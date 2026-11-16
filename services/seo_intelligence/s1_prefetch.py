@@ -27,6 +27,7 @@ from datetime import datetime, timedelta
 
 import structlog
 
+from .search_history import write_client_history
 from .seed_builder import (
     LOCATION_CODE_TO_MARKET, _WEAK_PLACE_WORDS, activity_terms, build_seed, idea_seeds, is_lodging_search,
     rank_keyword_ideas, title_place_terms,
@@ -337,17 +338,6 @@ async def _persist(conn, spec: dict, location_code: int, ideas: list[dict], paa:
     })
 
 
-async def _write_history(conn, client, location_code: int) -> int:
-    """AA-1122 — the monthly volumes of the ideas task just bought (search_history), never overwritten; 0 on error."""
-    from .search_history import MonthlyBuffer, write
-
-    buffer = getattr(client, "monthly", None)
-    market = LOCATION_CODE_TO_MARKET.get(location_code)
-    if market is None or not isinstance(buffer, MonthlyBuffer):
-        return 0
-    return await write(conn, market, buffer.pop(location_code))
-
-
 async def foreign_places(conn, country: str) -> frozenset[str]:
     """Lowercase names of places in OTHER countries (shared.destinations, read only), minus names
     that also exist in `country` and generic words. Empty on any error."""
@@ -454,7 +444,7 @@ async def prefetch(conn, rows: list[dict], *, tenant_id: str, location_code: int
                 ideas = await client.fetch_keyword_ideas_multi(seeds[:MAX_SEEDS_PER_TASK], location_code,
                                                                language_code, limit=300)
                 summary["ideas_tasks"] += 1
-                kept = await _write_history(conn, client, location_code)
+                kept = await write_client_history(conn, client, location_code)   # AA-1122
                 if kept:
                     summary["history_rows"] = summary.get("history_rows", 0) + kept
             except Exception as e:  # BudgetExceeded included: stop buying, keep what we have

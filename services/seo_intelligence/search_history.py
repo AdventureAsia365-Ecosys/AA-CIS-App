@@ -145,6 +145,23 @@ def with_history(history) -> dict:
     return {"history": history} if history else {}
 
 
+def client_history(client, location_code: int, keywords) -> dict:
+    """keyword -> (source, months) the client parsed for ``keywords`` in ``location_code``, taken out of its buffer;
+    {} for a client without one (a test double)."""
+    buffer = getattr(client, "monthly", None)
+    return buffer.pop(location_code, keywords) if isinstance(buffer, MonthlyBuffer) else {}
+
+
+async def write_client_history(conn_or_pool, client, location_code: int) -> int:
+    """Write every month ``client`` parsed for ``location_code`` (its market from seed_builder) to the history; 0 for
+    no client, an unknown location or a client without the buffer. Never raises."""
+    from .seed_builder import LOCATION_CODE_TO_MARKET
+
+    market = LOCATION_CODE_TO_MARKET.get(location_code)
+    history = client_history(client, location_code, None) if client is not None and market else {}
+    return await write(conn_or_pool, market, history) if history else 0
+
+
 def rows_for(market: str, history: Mapping[str, tuple[str, Series]]) -> list[tuple]:
     """The INSERT rows of one market's history. Pure. A keyword the table would refuse (too long) is left out."""
     rows = []
@@ -244,6 +261,6 @@ async def counts(pool) -> dict:
             "last_month": row["last_month"].isoformat() if row["last_month"] else None}
 
 
-__all__ = ["MonthlyBuffer", "Season", "with_history", "monthly_from_answer", "monthly_from_results", "series_of",
+__all__ = ["MonthlyBuffer", "Season", "with_history", "client_history", "write_client_history", "monthly_from_answer", "monthly_from_results", "series_of",
            "rows_for", "write",
            "seasonality", "place_seasonality", "counts"]

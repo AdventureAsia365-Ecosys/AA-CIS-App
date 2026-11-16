@@ -48,6 +48,7 @@ from services.seo_intelligence.dfs_queue import research_queue_mode
 from services.seo_intelligence.seed_builder import DFS_LOCATION_MAP
 from services.jobs.segment_research_job import KIND as JOB_KIND, dfs_balance, load_budgets, max_usd_per_run
 from shared.jobs import queue as job_queue
+from shared.research_budget import with_caps
 from shared.jobs.registry import enqueue
 
 logger = structlog.get_logger()
@@ -130,7 +131,7 @@ async def _active_job(pool) -> Optional[dict]:
 
 async def _month_cap(pool):
     """The research month cap with the ledger's month spend, or 503 when the ledger cannot be read (fail closed)."""
-    from shared.cost_guard import load_research_month_cap
+    from shared.research_budget import load_research_month_cap
 
     try:
         return await load_research_month_cap(pool)
@@ -153,7 +154,7 @@ async def preview_research(scope: ResearchScope, request: Request):
     pool = request.app.state.pool
     dfs_budget, llm_budget = await load_budgets(pool)
     month = await _month_cap(pool)
-    dfs_budget.shared_caps = (month,)
+    dfs_budget = with_caps(dfs_budget, month)
     result = await run_segment_research({"countries": scope.markets}, pool, dry_run=True,
                                         **_capped(_kwargs(scope), dfs_budget))
     active = await _active_job(pool)
@@ -183,7 +184,7 @@ async def run_research(scope: ResearchScope, request: Request, x_admin_secret: s
     dfs_budget, llm_budget = await load_budgets(pool)
     month = await _month_cap(pool)
     _refuse_spent_month(month)                     # AA-1122: refused up front, before any read of the scope
-    dfs_budget.shared_caps = (month,)
+    dfs_budget = with_caps(dfs_budget, month)
     kwargs = _capped(_kwargs(scope), dfs_budget)
     preview = await run_segment_research({"countries": scope.markets}, pool, dry_run=True, **kwargs)
     if preview["places_selected"] == 0:
@@ -246,7 +247,7 @@ async def _panel(pool) -> dict:
     from services.acp_contract import research_auto as ra
     from services.acp_contract.research_coverage import ReadOnlyPool
     from services.seo_intelligence import search_history, tour_paa
-    from shared.cost_guard import RESEARCH_JOB_KINDS, load_research_month_cap, month_start
+    from shared.research_budget import RESEARCH_JOB_KINDS, load_research_month_cap, month_start
 
     out: dict = {"errors": {}}
     cfg = ra.config()

@@ -158,7 +158,7 @@ def serp_price() -> float:
 async def preview(pool, tour_ids: list[str] | None = None, *, paid: bool = True) -> dict:
     """What a run would do, $0: tours to fill, filled free from the store, still empty, SERPs it would buy within the
     caps (per run and the research month left), and the estimate."""
-    from shared import cost_guard, settings
+    from shared import research_budget, settings
 
     plans = await build_plan(pool, tour_ids)
     from_store = sum(1 for p in plans if p.store_paa)
@@ -166,7 +166,7 @@ async def preview(pool, tour_ids: list[str] | None = None, *, paid: bool = True)
     buyable = [p for p in still if p.buy_keyword]
     price = serp_price()
     run_cap = float(settings.get(rs.TOUR_PAA_MAX_USD_PER_RUN)) if paid else 0.0
-    month = await cost_guard.load_research_month_cap(pool)
+    month = await research_budget.load_research_month_cap(pool)
     money = min(run_cap, month.remaining())
     distinct = len({p.buy_keyword for p in buyable})
     fits = min(distinct, math.floor(money / price + 1e-9)) if price > 0 else distinct
@@ -207,6 +207,31 @@ async def _write(pool, tour_id: str, paa: list[str], source: str) -> None:
         await conn.execute(WRITE_SQL, tour_id, json.dumps(paa), source)
 
 
+async def _fill_from_store(pool, plans: list[TourPlan], paid: bool, out: RunResult) -> dict[str, list[TourPlan]]:
+    """Write the store's questions; return buy keyword -> its tours. A paid run marks a tour with nothing to buy
+    'none'; a store-only run marks nothing (a paid run may still buy for those tours)."""
+    by_kw: dict[str, list[TourPlan]] = {}
+    for p in plans:
+        if p.store_paa:
+            await _write(pool, p.tour_id, p.store_paa, "store")
+            out.filled_store += 1
+        elif paid and p.buy_keyword:
+            by_kw.setdefault(p.buy_keyword, []).append(p)
+        elif paid:
+            await _write(pool, p.tour_id, [], "none")
+            out.marked_none += 1
+    return by_kw
+
+
+async def _write_answer(pool, tours: list[TourPlan], paa: list[str], most: int, out: RunResult) -> None:
+    for p in tours:
+        await _write(pool, p.tour_id, paa[:most], "serp" if paa else "none")
+        if paa:
+            out.filled_serp += 1
+        else:
+            out.marked_none += 1
+
+
 async def run(pool, *, paid: bool, client=None, dfs_budget=None, tour_ids: list[str] | None = None) -> dict:
     """Fill the planned tours: store first; then, when ``paid``, ONE SERP per distinct buy keyword through the research
     cache, under ``dfs_budget`` (its per-run cap and the shared month cap are checked before each post by the client).
@@ -217,22 +242,8 @@ async def run(pool, *, paid: bool, client=None, dfs_budget=None, tour_ids: list[
     from services.seo_intelligence.seed_builder import DFS_LOCATION_MAP
     from shared.cost_guard import BudgetExceeded
 
-    plans = await build_plan(pool, tour_ids)
     out = RunResult()
-    for p in plans:
-        if p.store_paa:
-            await _write(pool, p.tour_id, p.store_paa, "store")
-            out.filled_store += 1
-    rest = [p for p in plans if not p.store_paa]
-    by_kw: dict[str, list[TourPlan]] = {}
-    for p in rest:
-        if not paid:
-            continue            # a store-only run marks nothing: a paid run may still buy for these tours
-        if p.buy_keyword:
-            by_kw.setdefault(p.buy_keyword, []).append(p)
-        else:
-            await _write(pool, p.tour_id, [], "none")
-            out.marked_none += 1
+    by_kw = await _fill_from_store(pool, await build_plan(pool, tour_ids), paid, out)
     if not by_kw:
         return out.as_dict()
     if client is None:
@@ -241,37 +252,34 @@ async def run(pool, *, paid: bool, client=None, dfs_budget=None, tour_ids: list[
     loc = DFS_LOCATION_MAP[SERP_MARKET][0]
     _per_keyword, most = paa_caps()
     stored = await cache.serps(list(by_kw), SERP_MARKET)
+
+    async def _buy(kw: str, tours: list[TourPlan]) -> list[str] | None:
+        """The PAA of one bought SERP (written back to the store), or None when nothing was bought."""
+        try:
+            data = await client._serp_advanced(kw, loc, "en")
+        except BudgetExceeded as exc:
+            out.stop_reason = str(exc)
+            out.skipped_cap += len(tours)
+            return None
+        except Exception as exc:  # noqa: BLE001 — one failed SERP: its tours stay as they are
+            logger.warning("tour_paa_serp_failed", keyword=kw, error=str(exc)[:200])
+            out.failed += len(tours)
+            return None
+        out.serp_calls += 1
+        await cache.put_serp_answer(client, kw, SERP_MARKET, data)
+        return parse_serp(client, data)[0]
+
     for kw, tours in by_kw.items():
         if kw in stored:            # a concurrent research run stored it meanwhile: nothing to buy
-            paa = list(stored[kw].paa)
             out.serp_cached += 1
+            paa = list(stored[kw].paa)
         elif out.stop_reason is not None:
             out.skipped_cap += len(tours)
             continue
-        else:
-            try:
-                data = await client._serp_advanced(kw, loc, "en")
-            except BudgetExceeded as exc:
-                out.stop_reason = str(exc)
-                out.skipped_cap += len(tours)
-                continue
-            except Exception as exc:  # noqa: BLE001 — one failed SERP: its tours stay as they are
-                logger.warning("tour_paa_serp_failed", keyword=kw, error=str(exc)[:200])
-                out.failed += len(tours)
-                continue
-            out.serp_calls += 1
-            await cache.put_serp_answer(client, kw, SERP_MARKET, data)
-            paa = parse_serp(client, data)[0]
-        for p in tours:
-            if paa:
-                await _write(pool, p.tour_id, paa[:most], "serp")
-                out.filled_serp += 1
-            else:
-                await _write(pool, p.tour_id, [], "none")
-                out.marked_none += 1
-    if out.serp_cached:
-        await cache.log_hits("serp_advanced", count=out.serp_cached, location_code=loc,
-                             meta={"phase": "tour_paa"})
+        elif (paa := await _buy(kw, tours)) is None:
+            continue
+        await _write_answer(pool, tours, paa, most, out)
+    await cache.log_hits("serp_advanced", count=out.serp_cached, location_code=loc, meta={"phase": "tour_paa"})
     return out.as_dict()
 
 

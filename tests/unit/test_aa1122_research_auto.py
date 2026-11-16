@@ -6,9 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from services.acp_contract import research_auto as ra
-from services.acp_contract import segment_matching as sm
+from services.acp_contract import research_carry as sm
 from services.seo_intelligence import tour_paa
-from shared import cost_guard as cg
+from shared import cost_guard
+from shared import research_budget as cg
 
 NOW = datetime(2026, 11, 20, 18, 0, tzinfo=timezone.utc)
 CFG = {"enabled": True, "window_start": 17, "window_end": 23, "new_min_places": 20, "new_max_wait_days": 7,
@@ -194,7 +195,7 @@ async def test_paid_run_buys_one_serp_per_keyword_and_stops_at_the_cap():
     async def serp(kw, loc, lang):
         calls.append(kw)
         if len(calls) > 1:
-            raise cg.BudgetExceeded("research month budget $5.00 reached", "research", "per_month")
+            raise cost_guard.BudgetExceeded("research month budget $5.00 reached", "research", "per_month")
         return {"tasks": []}
     client._serp_advanced = serp
     client._parse_paa = MagicMock(return_value=["Is it open in winter?"])

@@ -20,10 +20,11 @@ sys.path.insert(0, os.path.dirname(__file__))
 from conftest import BATCH_ID, DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER, TENANT_ID  # noqa: E402
 from api.routers import admin_segment_research as router  # noqa: E402
 from services.acp_contract import research_auto as ra  # noqa: E402
-from services.acp_contract import segment_matching as sm  # noqa: E402
+from services.acp_contract import research_carry as sm  # noqa: E402
 from services.seo_intelligence import search_history as sh  # noqa: E402
 from services.seo_intelligence import tour_paa  # noqa: E402
-from shared import cost_guard as cg  # noqa: E402
+from shared import cost_guard
+from shared import research_budget as cg  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 

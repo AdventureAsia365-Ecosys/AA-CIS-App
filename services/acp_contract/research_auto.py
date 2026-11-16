@@ -7,7 +7,7 @@ rewrite, a rename) only change what the next selection returns, and only the nig
 ``segment_research`` job, which buys inside its caps (segment_research_job: the hard monthly cap and the automatic run
 cap over DFS + LLM + Jev, re-checked before every paid post).
 
-The tick (the job worker calls :func:`tick_safe` every RESEARCH_TICK_EVERY_S, shared/jobs/worker.py):
+The tick (the job worker calls :func:`tick_safe` hourly, right after its landing sweep, shared/jobs/worker.py):
 
   1. off (``cis.seo.research_auto_enabled`` false) -> ``disabled``; outside the UTC window
      [``research_auto_window_start_utc``, ``_end_utc``) -> ``outside_window`` (a run blocks backend deploys, DM-11.4);
@@ -47,7 +47,6 @@ logger = structlog.get_logger()
 
 KIND = "segment_research"
 AUTO_CREATOR = "system:auto"
-RESEARCH_TICK_EVERY_S = 3600.0   # technical-constant: how often the worker asks; the settings decide what it does
 TICK_TIMEOUT_S = 180.0           # technical-constant: bound of one tick (bounded reads, at most one enqueue)
 NEW_LIST = 50                    # technical-constant: rows of the panel's never-researched list (display only)
 MASTER_TENANT = "00000000-0000-0000-0000-000000000001"
@@ -198,21 +197,22 @@ async def pending(pool, markets: list[str], activation_stale_pct: float, now: Op
     """What waits, $0: the scope (stored Jev picks only), its research rows and the per-market staleness (the research
     run's own definitions: segment_research.stale_tiers / log_ages)."""
     from services.acp_contract import research_coverage as rc
+    from services.acp_contract import research_plan as rp
     from services.acp_contract import segment_research as sr
     from services.seo_intelligence.research_cache import fresh_windows
 
     now = now or datetime.now(timezone.utc)
     rows = await sr.scoped_rows(pool, cached_only=True)
-    info = sr.place_info(rows)
+    info = rp.place_info(rows)
     names = sorted(info)
-    ages = await sr.log_ages(pool, names)
+    ages = await rp.log_ages(pool, names)
     fresh = await sr._fresh_tiers(pool, names, await fresh_windows()) if names else {}
     new = [n for n in names if n not in ages]
     out = Pending(places_in_scope=len(names), new=len(new))
     seen = [info[n].first_seen for n in new if info[n].first_seen is not None]
     if seen:
         out.oldest_new_wait_days = round((now - min(seen)).total_seconds() / 86400.0, 1)
-    ordered = sorted(new, key=lambda n: sr.order_key("new", n, info, ages))
+    ordered = sorted(new, key=lambda n: rp.order_key("new", n, info, ages))
     out.new_places = [{"place": n, "tours": info[n].tours,
                        "first_seen": info[n].first_seen.isoformat() if info[n].first_seen else None}
                       for n in ordered[:NEW_LIST]]
@@ -234,7 +234,7 @@ async def recent_jobs(pool) -> list[dict]:
 
 
 async def _active(pool) -> bool:
-    from shared.cost_guard import RESEARCH_JOB_KINDS
+    from shared.research_budget import RESEARCH_JOB_KINDS
     async with pool.acquire() as conn:
         return bool(await conn.fetchval(ACTIVE_RESEARCH_SQL, list(RESEARCH_JOB_KINDS)))
 
@@ -247,40 +247,69 @@ async def _alert(pool, alerts: list) -> dict:
     return await ops_checks.alert_all(pool, [ops_checks.Finding(c, s, d) for c, s, d in alerts])
 
 
+def _closed(cfg: dict, now: datetime, force: bool) -> Optional[str]:
+    """The reason the tick does nothing before any read ("disabled", "outside_window"), or None. Pure."""
+    if force:
+        return None
+    if not cfg["enabled"]:
+        return "disabled"
+    return None if in_window(now.hour, cfg["window_start"], cfg["window_end"]) else "outside_window"
+
+
+async def _enqueue(pool, d: Decision, waiting: Pending, cfg: dict, now: datetime) -> dict:
+    """Enqueue the decided run: one per kind per UTC day (idempotency key), created_by system:auto."""
+    from shared.jobs.registry import enqueue
+
+    payload = {"markets": waiting.markets, "scope": f"auto_{d.kind}", "max_usd": d.max_usd,
+               "dfs_queue": cfg["dfs_queue"], "tiers": ["volume", "serp"], "strategy": "batch", "recompute": True}
+    key = f"{KIND}:auto:{d.kind}:{now.strftime('%Y-%m-%d')}"
+    job_id, created = await enqueue(pool, KIND, payload, idempotency_key=key, created_by=AUTO_CREATOR)
+    logger.info("research_auto_enqueued", job_id=job_id, created=created, kind=d.kind, max_usd=d.max_usd,
+                markets=waiting.markets, new=waiting.new)
+    return {"job_id": job_id, "created": created}
+
+
+def _last_failed(jobs: list[dict], streak: int) -> list:
+    """The alert for an automatic run that just failed (below the pause streak). Pure."""
+    if streak and jobs and jobs[0].get("created_by") == AUTO_CREATOR and jobs[0]["status"] in FAILED:
+        return [("research_auto_failed", f"the last automatic research run {jobs[0]['status']}",
+                 {"job_id": jobs[0]["id"], "streak": streak})]
+    return []
+
+
+async def _month(pool, now: datetime):
+    """(the month cap, None) or (None, the alert): an unreadable ledger never starts a run (fail closed)."""
+    from shared import research_budget
+
+    try:
+        return await research_budget.load_research_month_cap(pool, now), None
+    except Exception as exc:  # noqa: BLE001
+        return None, ("research_auto_failed", "the research spend ledger could not be read; no automatic run",
+                      {"error": f"{type(exc).__name__}: {str(exc)[:200]}"})
+
+
 async def tick(pool, *, now: Optional[datetime] = None, force: bool = False, dry_run: bool = False) -> dict:
     """One tick (module docstring). `force` skips the switch and the window (an administrator's check, tests);
     `dry_run` decides and returns the decision without enqueueing or alerting ($0)."""
-    from shared.cost_guard import load_research_month_cap
-    from shared.jobs.registry import enqueue
+    from services.acp_contract.research_coverage import ReadOnlyPool
 
     now = now or datetime.now(timezone.utc)
     cfg = config()
-    if not force:
-        if not cfg["enabled"]:
-            return {"action": "disabled"}
-        if not in_window(now.hour, cfg["window_start"], cfg["window_end"]):
-            return {"action": "outside_window"}
-    if await _active(pool):
-        return {"action": "research_active"}
+    closed = _closed(cfg, now, force) or ("research_active" if await _active(pool) else None)
+    if closed:
+        return {"action": closed}
     jobs = await recent_jobs(pool)
     streak = failure_streak(jobs)
     if streak >= cfg["max_failures"]:
-        alerts = [("research_auto_failed", f"{streak} automatic research runs in a row failed or stopped; automatic "
-                   "research waits until a run succeeds", {"streak": streak, "last": jobs[0]["id"] if jobs else None})]
-        if not dry_run:
-            await _alert(pool, alerts)
+        await _alert(pool, [] if dry_run else [(
+            "research_auto_failed", f"{streak} automatic research runs in a row failed or stopped; automatic research "
+            "waits until a run succeeds", {"streak": streak, "last": jobs[0]["id"] if jobs else None})])
         return {"action": "paused_failures", "streak": streak}
-    from services.acp_contract.research_coverage import ReadOnlyPool
     ro = ReadOnlyPool(pool, statement_timeout="20s")
-    markets = await auto_markets(ro, cfg["tenant_statuses"])
-    waiting = await pending(ro, markets, cfg["activation_stale_pct"], now)
-    try:
-        month = await load_research_month_cap(pool, now)
-    except Exception as exc:  # noqa: BLE001 — fail closed: no run on an unknown month spend
-        alerts = [("research_auto_failed", "the research spend ledger could not be read; no automatic run",
-                   {"error": f"{type(exc).__name__}: {str(exc)[:200]}"})]
-        if not dry_run:
-            await _alert(pool, alerts)
+    waiting = await pending(ro, await auto_markets(ro, cfg["tenant_statuses"]), cfg["activation_stale_pct"], now)
+    month, failed = await _month(pool, now)
+    if month is None:
+        await _alert(pool, [] if dry_run else [failed])
         return {"action": "ledger_error"}
     d = decide(now, cfg, waiting, jobs, month)
     out = {"action": d.action, "kind": d.kind, "max_usd": d.max_usd, "reason": d.reason, "markets": waiting.markets,
@@ -289,17 +318,8 @@ async def tick(pool, *, now: Optional[datetime] = None, force: bool = False, dry
     if dry_run:
         return {**out, "dry_run": True}
     if d.action == "enqueue":
-        payload = {"markets": waiting.markets, "scope": f"auto_{d.kind}", "max_usd": d.max_usd,
-                   "dfs_queue": cfg["dfs_queue"], "tiers": ["volume", "serp"], "strategy": "batch", "recompute": True}
-        key = f"{KIND}:auto:{d.kind}:{now.strftime('%Y-%m-%d')}"
-        job_id, created = await enqueue(pool, KIND, payload, idempotency_key=key, created_by=AUTO_CREATOR)
-        out.update(job_id=job_id, created=created)
-        logger.info("research_auto_enqueued", job_id=job_id, created=created, kind=d.kind, max_usd=d.max_usd,
-                    markets=waiting.markets, new=waiting.new)
-    if streak and jobs and jobs[0].get("created_by") == AUTO_CREATOR and jobs[0]["status"] in FAILED:
-        d.alerts.append(("research_auto_failed", f"the last automatic research run {jobs[0]['status']}",
-                         {"job_id": jobs[0]["id"], "streak": streak}))
-    out["alerted"] = await _alert(pool, d.alerts)
+        out.update(await _enqueue(pool, d, waiting, cfg, now))
+    out["alerted"] = await _alert(pool, d.alerts + _last_failed(jobs, streak))
     return out
 
 
@@ -313,4 +333,4 @@ async def tick_safe(pool) -> dict:
 
 
 __all__ = ["tick", "tick_safe", "decide", "pending", "auto_markets", "config", "failure_streak", "in_window",
-           "Pending", "Decision", "RESEARCH_TICK_EVERY_S", "AUTO_CREATOR"]
+           "Pending", "Decision", "AUTO_CREATOR"]

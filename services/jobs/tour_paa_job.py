@@ -5,7 +5,7 @@ through the research cache (services/seo_intelligence/tour_paa.py). Enqueued by 
 (POST /admin/segment-research/tour-paa/run, after the free preview) and, store-only (``paid`` false), by a research run
 that bought SERPs (segment_research_job.enqueue_paa_derive, once per UTC day).
 
-Caps of a paid run, one counter over its DataForSEO calls (shared.cost_guard.SharedCap on the run budget, checked by the
+Caps of a paid run, one counter over its DataForSEO calls (shared.research_budget.SharedCap on the run budget, checked by the
 client before every post): the per-run cap ``cis.spend.tour_paa_backfill_max_usd_per_run`` minus what this job already
 spent (retries never start a fresh budget) and the research month cap ``cis.spend.research_max_usd_per_month`` (this
 kind is a research kind: its spend counts there, RESEARCH_JOB_KINDS). A month already spent, an unreadable ledger or a
@@ -29,7 +29,8 @@ async def paid_budget(pool, job_id: str):
     bought. Fail closed: an unreadable ledger buys nothing."""
     from services.seo_intelligence import research_settings as rs
     from shared import settings
-    from shared.cost_guard import SharedCap, job_spend, load_research_month_cap, load_run_budget
+    from shared.cost_guard import load_run_budget
+    from shared.research_budget import SharedCap, job_spend, load_research_month_cap, with_caps
 
     try:
         month = await load_research_month_cap(pool)
@@ -41,9 +42,7 @@ async def paid_budget(pool, job_id: str):
         return None, f"research month cap reached: spent ${month.spent:.2f} of ${month.cap_usd:.2f}"
     if run.remaining() <= 0:
         return None, f"per-run cap reached or 0 (${run.cap_usd:.2f}, this job spent ${prior:.2f})"
-    budget = await load_run_budget(pool, "dfs", KIND)
-    budget.shared_caps = (month, run)
-    return budget, None
+    return with_caps(await load_run_budget(pool, "dfs", KIND), month, run), None
 
 
 @job_kind(KIND, concurrency=1, max_attempts=2, expected_seconds=1800)

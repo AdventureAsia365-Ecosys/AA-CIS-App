@@ -11,17 +11,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from services.acp_contract import research_plan as rp
 from services.acp_contract import segment_research as sr
 from services.acp_contract import segment_research_batch as rb
 from services.seo_intelligence.dataforseo_client import DataForSEOClient
-from shared import cost_guard as cg
+from shared import cost_guard
+from shared import research_budget as cg
 from shared.jobs.registry import NonRetryable
 
 
-def _budget(provider: str, caps=()) -> cg.RunBudget:
-    b = cg.RunBudget(provider=provider, scope="job:segment_research", per_run_usd=None, per_day_usd=None)
-    b.shared_caps = tuple(caps)
-    return b
+def _budget(provider: str, caps=()) -> cg.CappedRunBudget:
+    b = cost_guard.RunBudget(provider=provider, scope="job:segment_research", per_run_usd=None, per_day_usd=None)
+    return cg.with_caps(b, *caps)
 
 
 # ── SharedCap ───────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -32,7 +33,7 @@ def test_shared_cap_counts_every_budget_it_is_attached_to():
     llm.charge(0.1)
     assert round(month.spent, 6) == 0.9 and round(month.remaining(), 6) == 0.1
     llm.check(0.1)                                   # exactly at the cap is allowed
-    with pytest.raises(cg.BudgetExceeded) as e:
+    with pytest.raises(cost_guard.BudgetExceeded) as e:
         dfs.check(0.11)
     assert e.value.limit == "per_month" and "month" in str(e.value)
     assert dfs.remaining_usd() == pytest.approx(0.1)
@@ -41,7 +42,7 @@ def test_shared_cap_counts_every_budget_it_is_attached_to():
 def test_a_zero_cap_means_no_spend_never_unlimited():
     month = cg.SharedCap("month", 0.0)
     b = _budget("dfs", [month])
-    with pytest.raises(cg.BudgetExceeded):
+    with pytest.raises(cost_guard.BudgetExceeded):
         b.check(0.0001)
     b.check(0.0)                                     # a free call (a store hit) is never refused
     assert b.remaining_usd() == 0.0
@@ -109,7 +110,7 @@ async def test_a_spent_month_stops_the_job_before_anything_is_read():
     month = cg.SharedCap("month", 5.0, spent_at_start=5.0)
     with patch.object(srj, "shared_caps", AsyncMock(return_value=(month, None, 0.0))), \
             patch.object(srj, "load_budgets", AsyncMock()) as budgets:
-        with pytest.raises(cg.BudgetExceeded) as e:
+        with pytest.raises(cost_guard.BudgetExceeded) as e:
             await srj.run(ctx)
     assert "month cap reached" in str(e.value)
     budgets.assert_not_awaited()
@@ -140,7 +141,7 @@ async def test_guard_no_dfs_research_path_spends_past_the_month_cap(path):
     prices = {"search_volume_bulk": 0.06, "serp_advanced": 0.06, "keywords_for_keywords": 0.06}
     # The pre-call check reads the worst-case price table (cis.spend.dfs_call_estimate_usd); the cap holds as long as
     # that table is at or above the real price, which is what the setting is for.
-    with patch.object(cg, "dfs_call_estimate_usd", return_value=prices), \
+    with patch.object(cost_guard, "dfs_call_estimate_usd", return_value=prices), \
             patch("services.seo_intelligence.dataforseo_client.dfs_call_estimate_usd", return_value=prices):
         for i in range(10):
             try:
@@ -151,7 +152,7 @@ async def test_guard_no_dfs_research_path_spends_past_the_month_cap(path):
                 else:
                     await client.fetch_keyword_ideas_multi([f"zz place {i}"], 2840, "en")
                 spent_calls += 1
-            except cg.BudgetExceeded:
+            except cost_guard.BudgetExceeded:
                 break
     assert spent_calls == 2                         # 0.1 + 2 x 0.06 = 0.22; a third call would pass 0.25
     assert month.spent <= month.cap_usd + 1e-9
@@ -188,7 +189,7 @@ async def test_guard_jev_questions_are_reserved_before_they_are_asked():
     places = [rb._Place("Zz Amber", ["visit"], ["US"], keywords=["zz amber", "zz amber falls", "zz amber walk"])]
     places[0].plain = "zz amber"
     decide = AsyncMock()
-    with patch.object(rb, "decide", decide), patch.object(rb, "jev_ask_estimate_usd", return_value=0.006):
+    with patch.object(rb, "decide", decide), patch("services.acp_contract.research_select.jev_ask_estimate_usd", return_value=0.006):
         out = await rb._gate_keywords(places, MagicMock(), llm_budget, sr._RunGuard())
     decide.assert_not_awaited()                     # 2 questions x 0.006 > 0.01: nothing asked, nothing bought
     assert out["jev_keywords_checked"] == 0 and places[0].failed
@@ -197,7 +198,7 @@ async def test_guard_jev_questions_are_reserved_before_they_are_asked():
     places2[0].plain = "zz amber"
     verdict = SimpleNamespace(verdicts={}, cost_usd=0.004, rejected=lambda q: False)
     with patch.object(rb, "decide", AsyncMock(return_value=verdict)), \
-            patch.object(rb, "jev_ask_estimate_usd", return_value=0.006):
+            patch("services.acp_contract.research_select.jev_ask_estimate_usd", return_value=0.006):
         await rb._gate_keywords(places2, MagicMock(), _budget("bedrock", [month2]), sr._RunGuard())
     assert month2.spent == pytest.approx(0.004)     # charged what Jev really cost
 
@@ -209,18 +210,18 @@ def test_guard_every_paid_research_entry_point_is_capped():
 
     from services.jobs import segment_research_job, tour_paa_job
     assert set(cg.RESEARCH_JOB_KINDS) == {segment_research_job.KIND, tour_paa_job.KIND}
-    assert "shared_caps" in inspect.getsource(segment_research_job.run)
-    assert "shared_caps" in inspect.getsource(tour_paa_job.paid_budget)
+    assert "with_caps" in inspect.getsource(segment_research_job.run)
+    assert "with_caps" in inspect.getsource(tour_paa_job.paid_budget)
     assert "load_research_month_cap" in inspect.getsource(tour_paa_job.paid_budget)
 
 
 # ── selection order ─────────────────────────────────────────────────────────────────────────────────────────────────
 def test_order_key_never_researched_most_active_first_then_longest_wait():
     t1, t2 = datetime(2026, 10, 1, tzinfo=timezone.utc), datetime(2026, 11, 1, tzinfo=timezone.utc)
-    info = {"Zz A": sr.PlaceInfo(1, t1), "Zz B": sr.PlaceInfo(5, t2), "Zz C": sr.PlaceInfo(1, t2)}
-    assert sorted(info, key=lambda n: sr.order_key("new", n, info, {})) == ["Zz B", "Zz A", "Zz C"]
+    info = {"Zz A": rp.PlaceInfo(1, t1), "Zz B": rp.PlaceInfo(5, t2), "Zz C": rp.PlaceInfo(1, t2)}
+    assert sorted(info, key=lambda n: rp.order_key("new", n, info, {})) == ["Zz B", "Zz A", "Zz C"]
     ages = {"Zz A": (t2, t2), "Zz B": (t1, t2), "Zz C": (t1, t1)}
-    assert sorted(info, key=lambda n: sr.order_key("stale", n, info, ages)) == ["Zz B", "Zz C", "Zz A"]
+    assert sorted(info, key=lambda n: rp.order_key("stale", n, info, ages)) == ["Zz B", "Zz C", "Zz A"]
 
 
 def _fresh_rows(rows):
@@ -259,10 +260,10 @@ async def test_plan_puts_new_first_then_stale_oldest_and_auto_new_only_new():
     ages = {"Zz Alpha": (t_new, t_new), "Zz Beta": (t_old, t_old), "Zz Gamma": (t_new, t_new)}
     from datetime import timedelta
     w = sr.Windows(timedelta(days=180), timedelta(days=180), timedelta(days=7))
-    sel = await sr.plan_selection(_PlanPool(fresh, ages), by_place, ["US"], ("volume", "serp"), w)
+    sel = await rp.plan_selection(_PlanPool(fresh, ages), by_place, ["US"], ("volume", "serp"), w)
     assert [p.name for p in sel.places] == ["Zz Delta", "Zz Beta", "Zz Alpha"]
     assert [p.bucket for p in sel.places] == ["new", "stale", "stale"]
-    sel = await sr.plan_selection(_PlanPool(fresh, ages), by_place, ["US"], ("volume", "serp"), w, scope="auto_new")
+    sel = await rp.plan_selection(_PlanPool(fresh, ages), by_place, ["US"], ("volume", "serp"), w, scope="auto_new")
     assert [p.name for p in sel.places] == ["Zz Delta"]
 
 
@@ -275,12 +276,12 @@ async def test_refresh_run_buys_ahead_places_within_the_share():
     fresh = [(n, "US", tier) for n in names for tier in ("volume", "serp")]
     ages = {n: (t, t) for n in names}
     w = sr.Windows(timedelta(days=180), timedelta(days=180), timedelta(days=7))
-    ahead = sr._narrowed(w, 150)
+    ahead = rp.narrowed(w, 150)
     assert ahead.volume == timedelta(days=30)
-    sel = await sr.plan_selection(_PlanPool(fresh, ages, ahead=[]), by_place, ["US"], ("volume", "serp"), w,
+    sel = await rp.plan_selection(_PlanPool(fresh, ages, ahead=[]), by_place, ["US"], ("volume", "serp"), w,
                                   scope="auto_refresh", ahead_windows=ahead, ahead_share_pct=20)
     assert [p.bucket for p in sel.places] == ["ahead", "ahead"] and sel.counts["ahead"] == 10
-    manual = await sr.plan_selection(_PlanPool(fresh, ages, ahead=[]), by_place, ["US"], ("volume", "serp"), w,
+    manual = await rp.plan_selection(_PlanPool(fresh, ages, ahead=[]), by_place, ["US"], ("volume", "serp"), w,
                                      ahead_windows=ahead, ahead_share_pct=20)
     assert manual.places == []                      # a manual run never buys ahead
 

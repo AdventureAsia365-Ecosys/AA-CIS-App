@@ -16,7 +16,7 @@ narrowed to it (`narrow_to`), so the check before every paid post stops the run 
 balance-checked, whatever the estimate missed. A run that stored new demand enqueues one debounced platform recompute
 (segment_research.enqueue_recompute_for_places). `strategy: "loop"` is refused (retired, AA-1055).
 
-AA-1122 — every attempt runs under two shared caps over DFS + LLM + Jev together (shared.cost_guard.SharedCap, attached
+AA-1122 — every attempt runs under two shared caps over DFS + LLM + Jev together (shared.research_budget.SharedCap, attached
 to both run budgets): the hard monthly research cap (cis.spend.research_max_usd_per_month, the ledger month spend of
 every research job read at the attempt's start, fail closed) and, for an automatic run (`scope` auto_new /
 auto_refresh, created_by system:auto), the automatic run cap (cis.spend.research_auto_max_usd_per_run) minus what the
@@ -33,6 +33,7 @@ import structlog
 
 from shared.cost_guard import BudgetExceeded, load_run_budget, maybe_alert
 from shared.jobs.registry import JobContext, NonRetryable, enqueue, job_kind
+from shared.research_budget import with_caps
 
 from shared import settings
 
@@ -71,18 +72,36 @@ async def shared_caps(pool, job_id: str, scope: Optional[str]):
     """(month cap, run cap or None, what this job already spent) — read from the ledger at the attempt's start. Raises
     NonRetryable when the ledger cannot be read (fail closed: a run never starts on an unknown month spend)."""
     from services.seo_intelligence import research_settings as rs
-    from shared.cost_guard import SharedCap, job_spend, load_research_month_cap
+    from shared import research_budget as rbud
 
     try:
-        month = await load_research_month_cap(pool)
-        prior = await job_spend(pool, job_id)
+        month = await rbud.load_research_month_cap(pool)
+        prior = await rbud.job_spend(pool, job_id)
     except Exception as exc:  # noqa: BLE001 — unknown spend = refuse
         raise NonRetryable(f"research spend ledger unreadable: {type(exc).__name__}: {str(exc)[:200]}") from exc
     run = None
     if scope is not None:
         cap = min(float(settings.get(rs.AUTO_MAX_USD_PER_RUN)), max_usd_per_run())
-        run = SharedCap("run", cap, spent_at_start=prior, limit="per_run")
+        run = rbud.SharedCap("run", cap, spent_at_start=prior, limit="per_run")
     return month, run, prior
+
+
+def run_max_usd(payload: dict, dfs_budget, scope: Optional[str], prior: float) -> float:
+    """The selection's USD cap: max_usd_for (which reads the shared caps through the budget); a manual run's is also
+    narrowed by what earlier attempts of this job spent (an automatic run's run cap already holds that)."""
+    return max(max_usd_for(payload, dfs_budget) - (prior if scope is None else 0.0), 0.0)
+
+
+async def open_caps(pool, job_id: str, scope: Optional[str]):
+    """shared_caps, refusing up front (stopped_budget) when the month or this automatic run is already spent."""
+    month, run_cap, prior = await shared_caps(pool, job_id, scope)
+    if month.remaining() <= 0:
+        raise BudgetExceeded(f"research month cap reached: spent ${month.spent:.2f} of ${month.cap_usd:.2f}",
+                             "research", "per_month")
+    if run_cap is not None and run_cap.remaining() <= 0:
+        raise BudgetExceeded(f"automatic run cap reached: this job spent ${prior:.2f} of ${run_cap.cap_usd:.2f}",
+                             "research", "per_run")
+    return month, run_cap, prior
 
 
 async def enqueue_paa_derive(pool, result: dict) -> Optional[str]:
@@ -166,18 +185,11 @@ async def run(ctx: JobContext) -> dict:
         raise NonRetryable(f"strategy {ctx.payload.get('strategy')!r} is not supported (only 'batch', AA-1055)")
 
     scope = check_scope(ctx.payload, getattr(ctx.job, "created_by", None))
-    month, run_cap, prior = await shared_caps(ctx.pool, ctx.job_id, scope)
-    if month.remaining() <= 0:
-        raise BudgetExceeded(f"research month cap reached: spent ${month.spent:.2f} of ${month.cap_usd:.2f}",
-                             "research", "per_month")
-    if run_cap is not None and run_cap.remaining() <= 0:
-        raise BudgetExceeded(f"automatic run cap reached: this job spent ${prior:.2f} of ${run_cap.cap_usd:.2f}",
-                             "research", "per_run")
+    month, run_cap, prior = await open_caps(ctx.pool, ctx.job_id, scope)
 
     # Budgets and balance are re-checked here, not only at enqueue: a retry can start much later.
     dfs_budget, llm_budget = await load_budgets(ctx.pool)
-    caps = tuple(c for c in (month, run_cap) if c is not None)
-    dfs_budget.shared_caps = llm_budget.shared_caps = caps
+    dfs_budget, llm_budget = with_caps(dfs_budget, month, run_cap), with_caps(llm_budget, month, run_cap)
     for budget in (dfs_budget, llm_budget):
         remaining = budget.remaining_usd()
         if remaining is not None and remaining <= 0:
@@ -189,7 +201,7 @@ async def run(ctx: JobContext) -> dict:
     kwargs = scope_kwargs(ctx.payload)
     # max_usd_for reads dfs_budget.remaining_usd(), which now includes the shared caps (month left, run left); a
     # manual run's DFS cap is narrowed by what earlier attempts of this job already spent.
-    kwargs["max_usd"] = max(max_usd_for(ctx.payload, dfs_budget) - (prior if scope is None else 0.0), 0.0)
+    kwargs["max_usd"] = run_max_usd(ctx.payload, dfs_budget, scope, prior)
     narrow_to(dfs_budget, kwargs["max_usd"])
 
     await ctx.progress(phase="researching", markets=markets, dfs_balance_usd=balance, scope=scope,
@@ -200,11 +212,9 @@ async def run(ctx: JobContext) -> dict:
     # LLM spend is already attributed through llm_call_log.job_id (read-side sum, queue.py);
     # only the non-LLM DataForSEO spend is reported here, so nothing is counted twice.
     ctx.add_cost(dfs_budget.run_spent)
-    result["month"] = month.summary()
-    result["run_cap"] = run_cap.summary() if run_cap is not None else None
-    result["attempt"] = getattr(ctx.job, "attempt", None)
-    result["prior_attempts_spent_usd"] = round(prior, 4)
-    result["paa_derive_job_id"] = await enqueue_paa_derive(ctx.pool, result)
+    result.update(month=month.summary(), run_cap=run_cap.summary() if run_cap is not None else None,
+                  attempt=getattr(ctx.job, "attempt", None), prior_attempts_spent_usd=round(prior, 4),
+                  paa_derive_job_id=await enqueue_paa_derive(ctx.pool, result))
     ctx.set_result(result)
     await ctx.progress(phase="done")
 

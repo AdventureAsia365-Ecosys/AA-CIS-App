@@ -53,7 +53,9 @@ from services.seo_intelligence.dataforseo_client import DataForSEOClient, as_dfs
 from services.seo_intelligence.dfs_queue import QueuedTaskFailed
 from services.acp_contract.research_estimate import estimate_deduped
 from services.seo_intelligence.research_cache import CachedSerp, PaidNotStored, ResearchCache
-from services.seo_intelligence.search_history import with_history
+from services.acp_contract.research_select import (best_keyword, charge_jev, demand_groups, reserve_jev,  # noqa: F401
+                                                     serp_state)
+from services.seo_intelligence.search_history import client_history, with_history
 from services.seo_intelligence.seed_builder import DFS_LOCATION_MAP, LOCATION_CODE_TO_MARKET
 from shared.cost_guard import (DFS_RESEARCH_ENDPOINTS, BudgetExceeded, RunBudget, dfs_call_estimate_usd,
                                dfs_research_prices)
@@ -409,19 +411,6 @@ async def load_locations(pool, names: list[str]) -> dict[str, kq.PlaceLocation]:
     return out
 
 
-def _usd(value) -> float:
-    """A cost figure as float (0.0 for anything that is not a number, e.g. a test double)."""
-    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0
-
-
-def jev_ask_estimate_usd() -> float:
-    """AA-1122 — the reserved worst-case price of one Jev keyword question (setting
-    cis.spend.research_jev_ask_estimate_usd)."""
-    from services.seo_intelligence.research_settings import JEV_ASK_ESTIMATE_USD
-    from shared import settings
-    return float(settings.get(JEV_ASK_ESTIMATE_USD))
-
-
 async def _gate_keywords(places: list[_Place], pool, llm_budget: RunBudget | None = None,
                          guard: _RunGuard | None = None) -> dict:
     """AA-693 (A3-3): before any DFS purchase, ask Jev whether each proposed keyword is about this particular place
@@ -431,19 +420,9 @@ async def _gate_keywords(places: list[_Place], pool, llm_budget: RunBudget | Non
     pairs = [(p, kw) for p in places if not p.failed for kw in p.keywords if kw != (p.plain or _tidy(p.name))]
     if not pairs:
         return {"jev_keywords_checked": 0, "jev_keywords_rejected": 0}
-    caps = tuple(getattr(llm_budget, "shared_caps", ()) or ())
-    if caps:
-        # AA-1122: the questions are paid; their worst case is reserved against the month / run caps before asking
-        # (a stop fails the chunk: nothing of it is bought, it stays stale for the next run).
-        try:
-            for cap in caps:
-                cap.check(len(pairs) * jev_ask_estimate_usd())
-        except BudgetExceeded as exc:
-            if guard is not None:
-                guard.record(exc)
-            for p in places:
-                p.failed = True
-            return {"jev_keywords_checked": 0, "jev_keywords_rejected": 0}
+    caps, allowed = reserve_jev(llm_budget, len(pairs), places, guard)    # AA-1122: under the research caps
+    if not allowed:
+        return {"jev_keywords_checked": 0, "jev_keywords_rejected": 0}
     sem = asyncio.Semaphore(JEV_CONCURRENCY)
 
     async def _one(p: _Place, kw: str):
@@ -453,8 +432,7 @@ async def _gate_keywords(places: list[_Place], pool, llm_budget: RunBudget | Non
 
     rejected = 0
     answers = await asyncio.gather(*[_one(p, kw) for p, kw in pairs])
-    for cap in caps:
-        cap.charge(sum(_usd(getattr(dec, "cost_usd", 0.0)) for _p, _kw, dec in answers))
+    charge_jev(caps, [dec for _p, _kw, dec in answers])
     for p, kw, dec in answers:
         p.verdicts[kw] = dec.verdicts.get(JEV_KEYWORD_Q)
         if dec.rejected(JEV_KEYWORD_Q):
@@ -595,15 +573,6 @@ async def _purchase_volumes(chunk: list[str], loc: int, lang: str, client: DataF
     return out
 
 
-def client_history(client, location_code: int, keywords) -> dict:
-    """AA-1122 — the monthly volumes the client parsed for ``keywords`` in ``location_code`` (search_history), taken out
-    of its buffer; {} for a client without one (a test double)."""
-    from services.seo_intelligence.search_history import MonthlyBuffer
-
-    buffer = getattr(client, "monthly", None)
-    return buffer.pop(location_code, keywords) if isinstance(buffer, MonthlyBuffer) else {}
-
-
 async def _buy_volumes(places: list[_Place], markets: list[tuple[int, str, str]], client: DataForSEOClient,
                        pool, guard: _RunGuard, queue=None, cache: ResearchCache | None = None) -> dict:
     """Phase B. `queue` = a dfs_queue.StandardQueue, None = the live endpoint. `cache` = the run's research cache."""
@@ -703,24 +672,9 @@ def _serp_targets(wanted: list[_Place], rows, stats: dict) -> tuple[dict[str, li
     """Phase C's choice (module docstring): best keyword -> the places whose one SERP it is (not fresh yet), and the
     log rows of the places with nothing to buy (no volume anywhere it was measured, or a fresh SERP). A place whose
     SERP-market volumes are not all known waits. `rows` = _SERP_STATE_SQL rows; `stats` is counted in place."""
-    best_volume: dict[str, int] = {}
-    per_market: dict[str, dict[str, int]] = {}   # AA-1122: keyword -> market -> volume (the demand-group key)
-    fresh: set[str] = set()
-    known: set[str] = set()     # keywords whose SERP_MARKET volume is measured (None = DataForSEO has no row = 0)
-    for r in rows:
-        best_volume[r["keyword"]] = max(best_volume.get(r["keyword"], 0), r["search_volume"] or 0)
-        if r["search_volume"] is not None:
-            per_market.setdefault(r["keyword"], {})[r["market"]] = r["search_volume"]
-        if r["market"] == SERP_MARKET and r["serp_fresh"]:
-            fresh.add(r["keyword"])
-        if r["market"] == SERP_MARKET and r["volume_fresh"]:
-            known.add(r["keyword"])
-    for p in wanted:   # this run's answers too (a mock or a store write that has not landed)
-        for kw, per in p.volumes.items():
-            best_volume[kw] = max(best_volume.get(kw, 0), *[(v or 0) for v in per.values()], 0)
-            per_market.setdefault(kw, {}).update({m: v for m, v in per.items() if v is not None})
-            if SERP_MARKET in per:
-                known.add(kw)
+    # known = keywords whose SERP_MARKET volume is measured (None = DataForSEO has no row = 0); AA-1122 per_market =
+    # keyword -> market -> volume, the demand-group key (research_select)
+    best_volume, per_market, fresh, known = serp_state(rows, wanted, SERP_MARKET)
     by_kw: dict[str, list[_Place]] = {}
     logs: list[tuple[str, str, str]] = []
     for p in wanted:
@@ -845,41 +799,6 @@ async def _buy_serps(places: list[_Place], client: DataForSEOClient, pool, guard
 
     await asyncio.gather(*[_one(kw) for kw in keys])
     return stats
-
-
-def demand_groups(keywords: list[str], per_market: dict[str, dict[str, int]]) -> list[list[str]]:
-    """AA-1122 item 2 — the place's keywords grouped by demand: keywords whose volume is identical in every market it
-    was measured in (and above 0 somewhere) are ONE demand group. Google Ads answers close variants ("tiger nest
-    hike" / "tigers nest hike") with the volume of their whole group, the same number for each, so they are not
-    separate demand and their volumes must never be added or compared as if they were (critic C5 of the S282 DFS
-    audit: sending them in separate tasks does not split them either). A keyword with no volume above 0 is its own
-    group. Groups keep the map order of their first keyword; inside a group, the map order. Pure."""
-    groups: dict[object, list[str]] = {}
-    for i, kw in enumerate(keywords):
-        vols = per_market.get(kw) or {}
-        key: object = tuple(sorted(vols.items())) if any(v > 0 for v in vols.values()) else ("solo", i)
-        groups.setdefault(key, []).append(kw)
-    return list(groups.values())
-
-
-def best_keyword(place: _Place, best_volume: dict[str, int], *, serp_fresh: set[str] | frozenset = frozenset(),
-                 per_market: dict[str, dict[str, int]] | None = None) -> str | None:
-    """The keyword the one SERP of the place is bought for, or None when none has a volume above 0 (pure).
-
-    The demand group (demand_groups) with the highest known volume in any market wins (ties: the group whose first
-    keyword comes earlier in the map). AA-1122: INSIDE the group the keyword is chosen by SERP presence, then by
-    naturalness, never by volume (the variants share one number): a variant whose SERP is already fresh in the store
-    (`serp_fresh`: nothing to buy), else the most natural phrasing, i.e. the earliest in the map (the plain place name
-    first, then the proposals in the order a traveller types them), then the fewest words. Without `per_market` every
-    keyword is its own group (the pre-AA-1122 rule)."""
-    if not place.keywords:
-        return None
-    order = {kw: i for i, kw in enumerate(place.keywords)}
-    groups = demand_groups(place.keywords, per_market) if per_market is not None else [[kw] for kw in place.keywords]
-    top = max(groups, key=lambda g: (max(best_volume.get(kw, 0) for kw in g), -order[g[0]]))
-    if max(best_volume.get(kw, 0) for kw in top) <= 0:
-        return None
-    return min(top, key=lambda kw: (kw not in serp_fresh, order[kw], len(kw.split())))
 
 
 async def _place_countries(pool, names: list[str]) -> dict[str, str]:

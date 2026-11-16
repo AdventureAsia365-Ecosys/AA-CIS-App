@@ -9,6 +9,7 @@ from .dataforseo_client import (
 )
 from .seed_builder import resolve_buyer_market
 from shared import cost_guard
+from .search_history import write_client_history
 from shared.secrets import get_database_url
 from shared.dfs_client.call_log import record_dfs_call
 from shared.services.tenant_config_service import TenantConfigService
@@ -280,14 +281,8 @@ async def process_seo(
             "expires_at":     datetime.utcnow() + timedelta(seconds=_SEO_CACHE_TTL_SECONDS),
         })
         logger.info("seo_inserted", id=seo_id)
-        if history_client is not None:
-            # AA-1122: the 12 monthly volumes of the keyword answers just bought (never overwritten; never raises)
-            from .search_history import write as write_history
-            from .seed_builder import LOCATION_CODE_TO_MARKET
-            market = LOCATION_CODE_TO_MARKET.get(location_code)
-            buffer = getattr(history_client, "monthly", None)
-            if market and buffer is not None and type(buffer).__name__ == "MonthlyBuffer":
-                await write_history(conn, market, buffer.pop(location_code))
+        # AA-1122: the 12 monthly volumes of the keyword answers just bought (never overwritten; never raises)
+        await write_client_history(conn, history_client, location_code)
     finally:
         await conn.close()
 
