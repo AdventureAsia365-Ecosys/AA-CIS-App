@@ -3567,6 +3567,12 @@ eligible file that is in-sample for the steps, and writes a text-free fire repor
 A live fire appends a text-free checkpoint line per billed call; `--resume` continues a cut run (same identity, its
 ledger rows reconciled by call id, the spend carried over) into one run's report, and `fresh_pool sample` refuses a
 stopped one.
+Step sets (S282, `services/ground_truth/two_step_sets.py`): each registered pair of step versions pins its
+pre-registration file and that file's sha256; a set closes in code after its one gated run (v5 and v6 are closed, v7 is
+the default: `v7c` writes the closest source wording for each trip specific before it sorts, `v7j` writes a finding per
+listed specific and clears a sentence the source supports). A shaping pool that is itself a train-split pool
+(`prompts.TRAIN_SPLIT_POOLS`) must be named in a fresh manifest's `excluded_pools`; a train-split manifest does not keep
+it out.
 _Avoid_: prompt registry version (`shared.prompt_version`, AA-900, is the writers' registry).
 
 **Served state (tour liveness, AA-986, root ADR 0015)**:

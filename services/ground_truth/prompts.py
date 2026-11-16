@@ -35,6 +35,16 @@ through billed_fields and to quality_signal), so a measurement always says which
       name, time, service, activity, view, pace ...), listing the new specifics. Step 2 (v5j, `step="judge"`) judges
       only the specifics step 1 listed, with the source's support rules. A step version is entailment-only and is
       refused by r1.instruments (it runs only inside two_step). Shaped on the v2, v3 and v4 runs.
+  v6c / v6j  S282: v5's gated run (9b0d46f8) was no_go: step 1 sent 19 of 25 false positives on and step 2 cleared
+      2 of them. Both v5 steps looked each fact up before applying the background rule. v6c sets aside background,
+      the writer's reading, tone and words naming the reader first, then lists the trip specifics left and looks
+      them up with more one-step readings (its schema asks for `set_aside` first); v6j first asks whether a listed
+      specific is a trip specific at all. Shaped on the v2-v4 runs and on the false positives of 9b0d46f8.
+  v7c / v7j  S282: v6's gated run (c5983e03) was no_go (false positives dropped 56 %, step 2 cleared none it judged):
+      both v6 steps compared words, not facts. v7c writes the closest source wording for each trip specific (same
+      fact or not, with a close-paraphrase list) before it sorts; v7j writes a finding per listed specific and clears
+      the sentence when the source gives every specific. Shaped on the v2-v4 runs, 9b0d46f8 and c5983e03 (whose pool,
+      the S281 fresh pool, is a shaping pool). The v6 and v7 texts live in two_step_prompts.py (file limit).
 
 Every example in these prompts uses invented places and phrasing (the golden-set text guard). The B5 examples name the
 pattern classes of the five claims the tech lead relabelled to violation in S279, in wording of their own: checked
@@ -46,10 +56,14 @@ violations only. Pure: no DB, no network, no model call.
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from typing import Any, Callable
 
 from services.ground_truth import policy
+# The v6 and v7 step texts live in their own module (file limit); re-exported in __all__.
+from services.ground_truth.two_step_prompts import (V6C_SCHEMA, V6C_SYSTEM, V6J_SYSTEM, V7C_SCHEMA, V7C_SYSTEM,
+                                                    V7J_FINDINGS, V7J_SCHEMA, V7J_SYSTEM)
 
 DEFAULT = "v1"
 
@@ -421,6 +435,8 @@ V5J_SYSTEM = (
 V5J_USER = V2_ENTAILMENT_USER + "\n\nSPECIFICS TO CHECK:\n{specifics}"
 WHOLE_SENTENCE = "(the whole sentence)"
 
+# ── v6c / v6j, v7c / v7j: services/ground_truth/two_step_prompts.py (imported at the top, re-exported) ───────────
+
 
 # ── user prompt builders (items are services.ground_truth.r1.Item; duck-typed to keep this module import-free) ──────
 
@@ -516,6 +532,15 @@ class PromptVersion:
 # The S279 pool (the 286 R1-fired claims of the held-out split, pool-v2.jsonl): the S279 panel read its whole
 # false-positive side to write v2, and every version since builds on v2.
 S279_POOL = "487bf4847b6136fe"
+# The fresh pool of S281 (fresh_pool.py, 104 R1-fired claims of the train split): v5's gated run 9b0d46f8 and v6's
+# gated run c5983e03 ran on it. v7 was shaped on c5983e03's routed false positives (and the shape of its violations),
+# so the whole pool is a shaping pool of v7.
+FRESH_POOL = "716df551d458fee1"
+# Shaping pools that are themselves train-split pools: a train-split pool does not keep them out (the split is frozen
+# per tour, so a train pool shares tours with them), so a fresh manifest must name each in excluded_pools.
+TRAIN_SPLIT_POOLS = frozenset({FRESH_POOL})
+
+_V7_SHAPED_ON = ("3018008d", "33835b87", "2977dd78", "9b0d46f8", "c5983e03")
 
 VERSIONS: dict[str, PromptVersion] = {
     "v1": PromptVersion("v1", ENTAILMENT_SYSTEM, EXTRACTION_SYSTEM, v1_entailment_user, extraction_user,
@@ -535,6 +560,26 @@ VERSIONS: dict[str, PromptVersion] = {
                          shaped_on_pools=(S279_POOL,), step="classify"),
     "v5j": PromptVersion("v5j", V5J_SYSTEM, "", v5j_user, extraction_user, (V5J_USER, NONE_TEXT, WHOLE_SENTENCE),
                          shaped_on=("3018008d", "33835b87", "2977dd78"), shaped_on_pools=(S279_POOL,), step="judge"),
+    # S282 two-step v6: written from the 25 false positives of v5's gated run 9b0d46f8 on the fresh pool (FRESH_POOL)
+    # as well, so that run is a shaping run too. Its false positives are held out claim by claim by the v6
+    # pre-registration (two_step.py: held_out); the pool itself is not a shaping pool (its other 41 sampled false
+    # positives were never read). v6c pins its reply schema in the tag.
+    "v6c": PromptVersion("v6c", V6C_SYSTEM, "", v2_entailment_user, extraction_user,
+                         (V2_ENTAILMENT_USER, NONE_TEXT, json.dumps(V6C_SCHEMA, sort_keys=True)),
+                         shaped_on=("3018008d", "33835b87", "2977dd78", "9b0d46f8"),
+                         shaped_on_pools=(S279_POOL,), step="classify"),
+    "v6j": PromptVersion("v6j", V6J_SYSTEM, "", v5j_user, extraction_user, (V5J_USER, NONE_TEXT, WHOLE_SENTENCE),
+                         shaped_on=("3018008d", "33835b87", "2977dd78", "9b0d46f8"), shaped_on_pools=(S279_POOL,),
+                         step="judge"),
+    # S282 two-step v7: written from the 11 false positives v6's gated run c5983e03 routed on the S281 fresh pool (and
+    # the shape of that run's 21 violations), so c5983e03 is a shaping run and FRESH_POOL a shaping pool. The v7 run
+    # needs a new fresh pool whose manifest excludes both. Both reply schemas are pinned in the tags.
+    "v7c": PromptVersion("v7c", V7C_SYSTEM, "", v2_entailment_user, extraction_user,
+                         (V2_ENTAILMENT_USER, NONE_TEXT, json.dumps(V7C_SCHEMA, sort_keys=True)),
+                         shaped_on=_V7_SHAPED_ON, shaped_on_pools=(S279_POOL, FRESH_POOL), step="classify"),
+    "v7j": PromptVersion("v7j", V7J_SYSTEM, "", v5j_user, extraction_user,
+                         (V5J_USER, NONE_TEXT, WHOLE_SENTENCE, json.dumps(V7J_SCHEMA, sort_keys=True)),
+                         shaped_on=_V7_SHAPED_ON, shaped_on_pools=(S279_POOL, FRESH_POOL), step="judge"),
 }
 
 
@@ -546,6 +591,9 @@ def get(version: str) -> PromptVersion:
 
 __all__ = ["DEFAULT", "ENTAILMENT_SYSTEM", "ENTAILMENT_SYSTEM_V2", "ENTAILMENT_SYSTEM_V3", "ENTAILMENT_SYSTEM_V4",
            "EXTRACTION_SYSTEM", "EXTRACTION_SYSTEM_V2", "EXTRACTION_SYSTEM_V3", "EXTRACTION_SYSTEM_V4",
-           "PromptVersion", "S279_POOL", "UnknownPromptVersion", "V5C_SYSTEM", "V5J_SYSTEM", "V5J_USER", "VERSIONS",
+           "FRESH_POOL", "PromptVersion", "S279_POOL", "TRAIN_SPLIT_POOLS", "UnknownPromptVersion", "V5C_SYSTEM",
+           "V5J_SYSTEM", "V5J_USER",
+           "V6C_SCHEMA", "V6C_SYSTEM", "V6J_SYSTEM", "V7C_SCHEMA", "V7C_SYSTEM", "V7J_FINDINGS", "V7J_SCHEMA",
+           "V7J_SYSTEM", "VERSIONS",
            "WHOLE_SENTENCE", "around", "extraction_user", "get", "v1_entailment_user", "v2_entailment_user",
            "v5j_user"]

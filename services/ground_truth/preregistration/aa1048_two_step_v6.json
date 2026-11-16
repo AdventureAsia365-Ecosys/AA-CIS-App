@@ -1,0 +1,88 @@
+{
+ "id": "aa1048-two-step-v6",
+ "issue": "AA-1048",
+ "registered_on": "2026-11-16",
+ "doc": "docs/calibration/aa1048-two-step-v6-preregistration.md",
+ "question": "Does the two-step claim instrument v6 (step 1 v6c sets aside background, the writer's reading, tone and words naming the reader, then sorts restatement / new claim on the trip specifics left; step 2 v6j first asks whether each listed specific is a trip specific, then judges its support) drop the false positives of the R1 fired claims and keep the stored violations, on false positives it was not shaped on?",
+ "follows": "aa1048-two-step-v5 (gated run 9b0d46f8, no_go: false positives dropped 32 %, stored violations kept 95.2 %)",
+ "candidate": "gpt-6-luna-openai@openai-direct",
+ "votes": 3,
+ "stage": "adhoc_aa1048",
+ "role": "judge",
+ "prompt_versions": {
+  "classify": "aa1048-r1-v6c@711ef584d7a0",
+  "judge": "aa1048-r1-v6j@21f0ea6956df"
+ },
+ "shaped_on": [
+  "3018008d",
+  "33835b87",
+  "2977dd78",
+  "9b0d46f8"
+ ],
+ "shaped_on_pools": [
+  "487bf4847b6136fe"
+ ],
+ "shaped_on_pools_note": "the S279 pool file (286 held-out R1-fired claims), sha256 first 16 hex as fresh_pool writes excluded_pools; a live run needs a fresh manifest that excludes it or a train-split pool",
+ "pool": "the S281 fresh pool (digest 716df551d458fee1, manifest fresh-manifest-300.json: train split, the S279 pool and the v2-v4 runs excluded), minus the claims held out below",
+ "held_out": {
+  "run": "9b0d46f8",
+  "pool": "716df551d458fee1",
+  "claims": [
+   "02024dc1af665f2a",
+   "03477a4cf0fdadec",
+   "08241b2ec9b9f3f8",
+   "083a1b9c7568e835",
+   "23283004145277a0",
+   "2ad222c1918aa631",
+   "2b90e070acca2fc3",
+   "2bcdbdf3a41122b9",
+   "2e9beac731e06ea0",
+   "34454cc3d8926707",
+   "3564bcfde2b59e9a",
+   "35d15b733a6bb734",
+   "3abf12bd762bc0af",
+   "3f071c4887a912a4",
+   "41988da5acb4f257",
+   "426f4e0c8405d107",
+   "4286ebd2c83e5bd6",
+   "4471426b9af73f1b",
+   "456007fe22af8511",
+   "45d049e2518628a6",
+   "476244d303534c4f",
+   "59d62820b0f7f47e",
+   "5e048694b53cbb33",
+   "6737c7b20cdbd5fd",
+   "6e228b6e3c72e21d"
+  ],
+  "by_group": {
+   "fp_background": 11,
+   "fp_paraphrase": 12,
+   "fp_verbatim": 2
+  },
+  "why": "v6 was written from these false positives of v5's gated run (their step votes, specifics and reasons): they are in-sample for v6 and are dropped from the pool before the subset is drawn",
+  "tp_side": "the pool holds 21 stored violations and all 21 were in run 9b0d46f8; v6 was written without reading their text, specifics or reasons (aggregate counts only), so they stay the recall check of this run; a fully fresh TP side needs a new paid R1 fire and a panel round"
+ },
+ "subset": "instrument_eval.select: half false positives (paraphrase, verbatim, background in proportion), half stored violations in proportion per writer, claim-hash order; after the hold-out the pool has 41 sampled false positives (paraphrase 20, background 17, verbatim 4), so a 50-claim subset takes 25 of them and every stored violation",
+ "verdict_rule": "a claim is cleared when the step-1 majority is restatement; otherwise its verdict is the step-2 majority (unsupported = flagged, none = unverified); go needs every bar below",
+ "bars": {
+  "fp_dropped_min_pct": 60.0,
+  "tp_kept_min_pct": 90.0,
+  "route_tp_min_pct": 95.0,
+  "judge_tp_kept_min_pct": 95.0,
+  "judge_fp_dropped_min_pct": 40.0
+ },
+ "bars_settings": {
+  "fp_dropped_min_pct": "cis.quality.instrument_eval_fp_drop_min_pct",
+  "tp_kept_min_pct": "cis.quality.instrument_eval_tp_keep_min_pct",
+  "route_tp_min_pct": "cis.quality.claim_two_step_route_tp_min_pct",
+  "judge_tp_kept_min_pct": "cis.quality.claim_two_step_judge_tp_keep_min_pct",
+  "judge_fp_dropped_min_pct": "cis.quality.claim_two_step_judge_fp_drop_min_pct"
+ },
+ "hypotheses": {
+  "H1": "step 1 v6c still sends >= 95 % of the stored violations on: the trip specifics they add are never set aside",
+  "H2": "step 1 clears most background and reading false positives, because it sets them aside before it looks anything up",
+  "H3": "step 2 v6j clears >= 40 % of the false positives it receives, because a listed specific that is not a trip specific is supported"
+ },
+ "stop_rule": "one gated run; a no_go is read at $0 with the stored reasons and is never re-run on the same pool with a changed prompt",
+ "stop_rule_enforced": "two_step run --limit refuses when shared.llm_call_log (stage adhoc_aa1048) holds a gated run of this id, or of the same step-1 prompt on the same pool, or cannot be read; every ledger row of a run carries prereg, run_kind and pool; v5 is a closed step set (two_step STEP_SETS) and refuses every live run"
+}

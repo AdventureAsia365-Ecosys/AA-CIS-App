@@ -1,8 +1,10 @@
-"""AA-1048 (S281 lane l8) — the two-step claim instrument (services/ground_truth/two_step.py, prompts v5c / v5j): the
+"""AA-1048 (S281 lane l8; S282 lanes l4-v6 and l9-v7: the default step set is now v7) — the two-step claim instrument
+(services/ground_truth/two_step.py, prompts v5c / v5j, v6c / v6j and v7c / v7j): the
 step prompt versions, the reply parsing (step-1 classification, step-2 support), the routing rule, the live run on a
 fake caller (one budget, ledger signal per step, the specifics passed on), the score with its step bars, the
 pre-registration check, the out-of-sample gate and the CLI's DRY RUN / live refusals. Every model call is a fake;
 every text, place and hash is invented."""
+import dataclasses
 import hashlib
 import json
 import types
@@ -42,8 +44,11 @@ def _resp(payload, model="gpt-6-luna-openai", conn="openai-direct", cost=0.0002)
                                  provider="openai", stop_reason="stop", fallback_used=False)
 
 
-def _insts():
-    return ts.instruments(CAND)
+def _insts(steps="v7"):
+    return ts.instruments(CAND, steps)
+
+
+CLASSIFY = ("v5c", "v6c", "v7c")
 
 
 # ── prompt versions ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -67,9 +72,10 @@ def test_step_prompts_are_entailment_only_and_never_run_as_one_prompt():
     for v in ("v5c", "v5j"):
         with pytest.raises(r1.R1Refused, match="two-step"):
             r1.instruments([("gpt-6-luna-openai", "openai-direct")], ["entailment"], prompt=v)
-    insts = _insts()
+    insts = _insts("v5")
     assert insts["classify"].id == "gpt-6-luna-openai@openai-direct:entailment#v5c"
     assert insts["judge"].id == "gpt-6-luna-openai@openai-direct:entailment#v5j"
+    assert _insts()["classify"].id.endswith("#v7c") and _insts()["judge"].id.endswith("#v7j")
     with pytest.raises(ts.TwoStepRefused, match="no price"):
         ts.instruments("no-such-model@x")
     with pytest.raises(ts.TwoStepRefused, match="<model>@<connection>"):
@@ -128,7 +134,7 @@ def _fake(step1, step2, calls):
     def caller(inst, system, user, schema):
         calls.append((inst.prompt, user, schema["name"]))
         claim = next(t for t in step1 if f"SENTENCE: {t}\n" in user)
-        return _resp(step1[claim] if inst.prompt == "v5c" else step2[claim])
+        return _resp(step1[claim] if inst.prompt in CLASSIFY else step2[claim])
     return caller
 
 
@@ -147,12 +153,12 @@ def test_run_sends_only_new_claims_to_step_two_and_passes_their_specifics():
     assert res["calls"] == 15 and not res["stopped"]                                  # 3 x 3 + 2 x 3
     assert res["votes"]["classify"][_h(1)] == [False] * 3 and _h(1) not in res["votes"]["judge"]
     assert res["votes"]["judge"][_h(2)] == [True] * 3 and res["votes"]["judge"][_h(3)] == [False] * 3
-    judged = [u for p, u, _ in calls if p == "v5j"]
+    judged = [u for p, u, _ in calls if p == "v7j"]
     assert all(u.endswith("- at sunrise") for u in judged if f"SENTENCE: {promise}\n" in u)
     assert all(u.endswith(f"- {pr.WHOLE_SENTENCE}") for u in judged if f"SENTENCE: {fine}\n" in u)
-    assert {s for _, _, s in calls} == {"claim_restatement", "claim_entailment"}
+    assert {s for _, _, s in calls} == {"claim_restatement_v7", "claim_entailment_v7"}
     assert len(logged) == 15 and {s["step"] for s in logged} == {"classify", "judge"}
-    assert {s["prompt_version"] for s in logged if s["step"] == "judge"} == {pr.get("v5j").tag}
+    assert {s["prompt_version"] for s in logged if s["step"] == "judge"} == {pr.get("v7j").tag}
     assert res["by_step"]["classify"]["calls"] == 9 and res["by_step"]["judge"]["calls"] == 6
     assert res["by_step"]["judge"]["charged_usd"] == pytest.approx(0.0012)
     assert res["specifics"] == {_h(2): ["at sunrise"], _h(3): []}
@@ -167,7 +173,7 @@ def test_run_logs_each_reply_through_the_billed_ledger_writer(monkeypatch):
     ts.run([item], _insts(), cap=1.0, votes=1, run_id="r",
            caller=lambda *a: _resp({"kind": "restatement", "new_specifics": [], "why": "x"}))
     assert len(rows) == 1 and rows[0]["stage"] == r1.STAGE and rows[0]["role"] == "judge"
-    assert rows[0]["prompt_version"] == pr.get("v5c").tag and rows[0]["quality_signal"]["step"] == "classify"
+    assert rows[0]["prompt_version"] == pr.get("v7c").tag and rows[0]["quality_signal"]["step"] == "classify"
 
 
 def test_the_cap_and_a_caller_error_stop_the_run_cleanly():
@@ -270,7 +276,7 @@ def test_the_preregistration_names_the_code_prompts_and_the_settings_defaults():
     insts = _insts()
     assert prereg["prompt_versions"] == {s: insts[s].prompt_version.tag for s in ts.STEPS}
     assert sorted(prereg["shaped_on"]) == ts.shaped_on(insts) and prereg["candidate"] == CAND
-    assert prereg["shaped_on_pools"] == ts.shaped_on_pools(insts) == [pr.S279_POOL]
+    assert prereg["shaped_on_pools"] == ts.shaped_on_pools(insts) == [pr.S279_POOL, pr.FRESH_POOL]
     # the settings' defaults are the registered bars (CIS 417 + 423), so a fresh Dev matches the pre-registration
     for name, key in prereg["bars_settings"].items():
         assert float(settings.definition(key).default_value) == prereg["bars"][name]
@@ -331,8 +337,9 @@ def test_fresh_check_keeps_the_pools_the_steps_were_shaped_on_out(extra, split_o
     assert (why is None) if side else ("487bf4847b6136fe" in why and "train-split" in why)
 
 
-def test_the_pinned_shaping_pool_is_the_s279_digest():
-    assert POOLS == [pr.S279_POOL] == ts.shaped_on_pools(_insts())
+def test_the_pinned_shaping_pools_are_the_s279_and_the_s281_fresh_digests():
+    assert POOLS == [pr.S279_POOL] == ts.shaped_on_pools(_insts("v6")) == ts.shaped_on_pools(_insts("v5"))
+    assert ts.shaped_on_pools(_insts()) == sorted([pr.S279_POOL, pr.FRESH_POOL])                    # v7
 
 
 def test_an_exclude_only_oos_never_passes_a_live_run():
@@ -391,8 +398,9 @@ def _pool_file(tmp_path, n_tp=3, n_fp=3):
     path.write_text("".join(json.dumps(p.line()) + "\n" for p in rows), encoding="utf-8")
     manifest = tmp_path / "fresh.json"
     manifest.write_text(json.dumps({"pool_sha256": ts.pool_sha256(path.read_text(encoding="utf-8")),
-                                    "excluded_runs": ["3018008d", "33835b87", "2977dd78"],
-                                    "excluded_pieces": ["e" * 16], "excluded_pools": [pr.S279_POOL],
+                                    # another fresh pool: it keeps v7's shaping runs and pools out at piece level
+                                    "excluded_runs": ["3018008d", "33835b87", "2977dd78", "9b0d46f8", "c5983e03"],
+                                    "excluded_pieces": ["e" * 16], "excluded_pools": [pr.S279_POOL, pr.FRESH_POOL],
                                     "split": "train", "step1_gold": {}}), encoding="utf-8")
     return str(path), str(manifest)
 
@@ -425,8 +433,9 @@ def test_live_refuses_without_out_of_sample_or_with_another_preregistration(tmp_
     other.write_text(json.dumps({**ts.load_preregistration(), "votes": 5}), encoding="utf-8")
     assert ts.main(base + ["--fresh", manifest, "--preregistration", str(other)]) == 2
     assert "committed pre-registration only" in json.loads(capsys.readouterr().out)["refused"]
-    monkeypatch.setattr(ts, "PREREGISTRATION", other)
-    assert ts.main(base + ["--fresh", manifest, "--preregistration", str(other)]) == 2
+    monkeypatch.setitem(ts.STEP_SETS, "v7", dataclasses.replace(ts.STEP_SETS["v7"], preregistration=other,
+                                                                prereg_sha256=ts.file_sha256(other)))
+    assert ts.main(base + ["--fresh", manifest]) == 2
     assert "not the pre-registered one" in json.loads(capsys.readouterr().out)["refused"]
     monkeypatch.undo()
     monkeypatch.setattr(ev, "refresh_settings", lambda: False)
@@ -448,8 +457,8 @@ def test_live_trial_runs_both_steps_and_replays_at_zero_cost(tmp_path, monkeypat
     monkeypatch.setattr(ts, "_prior_runs", lambda: pytest.fail("a trial does not read the stop-rule ledger"))
 
     def caller(inst, system, user, schema):
-        if inst.prompt == "v5c":
-            return _resp({"kind": "new_claim", "new_specifics": ["at sunrise"], "why": "x"})
+        if inst.prompt in CLASSIFY:
+            return _resp({"set_aside": [], "kind": "new_claim", "new_specifics": ["at sunrise"], "why": "x"})
         return _resp({"verdict": "unsupported", "quote": "", "why": "x"})
     monkeypatch.setattr(ts, "_caller", caller)
     from shared.llm_client import call_log
@@ -465,7 +474,7 @@ def test_live_trial_runs_both_steps_and_replays_at_zero_cost(tmp_path, monkeypat
     digest = ts.pool_sha256(open(pool, encoding="utf-8").read())[:16]
     assert rep["run_kind"] == "trial" and rep["pool_sha256"] == digest and rep["stop_rule"]["ledger_read"] is None
     assert {(r["quality_signal"]["prereg"], r["quality_signal"]["run_kind"], r["quality_signal"]["pool"])
-            for r in rows} == {("aa1048-two-step-v5", "trial", digest)}
+            for r in rows} == {("aa1048-two-step-v7", "trial", digest)}
     assert ts.main(["score", "--pool", pool, "--report", str(out)]) == 0
     assert json.loads(capsys.readouterr().out)["matches_stored"] is True
 
@@ -490,7 +499,8 @@ def _gated(tmp_path, monkeypatch, prior):
 
 
 def test_a_gated_run_refuses_when_the_ledger_holds_one_of_this_preregistration(tmp_path, monkeypatch, capsys):
-    rc, calls, rows, _ = _gated(tmp_path, monkeypatch, [_prior("7", "full", pool="c" * 16)])
+    rc, calls, rows, _ = _gated(tmp_path, monkeypatch, [_prior("7", "full", prereg="aa1048-two-step-v7",
+                                                             pool="c" * 16, pv=pr.get("v7c").tag)])
     assert rc == 2 and calls == [] and rows == []
     assert "one gated run" in json.loads(capsys.readouterr().out)["refused"]
 
@@ -501,9 +511,9 @@ def test_a_gated_run_refuses_when_the_ledger_cannot_be_read(tmp_path, monkeypatc
 
 
 def test_the_first_gated_run_runs_and_marks_every_ledger_row_full(tmp_path, monkeypatch, capsys):
-    rc, calls, rows, pool = _gated(tmp_path, monkeypatch, [_prior("8", "trial")])
+    rc, calls, rows, pool = _gated(tmp_path, monkeypatch, [_prior("8", "trial", prereg="aa1048-two-step-v7")])
     rep = json.loads(capsys.readouterr().out)
     assert rc == 0 and rep["run_kind"] == "full" and rep["stop_rule"]["prior_trials"] == 1
-    assert calls == ["v5c"] * 18 and len(rows) == 18                                 # all restated: no step 2
+    assert calls == ["v7c"] * 18 and len(rows) == 18                                 # all restated: no step 2
     digest = ts.pool_sha256(open(pool, encoding="utf-8").read())[:16]
     assert {(r["quality_signal"]["run_kind"], r["quality_signal"]["pool"]) for r in rows} == {("full", digest)}

@@ -17,7 +17,8 @@ from services.ground_truth import r1
 from services.ground_truth import r1_fire as rf
 
 SOURCE = "Day 1: Arrive in Pellow.\nDay 2: Walk the dunes of Sarrow.\nDay 3: Drive back to Pellow."
-SHAPED_RUNS = ["2977dd78", "3018008d", "33835b87"]
+# the shaping runs of the default step set (v7: the v2-v4 runs, v5's gated run 9b0d46f8 and v6's gated run c5983e03)
+SHAPED_RUNS = ["2977dd78", "3018008d", "33835b87", "9b0d46f8", "c5983e03"]
 
 
 def _h(n: int) -> str:
@@ -60,7 +61,7 @@ def _files(tmp_path, lines=None, **manifest):
     elig = tmp_path / "eligible.jsonl"
     elig.write_text("".join(json.dumps(e) + "\n" for e in lines), encoding="utf-8")
     man = {"kind": "fresh_eligible", "issue": "AA-1048", "split": "train", "excluded_runs": SHAPED_RUNS,
-           "excluded_pools": [pr.S279_POOL], "excluded_pieces": [_piece(TRAIN[5])[:16]],
+           "excluded_pools": [pr.S279_POOL, pr.FRESH_POOL], "excluded_pieces": [_piece(TRAIN[5])[:16]],
            "eligible_sha256": fp._sha(elig.read_text(encoding="utf-8")), **manifest}
     mp = tmp_path / "eligible-manifest.json"
     mp.write_text(json.dumps(man), encoding="utf-8")
@@ -137,12 +138,17 @@ def test_an_unlabelled_line_becomes_an_item_that_says_so():
 
 def test_a_fresh_train_manifest_is_out_of_sample():
     lines = _lines()
-    oos = rf.out_of_sample({"split": "train", "excluded_runs": SHAPED_RUNS, "excluded_pools": [],
+    # the train split keeps the held-out S279 pool out; the S281 fresh pool is a train pool and is named
+    oos = rf.out_of_sample({"split": "train", "excluded_runs": SHAPED_RUNS, "excluded_pools": [pr.FRESH_POOL],
                             "excluded_pieces": []}, lines)
     assert rf.oos_refusal(oos) is None and oos["pool_side"] == "train_split"
-    named = rf.out_of_sample({"split": "all", "excluded_runs": SHAPED_RUNS, "excluded_pools": [pr.S279_POOL]},
-                             lines + _lines(1, pieces=[HELD[0]]))
+    named = rf.out_of_sample({"split": "all", "excluded_runs": SHAPED_RUNS,
+                              "excluded_pools": [pr.S279_POOL, pr.FRESH_POOL]}, lines + _lines(1, pieces=[HELD[0]]))
     assert rf.oos_refusal(named) is None and named["pool_side"] == "excluded"
+    # a train-split manifest that does not name the train-split shaping pool is refused
+    bare = rf.out_of_sample({"split": "train", "excluded_runs": SHAPED_RUNS, "excluded_pools": [],
+                             "excluded_pieces": []}, lines)
+    assert bare["pool_side"] is None and pr.FRESH_POOL in rf.oos_refusal(bare)
 
 
 @pytest.mark.parametrize("manifest,extra,needle", [

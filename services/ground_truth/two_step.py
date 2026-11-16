@@ -15,8 +15,25 @@ recall first, an unsure step 1 never clears) its verdict is the step-2 majority 
 unverified, D7 "a miss is unverified"). Each step is a registered prompt version (services/ground_truth/prompts.py),
 an instrument "<model>@<connection>:entailment#v5c|v5j" with its own tag in every ledger row.
 
+Step sets (S282). v5's one gated run (9b0d46f8) was no_go (false positives dropped 32 %), so v5 is a CLOSED step set
+(every live run refused) and v6 (v6c / v6j, docs/calibration/aa1048-two-step-v6-preregistration.md) is the default:
+v6c sets aside background, the writer's reading, tone and words naming the reader before it looks the trip specifics
+up; v6j first asks whether a listed specific is a trip specific at all. Each step set pins its pre-registration file
+and that file's sha256 (STEP_SETS); a live run refuses a file whose sha differs. v6 was shaped on the 25 false
+positives of 9b0d46f8 on the S281 fresh pool, so its registration holds them out claim by claim (`held_out`): on that
+pool they are dropped before the subset is drawn, and the run counts as kept out; on another pool the manifest must
+exclude the run as usual.
+
+v7 (S282, docs/calibration/aa1048-two-step-v7-preregistration.md). v6's one gated run (c5983e03) was no_go but close
+(false positives dropped 56 %, step 2 cleared none it judged), so v6 is closed too and v7 is the default: both steps
+compared words, not facts. v7c writes a row per trip specific (the closest source wording, same fact or not) with a
+close-paraphrase list before it decides; v7j writes a row per listed specific with a finding and clears the sentence
+when the source gives every specific. v7 was shaped on c5983e03 on the S281 fresh pool, so that pool is a shaping pool:
+the v7 run needs a new fresh pool whose manifest excludes it and every shaping run (no claim-level hold-out).
+`--steps v5|v6|v7` picks the set (default v7).
+
   python -m services.ground_truth.two_step run --pool <pool.jsonl> (--fresh <manifest.json> | --exclude <report> ...)
-      [--candidate <model>@<connection>] [--trial N | --limit N] [--live --confirm-spend] [--cap USD]
+      [--steps v6] [--candidate <model>@<connection>] [--trial N | --limit N] [--live --confirm-spend] [--cap USD]
       [--measured <two-step report>] [--with-reasons] [--out <json>]
       DRY RUN by default: the subset, the plan and its cost estimate (step 2 priced as if every claim reached it), the
       pre-registration check and the out-of-sample check; no client, no call. A paid run needs --live, --confirm-spend
@@ -65,12 +82,16 @@ from typing import Any, Callable, Iterable, Optional
 from services.ground_truth import instrument_eval as ev
 from services.ground_truth import prompts as pr
 from services.ground_truth import r1
+from services.ground_truth.two_step_sets import (  # noqa: F401 — re-exported: callers and tests use ts.<name>
+    DEFAULT_STEP_SET, STEP_SETS, StepSet, TwoStepRefused, covered_runs, file_sha256, held_out, step_set,
+    stop_rule)
 from shared import settings
 
 STEPS = ("classify", "judge")
-STEP_PROMPT = {"classify": "v5c", "judge": "v5j"}
 MODE = "entailment"
-PREREGISTRATION = Path(__file__).with_name("preregistration") / "aa1048_two_step_v5.json"
+# The default step set's prompts and registration (the names v5's callers and tests used).
+STEP_PROMPT = STEP_SETS[DEFAULT_STEP_SET].prompts
+PREREGISTRATION = STEP_SETS[DEFAULT_STEP_SET].preregistration
 # The gated runs and trials of the two-step instrument already in the ledger: one row per run and prompt version.
 PRIOR_RUNS_SQL = (
     "SELECT quality_signal->>'run_id' AS run_id, quality_signal->>'prereg' AS prereg, "
@@ -84,10 +105,14 @@ CLASSIFY_SCHEMA = {"name": "claim_restatement", "schema": {
                    "new_specifics": {"type": "array", "items": {"type": "string"}},
                    "why": {"type": "string"}}}}
 SCHEMA = {"classify": CLASSIFY_SCHEMA, "judge": r1.ENTAILMENT_SCHEMA}
+# The reply schema of each step prompt (v6c asks for what it set aside before its decision; pinned in its tag).
+# v7c / v7j write one row per specific (the closest source wording) before their decision; both pinned in their tags.
+PROMPT_SCHEMA = {"v5c": CLASSIFY_SCHEMA, "v5j": r1.ENTAILMENT_SCHEMA, "v6c": pr.V6C_SCHEMA,
+                 "v6j": r1.ENTAILMENT_SCHEMA, "v7c": pr.V7C_SCHEMA, "v7j": pr.V7J_SCHEMA}
 
 
-class TwoStepRefused(ev.EvalRefused):
-    """The two-step run cannot start (pre-registration, out of sample, inputs): no call is made."""
+def schema_of(inst: r1.Instrument) -> dict:
+    return PROMPT_SCHEMA[inst.prompt]
 
 
 @dataclass(frozen=True)
@@ -105,9 +130,10 @@ def step_limits() -> StepLimits:
         judge_fp_drop_min=float(settings.get("cis.quality.claim_two_step_judge_fp_drop_min_pct")) / 100.0)
 
 
-def instruments(candidate: str) -> dict[str, r1.Instrument]:
-    """step -> the step's instrument on `candidate` ("<model>@<connection>"). A model without a catalog price is
-    refused (the cap cannot be kept)."""
+def instruments(candidate: str, steps: str = DEFAULT_STEP_SET) -> dict[str, r1.Instrument]:
+    """step -> the step's instrument of step set `steps` on `candidate` ("<model>@<connection>"). A model without a
+    catalog price is refused (the cap cannot be kept)."""
+    prompts = step_set(steps).prompts
     model, _, conn = candidate.partition("@")
     if not model or not conn:
         raise TwoStepRefused(f"a candidate is <model>@<connection>, got {candidate!r}")
@@ -115,7 +141,7 @@ def instruments(candidate: str) -> dict[str, r1.Instrument]:
         r1._price(model)
     except r1.R1Refused as e:
         raise TwoStepRefused(str(e)) from e
-    return {s: r1.Instrument(model, conn, MODE, STEP_PROMPT[s]) for s in STEPS}
+    return {s: r1.Instrument(model, conn, MODE, prompts[s]) for s in STEPS}
 
 
 # ── replies ────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -171,8 +197,8 @@ def final_votes(items: Iterable[r1.Item], step1: dict[str, list], step2: dict[st
 Expected = Callable[[str, r1.Instrument, str], float]
 
 
-def step1_user(item: r1.Item) -> str:
-    return pr.get(STEP_PROMPT["classify"]).entailment_user(item)
+def step1_user(item: r1.Item, prompt: Optional[str] = None) -> str:
+    return pr.get(prompt or STEP_PROMPT["classify"]).entailment_user(item)
 
 
 def step2_user(item: r1.Item, specifics: Iterable[str] = ()) -> str:
@@ -192,7 +218,7 @@ def plan(items: list[r1.Item], insts: dict[str, r1.Instrument], *, votes: int = 
     rows = []
     for step in STEPS:
         inst = insts[step]
-        users = [step1_user(i) if step == "classify" else step2_user(i) for i in items]
+        users = [step1_user(i, inst.prompt) if step == "classify" else step2_user(i) for i in items]
         attempts = attempts_of(inst) if attempts_of else 1
         one = (lambda u, s=step, i=inst: expected_of(s, i, u)) if expected_of else (
             lambda u, i=inst: r1.call_cost(i, u, r1.expected_out(i)))
@@ -286,21 +312,26 @@ def pool_sha256(text: str) -> str:
 
 
 def fresh_check(manifest: dict, pool_text: str, pool: list[ev.PoolItem], shaped: list[str],
-                shaped_pools: Iterable[str] = ()) -> dict:
+                shaped_pools: Iterable[str] = (), covered: Iterable[str] = ()) -> dict:
     """A fresh pool is out of sample by construction (fresh_pool.py): its manifest is the one of this pool file, it
     names every run the steps were shaped on as excluded, no claim of the pool sits on an excluded piece, and the
     pools the steps were shaped on are kept out: each is in the manifest's excluded_pools, or the pool is a train-split
-    pool (manifest split train and every claim train: the split is frozen per tour, the shaping pools are held-out)."""
+    pool (manifest split train and every claim train: the split is frozen per tour, the S279 shaping pool is held-out;
+    a shaping pool of the train split itself, prompts.TRAIN_SPLIT_POOLS, must be in excluded_pools by name).
+    `covered`: shaping runs that a claim-level hold-out of the pre-registration keeps out of this pool (held_out)."""
     excluded_runs = sorted({str(r)[:8].lower() for r in manifest.get("excluded_runs") or []})
+    held = set(covered)
     pieces = {str(p)[:16].lower() for p in manifest.get("excluded_pieces") or []}
     overlap = sorted({p.item.content_sha256[:16] for p in pool if p.item.content_sha256[:16].lower() in pieces})
     excluded_pools = {str(p)[:16].lower() for p in manifest.get("excluded_pools") or []}
     pools_missing = [p for p in sorted(shaped_pools) if p.lower() not in excluded_pools]
     splits = Counter(p.item.split for p in pool)
-    train_only = manifest.get("split") == "train" and bool(pool) and set(splits) == {"train"}
+    train_only = (manifest.get("split") == "train" and bool(pool) and set(splits) == {"train"}
+                  and not any(p.lower() in pr.TRAIN_SPLIT_POOLS for p in pools_missing))
     return {"kind": "fresh", "pool_sha_matches": manifest.get("pool_sha256") == pool_sha256(pool_text),
             "shaped_on": shaped, "excluded_runs": excluded_runs,
-            "missing": [r for r in shaped if r not in excluded_runs], "excluded_pieces": len(pieces),
+            "missing": [r for r in shaped if r not in excluded_runs and r not in held],
+            "covered_by_held_out": sorted(held), "excluded_pieces": len(pieces),
             "pieces_on_excluded": len(overlap), "shaped_on_pools": sorted(shaped_pools),
             "excluded_pools": sorted(excluded_pools), "pools_missing": pools_missing,
             "split": manifest.get("split"), "pool_splits": dict(sorted(splits.items())),
@@ -311,6 +342,10 @@ def oos_refusal(oos: dict) -> Optional[str]:
     if oos.get("kind") != "fresh":
         return ("a live two-step run needs --fresh <manifest> (fresh_pool.py): the steps were shaped on runs and on "
                 "pools that --exclude cannot leave out (it drops claims of run reports, not the pool the panel read)")
+    hold = oos.get("held_out")
+    if hold and hold.get("applies") and hold.get("not_in_pool"):
+        return (f"{hold['not_in_pool']} held-out claim(s) of the pre-registration are not in this pool: it is not the "
+                "pool the hold-out was registered on")
     if oos["missing"]:
         return f"the steps were shaped on run(s) {', '.join(oos['missing'])}: the pool is in-sample for them"
     if oos.get("kind") == "fresh" and not oos["pool_sha_matches"]:
@@ -345,39 +380,6 @@ def prior_runs(stage: str = r1.STAGE) -> Optional[list[dict]]:
         return None
     return [{**r, "first_at": r["first_at"].isoformat() if hasattr(r.get("first_at"), "isoformat")
              else r.get("first_at")} for r in rows]
-
-
-def stop_rule(prior: Optional[list[dict]], *, kind: str, prereg_id: str, pool: str, classify_tag: str) -> dict:
-    """The pre-registered stop rule, in code: one gated run. A gated ("full") run is refused when the ledger already
-    holds a gated run of this pre-registration (any pool), or of the same step-1 prompt on the same pool (a re-roll
-    under a new id), or when the ledger cannot be read (a gated run that cannot prove it is the first). A trial is not
-    gated (its verdict is always "trial") and may repeat; a stopped gated run counts (its votes were seen)."""
-    read = prior is not None if kind == "full" else None    # a trial does not read the ledger
-    rec: dict[str, Any] = {"kind": kind, "prereg": prereg_id, "pool": pool, "ledger_read": read,
-                           "prior_gated_runs": [], "prior_trials": 0, "refused": None}
-    if prior is None:
-        if kind == "full":
-            rec["refused"] = ("the ledger cannot be read, so this gated run cannot prove it is the first of its "
-                              "pre-registration (stop rule)")
-        return rec
-    gated = {}
-    for r in prior:
-        rid = str(r.get("run_id") or "")[:8]
-        if r.get("run_kind") == "trial":
-            continue
-        same_id = r.get("prereg") == prereg_id
-        reroll = r.get("pool") == pool and r.get("prompt_version") == classify_tag
-        if same_id or reroll:
-            gated.setdefault(rid, {"run": rid, "prereg": r.get("prereg"), "pool": r.get("pool"),
-                                   "first_at": r.get("first_at")})
-    rec["prior_trials"] = len({str(r.get("run_id") or "")[:8] for r in prior
-                               if r.get("run_kind") == "trial" and r.get("prereg") == prereg_id})
-    rec["prior_gated_runs"] = sorted(gated.values(), key=lambda g: str(g["first_at"]))
-    if kind == "full" and gated:
-        rec["refused"] = (f"the stop rule allows one gated run: the ledger already holds gated run(s) "
-                          f"{', '.join(sorted(gated))} of pre-registration {prereg_id} or of the same step-1 prompt "
-                          "on this pool; a no_go is read at $0, a new run needs a new pre-registration")
-    return rec
 
 
 # ── live ───────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -464,7 +466,7 @@ class _Run:
         if self._blocked(worst):
             return None
         try:
-            resp = self.caller(inst, inst.prompt_version.system(MODE), user, SCHEMA[step])
+            resp = self.caller(inst, inst.prompt_version.system(MODE), user, schema_of(inst))
         except Exception as e:                               # noqa: BLE001 — paid attempts may have run: stop clean
             self._caller_error(step, vote, inst, user, worst, e)
             return None
@@ -488,7 +490,7 @@ def _step1_votes(state: _Run, items: list[r1.Item], votes: int, step_votes: dict
                  spec_votes: dict) -> None:
     for vote in range(votes):
         for item in items:
-            parsed = state.one("classify", vote, item, step1_user(item))
+            parsed = state.one("classify", vote, item, step1_user(item, state.insts["classify"].prompt))
             v = classify_vote(parsed) if parsed is not None else None
             step_votes["classify"][item.claim_hash].append(v)
             reasons["classify"][item.claim_hash].append(str((parsed or {}).get("why") or "")[:r1.REASON_CHARS])
@@ -632,15 +634,9 @@ def _h16(votes: dict[str, list]) -> dict[str, list]:
     return {h[:16]: v for h, v in sorted(votes.items())}
 
 
-def cmd_run(a: argparse.Namespace) -> tuple[int, dict]:
-    if a.live and not a.confirm_spend:
-        raise TwoStepRefused("--live is paid: add --confirm-spend")
-    fresh = ev.refresh_settings() if a.live else None
-    lim, slim = ev.limits(), step_limits()
-    n = ev.gate(a, lim)
-    insts = instruments(a.candidate)
-    pool_text = _read(a.pool)
-    full = ev.read_pool(pool_text)
+def _out_of_sample(a: argparse.Namespace, full: list[ev.PoolItem], hold: Optional[dict], pool_text: str,
+                   insts: dict[str, r1.Instrument]) -> tuple[list[ev.PoolItem], Optional[dict], dict, dict]:
+    """The pool after --exclude, what was excluded, the out-of-sample record and the fresh manifest ({} without)."""
     texts = [_read(f) for f in a.exclude]
     pool, excluded = (ev.exclude(full, set().union(*(ev.prefixes_from(t) for t in texts))) if texts else (full, None))
     shaped = shaped_on(insts)
@@ -648,33 +644,65 @@ def cmd_run(a: argparse.Namespace) -> tuple[int, dict]:
     manifest = json.loads(_read(a.fresh)) if a.fresh else {}
     if a.fresh:
         # the manifest alone proves the pool is out of sample (piece level); --exclude only drops claims
-        oos = {**fresh_check(manifest, pool_text, pool, shaped, shaped_on_pools(insts)), "cli_excluded_runs": runs}
+        oos = {**fresh_check(manifest, pool_text, pool, shaped, shaped_on_pools(insts), covered_runs(hold)),
+               "cli_excluded_runs": runs, "held_out": hold}
     else:
         oos = {"kind": "exclude", "shaped_on": shaped, "excluded_runs": runs,
-               "missing": [r for r in shaped if r not in runs], "shaped_on_pools": shaped_on_pools(insts)}
-    prereg_file = load_preregistration(Path(a.preregistration))
-    prereg = preregistration_check(prereg_file, lim, slim, insts, a.votes)
-    kind = "trial" if a.trial is not None else "full"
+               "missing": [r for r in shaped if r not in runs], "shaped_on_pools": shaped_on_pools(insts),
+               "held_out": hold}
+    return pool, excluded, oos, manifest
+
+
+def _live_gate(sset: StepSet, oos: dict, prereg: dict, prereg_path: Path, *, kind: str, prereg_id: str, pool: str,
+               classify_tag: str) -> dict:
+    """Every refusal of a live run before a call: out of sample, the committed and pinned registration matching the
+    run in force, and the stop rule (read from the ledger for a gated run). Returns the stop-rule record."""
+    why = oos_refusal(oos)
+    if why:
+        raise TwoStepRefused(why)
+    if prereg_path.resolve() != sset.preregistration.resolve():
+        raise TwoStepRefused("a live run reads the committed pre-registration only (drop --preregistration)")
+    if not prereg["sha_matches"]:
+        raise TwoStepRefused(f"the pre-registration file of step set {sset.id} changed after it was pinned "
+                             f"(sha256 {prereg['file_sha256'][:12]}, pinned {sset.prereg_sha256[:12]})")
+    if not prereg["matches"]:
+        raise TwoStepRefused("the run is not the pre-registered one: " + "; ".join(prereg["differences"]))
+    stop = stop_rule(_prior_runs() if kind == "full" else None, kind=kind, prereg_id=prereg_id, pool=pool,
+                     classify_tag=classify_tag)
+    if stop["refused"]:
+        raise TwoStepRefused(stop["refused"])
+    return stop
+
+
+def cmd_run(a: argparse.Namespace) -> tuple[int, dict]:
+    if a.live and not a.confirm_spend:
+        raise TwoStepRefused("--live is paid: add --confirm-spend")
+    sset = step_set(a.steps)
+    if a.live and sset.closed:
+        raise TwoStepRefused(f"step set {sset.id} is closed: {sset.closed}")
+    fresh = ev.refresh_settings() if a.live else None
+    lim, slim = ev.limits(), step_limits()
+    n = ev.gate(a, lim)
+    insts = instruments(a.candidate, sset.id)
+    pool_text = _read(a.pool)
     pool_digest = pool_sha256(pool_text)[:16]
-    stop = None
-    if a.live:
-        why = oos_refusal(oos)
-        if why:
-            raise TwoStepRefused(why)
-        if Path(a.preregistration).resolve() != PREREGISTRATION.resolve():
-            raise TwoStepRefused("a live run reads the committed pre-registration only (drop --preregistration)")
-        if not prereg["matches"]:
-            raise TwoStepRefused("the run is not the pre-registered one: " + "; ".join(prereg["differences"]))
-        stop = stop_rule(_prior_runs() if kind == "full" else None, kind=kind, prereg_id=str(prereg_file.get("id")),
-                         pool=pool_digest, classify_tag=insts["classify"].prompt_version.tag)
-        if stop["refused"]:
-            raise TwoStepRefused(stop["refused"])
+    prereg_path = Path(a.preregistration) if a.preregistration else sset.preregistration
+    prereg_file = load_preregistration(prereg_path)
+    full, hold = held_out(prereg_file, ev.read_pool(pool_text), pool_digest)
+    pool, excluded, oos, manifest = _out_of_sample(a, full, hold, pool_text, insts)
+    sha = file_sha256(prereg_path)
+    prereg = {**preregistration_check(prereg_file, lim, slim, insts, a.votes), "file_sha256": sha,
+              "pinned_sha256": sset.prereg_sha256, "sha_matches": sha == sset.prereg_sha256}
+    kind = "trial" if a.trial is not None else "full"
+    stop = (_live_gate(sset, oos, prereg, prereg_path, kind=kind, prereg_id=str(prereg_file.get("id")),
+                       pool=pool_digest, classify_tag=insts["classify"].prompt_version.tag) if a.live else None)
     expected_of, measured = (measured_expectation(json.loads(_read(a.measured)), insts) if a.measured
                              else (None, None))
     subset = _subset(pool, a, n, lim)
     cap = a.cap if a.cap is not None else lim.cap_usd
     the_plan = plan([p.item for p in subset], insts, votes=a.votes, cap=cap, expected_of=expected_of)
-    rep = {"mode": "live" if a.live else "dry_run", "instruments": {s: i.id for s, i in insts.items()},
+    rep = {"mode": "live" if a.live else "dry_run", "steps": sset.id,
+           "instruments": {s: i.id for s, i in insts.items()},
            "prompt_versions": {s: i.prompt_version.tag for s, i in insts.items()}, "settings_refreshed": fresh,
            "limits": asdict(lim), "step_limits": asdict(slim), "preregistration": prereg, "excluded": excluded,
            "out_of_sample": oos, "run_kind": kind, "pool_sha256": pool_digest, "stop_rule": stop,
@@ -716,11 +744,13 @@ def parser() -> argparse.ArgumentParser:
     r.add_argument("--exclude", action="append", default=[],
                    help="leave out the claims of this run report (an older pool): out of sample for those runs")
     r.add_argument("--candidate", default=ev.DEFAULT_CANDIDATE)
+    r.add_argument("--steps", default=DEFAULT_STEP_SET, choices=sorted(STEP_SETS),
+                   help=f"the step set (prompts + pre-registration); default {DEFAULT_STEP_SET}")
     r.add_argument("--votes", type=int, default=r1.VOTES)
     r.add_argument("--trial", type=int)
     r.add_argument("--limit", type=int)
     r.add_argument("--cap", type=float)
-    r.add_argument("--preregistration", default=str(PREREGISTRATION))
+    r.add_argument("--preregistration", help="DRY RUN only: check against this file instead of the step set's")
     r.add_argument("--measured", help="expected cost from this finished live two-step run report")
     r.add_argument("--dry-run", action="store_true", help="the default; never paid")
     r.add_argument("--live", action="store_true", help="PAID: make the calls")
