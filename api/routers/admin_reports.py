@@ -12,6 +12,9 @@
   POST /admin/reports/{report_id}/run         {period_start?, period_end?} (ICT days): queue report_generate for a
                                               report the CIS engine renders (EX-04, EX-06); 409 for any other, 202
                                               with the run and job ids. Default period: the day the daily chain covers.
+                                              R6: for EX-03, EX-07 and CRM-04 the API first reads crm.ops.v1 with the
+                                              caller's own staff token (api/services/report_crm_inputs.py) and passes
+                                              the numbers in the job payload.
 
 Who may call (api/core/staff_authz.py POLICY): reads ops.read, the run ops.write (admin only, as /admin/overview and
 the job runner). The router is included without an include prefix (staff_policy reads scope["route"].path).
@@ -30,6 +33,8 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
 
 from api.core.staff_authz import staff_policy
+from api.services import report_crm_inputs
+from api.services.platform_apps import relay_authorization
 from services.jobs import report_jobs
 from shared.jobs.registry import NonRetryable, enqueue
 from services.reports import generate, periods, store
@@ -171,8 +176,10 @@ async def run_report(report_id: str, request: Request, body: Optional[RunRequest
         raise HTTPException(status_code=409, detail="This report is not generated here yet")
     first, last = resolve_period(report, body or RunRequest())
     actor = _actor(x_admin_user_id)
+    # R6: a partner report reads crm.ops.v1 now, with this administrator's own token (the worker has none).
+    inputs = await report_crm_inputs.capture(report.id, first, last, relay_authorization(request))
     out = await report_jobs.enqueue_report_run(_pool(request), report, first, last, trigger="manual",
-                                               triggered_by=actor)
+                                               triggered_by=actor, inputs=inputs)
     logger.info("admin_report_run_queued", report_id=report.id, run_id=out["run_id"], job_id=out["job_id"],
                 period_start=out["period_start"], period_end=out["period_end"], admin_user=x_admin_user_id)
     return out

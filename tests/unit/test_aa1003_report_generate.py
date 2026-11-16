@@ -123,7 +123,7 @@ def test_register_lists_every_report_and_flags_failures():
     assert "EX-04" in out.output["attention"]
     # EX-04, EX-06; R2: OPS-12 (TP-03 retired by the R0 hotfix); R3: 8 money; R4: 8; R4 part 2: TP-01, SEC-03, SEC-08,
     # DEV-01, DEV-03, OPS-15; AA-900: CIS-08
-    assert out.output["registry"]["automated"] == 29     # R5 adds FI-08, BK-03, FI-07
+    assert out.output["registry"]["automated"] == 32     # R5 adds FI-08, BK-03, FI-07; R6 EX-03, EX-07, CRM-04
     assert "## Generated here" in out.markdown and "| P0 |" in out.markdown
 
 

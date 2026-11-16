@@ -111,7 +111,18 @@ def test_run_queues_ex04_for_the_default_day(api):
     day = periods.snapshot_day().isoformat()
     assert (r.json()["period_start"], r.json()["period_end"]) == (day, day)
     kw = api.enqueue.await_args.kwargs
-    assert kw == {"trigger": "manual", "triggered_by": "admin:staff-1"}
+    assert kw == {"trigger": "manual", "triggered_by": "admin:staff-1", "inputs": None}
+
+
+def test_run_of_a_partner_report_passes_the_crm_inputs_read_now(api, monkeypatch):
+    """R6: EX-03 reads crm.ops.v1 in the request (the worker has no staff token) and the numbers ride in the job."""
+    captured = {"contract": "crm.ops.v1", "read_at": "2026-11-16T01:00:00+00:00", "parts": {"agencies": {"rows": []}}}
+    capture = AsyncMock(return_value=captured)
+    monkeypatch.setattr(admin_reports.report_crm_inputs, "capture", capture)
+    r = api.post("/admin/reports/EX-03/run", json={}, headers=_staff())
+    assert r.status_code == 202, r.text
+    assert capture.await_args.args[0] == "EX-03"
+    assert api.enqueue.await_args.kwargs["inputs"] == captured
 
 
 def test_run_refusals(api):
