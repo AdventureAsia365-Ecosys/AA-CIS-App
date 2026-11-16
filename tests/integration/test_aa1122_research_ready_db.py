@@ -188,7 +188,7 @@ async def test_tour_paa_candidates_write_rule_and_coverage(tx):
     assert got[empty][2] == S1_FETCHED_AT                                               # fetched_at untouched
     cov = await tour_paa.coverage(_Pool(tx))
     assert cov["published"] >= 3 and cov["with_paa"] >= 3
-    store = await tx.fetch(tour_paa.STORE_SQL, list(tour_paa.STORE_MARKETS), ["%zz lantern%"], window)
+    store = await tx.fetch(tour_paa.STORE_SQL, list(tour_paa.STORE_MARKETS), window)
     assert isinstance(store, list)
 
 
