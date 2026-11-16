@@ -63,7 +63,7 @@ async def _tenant(conn, *, tripplanner=True) -> str:
                        "'starter'::plan_tier_enum, 3, 60, true, 'agency')", tid, f"zz1090-{tid[:12]}")
     if tripplanner:
         await conn.execute("INSERT INTO shared.tenant_subscription (tenant_id, product, plan_key, status, updated_by) "
-                           "VALUES ($1::uuid, 'tripplanner', 'tripplanner.hosted', 'active', 'test:aa1090')", tid)
+                           "VALUES ($1::uuid, 'tripplanner', 'tripplanner.pro', 'active', 'test:aa1090')", tid)
     return tid
 
 
