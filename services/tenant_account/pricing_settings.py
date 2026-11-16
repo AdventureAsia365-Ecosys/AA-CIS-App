@@ -2,8 +2,8 @@
 
 Every pricing policy value is a platform setting on Platform › Settings (areas "billing" and "tenant"; tech lead S279
 and 16/11/2026: every price, threshold, limit and policy value is data an administrator edits, never a code literal).
-Readers (the provision saga, the add-on paths, shared/cost_guard.py, the quote service, the Plans and Tenant 360 routes)
-name a key through these constants and read the value in force with :func:`value` / :func:`avalue`
+Readers (the provision saga, the add-on request paths, shared/cost_guard.py, the quote service, the Plans and Tenant
+360 routes) name a key through these constants and read the value in force with :func:`value` / :func:`avalue`
 (``shared.settings``), never a copied number. The SQL readers (resolver 437, catalog views 438) read the same keys with
 ``shared.v_setting_billing_effective``. The keys equal the CIS 436 seed
 (tests/integration/test_aa1116_migrations_435_439.py and the settings-lint reader check,
@@ -15,10 +15,11 @@ from typing import Any
 
 from shared import settings
 
-# Trials (decision 3: every attach and approved add-on request starts trialing for the default length).
+# Trials (decision 3: every crm / tripplanner attach and approved add-on request starts trialing for the default
+# length).
 TRIAL_DAYS_DEFAULT = "cis.billing.trial_days_default"
 TRIAL_DAYS_MAX = "cis.billing.trial_days_max"
-# Decision 4: the share of each trialing subscription's / add-on's own AI part (resolver 437 reads it in SQL).
+# Decision 4: the share of each trialing subscription's own AI part (resolver 437 reads it in SQL).
 TRIAL_AI_BUDGET_PCT = "cis.billing.trial_ai_budget_pct"
 # Pilots (decision 8): a dated pilot is at most this many weeks; a pilot without an end date is always allowed.
 PILOT_MAX_WEEKS = "cis.tenant.pilot_max_weeks"

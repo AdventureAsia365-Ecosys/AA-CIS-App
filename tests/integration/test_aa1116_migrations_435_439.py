@@ -3,16 +3,14 @@
 The conftest replay applies 435 / 436 / 437 / 439 like any file (438 is the catalog recipe: its own module). This module
 re-applies each file (re-runnable, errors NOT swallowed), then every test runs in a transaction it rolls back:
 
-  * 435: the new CHECKs (addon product, unit price unit, VND prices >= 0, seats_min 1-500, billing currency USD | VND,
-    founding dates both or neither, agreed price and currency both or neither, billing interval month | year), a pilot
-    without an end date, plan_feature_guard (an add-on plan lists any product's feature, a crm plan does not), the
-    tenant_addon rules (a live content subscription, one live row per tenant and add-on, quantity 1-1000, trial end),
+  * 435: the new CHECKs (VND prices >= 0, seats_min 1-500, billing currency USD | VND, founding dates both or
+    neither, agreed price and currency both or neither, billing interval month | year), no retail add-on product or
+    unit price unit (S282 decision 14), a pilot without an end date, no shared.tenant_addon table,
     shared.v_setting_billing_effective (default, then the approved value in force; billing keys only);
   * 436: the nineteen keys at the option B values, maker-checker, enforced, guides present;
-  * 437: the AI budget = content x the trial share while trialing + the add-on increments (crm / tripplanner plans and
-    add-ons x quantity, each x the trial share while trialing); an override stays absolute; an AA-1016 row without an
-    amount follows the plan; an add-on flag only where its product is live; tenant_entitlement_sync_due re-syncs an
-    ended add-on and a changed trial share; the materialisation equals the resolver;
+  * 437: the AI budget = content x the trial share while trialing + the crm / tripplanner increments (each x the trial
+    share while that subscription trials); an override stays absolute; an AA-1016 row without an amount follows the
+    plan; tenant_entitlement_sync_due re-syncs a changed trial share; the materialisation equals the resolver;
   * 439: the usage view's columns (233's order + four appended) and its numbers from shared.plan and the resolved
     quotas (built on a stand-in tenant_tour_versions inside the rolled-back transaction, as the 233 test does).
 Invented names only.
@@ -32,7 +30,7 @@ from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 MIG = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations")
 M435 = os.path.join(MIG, "435_aa1116_pricing_option_b_schema.sql")
 M436 = os.path.join(MIG, "436_aa1116_billing_policy_settings.sql")
-M437 = os.path.join(MIG, "437_aa1116_resolver_addons_trial_ai.sql")
+M437 = os.path.join(MIG, "437_aa1116_resolver_trial_ai_budget.sql")
 M439 = os.path.join(MIG, "439_aa1116_usage_view_reads_shared_plan.sql")
 REASON = "zz test: a reason of at least twenty characters"
 OPTION_B = {
@@ -41,7 +39,7 @@ OPTION_B = {
     "cis.billing.ai_approval_pct_default": 100, "cis.billing.ai_hard_stop_default": True,
     "cis.billing.annual_paid_months": 10, "cis.billing.founding_discount_pct": 30, "cis.billing.founding_months": 12,
     "cis.billing.founding_max_agencies": 10,
-    "cis.billing.founding_eligible_plans": ["content.growth", "content.business", "crm.*", "tripplanner.*", "addon.*"],
+    "cis.billing.founding_eligible_plans": ["content.growth", "content.business", "crm.*", "tripplanner.*"],
     "cis.billing.combo_discount_pct": 10, "cis.billing.combo_products": ["content", "crm", "tripplanner"],
     "cis.billing.fx_vnd_per_usd": 26000, "cis.billing.vnd_price_review_months": 3,
     "cis.billing.price_lock_months": 12, "cis.billing.price_review_months": 12,
@@ -89,14 +87,6 @@ def _tenant(cur, tier="starter", **cols):
     return tid
 
 
-def _plan(cur, key, product, unit="unit", price=None, features=None):
-    cur.execute("INSERT INTO shared.plan (plan_key, product, name, price_usd_monthly, price_unit, updated_by) "
-                "VALUES (%s, %s, %s, %s, %s, 'test:1116')", (key, product, key.split(".")[1].title(), price, unit))
-    for fk, lim in (features or {}).items():
-        cur.execute("INSERT INTO shared.plan_feature (plan_key, feature_key, limit_value, updated_by) "
-                    "VALUES (%s, %s, %s, 'test:1116')", (key, fk, lim))
-
-
 def _feature(cur, plan_key, feature_key, limit):
     cur.execute("INSERT INTO shared.plan_feature (plan_key, feature_key, limit_value, updated_by) "
                 "VALUES (%s, %s, %s, 'test:1116') ON CONFLICT (plan_key, feature_key) "
@@ -108,14 +98,6 @@ def _sub(cur, tid, product, plan_key, status="active", trial_days=None):
                 "updated_by) VALUES (%s, %s, %s, %s, CASE WHEN %s::int IS NULL THEN NULL "
                 "ELSE now() + make_interval(days => %s::int) END, 'test:1116')",
                 (tid, product, plan_key, status, trial_days, trial_days))
-
-
-def _addon(cur, tid, plan_key, quantity=1, status="active", ends=None):
-    cur.execute("INSERT INTO shared.tenant_addon (tenant_id, plan_key, quantity, status, trial_ends_at, ends_at, "
-                "reason, created_by, updated_by) VALUES (%s, %s, %s, %s, "
-                "CASE WHEN %s = 'trialing' THEN now() + interval '14 days' END, %s, 'zz order', 'test', 'test') "
-                "RETURNING addon_id", (tid, plan_key, quantity, status, status, ends))
-    return cur.fetchone()[0]
 
 
 def _ai(cur, tid):
@@ -154,12 +136,16 @@ def test_registered_once(cur, version):
 
 # ── 435 ──────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-def test_addon_plan_with_a_unit_price_and_vnd_list(cur):
-    cur.execute("INSERT INTO shared.plan (plan_key, product, name, price_usd_monthly, price_vnd_monthly, price_unit, "
-                "updated_by) VALUES ('addon.zz_lantern', 'addon', 'Lantern', 15, 390000, 'unit', 'test')")
-    cur.execute("SELECT product, price_unit, price_vnd_monthly AS v FROM shared.plan "
-                "WHERE plan_key = 'addon.zz_lantern'")
-    assert cur.fetchone() == ("addon", "unit", 390000)
+def test_vnd_list_price_and_seat_minimum(cur):
+    cur.execute("UPDATE shared.plan SET price_vnd_monthly = 494000, seats_min = 3 WHERE plan_key = 'crm.core' "
+                "RETURNING price_vnd_monthly, seats_min")
+    assert cur.fetchone() == (494000, 3)
+
+
+def test_no_retail_addon_storage(cur):
+    # S282 decision 14: no addon product, no unit price unit, no shared.tenant_addon table
+    cur.execute("SELECT to_regclass('shared.tenant_addon') IS NULL AS gone")
+    assert cur.fetchone()[0] is True
 
 
 @pytest.mark.parametrize("sql", [
@@ -171,6 +157,10 @@ def test_addon_plan_with_a_unit_price_and_vnd_list(cur):
     "UPDATE shared.plan SET price_unit = 'month' WHERE plan_key = 'crm.core'",
     "INSERT INTO shared.plan (plan_key, product, name, price_unit, updated_by) "
     "VALUES ('bundle.zz', 'bundle', 'Zz', 'unit', 'test')",
+    "INSERT INTO shared.plan (plan_key, product, name, price_unit, updated_by) "
+    "VALUES ('addon.zz_lantern', 'addon', 'Zz', 'tenant', 'test')",
+    "INSERT INTO shared.plan (plan_key, product, name, price_unit, updated_by) "
+    "VALUES ('crm.zz_lantern', 'crm', 'Zz', 'unit', 'test')",
 ])
 def test_plan_checks_refuse(cur, sql):
     with pytest.raises(psycopg2.errors.CheckViolation):
@@ -218,35 +208,9 @@ def test_subscription_terms_accept_a_locked_price(cur):
     assert cur.fetchone()[0] == "year"
 
 
-def test_addon_plan_lists_another_products_flag_but_a_crm_plan_does_not(cur):
-    _plan(cur, "addon.zz_domain", "addon", features={"tp.custom_domain": None, "crm.custom_domain": None})
+def test_a_crm_plan_still_cannot_list_a_tripplanner_flag(cur):
     with pytest.raises(psycopg2.errors.CheckViolation):
         _feature(cur, "crm.core", "tp.custom_domain", None)
-
-
-def test_tenant_addon_rules(cur):
-    _plan(cur, "addon.zz_pack", "addon", features={"ai.budget_addon_usd_monthly": 10})
-    tid = _tenant(cur)
-    _addon(cur, tid, "addon.zz_pack", quantity=2)
-    with pytest.raises(psycopg2.errors.UniqueViolation):
-        _addon(cur, tid, "addon.zz_pack")
-
-
-@pytest.mark.parametrize("quantity,status", [(0, "active"), (1001, "active"), (1, "paused")])
-def test_tenant_addon_checks(cur, quantity, status):
-    _plan(cur, "addon.zz_pack", "addon")
-    tid = _tenant(cur)
-    with pytest.raises(psycopg2.errors.CheckViolation):
-        _addon(cur, tid, "addon.zz_pack", quantity=quantity, status=status)
-
-
-def test_tenant_addon_needs_a_live_content_subscription(cur):
-    _plan(cur, "addon.zz_pack", "addon")
-    tid = _tenant(cur)
-    cur.execute("UPDATE shared.tenant_subscription SET status = 'canceled', canceled_at = now() WHERE tenant_id = %s",
-                (tid,))
-    with pytest.raises(psycopg2.errors.CheckViolation):
-        _addon(cur, tid, "addon.zz_pack")
 
 
 def _effective(cur, key):
@@ -316,23 +280,11 @@ def test_changed_trial_share_reaches_the_materialisation_through_sync_due(cur):
     assert _ai(cur, tid) == 10
 
 
-def test_ai_pack_times_quantity_and_its_end(cur):
-    _plan(cur, "addon.zz_pack", "addon", features={"ai.budget_addon_usd_monthly": 10})
-    tid = _tenant(cur)                              # starter 15
-    addon = _addon(cur, tid, "addon.zz_pack", quantity=2)
-    assert _ai(cur, tid) == 35
-    cur.execute("UPDATE shared.tenant_addon SET starts_at = now() - interval '2 days', "
-                "ends_at = now() - interval '1 second' WHERE addon_id = %s", (addon,))
-    # the UPDATE re-synced at once (trigger); the resolver no longer counts the pack
-    assert _ai(cur, tid) == 15
-    cur.execute("SELECT shared.tenant_entitlement_sync_due() AS n")
-    assert _ai(cur, tid) == 15
-
-
 def test_override_stays_absolute(cur):
-    _plan(cur, "addon.zz_pack", "addon", features={"ai.budget_addon_usd_monthly": 10})
+    _feature(cur, "tripplanner.hosted", "ai.budget_addon_usd_monthly", 10)
     tid = _tenant(cur)
-    _addon(cur, tid, "addon.zz_pack")
+    _sub(cur, tid, "tripplanner", "tripplanner.hosted")
+    assert _ai(cur, tid) == 25
     cur.execute("INSERT INTO shared.tenant_entitlement_override (tenant_id, feature_key, limit_value, reason, "
                 "granted_by) VALUES (%s, 'ai.budget_usd_monthly', 7, 'zz contract cap', 'test')", (tid,))
     assert _ai(cur, tid) == 7
@@ -356,38 +308,12 @@ def test_ai_budget_row_without_amount_is_unlimited_for_internal(cur):
     assert cur.fetchone() == ("override", None)
 
 
-def test_addon_flag_only_where_its_product_is_live(cur):
-    _plan(cur, "addon.zz_domain", "addon", features={"tp.custom_domain": None, "crm.custom_domain": None})
-    tid = _tenant(cur)
-    _addon(cur, tid, "addon.zz_domain")
-    assert _resolved(cur, tid, "tp.custom_domain") is None
-    assert _resolved(cur, tid, "crm.custom_domain") is None
-    _sub(cur, tid, "tripplanner", "tripplanner.hosted")
-    assert _resolved(cur, tid, "tp.custom_domain")[1:] == ("plan", "addon.zz_domain")
-    assert _resolved(cur, tid, "crm.custom_domain") is None
-
-
-def test_product_plan_grant_wins_over_the_addon(cur):
-    _plan(cur, "addon.zz_domain", "addon", features={"tp.custom_domain": None})
-    tid = _tenant(cur)
-    _sub(cur, tid, "tripplanner", "tripplanner.pro")
-    _addon(cur, tid, "addon.zz_domain", status="trialing")
-    assert _resolved(cur, tid, "tp.custom_domain")[1:] == ("plan", "tripplanner.pro")
-
-
-def test_platform_key_on_an_addon_plan_is_not_served(cur):
-    _plan(cur, "addon.zz_odd", "addon", features={"ai.budget_usd_monthly": 999})
-    tid = _tenant(cur)
-    _addon(cur, tid, "addon.zz_odd")
-    assert _ai(cur, tid) == 15
-
-
 def test_materialisation_equals_the_resolver(cur):
     _feature(cur, "tripplanner.hosted", "ai.budget_addon_usd_monthly", 10)
-    _plan(cur, "addon.zz_pack", "addon", features={"ai.budget_addon_usd_monthly": 10})
+    _feature(cur, "crm.core", "ai.budget_addon_usd_monthly", 4)
     tid = _tenant(cur, tier="business")
     _sub(cur, tid, "tripplanner", "tripplanner.hosted", status="trialing", trial_days=14)
-    _addon(cur, tid, "addon.zz_pack", quantity=3, status="trialing")
+    _sub(cur, tid, "crm", "crm.core")
     cur.execute("SELECT count(*) AS n FROM shared.v_tenant_entitlement_resolved r "
                 "FULL JOIN (SELECT * FROM shared.tenant_entitlement WHERE tenant_id = %s) e "
                 "ON e.feature_key = r.feature_key AND e.tenant_id = r.tenant_id "
@@ -395,7 +321,7 @@ def test_materialisation_equals_the_resolver(cur):
                 "OR r.limit_value IS DISTINCT FROM e.limit_value OR r.source IS DISTINCT FROM e.source)",
                 (tid, tid, tid))
     assert cur.fetchone()[0] == 0
-    assert _ai(cur, tid) == 100                     # 80 + 10 x 50 % + 10 x 3 x 50 %
+    assert _ai(cur, tid) == 89                      # 80 + 10 x 50 % + 4
 
 
 # ── 439 ──────────────────────────────────────────────────────────────────────────────────────────────────────────

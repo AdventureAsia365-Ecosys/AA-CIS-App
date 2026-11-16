@@ -8,10 +8,10 @@ and 438 as db_migrator (errors NOT swallowed), 438 twice, and undoes them at tea
 
   * the three views' exact columns (377 / 390 / 429 columns first, then the appended ones), owner catalog_owner,
     security_barrier, the consumer roles only;
-  * catalog_owner reads exactly the granted columns of shared.tenant_addon (never reason / created_by) and nothing of
-    billing_ref;
+  * catalog_owner reads nothing of tenant_subscription.billing_ref;
   * as booking: the VND currency, the seat minimum, the agreed price, bill_free for a pilot (and not after an approved
-    cis.billing.pilot_free = false), one add-on row with its quantity; the 377 column list still answers;
+    cis.billing.pilot_free = false), the same rows as 377 (one per subscription, no retail add-on row: S282 decision
+    14); the 377 column list still answers;
   * as tripplanner: alert / approval / hard stop from the tenant's AI budget row, else the registry defaults;
     ai_sessions_monthly from tp.ai_sessions (NULL when the plan sets none).
 Invented names only.
@@ -47,16 +47,14 @@ BILLING_COLUMNS = (
     "seats integer, subscription_status text, billing_currency text, price_vnd_monthly numeric(14,0), "
     "price_extra_seat_vnd numeric(14,0), seats_min integer, agreed_price_monthly numeric(14,2), agreed_currency text, "
     "agreed_until date, billing_interval text, trial_ends_at timestamp with time zone, is_pilot boolean, "
-    "bill_free boolean, quantity integer, ends_at timestamp with time zone")
+    "bill_free boolean")
 BUDGET_COLUMNS = ("tenant_id uuid, budget_source text, monthly_usd numeric, month_spent_usd numeric(14,6), "
                   "month_calls integer, alert_pct integer, approval_pct integer, hard_stop boolean")
 TP_COLUMNS = t429.COLUMNS + ", ai_sessions_monthly integer"
-ADDON_COLUMNS = ("tenant_id", "plan_key", "product", "quantity", "status", "trial_ends_at", "starts_at", "ends_at")
 REASON = "zz test: a reason of at least twenty characters"
 
 
 def undo_438(a):
-    a.execute(f"REVOKE SELECT ({', '.join(ADDON_COLUMNS)}) ON shared.tenant_addon FROM catalog_owner")
     a.execute("REVOKE SELECT (tenant_id, alert_pct, approval_pct, hard_stop) ON shared.tenant_ai_budget "
               "FROM catalog_owner")
     a.execute("REVOKE SELECT (billing_currency, is_pilot) ON shared.tenants FROM catalog_owner")
@@ -161,44 +159,33 @@ def test_consumers(cur, view, reader):
         assert cur.fetchone()[0] is (role == reader), role
 
 
-def test_catalog_owner_reads_only_the_granted_addon_columns(cur):
-    cur.execute("SELECT string_agg(a.attname, ',' ORDER BY a.attname) AS c FROM pg_attribute a "
-                "WHERE a.attrelid = 'shared.tenant_addon'::regclass AND a.attnum > 0 AND NOT a.attisdropped "
-                "AND has_column_privilege('catalog_owner', a.attrelid, a.attnum, 'SELECT')")
-    assert cur.fetchone()[0] == ",".join(sorted(ADDON_COLUMNS))
+def test_catalog_owner_never_reads_billing_ref(cur):
     cur.execute("SELECT has_column_privilege('catalog_owner', 'shared.tenant_subscription', 'billing_ref', 'SELECT') "
                 "AS ok")
     assert cur.fetchone()[0] is False
 
 
-def test_booking_reads_the_option_b_terms_and_addon_rows(cur):
+def test_booking_reads_the_option_b_terms(cur):
     cur.execute("UPDATE shared.plan SET seats_min = 3, price_vnd_monthly = 490000 WHERE plan_key = 'crm.core'")
-    cur.execute("INSERT INTO shared.plan (plan_key, product, name, price_usd_monthly, price_unit, updated_by) "
-                "VALUES ('addon.zz_pack', 'addon', 'Zz pack', 19, 'unit', 'test')")
     tid = t377._tenant(cur, "Zz Juniper Coast")
     cur.execute("UPDATE shared.tenants SET billing_currency = 'VND', is_pilot = true WHERE tenant_id = %s", (tid,))
     cur.execute("INSERT INTO shared.tenant_subscription (tenant_id, product, plan_key, status, seats, "
                 "agreed_price_monthly, agreed_currency, agreed_until, updated_by) "
                 "VALUES (%s, 'crm', 'crm.core', 'active', 1, 450000, 'VND', '2030-01-01', 'test')", (tid,))
-    cur.execute("INSERT INTO shared.tenant_addon (tenant_id, plan_key, quantity, status, reason, created_by, "
-                "updated_by) VALUES (%s, 'addon.zz_pack', 2, 'active', 'zz order', 'test', 'test')", (tid,))
     rows = _as(cur, "booking", f"SELECT product, plan_key, billing_currency, seats_min, price_vnd_monthly, "
                                f"agreed_price_monthly, agreed_currency, billing_interval, is_pilot, bill_free, "
-                               f"quantity, "
                                f"subscription_status FROM {BILLING} WHERE tenant_id = %s ORDER BY product", tid)
     by = {r["product"]: r for r in rows}
-    assert set(by) == {"addon", "content", "crm"}
+    assert len(rows) == 2 and set(by) == {"content", "crm"}         # no retail add-on row (decision 14)
     crm = by["crm"]
     assert (crm["billing_currency"], crm["seats_min"], int(crm["price_vnd_monthly"]),
             float(crm["agreed_price_monthly"]), crm["agreed_currency"], crm["billing_interval"], crm["bill_free"],
-            crm["quantity"]) == (
-        "VND", 3, 490000, 450000.0, "VND", "month", True, None)
-    assert (by["addon"]["plan_key"], by["addon"]["quantity"], by["addon"]["subscription_status"]) == (
-        "addon.zz_pack", 2, "active")
+            crm["subscription_status"]) == (
+        "VND", 3, 490000, 450000.0, "VND", "month", True, "active")
     # the 377 column list still answers
     old = _as(cur, "booking", f"SELECT {', '.join(c.split()[0] for c in t377.COLUMNS)} FROM {BILLING} "
                               f"WHERE tenant_id = %s", tid) if isinstance(t377.COLUMNS, tuple) else None
-    assert old is None or len(old) == 3
+    assert old is None or len(old) == 2
 
 
 def test_bill_free_follows_the_setting(cur):

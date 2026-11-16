@@ -1,39 +1,33 @@
--- Migration 437: AA-1116 (S282) — the resolver serves the option B AI budget and the add-ons: AI budget = content plan
--- (x the trial share while trialing) + the add-on increments of live crm / tripplanner plans and add-ons (x quantity,
--- x the trial share while trialing); add-on plans grant their flags (custom domain) where the flag's product is live;
--- a per-tenant AI budget row with no amount follows the plan.
+-- Migration 437: AA-1116 (S282) — the resolver serves the option B AI budget: AI budget = content plan (x the trial
+-- share while trialing) + the AI increments of live crm / tripplanner plans (x the trial share while that
+-- subscription trials); a per-tenant AI budget row with no amount follows the plan.
 --
--- Why. Option B sells TripPlanner Hosted / Pro with +10 / +25 USD of AI a month and an AI pack of +10 USD per unit,
--- and gives a trialing agency 50 % of its AI budget (cis.billing.trial_ai_budget_pct, CIS 436). 361 serves only the
--- content plan's ai.budget_usd_monthly, and the only way to change it per tenant was an absolute override that never
--- ends with the trial. The custom-domain add-on (addon.custom_domain, CIS 435) must give tp.custom_domain and
--- crm.custom_domain. Decision 5 (S282): an AA-1016 shared.tenant_ai_budget row with monthly_usd empty means "follow
--- the plan", not "unlimited" (unlimited only for kind internal).
+-- Why. Option B sells TripPlanner Hosted / Pro with +10 / +25 USD of AI a month and gives a trialing agency 50 % of
+-- its AI budget (cis.billing.trial_ai_budget_pct, CIS 436). 361 serves only the content plan's ai.budget_usd_monthly,
+-- and the only way to change it per tenant was an absolute override that never ends with the trial. There is no
+-- retail add-on (no AI pack, no custom-domain add-on: S282 decision 14); an AI top-up stays a per-tenant override.
+-- Decision 5 (S282): an AA-1016 shared.tenant_ai_budget row with monthly_usd empty means "follow the plan", not
+-- "unlimited" (unlimited only for kind internal).
 --
 -- What.
 --   1. CREATE OR REPLACE VIEW shared.v_tenant_entitlement_resolved, same columns as 361:
---      (a) live_sub as 361; live_addon = shared.tenant_addon rows trialing / active, started, not ended;
+--      (a) live_sub as 361;
 --      (b) factor = shared.v_setting_billing_effective('cis.billing.trial_ai_budget_pct') / 100 (one evaluation);
 --      (c) addon_ai per tenant = sum over live crm / tripplanner subscriptions of their plan's
---          ai.budget_addon_usd_monthly (x factor while trialing) + sum over live add-ons of the plan's
---          ai.budget_addon_usd_monthly x quantity (x factor while trialing);
+--          ai.budget_addon_usd_monthly (x factor while that subscription trials);
 --      (d) the content plan's ai.budget_usd_monthly candidate (rank 3) = round(limit x factor-if-trialing +
 --          addon_ai, 2); NULL (internal: no limit) stays NULL;
---      (e) rank 3 candidates from live add-ons (source plan or trial, plan_key the add-on plan, expires_at = the
---          trial end while trialing else ends_at), never a platform key (ai.*, policy.*); served only where the
---          feature's product is live;
---      (f) rank 2 (shared.tenant_ai_budget) only when monthly_usd is set or the tenant is kind internal;
---      (g) ORDER BY rank, a product plan before an add-on, plan_key (361 + 437).
+--      (e) rank 2 (shared.tenant_ai_budget) only when monthly_usd is set or the tenant is kind internal;
+--      (f) ORDER BY rank, plan_key (as 361).
 --      Overrides (rank 1) and AA-1016 amounts (rank 2) stay absolute (decision 4: the trial share never applies to
 --      them).
---   2. shared.tenant_entitlement_sync_due() also re-syncs tenants with a trialing subscription or add-on (a changed
---      trial share reaches the materialisation within the hourly tenant_account_tick) and tenants with an add-on
---      whose end has passed (an AI pack that ended). The sync is diff-based: no change, no event.
---   3. Re-sync every tenant (actor migration:437). Dev today: no plan has ai.budget_addon_usd_monthly and no add-on
---      exists, so only a trialing content subscription changes (its budget halves) and an AA-1016 row with an empty
---      amount of a non-internal tenant now follows the plan.
+--   2. shared.tenant_entitlement_sync_due() also re-syncs tenants with a trialing subscription (a changed trial share
+--      reaches the materialisation within the hourly tenant_account_tick). The sync is diff-based: no change, no event.
+--   3. Re-sync every tenant (actor migration:437). Dev today: no plan has ai.budget_addon_usd_monthly yet, so only a
+--      trialing content subscription changes (its budget halves) and an AA-1016 row with an empty amount of a
+--      non-internal tenant now follows the plan.
 --   4. Guards as 361 (materialisation = resolver; no platform key without a live content subscription; no platform
---      key from a non-content plan) + no add-on flag of a product the tenant does not hold.
+--      key from a non-content plan) + ai.budget_addon_usd_monthly never served as its own entitlement.
 --   5. Register 437.
 --
 -- Behaviour. The AI budget read by shared/cost_guard.py (shared.tenant_entitlement), catalog.v_tenant_ai_budget_v1
@@ -71,35 +65,21 @@ WITH live_sub AS (
       FROM shared.tenant_subscription s
      WHERE s.status IN ('trialing', 'active', 'past_due')
 ),
-live_addon AS (
-    SELECT a.tenant_id, a.plan_key, a.status, a.trial_ends_at, a.ends_at, a.quantity
-      FROM shared.tenant_addon a
-     WHERE a.status IN ('trialing', 'active') AND a.starts_at <= now() AND (a.ends_at IS NULL OR a.ends_at > now())
-),
 factor AS (
-    -- 437: the AI share a trialing subscription or add-on gets (cis.billing.trial_ai_budget_pct, CIS 436)
+    -- 437: the AI share a trialing subscription gets (cis.billing.trial_ai_budget_pct, CIS 436)
     SELECT coalesce(((SELECT v.value FROM shared.v_setting_billing_effective v
                       WHERE v.key = 'cis.billing.trial_ai_budget_pct') #>> '{}')::numeric, 100) / 100
            AS trial
 ),
 addon_ai AS (
-    SELECT x.tenant_id, sum(x.amount) AS amount
-      FROM (SELECT ls.tenant_id,
-                   pf.limit_value * CASE WHEN ls.status = 'trialing' THEN f.trial ELSE 1 END AS amount
-              FROM live_sub ls
-              JOIN shared.plan_feature pf ON pf.plan_key = ls.plan_key
-                                         AND pf.feature_key = 'ai.budget_addon_usd_monthly'
-             CROSS JOIN factor f
-             WHERE ls.product <> 'content'
-            UNION ALL
-            SELECT la.tenant_id,
-                   pf.limit_value * la.quantity * CASE WHEN la.status = 'trialing' THEN f.trial ELSE 1 END
-              FROM live_addon la
-              JOIN shared.plan_feature pf ON pf.plan_key = la.plan_key
-                                         AND pf.feature_key = 'ai.budget_addon_usd_monthly'
-             CROSS JOIN factor f) x
-     WHERE x.amount IS NOT NULL
-     GROUP BY x.tenant_id
+    SELECT ls.tenant_id,
+           sum(pf.limit_value * CASE WHEN ls.status = 'trialing' THEN f.trial ELSE 1 END) AS amount
+      FROM live_sub ls
+      JOIN shared.plan_feature pf ON pf.plan_key = ls.plan_key
+                                 AND pf.feature_key = 'ai.budget_addon_usd_monthly'
+     CROSS JOIN factor f
+     WHERE ls.product <> 'content' AND pf.limit_value IS NOT NULL
+     GROUP BY ls.tenant_id
 ),
 candidate AS (
     -- 356: the limiter's per-tenant RPM (shared.tenants.rate_limit_rpm) when it differs from the live content plan.
@@ -126,7 +106,7 @@ candidate AS (
     UNION ALL
     SELECT ls.tenant_id, pf.feature_key,
            CASE WHEN f.value_kind = 'seats' THEN coalesce(ls.seats::numeric(14,2), pf.limit_value)
-                -- 437: the content plan's AI budget x the trial share + the add-on increments
+                -- 437: the content plan's AI budget x the trial share + the crm / tripplanner increments
                 WHEN pf.feature_key = 'ai.budget_usd_monthly' AND ls.product = 'content'
                 THEN round(pf.limit_value * CASE WHEN ls.status = 'trialing' THEN fx.trial ELSE 1 END
                            + coalesce(ai.amount, 0), 2)::numeric(14,2)
@@ -142,32 +122,17 @@ candidate AS (
       JOIN shared.entitlement_feature f ON f.feature_key = pf.feature_key
      CROSS JOIN factor fx
       LEFT JOIN addon_ai ai ON ai.tenant_id = ls.tenant_id
-    UNION ALL
-    -- 437: what a live add-on grants (its flags and limits; its AI increment is summed above)
-    SELECT la.tenant_id, pf.feature_key, pf.limit_value, true,
-           CASE WHEN la.status = 'trialing' THEN 'trial' ELSE 'plan' END,
-           la.plan_key,
-           CASE WHEN la.status = 'trialing' THEN least(la.trial_ends_at, la.ends_at) ELSE la.ends_at END,
-           3,
-           'addon'::text
-      FROM live_addon la
-      JOIN shared.plan_feature pf ON pf.plan_key = la.plan_key
-      JOIN shared.entitlement_feature af ON af.feature_key = pf.feature_key
-     -- never a platform key (ai.*, policy.*: the AI increment is summed above, the rest comes from the content plan)
-     WHERE af.product <> 'platform'
 ),
 ranked AS (
     SELECT c.tenant_id, c.feature_key, c.limit_value, c.enabled, c.source, c.plan_key, c.expires_at,
            f.product, f.value_kind, f.unit,
-           row_number() OVER (PARTITION BY c.tenant_id, c.feature_key
-                              -- 437: a product plan's grant before an add-on's (no trial end on an included flag)
-                              ORDER BY c.rank, c.sub_product IS NOT DISTINCT FROM 'addon', c.plan_key) AS rn
+           row_number() OVER (PARTITION BY c.tenant_id, c.feature_key ORDER BY c.rank, c.plan_key) AS rn
       FROM candidate c
       JOIN shared.entitlement_feature f ON f.feature_key = c.feature_key
      WHERE f.retired_at IS NULL
        -- a candidate that is not a product plan's own needs a live subscription of the key's product; a platform
-       -- key's product is content (356); 437: an add-on's grant too
-       AND ((c.rank = 3 AND c.sub_product <> 'addon')
+       -- key's product is content (356)
+       AND (c.rank = 3
             OR EXISTS (SELECT 1 FROM live_sub ls
                         WHERE ls.tenant_id = c.tenant_id
                           AND ls.product = CASE WHEN f.product = 'platform' THEN 'content' ELSE f.product END))
@@ -182,10 +147,10 @@ SELECT r.tenant_id, r.feature_key, r.product, r.value_kind, r.unit,
 COMMENT ON VIEW shared.v_tenant_entitlement_resolved IS
     'AA-1028 R1, AA-1116 (CIS 353, 356, 361, 437): the resolver, computed live: shared.tenants.rate_limit_rpm when it '
     'differs from the content plan > override (unexpired) > shared.tenant_ai_budget with an amount (or any row of an '
-    'internal tenant) as the ai.budget_usd_monthly override > the plan of a live subscription or add-on (437: the '
+    'internal tenant) as the ai.budget_usd_monthly override > the plan of a live subscription (437: the '
     'content plan''s ai.budget_usd_monthly x cis.billing.trial_ai_budget_pct while trialing + the '
-    'ai.budget_addon_usd_monthly of live crm / tripplanner plans and add-ons x quantity, each x the trial share while '
-    'trialing; an add-on''s grant only where its product is live). A non-plan candidate needs a live subscription of '
+    'ai.budget_addon_usd_monthly of live crm / tripplanner plans, each x the trial share while that subscription '
+    'trials). A non-plan candidate needs a live subscription of '
     'its product (content for platform keys). Internal: the contract view is shared.v_tenant_entitlement_v1 (355).';
 
 -- ── 2. Hourly re-sync ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -200,14 +165,8 @@ BEGIN
     FOR t IN SELECT e.tenant_id FROM shared.tenant_entitlement e
               WHERE e.expires_at IS NOT NULL AND e.expires_at <= now()
              UNION
-             -- 437: a trialing subscription or add-on follows a changed trial share
+             -- 437: a trialing subscription follows a changed trial share
              SELECT s.tenant_id FROM shared.tenant_subscription s WHERE s.status = 'trialing'
-             UNION
-             SELECT a.tenant_id FROM shared.tenant_addon a WHERE a.status = 'trialing'
-             UNION
-             -- 437: an add-on that ended (an AI pack for one month) leaves the AI budget sum
-             SELECT a.tenant_id FROM shared.tenant_addon a
-              WHERE a.status <> 'canceled' AND a.ends_at IS NOT NULL AND a.ends_at <= now()
              ORDER BY 1
     LOOP
         n := n + shared.tenant_entitlement_sync(t);
@@ -259,24 +218,14 @@ BEGIN
     IF n > 0 THEN
         RAISE EXCEPTION 'migration 437: % platform entitlement(s) served from a non-content plan', n;
     END IF;
-    SELECT count(*) INTO n
-      FROM shared.v_tenant_entitlement_resolved r
-      JOIN shared.plan p ON p.plan_key = r.plan_key AND p.product = 'addon'
-     WHERE r.product <> 'platform'
-       AND NOT EXISTS (SELECT 1 FROM shared.tenant_subscription s
-                        WHERE s.tenant_id = r.tenant_id AND s.product = r.product
-                          AND s.status IN ('trialing', 'active', 'past_due'));
-    IF n > 0 THEN
-        RAISE EXCEPTION 'migration 437: % add-on grant(s) of a product the tenant does not hold', n;
-    END IF;
     IF EXISTS (SELECT 1 FROM shared.v_tenant_entitlement_resolved WHERE feature_key = 'ai.budget_addon_usd_monthly') THEN
         RAISE EXCEPTION 'migration 437: ai.budget_addon_usd_monthly is served as its own entitlement';
     END IF;
 END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('437', now(), 'AA-1116: resolver sums the AI budget (content x trial share + add-on increments), add-on '
-                      'grants, AA-1016 empty amount follows the plan; hourly re-sync of trials and ended add-ons')
+VALUES ('437', now(), 'AA-1116: resolver sums the AI budget (content x trial share + crm / tripplanner increments), '
+                      'AA-1016 empty amount follows the plan; hourly re-sync of trials')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

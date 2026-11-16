@@ -3,60 +3,56 @@
 -- amendment "option B" (b2-b4, b18) and the S282 pricing decisions.
 --
 -- Why. The S282 pricing gap audit found the option B values with nowhere to live: no VND price list, no minimum seats,
--- no Enterprise floor, overage rates only in the legacy shared.membership_plans (no admin writer), no add-on product
--- for the custom-domain add-on and the AI pack, no billing interval / agreed price / price lock on a subscription, no
--- per-agency billing currency or founding-offer dates, and a pilot that must end on a date (the tech lead wants "free
+-- no Enterprise floor, overage rates only in the legacy shared.membership_plans (no admin writer), no AI increment for
+-- the TripPlanner plans, no billing interval / agreed price / price lock on a subscription, no per-agency billing
+-- currency or founding-offer dates, and a pilot that must end on a date (the tech lead wants "free
 -- until go-live").
 --
 -- What (storage only; the readers come with migrations 437-439 and the AA-1116 code PRs):
 --   1. shared.plan: + price_vnd_monthly numeric(14,0), price_extra_seat_vnd numeric(14,0), seats_min integer (>= 1,
 --      NULL = no minimum; billed quantity = max(seats, seats_min)), price_floor_usd_monthly numeric(10,2) (Enterprise
 --      contract floor), overage_usd_per_tour numeric(10,4), overage_usd_per_1k_calls numeric(10,4), price_set_at date
---      (the day the list price was last set; the review badge counts from it). Product CHECK + 'addon' (plan_key
---      addon.<name>), price_unit CHECK + 'unit'. Backfill: the content plans get today's overage rates of
---      shared.membership_plans by tier (so they become editable on the Plans page; nothing else changes).
+--      (the day the list price was last set; the review badge counts from it). Backfill: the content plans get today's
+--      overage rates of shared.membership_plans by tier (so they become editable on the Plans page; nothing else
+--      changes). The product and price-unit CHECKs stay as 353: there is no retail add-on product (S282 decision 14:
+--      no custom-domain add-on, no AI pack; the custom domain is a TripPlanner Pro feature and an AI top-up is a
+--      per-tenant override).
 --   2. shared.entitlement_feature: + ai.budget_addon_usd_monthly (platform, limit, usd_month): what a crm /
---      tripplanner plan or an add-on (the AI pack, per unit) ADDS to the tenant's monthly AI budget. plan_feature_guard
---      lets an add-on plan list a feature of any product (addon.custom_domain gives tp.custom_domain and
---      crm.custom_domain; the flag takes effect only where that product is live, resolver 437).
---   3. shared.tenant_addon (new): the add-ons a tenant holds (custom domain, AI pack x quantity), one live row per
---      tenant and add-on plan; status trialing | active | canceled (an attach starts trialing, decision 3); an optional
---      end (an AI pack for one month). Needs a live content subscription, like the crm / tripplanner add-ons. Every
---      change re-syncs the tenant's entitlements (353 trigger function). RLS off and cis_app grants like
---      shared.tenant_subscription (the tenant-control-plane rule a allowlist); FK cascade from shared.tenants.
---   4. shared.tenant_subscription: + billing_interval month | year (NOT NULL DEFAULT 'month'), agreed_price_monthly
+--      tripplanner plan ADDS to the tenant's monthly AI budget (TripPlanner Hosted +10, Pro +25 USD in option B).
+--   3. shared.tenant_subscription: + billing_interval month | year (NOT NULL DEFAULT 'month'), agreed_price_monthly
 --      numeric(14,2) + agreed_currency USD | VND (both or neither), agreed_until date (needs an agreed price; NULL with
---      a price = a contract price without end). The price lock of option B is an agreed price with agreed_until.
---   5. shared.tenants: + billing_currency USD | VND (NOT NULL DEFAULT 'USD'), founding_offer_from / founding_offer_until
+--      a price = a contract price without end). The agreed price is per billed unit, like the list price it replaces:
+--      per seat on a per-seat plan (line = agreed x max(seats, seats_min)), the plan fee on any other plan (extra seats
+--      above seats_included still at the extra-seat list price). The price lock of option B is an agreed price with
+--      agreed_until.
+--   4. shared.tenants: + billing_currency USD | VND (NOT NULL DEFAULT 'USD'), founding_offer_from / founding_offer_until
 --      (both or neither, until >= from). tenants_pilot_check relaxed: a pilot may have no end date ("until go-live",
 --      decision 8); a non-pilot still has none and a pilot is still an agency.
---   6. shared.v_setting_billing_effective (key, value): the platform value in force of every cis.billing.* registry key
+--   5. shared.v_setting_billing_effective (key, value): the platform value in force of every cis.billing.* registry key
 --      (the newest approved platform row with effective_from <= now(), else the definition default), for SQL readers
 --      (resolver 437, catalog views 438). A view owned by cis_owner (it reads the FORCE RLS settings tables as their
 --      owner); SELECT to cis_app and catalog_owner.
---   7. Guards and register 435.
+--   6. Guards and register 435.
 --
--- Behaviour on apply. None for running code: new columns are NULL / defaulted (USD, month), the CHECKs only widen
--- (product, price unit, pilot end), the new table is empty and nothing reads the settings view yet. The overage backfill
+-- Behaviour on apply. None for running code: new columns are NULL / defaulted (USD, month), the pilot CHECK only
+-- widens (a pilot without an end date) and nothing reads the settings view yet. The overage backfill
 -- copies values (4 / 3 / 2 USD a tour, 0.80 / 0.60 / 0.40 USD per 1k calls on Dev) that only 439 starts to read.
 --
--- Class: CONTRACT (root ADR 0017 decision 3; no migrate directive line): ALTERs existing tables, replaces a CHECK and
--- a trigger function, backfills rows. MIG-4: the AA-1116 migration-only PR (435-439, one batch), applied on Dev by
--- Infra Migration Apply when every job table is idle (ADR 0017a), then the code PRs. DM-6.1: billing_currency and the
--- founding dates are commercial terms, not personal data; DM-7.1: shared.tenant_addon gets its retention row in the
--- root data-management standard (same as shared.tenant_subscription: the life of the tenant, erased with it).
+-- Class: CONTRACT (root ADR 0017 decision 3; no migrate directive line): ALTERs existing tables, replaces a CHECK,
+-- backfills rows. MIG-4: the AA-1116 migration-only PR (435-439, one batch), applied on Dev by Infra Migration Apply
+-- when every job table is idle (ADR 0017a), then the code PRs. DM-6.1: billing_currency and the founding dates are
+-- commercial terms, not personal data; DM-7.1: no new table.
 --
 -- Number. 433 is the newest CIS migration on main (16/11/2026); 434 is taken by another S282 lane (AA-1120). If the
 -- owner main max + 1 differs at merge, renumber 435-439 (git grep '435_' and '435' in api/migrations, tests,
 -- shared/settings/compiled_defaults.json and docs/implementation-notes/AA-1116.md).
 --
--- Locks. ALTER TABLE ADD COLUMN with constant defaults (no rewrite on PG 15), CHECK swaps on four small tables
--- (plan ~10 rows, tenants ~11, tenant_subscription ~31), one CREATE TABLE. lock_timeout 5s, statement_timeout 2min.
+-- Locks. ALTER TABLE ADD COLUMN with constant defaults (no rewrite on PG 15), CHECK swaps on three small tables
+-- (plan ~10 rows, tenants ~11, tenant_subscription ~31). lock_timeout 5s, statement_timeout 2min.
 -- Idempotent (IF NOT EXISTS, DROP CONSTRAINT IF EXISTS + ADD, CREATE OR REPLACE, ON CONFLICT, backfill only where
 -- NULL), one transaction, self-registering.
 --
--- Rollback (a NEW forward migration, after the AA-1116 code is reverted): DROP TABLE shared.tenant_addon; restate the
--- 353 product / unit CHECKs and plan_feature_guard (after deleting addon plans), the 354 pilot CHECK (after giving
+-- Rollback (a NEW forward migration, after the AA-1116 code is reverted): restate the 354 pilot CHECK (after giving
 -- every pilot an end date); DROP the added columns and the settings view; DELETE the ai.budget_addon_usd_monthly feature.
 --
 -- X1. One BEGIN … COMMIT block, no role switch. DB Migrate runs cis/ files as cis_owner, the owner of shared.
@@ -95,15 +91,8 @@ ALTER TABLE shared.plan ADD CONSTRAINT plan_option_b_check
            AND (overage_usd_per_tour IS NULL OR overage_usd_per_tour >= 0)
            AND (overage_usd_per_1k_calls IS NULL OR overage_usd_per_1k_calls >= 0));
 
-ALTER TABLE shared.plan DROP CONSTRAINT IF EXISTS plan_product_check;
-ALTER TABLE shared.plan ADD CONSTRAINT plan_product_check
-    CHECK (product IN ('content', 'crm', 'tripplanner', 'addon'));
-ALTER TABLE shared.plan DROP CONSTRAINT IF EXISTS plan_price_unit_check;
-ALTER TABLE shared.plan ADD CONSTRAINT plan_price_unit_check
-    CHECK (price_unit IN ('tenant', 'seat', 'site', 'unit'));
-
 COMMENT ON COLUMN shared.plan.price_vnd_monthly IS
-    'AA-1116 (435): the VND list price a month (per seat for a per-seat plan, per unit for an add-on); NULL = not '
+    'AA-1116 (435): the VND list price a month (per seat for a per-seat plan); NULL = not '
     'priced in VND. Reviewed every cis.billing.vnd_price_review_months against cis.billing.fx_vnd_per_usd.';
 COMMENT ON COLUMN shared.plan.seats_min IS
     'AA-1116 (435): the fewest seats billed (quantity = max(seats, seats_min)); provision raises a smaller request to '
@@ -132,126 +121,14 @@ BEGIN
     END IF;
 END $$;
 
--- ── 2. Feature catalogue and the plan_feature guard ─────────────────────────────────────────────────────────────────
+-- ── 2. Feature catalogue ─────────────────────────────────────────────────────────────────────────────────────────────
 INSERT INTO shared.entitlement_feature (feature_key, product, value_kind, unit, description)
 VALUES ('ai.budget_addon_usd_monthly', 'platform', 'limit', 'usd_month',
-        'USD a month this plan adds to the tenant''s AI budget (crm / tripplanner add-on plans, and per unit on an '
-        'add-on such as the AI pack); never on a content plan. The resolver adds it to the content plan''s '
-        'ai.budget_usd_monthly (AA-1116, CIS 437).')
+        'USD a month this plan adds to the tenant''s AI budget (crm / tripplanner plans); never on a content plan. '
+        'The resolver adds it to the content plan''s ai.budget_usd_monthly (AA-1116, CIS 437).')
 ON CONFLICT (feature_key) DO NOTHING;
 
--- 353's guard, with one change: an add-on plan (product addon) may list a feature of any product (the custom-domain
--- add-on gives tp.custom_domain and crm.custom_domain); the resolver serves it only where that product is live.
-CREATE OR REPLACE FUNCTION shared.plan_feature_guard() RETURNS trigger
-    LANGUAGE plpgsql
-    SET search_path = pg_catalog, shared
-AS $$
-DECLARE
-    f_product text;
-    f_kind    text;
-    p_product text;
-BEGIN
-    SELECT f.product, f.value_kind INTO f_product, f_kind FROM shared.entitlement_feature f
-     WHERE f.feature_key = NEW.feature_key;
-    SELECT p.product INTO p_product FROM shared.plan p WHERE p.plan_key = NEW.plan_key;
-    IF f_product IS NULL OR p_product IS NULL THEN
-        RETURN NEW;     -- the FKs report the missing key
-    END IF;
-    IF f_product <> 'platform' AND f_product <> p_product AND p_product <> 'addon' THEN
-        RAISE EXCEPTION 'plan_feature: % is a % feature, plan % is %', NEW.feature_key, f_product, NEW.plan_key,
-                        p_product USING ERRCODE = 'check_violation';
-    END IF;
-    IF f_kind = 'flag' AND NEW.limit_value IS NOT NULL THEN
-        RAISE EXCEPTION 'plan_feature: % is a flag and takes no limit', NEW.feature_key USING ERRCODE = 'check_violation';
-    END IF;
-    RETURN NEW;
-END
-$$;
-
--- ── 3. shared.tenant_addon ──────────────────────────────────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS shared.tenant_addon (
-    addon_id      uuid NOT NULL DEFAULT gen_random_uuid(),
-    tenant_id     uuid NOT NULL,
-    plan_key      text NOT NULL,
-    product       text NOT NULL DEFAULT 'addon',
-    quantity      integer NOT NULL DEFAULT 1,
-    status        text NOT NULL,
-    trial_ends_at timestamp with time zone,
-    starts_at     timestamp with time zone NOT NULL DEFAULT now(),
-    ends_at       timestamp with time zone,
-    canceled_at   timestamp with time zone,
-    reason        text NOT NULL,
-    created_by    text NOT NULL,
-    created_at    timestamp with time zone NOT NULL DEFAULT now(),
-    updated_at    timestamp with time zone NOT NULL DEFAULT now(),
-    updated_by    text NOT NULL,
-    CONSTRAINT tenant_addon_pkey PRIMARY KEY (addon_id),
-    CONSTRAINT tenant_addon_tenant_id_fkey FOREIGN KEY (tenant_id)
-        REFERENCES shared.tenants (tenant_id) ON DELETE CASCADE,
-    CONSTRAINT tenant_addon_plan_fkey FOREIGN KEY (plan_key, product) REFERENCES shared.plan (plan_key, product),
-    CONSTRAINT tenant_addon_product_check CHECK (product = 'addon'),
-    CONSTRAINT tenant_addon_quantity_check CHECK (quantity BETWEEN 1 AND 1000),
-    CONSTRAINT tenant_addon_status_check CHECK (status IN ('trialing', 'active', 'canceled')),
-    CONSTRAINT tenant_addon_trial_check CHECK (status <> 'trialing' OR trial_ends_at IS NOT NULL),
-    CONSTRAINT tenant_addon_canceled_check CHECK ((status = 'canceled') = (canceled_at IS NOT NULL)),
-    CONSTRAINT tenant_addon_window_check CHECK (ends_at IS NULL OR ends_at > starts_at),
-    CONSTRAINT tenant_addon_text_check
-        CHECK (char_length(btrim(reason)) BETWEEN 3 AND 500 AND char_length(created_by) BETWEEN 1 AND 64
-               AND char_length(updated_by) BETWEEN 1 AND 64)
-);
--- One live row per tenant and add-on plan: more of the same add-on is a larger quantity.
-CREATE UNIQUE INDEX IF NOT EXISTS tenant_addon_live_key
-    ON shared.tenant_addon (tenant_id, plan_key) WHERE status <> 'canceled';
-CREATE INDEX IF NOT EXISTS tenant_addon_plan_key_idx ON shared.tenant_addon (plan_key);
-COMMENT ON TABLE shared.tenant_addon IS
-    'AA-1116 (CIS 435, option B): the add-ons a tenant holds beyond its product subscriptions (addon.* plans: the '
-    'custom domain, the AI pack x quantity). Live = trialing or active, started, not ended. Needs a live content '
-    'subscription. Every change re-syncs shared.tenant_entitlement. Admin writes only (Tenant 360 > Add-ons), audited.';
-COMMENT ON COLUMN shared.tenant_addon.ends_at IS
-    'Optional end (an AI pack for one month); NULL = until canceled. The hourly tenant_account_tick re-syncs a tenant '
-    'whose add-on ended (CIS 437 tenant_entitlement_sync_due).';
-
-CREATE OR REPLACE FUNCTION shared.tenant_addon_guard() RETURNS trigger
-    LANGUAGE plpgsql
-    SET search_path = pg_catalog, shared
-AS $$
-BEGIN
-    IF TG_OP = 'UPDATE' AND (NEW.tenant_id IS DISTINCT FROM OLD.tenant_id OR NEW.plan_key IS DISTINCT FROM OLD.plan_key) THEN
-        RAISE EXCEPTION 'tenant_addon: tenant_id and plan_key never change' USING ERRCODE = 'restrict_violation';
-    END IF;
-    IF TG_OP = 'INSERT'
-       AND EXISTS (SELECT 1 FROM shared.plan p WHERE p.plan_key = NEW.plan_key AND p.retired_at IS NOT NULL) THEN
-        RAISE EXCEPTION 'tenant_addon: plan % is retired', NEW.plan_key USING ERRCODE = 'check_violation';
-    END IF;
-    IF NEW.status <> 'canceled'
-       AND NOT EXISTS (SELECT 1 FROM shared.tenant_subscription c
-                        WHERE c.tenant_id = NEW.tenant_id AND c.product = 'content'
-                          AND c.status IN ('trialing', 'active', 'past_due')) THEN
-        RAISE EXCEPTION 'tenant_addon: the add-on % needs a live content subscription', NEW.plan_key
-            USING ERRCODE = 'check_violation';
-    END IF;
-    IF TG_OP = 'UPDATE' THEN
-        NEW.updated_at := now();
-    END IF;
-    RETURN NEW;
-END
-$$;
-
-DROP TRIGGER IF EXISTS tenant_addon_guard ON shared.tenant_addon;
-CREATE TRIGGER tenant_addon_guard
-    BEFORE INSERT OR UPDATE ON shared.tenant_addon
-    FOR EACH ROW EXECUTE FUNCTION shared.tenant_addon_guard();
--- 353's row re-sync (OLD / NEW tenant_id; an offboarded tenant's delete emits nothing).
-DROP TRIGGER IF EXISTS tenant_addon_resync ON shared.tenant_addon;
-CREATE TRIGGER tenant_addon_resync
-    AFTER INSERT OR UPDATE OR DELETE ON shared.tenant_addon
-    FOR EACH ROW EXECUTE FUNCTION shared.tenant_entitlement_resync_row();
-
-REVOKE ALL ON shared.tenant_addon FROM PUBLIC;
-GRANT SELECT, INSERT, UPDATE, DELETE ON shared.tenant_addon TO cis_app;
-REVOKE ALL ON FUNCTION shared.tenant_addon_guard() FROM PUBLIC;
-
--- ── 4. shared.tenant_subscription ───────────────────────────────────────────────────────────────────────────────────
+-- ── 3. shared.tenant_subscription ───────────────────────────────────────────────────────────────────────────────────
 ALTER TABLE shared.tenant_subscription
     ADD COLUMN IF NOT EXISTS billing_interval     text NOT NULL DEFAULT 'month',
     ADD COLUMN IF NOT EXISTS agreed_price_monthly numeric(14,2),
@@ -268,10 +145,12 @@ COMMENT ON COLUMN shared.tenant_subscription.billing_interval IS
     'AA-1116 (435): month or year (annual = cis.billing.annual_paid_months of 12 paid up front; Booking flags it for a '
     'manual invoice, decision 7).';
 COMMENT ON COLUMN shared.tenant_subscription.agreed_price_monthly IS
-    'AA-1116 (435): the monthly price agreed with this agency in agreed_currency (Enterprise contract, price lock); '
-    'wins over the list price until agreed_until (NULL = no end). NULL = the list price.';
+    'AA-1116 (435): the monthly price agreed with this agency in agreed_currency (Enterprise contract, price lock), '
+    'per billed unit like the list price it replaces: per seat on a per-seat plan (line = agreed x max(seats, '
+    'seats_min)), the plan fee on any other plan (extra seats above seats_included at the extra-seat list price). '
+    'Wins over the list price until agreed_until (NULL = no end). NULL = the list price.';
 
--- ── 5. shared.tenants ───────────────────────────────────────────────────────────────────────────────────────────────
+-- ── 4. shared.tenants ───────────────────────────────────────────────────────────────────────────────────────────────
 ALTER TABLE shared.tenants
     ADD COLUMN IF NOT EXISTS billing_currency     character(3) NOT NULL DEFAULT 'USD',
     ADD COLUMN IF NOT EXISTS founding_offer_from  date,
@@ -293,7 +172,7 @@ COMMENT ON COLUMN shared.tenants.founding_offer_from IS
     'AA-1116 (435): start of the founding-agency offer (cis.billing.founding_discount_pct for cis.billing.'
     'founding_months, at most cis.billing.founding_max_agencies agencies); NULL = none.';
 
--- ── 6. shared.v_setting_billing_effective ─────────────────────────────────────────────────────────────────────────
+-- ── 5. shared.v_setting_billing_effective ─────────────────────────────────────────────────────────────────────────
 -- A view, not a function: a view reads its tables as its owner (cis_owner, which the FORCE RLS settings tables let read
 -- every key), while a function would run as its caller (booking, tripplanner through a catalog view) and a SECURITY
 -- DEFINER routine in shared is refused by MIG-6 (CIS 245).
@@ -315,17 +194,11 @@ COMMENT ON VIEW shared.v_setting_billing_effective IS
 REVOKE ALL ON shared.v_setting_billing_effective FROM PUBLIC;
 GRANT SELECT ON shared.v_setting_billing_effective TO cis_app, catalog_owner;
 
--- ── 7. Guards ───────────────────────────────────────────────────────────────────────────────────────────────────────
+-- ── 6. Guards ───────────────────────────────────────────────────────────────────────────────────────────────────────
 DO $$
 DECLARE
     n bigint;
 BEGIN
-    IF to_regclass('shared.tenant_addon') IS NULL THEN
-        RAISE EXCEPTION 'migration 435: shared.tenant_addon missing';
-    END IF;
-    IF NOT pg_catalog.has_table_privilege('cis_app', 'shared.tenant_addon', 'SELECT, INSERT, UPDATE, DELETE') THEN
-        RAISE EXCEPTION 'migration 435: cis_app cannot write shared.tenant_addon';
-    END IF;
     SELECT count(*) INTO n FROM information_schema.columns
      WHERE table_schema = 'shared'
        AND (table_name, column_name) IN (('plan', 'price_vnd_monthly'), ('plan', 'seats_min'),
@@ -354,9 +227,9 @@ BEGIN
 END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('435', now(), 'AA-1116: option B pricing storage (plan VND / seats_min / floor / overage, addon product + '
-                      'shared.tenant_addon, subscription interval / agreed price, tenant billing currency / founding '
-                      'dates, pilot without end, shared.v_setting_billing_effective)')
+VALUES ('435', now(), 'AA-1116: option B pricing storage (plan VND / seats_min / floor / overage, AI increment '
+                      'feature, subscription interval / agreed price, tenant billing currency / founding dates, pilot '
+                      'without end, shared.v_setting_billing_effective)')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

@@ -4,30 +4,29 @@
 -- Why. Booking drafts the monthly software invoice from catalog.v_tenant_billing_v1 (377) and TripPlanner enforces its
 -- AI budget from catalog.v_tenant_ai_budget_v1 (390) and serves the site from catalog.v_tenant_tripplanner_v1 (429).
 -- Option B needs Booking to see the agency's currency, the VND list, the seat minimum, an agreed / locked price, the
--- billing interval, the trial end, the free pilot and the add-ons (custom domain, AI pack x quantity); and TripPlanner
+-- billing interval, the trial end and the free pilot; and TripPlanner
 -- to see its AI sessions a month (tp.ai_sessions) and the alert / stop shares (80 / 100 % from the settings registry,
 -- not a literal 100).
 --
 -- What:
 --   1. catalog_owner column SELECTs: shared.tenants (billing_currency, is_pilot), shared.tenant_subscription
 --      (billing_interval, agreed_price_monthly, agreed_currency, agreed_until, trial_ends_at), shared.plan
---      (price_vnd_monthly, price_extra_seat_vnd, seats_min), shared.tenant_addon (tenant_id, plan_key, product,
---      quantity, status, trial_ends_at, starts_at, ends_at), shared.tenant_ai_budget (tenant_id, alert_pct,
+--      (price_vnd_monthly, price_extra_seat_vnd, seats_min), shared.tenant_ai_budget (tenant_id, alert_pct,
 --      approval_pct, hard_stop).
 --   2. catalog.v_tenant_billing_v1 (Booking only) appends: billing_currency, price_vnd_monthly, price_extra_seat_vnd,
 --      seats_min, agreed_price_monthly, agreed_currency, agreed_until, billing_interval, trial_ends_at, is_pilot,
---      bill_free (is_pilot AND cis.billing.pilot_free), quantity (add-on rows; NULL on a subscription row), ends_at
---      (add-on rows); and one row per add-on of shared.tenant_addon (product 'addon', subscription_status = the
---      add-on status). A reader that knows only the 377 columns keeps its rows; an add-on row has product 'addon'.
+--      bill_free (is_pilot AND cis.billing.pilot_free). Same rows as 377 (one per tenant and subscription; no retail
+--      add-on rows: S282 decision 14), so a reader that knows only the 377 columns keeps its rows unchanged.
+--      agreed_price_monthly is the agreed price per billed unit (per seat on a per-seat plan, as price_usd_monthly):
+--      the line amount is agreed_price_monthly x max(seats, seats_min) for a seat plan (435 column comment).
 --   3. catalog.v_tenant_ai_budget_v1 (TripPlanner only) appends alert_pct, approval_pct, hard_stop (the tenant's
 --      AA-1016 row, else cis.billing.ai_alert_pct_default / ai_approval_pct_default / ai_hard_stop_default).
 --   4. catalog.v_tenant_tripplanner_v1 (TripPlanner only) appends ai_sessions_monthly (resolved tp.ai_sessions,
 --      NULL = no limit).
 --   5. Register 438.
 --
--- Behaviour on apply. Same rows plus add-on rows in the billing view (none on Dev: no add-on exists yet); the new
--- columns are NULL / defaulted until staff enter values. Booking's draft code reads columns by name and treats an
--- unknown product as a line of its plan (the AA-1116 Booking lane adds the new columns); TripPlanner reads the new
+-- Behaviour on apply. Same rows in every view; the new columns are NULL / defaulted until staff enter values.
+-- Booking's draft code reads columns by name (the AA-1116 Booking lane adds the new columns); TripPlanner reads the new
 -- columns only after its AA-1116 lane.
 --
 -- Class: CONTRACT (root ADR 0017 decision 3; no migrate directive line): column GRANTs on existing tables, replaced
@@ -71,14 +70,12 @@ GRANT SELECT (billing_currency, is_pilot) ON shared.tenants TO catalog_owner;
 GRANT SELECT (billing_interval, agreed_price_monthly, agreed_currency, agreed_until, trial_ends_at)
     ON shared.tenant_subscription TO catalog_owner;
 GRANT SELECT (price_vnd_monthly, price_extra_seat_vnd, seats_min) ON shared.plan TO catalog_owner;
-GRANT SELECT (tenant_id, plan_key, product, quantity, status, trial_ends_at, starts_at, ends_at)
-    ON shared.tenant_addon TO catalog_owner;
 GRANT SELECT (tenant_id, alert_pct, approval_pct, hard_stop) ON shared.tenant_ai_budget TO catalog_owner;
 
 GRANT CREATE ON SCHEMA catalog TO catalog_owner;
 SET LOCAL ROLE catalog_owner;
 
--- ── 2. The Booking billing view: 377's columns, then the option B terms; add-on rows appended ───────────────────
+-- ── 2. The Booking billing view: 377's columns, then the option B terms ─────────────────────────────────────────
 CREATE OR REPLACE VIEW catalog.v_tenant_billing_v1 WITH (security_barrier = true) AS
 SELECT t.tenant_id,
        t.name::text AS name,
@@ -109,53 +106,16 @@ SELECT t.tenant_id,
        t.is_pilot,
        t.is_pilot AND coalesce(((SELECT v.value FROM shared.v_setting_billing_effective v
                   WHERE v.key = 'cis.billing.pilot_free') #>> '{}')::boolean, true)
-           AS bill_free,
-       NULL::integer AS quantity,
-       NULL::timestamp with time zone AS ends_at
+           AS bill_free
   FROM shared.tenants t
   LEFT JOIN shared.tenant_subscription s ON s.tenant_id = t.tenant_id
-  LEFT JOIN shared.plan p ON p.plan_key = s.plan_key
-UNION ALL
-SELECT t.tenant_id,
-       t.name::text,
-       t.kind,
-       t.legal_entity_name,
-       t.tax_id,
-       t.billing_email,
-       t.billing_address,
-       t.billing_country,
-       a.product,
-       a.plan_key,
-       p.name,
-       p.price_usd_monthly,
-       p.price_unit,
-       p.seats_included,
-       p.price_extra_seat_usd,
-       NULL::integer,
-       a.status,
-       t.billing_currency::text,
-       p.price_vnd_monthly,
-       p.price_extra_seat_vnd,
-       p.seats_min,
-       NULL::numeric(14,2),
-       NULL::text,
-       NULL::date,
-       'month'::text,
-       a.trial_ends_at,
-       t.is_pilot,
-       t.is_pilot AND coalesce(((SELECT v.value FROM shared.v_setting_billing_effective v
-                  WHERE v.key = 'cis.billing.pilot_free') #>> '{}')::boolean, true),
-       a.quantity,
-       a.ends_at
-  FROM shared.tenant_addon a
-  JOIN shared.tenants t ON t.tenant_id = a.tenant_id
-  JOIN shared.plan p ON p.plan_key = a.plan_key;
+  LEFT JOIN shared.plan p ON p.plan_key = s.plan_key;
 
 COMMENT ON VIEW catalog.v_tenant_billing_v1 IS
     'AA-1037 R4, AA-1116 (377, 438; contract tenant.entitlements.v1 1.9, root ADR 0019 d1 / d9): what AA-Booking '
     'invoices an agency for: one row per tenant and subscription (NULL subscription columns for a tenant without one) '
-    'and, since 438, one row per add-on (product addon, quantity, ends_at), with the plan''s USD and VND list prices, '
-    'unit, included seats, seat minimum and extra-seat prices, the agreed price / currency / end, the billing interval, '
+    'with the plan''s USD and VND list prices, unit, included seats, seat minimum and extra-seat prices, the agreed '
+    'price per billed unit / currency / end (438), the billing interval, '
     'the trial end, the agency''s billing currency, the pilot flag and bill_free (pilot while cis.billing.pilot_free '
     'is on), and the bill-to fields CIS holds. Booking only. Contract v1: columns are only appended.';
 
@@ -272,9 +232,8 @@ GRANT SELECT ON catalog.v_tenant_tripplanner_v1 TO tripplanner;
 -- ── Closing check as catalog_owner: the views answer ─────────────────────────────────────────────────────────────
 DO $$
 BEGIN
-    RAISE NOTICE 'migration 438: as catalog_owner, billing % row(s) (% add-on), ai budget % row(s), tripplanner % row(s)',
+    RAISE NOTICE 'migration 438: as catalog_owner, billing % row(s), ai budget % row(s), tripplanner % row(s)',
         (SELECT count(*) FROM catalog.v_tenant_billing_v1),
-        (SELECT count(*) FROM catalog.v_tenant_billing_v1 WHERE product = 'addon'),
         (SELECT count(*) FROM catalog.v_tenant_ai_budget_v1),
         (SELECT count(*) FROM catalog.v_tenant_tripplanner_v1);
 END $$;
@@ -326,20 +285,11 @@ BEGIN
                              'price_extra_seat_vnd numeric(14,0), seats_min integer, '
                              'agreed_price_monthly numeric(14,2), agreed_currency text, agreed_until date, '
                              'billing_interval text, trial_ends_at timestamp with time zone, is_pilot boolean, '
-                             'bill_free boolean, quantity integer, ends_at timestamp with time zone' THEN
+                             'bill_free boolean' THEN
         RAISE EXCEPTION 'migration 438: catalog.v_tenant_billing_v1 columns are %', cols;
     END IF;
     IF pg_catalog.has_column_privilege('catalog_owner', 'shared.tenant_subscription', 'billing_ref', 'SELECT') THEN
         RAISE EXCEPTION 'migration 438: catalog_owner reads tenant_subscription.billing_ref';
-    END IF;
-    IF pg_catalog.has_table_privilege('catalog_owner', 'shared.tenant_addon', 'SELECT')
-       OR pg_catalog.has_any_column_privilege('catalog_owner', 'shared.tenant_addon', 'UPDATE')
-       OR pg_catalog.has_column_privilege('catalog_owner', 'shared.tenant_addon', 'reason', 'SELECT') THEN
-        RAISE EXCEPTION 'migration 438: catalog_owner has more than its column SELECT on shared.tenant_addon';
-    END IF;
-    IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'booking')
-       AND pg_catalog.has_any_column_privilege('booking', 'shared.tenant_addon', 'SELECT') THEN
-        RAISE EXCEPTION 'migration 438: booking reads shared.tenant_addon directly';
     END IF;
     IF pg_catalog.has_schema_privilege('catalog_owner', 'catalog', 'CREATE') THEN
         RAISE EXCEPTION 'migration 438: catalog_owner still has CREATE on schema catalog';
@@ -347,7 +297,7 @@ BEGIN
 END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('438', now(), 'AA-1116: option B terms appended to catalog.v_tenant_billing_v1 (+ add-on rows), '
+VALUES ('438', now(), 'AA-1116: option B terms appended to catalog.v_tenant_billing_v1, '
                       'v_tenant_ai_budget_v1 (alert / stop shares) and v_tenant_tripplanner_v1 (ai_sessions_monthly)')
 ON CONFLICT (version) DO NOTHING;
 
