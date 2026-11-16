@@ -82,7 +82,7 @@ async def test_an_ended_trial_stays_live_until_the_tick(conn):
     await conn.execute("UPDATE shared.tenant_subscription SET status = 'trialing', "
                        "trial_ends_at = now() + interval '2 days' WHERE tenant_id = $1 AND product = 'content'", tid)
     running = await _ents(conn, tid)
-    assert running["ai.budget_usd_monthly"][:2] == (15.0, "trial") and running["trade.book"][1] == "trial"
+    assert running["ai.budget_usd_monthly"][:2] == (7.5, "trial") and running["trade.book"][1] == "trial"
     events = await conn.fetchval("SELECT count(*) FROM shared.tenant_account_event WHERE tenant_id = $1 "
                                  "AND type = 'entitlement.changed'", tid)
     # the trial ends; the tick has not run yet. The subscription trigger fires on the trial_ends_at update and
@@ -91,7 +91,7 @@ async def test_an_ended_trial_stays_live_until_the_tick(conn):
                        "WHERE tenant_id = $1 AND product = 'content'", tid)
     ended = await _ents(conn, tid)
     assert set(ended) == set(running)
-    assert ended["ai.budget_usd_monthly"][:3] == (15.0, "trial", "content.starter")
+    assert ended["ai.budget_usd_monthly"][:3] == (7.5, "trial", "content.starter")
     assert ended["trade.book"][3] is not None and await _materialised(conn, tid) == ended
     await conn.execute(_guards())
     # the tick's move (past_due: the grace state) re-syncs to the plan, expires_at cleared

@@ -497,14 +497,14 @@ async def test_an_ended_trial_keeps_its_budget_until_the_tick(conn):
     # AI budget never reads as unlimited
     tid = await _tenant(conn, "starter", add_ons=[{"product": "crm", "plan_key": "crm.core"}], trial_days=3)
     before = await _ents(conn, tid)
-    assert before["ai.budget_usd_monthly"] == (15.0, "trial") and "crm.core" in before
+    assert before["ai.budget_usd_monthly"] == (7.5, "trial") and "crm.core" in before
     await conn.execute("UPDATE shared.tenant_subscription SET trial_ends_at = now() - interval '5 minutes' "
                        "WHERE tenant_id = $1::uuid", tid)
     assert await _ents(conn, tid) == before                        # nothing changes at the trial end ...
     assert await _stored(conn, tid) == before
     assert tid in await cost_guard.budgeted_tenants(conn)
     b = await cost_guard.tenant_budget_check(conn, tid)
-    assert (b.monthly_usd, b.hard_stop) == (15.0, True)
+    assert (b.monthly_usd, b.hard_stop) == (7.5, True)           # the trial share (CIS 437)
     await lifecycle.tick(_Pool(conn), job_id="zz-grace")          # ... everything follows the tick
     after = await _ents(conn, tid)
     assert after["ai.budget_usd_monthly"] == (15.0, "plan") and after["crm.core"][1] == "plan"

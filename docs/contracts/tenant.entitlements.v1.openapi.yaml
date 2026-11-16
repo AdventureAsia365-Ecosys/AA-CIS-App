@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: tenant.entitlements.v1 (AA-CIS-App → AA-Partner CRM, AA-Booking, TripPlanner; tenant account and entitlements)
-  version: "1.8"
+  version: "1.9"
   description: >-
     CIS shared is the master of the tenant account: lifecycle status, data region, product subscriptions and the
     entitlements they give (root ADR 0019 d1, d2). This contract tells the other apps, per tenant, which feature keys
@@ -100,10 +100,25 @@ info:
     hosts never appear. TripPlanner serves a request whose Host is in custom_domains as that tenant (same branding,
     tours, lead route and WAF rules as /{slug}), only for a served row; any other host stays a 404. A reader that
     cannot see the column (42703) treats every custom host as unknown. No personal data.
+    1.9 (AA-1116 option B pricing, additive; no HTTP shape change; CIS 435-438): catalog.v_tenant_billing_v1 appends
+    billing_currency (USD | VND), price_vnd_monthly, price_extra_seat_vnd, seats_min, agreed_price_monthly,
+    agreed_currency, agreed_until, billing_interval (month | year), trial_ends_at, is_pilot and bill_free (a pilot
+    while the setting cis.billing.pilot_free is on); its rows are unchanged (one per tenant and subscription; there is
+    no retail add-on and no add-on row). agreed_price_monthly is the agreed price per billed unit, like the list price
+    it replaces: per seat on a per-seat plan (line = agreed_price_monthly x max(seats, seats_min)), the plan fee on
+    any other plan (seats above seats_included still at the extra-seat list price); it applies in agreed_currency
+    while agreed_until is empty or not past. catalog.v_tenant_ai_budget_v1 appends alert_pct, approval_pct (integer)
+    and hard_stop (the tenant's AI budget row, else the cis.billing.ai_* registry defaults 80 / 100 / on); monthly_usd
+    now also adds the TripPlanner / CRM plan increments (ai.budget_addon_usd_monthly) and applies the trial share
+    (cis.billing.trial_ai_budget_pct) to each part while its subscription trials; an AI top-up is a per-tenant
+    override. catalog.v_tenant_tripplanner_v1 appends ai_sessions_monthly (integer, the resolved tp.ai_sessions,
+    NULL = no limit). The entitlement feed may carry the new feature key ai.budget_addon_usd_monthly on plans only; it
+    is never served as a tenant entitlement. Readers name their columns; a reader that knows only the 1.8 columns
+    keeps its rows. No personal data.
   x-aa-contract: tenant.entitlements.v1
   x-aa-producer: AA-CIS-App
   x-aa-consumers: [AA-Partner, AA-Booking, AA-TripPlanner-Web]
-  x-aa-issues: [AA-1028, AA-1037, AA-1038, AA-1093]
+  x-aa-issues: [AA-1028, AA-1037, AA-1038, AA-1093, AA-1116]
 servers:
   - url: /tenant/v1
 security:
