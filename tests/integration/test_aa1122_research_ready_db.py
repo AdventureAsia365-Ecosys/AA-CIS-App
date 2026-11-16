@@ -1,4 +1,4 @@
-"""AA-1122 — the new reads and writes on the real schema (CIS 440-452 applied by conftest): the research month ledger by
+"""AA-1122 — the new reads and writes on the real schema (CIS 440-442 applied by conftest): the research month ledger by
 job, the monthly volume history (never overwritten) and the season read, the tour PAA backfill (candidates, the write
 that never overwrites a bought list, coverage), the rename carry, the agency markets of automatic research and the
 Research tab's run rows.
