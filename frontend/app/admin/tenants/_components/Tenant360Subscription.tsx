@@ -34,6 +34,7 @@ import { can } from "@/lib/rbac";
 import { useAdminIdentity } from "../../../_kit/useAdminIdentity";
 import { T360_SUB } from "./subscription.messages";
 import { Tenant360AddOnRequests } from "./Tenant360AddOnRequests";
+import { Tenant360Commercial } from "./Tenant360Commercial";
 import { Tenant360EndPilot } from "./Tenant360EndPilot";
 import { Tenant360CustomDomain } from "./Tenant360CustomDomain";
 import { Tenant360LeadRoute } from "./Tenant360LeadRoute";
@@ -418,6 +419,8 @@ function SubscriptionTab({ tenantId }: { tenantId: string }) {
         crmCore={data.entitlements.some((e) => e.feature_key === "crm.core")} />
 
       <Tenant360CustomDomain tenantId={tenantId} canEdit={can(role, "tenant.write")} />
+
+      <Tenant360Commercial tenantId={tenantId} canWrite={canWrite} />
 
       {addOn && <AddOnDrawer tenantId={tenantId} data={data} start={addOn.start} onClose={() => setAddOn(null)} />}
       {override && featuresQ.data && (
