@@ -44,6 +44,14 @@ async def conn():
     tr = c.transaction()
     await tr.start()
     await c.execute("ALTER TABLE shared.tenants ADD COLUMN IF NOT EXISTS plan_id uuid")
+    # the replay has no legacy plan table (CIS 001); the quota read falls back to it (test_aa1028_slice3 stand-in)
+    await c.execute("""
+        CREATE TABLE IF NOT EXISTS shared.membership_plans (
+            id uuid PRIMARY KEY DEFAULT gen_random_uuid(), plan_name text NOT NULL UNIQUE,
+            tours_quota_monthly integer NOT NULL, api_calls_quota_monthly integer NOT NULL,
+            price_usd_monthly numeric NOT NULL, overage_rate_usd_per_tour numeric NOT NULL,
+            overage_rate_usd_per_1k_calls numeric NOT NULL, is_active boolean NOT NULL DEFAULT true,
+            created_at timestamptz NOT NULL DEFAULT now())""")
     try:
         yield c
     finally:
