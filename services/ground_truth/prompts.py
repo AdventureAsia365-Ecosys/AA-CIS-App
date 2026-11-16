@@ -35,6 +35,11 @@ through billed_fields and to quality_signal), so a measurement always says which
       name, time, service, activity, view, pace ...), listing the new specifics. Step 2 (v5j, `step="judge"`) judges
       only the specifics step 1 listed, with the source's support rules. A step version is entailment-only and is
       refused by r1.instruments (it runs only inside two_step). Shaped on the v2, v3 and v4 runs.
+  v6c / v6j  S282: v5's gated run (9b0d46f8) was no_go: step 1 sent 19 of 25 false positives on and step 2 cleared
+      2 of them. Both v5 steps looked each fact up before applying the background rule. v6c sets aside background,
+      the writer's reading, tone and words naming the reader first, then lists the trip specifics left and looks
+      them up with more one-step readings (its schema asks for `set_aside` first); v6j first asks whether a listed
+      specific is a trip specific at all. Shaped on the v2-v4 runs and on the false positives of 9b0d46f8.
 
 Every example in these prompts uses invented places and phrasing (the golden-set text guard). The B5 examples name the
 pattern classes of the five claims the tech lead relabelled to violation in S279, in wording of their own: checked
@@ -46,6 +51,7 @@ violations only. Pure: no DB, no network, no model call.
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -421,6 +427,117 @@ V5J_SYSTEM = (
 V5J_USER = V2_ENTAILMENT_USER + "\n\nSPECIFICS TO CHECK:\n{specifics}"
 WHOLE_SENTENCE = "(the whole sentence)"
 
+# ── v6c / v6j (S282: v5's gated run 9b0d46f8 was no_go, FP dropped 32 %) ──────────────────────────────────────────
+# v5c sent 19 of the 25 false positives on (17 of them restatements by the panel's step-1 answer) and v5j cleared 2 of
+# the 19 (docs/implementation-notes/AA-1048-v6.md, counts only). The reasons show both steps ask "can you point to
+# every fact in the source?" first: background about a named place, people or craft (7), an over-literal reading of a
+# paraphrase (6), the writer's reading of the source facts (4) and a word naming the reader (2) all failed that
+# lookup before the background rule was ever applied. v6c orders the work: set aside what is not about what THIS trip
+# gives the traveller, then list the trip specifics left, then look each up with more one-step readings; its schema
+# asks for `set_aside` before `kind`. v6j first asks whether a listed specific is a trip specific at all, then looks
+# it up, then keeps v5j's promise list. The recall guard of both: wording about meals, the guide, other travellers,
+# crowds, pace, effort, comfort, safety, suitability or what the traveller will see, hear or feel at a stop is a trip
+# specific even when it reads like a judgement. Every example is invented (Halvik, Orsa, Drevna, Kettle Ford, Lusk,
+# Tasska, Ilbern, Quell); the S282 leak check (scratch) found no three-word sequence with a content word shared with
+# any claim of the fresh pool.
+
+_V6_SET_ASIDE = (
+    "  - background about a place, people, craft, food, custom or region the source names: what it is or was, its "
+    "history, age, builder, purpose, meaning, status or reputation, the people who live there and how they live, "
+    "its landscape, plants, climate or position, how it compares with other places or regions;\n"
+    "  - the writer's reading of the source facts: what a day or a stop offers, means or shows, an interpretation of "
+    "the itinerary as a whole, a comparison or an intensifier ('more', 'far', 'quite unlike', 'truly'), an image or "
+    "figure of speech, a purpose or intent given to a fact the source states ('deliberately', 'on purpose');\n"
+    "  - tone and feeling words that add no fact ('unhurried', 'memorable');\n"
+    "  - a word that names who the text speaks to or about ('you', 'families', 'travellers', 'couples') when it adds "
+    "nothing about other people the traveller will meet or travel with;\n"
+    "  - a sentence about the text itself (what this guide covers), and a heading or label made of source words.\n")
+_V6_NEVER_ASIDE = (
+    "Wording about the trip's meals, the guide, other travellers, crowds, pace, effort, comfort, safety or who the "
+    "trip suits, or about what the traveller will see, hear or feel at a stop, is always a trip specific and never "
+    "set aside: 'an easy day', 'a family-style dinner', 'a guide who knows every trail', 'the square to ourselves' are "
+    "trip specifics even when they read like the writer's judgement or tone.")
+_V6_ONE_STEP = (
+    "these or other words, or when it follows from the source in one obvious step: the stop listed after lunch is "
+    "an afternoon stop; a tour that returns to its start town is a round trip; a town the source has the trip stop "
+    "at or near on the way lies on its road; a place the source names may be called by its other well-known name; a "
+    "meal on an evening the source gives at one hotel or camp, with no other place for it, is at that hotel or "
+    "camp; a sight the source gives on an earlier day is already behind the traveller on a later day; two facts the "
+    "source gives for the same stop and time may be told together")
+
+V6C_SYSTEM = (
+    "You read ONE sentence of a travel text and the SOURCE the trip is built from. You do not decide whether the "
+    "sentence is right. You only sort it, so that a second reader checks the sentences that add something to THIS "
+    "trip. Work in this order.\n"
+    "1. Set aside every part of the sentence that is not about what THIS trip gives the traveller. Set it aside even "
+    "when the source does not mention it, and list it in 'set_aside':\n"
+    + _V6_SET_ASIDE
+    + _V6_NEVER_ASIDE + "\n"
+    "2. What is left are the trip specifics: what the traveller does, gets, sees or meets on this trip, and when, "
+    "where, how and with whom. They are: a number about the trip, the name of a place the trip goes to or of a "
+    "service it gives, a day, a clock time or a time of day, an order or schedule, a route or a means of travel, a "
+    "service, a meal and its character, a quality of the guide, other travellers, a group or crowd condition, an "
+    "activity, a view or sighting, access to a place, the trip's pace, effort, comfort or safety, and who it suits.\n"
+    "3. Look each trip specific up in the WHOLE source (overview, highlights, every day, inclusions, place "
+    "background). It is in the source when the source gives it in " + _V6_ONE_STEP + ". Two source facts joined into "
+    "a new activity, one side of an 'or' made firm, and a fact stretched to other days are NOT in the source.\n"
+    "Answer 'restatement' when nothing is left after step 1, or when every trip specific is in the source. Answer "
+    "'new_claim' when at least one trip specific is not in the source or goes against it, and list each such "
+    "specific in 'new_specifics' in the sentence's own words. When you are unsure whether a trip specific is in the "
+    "source, answer new_claim: the second reader decides. Never answer new_claim for background, the writer's reading "
+    "or a word that names the reader alone. Examples:\n"
+    "  - source 'a morning at the Halvik salt works', sentence 'salt has been raked from the Halvik flats since the "
+    "guilds held the coast, and the works still set the rhythm of village life' -> restatement (background about "
+    "the place and its people);\n"
+    "  - source 'Day 2: the mill at Orsa, the weavers' lane and the old toll bridge', sentence 'the day reads less "
+    "like a list of sights than one long story of how Orsa earned its living' -> restatement (the writer's reading "
+    "of the source's stops);\n"
+    "  - source for a family trip 'Day 5: the fort at Drevna', sentence 'families climb up to Drevna fort on the "
+    "fifth day' -> restatement (the word names the readers);\n"
+    "  - source 'lunch close to Kettle Ford on the drive north', sentence 'the northbound drive goes by Kettle Ford' "
+    "-> restatement (one step);\n"
+    "  - source 'the Tasska ferry over to Ilbern', sentence 'the crossing to Ilbern leaves at dawn' -> new_claim "
+    "('at dawn');\n"
+    "  - source 'six nights in guesthouses', sentence 'an easy week that suits any walker' -> new_claim ('easy', "
+    "'suits any walker');\n"
+    "  - source 'a free afternoon in Lusk', sentence 'a slow lunch with the family who keep the harbour inn' -> "
+    "new_claim (the meal and the people met);\n"
+    "  - source 'a boat trip on Quell lake or a cycle along its shore', sentence 'a boat trip on Quell lake' -> "
+    "new_claim (one side of an 'or' made firm).\n"
+    "Say in 'why' in one sentence what decided it. Reply with the JSON object only.")
+# The v6c reply: what was set aside comes before the decision (the schema is hashed into the v6c tag).
+V6C_SCHEMA = {"name": "claim_restatement_v6", "schema": {
+    "type": "object", "additionalProperties": False, "required": ["set_aside", "new_specifics", "kind", "why"],
+    "properties": {"set_aside": {"type": "array", "items": {"type": "string"}},
+                   "new_specifics": {"type": "array", "items": {"type": "string"}},
+                   "kind": {"type": "string", "enum": ["restatement", "new_claim"]},
+                   "why": {"type": "string"}}}}
+
+V6J_SYSTEM = (
+    "You check ONE sentence of a travel text against the SOURCE the trip is built from. A first reader listed the "
+    "SPECIFICS of the sentence it could not find in the source. It was told to list whatever it was unsure of, so "
+    "many listed specifics are not about the trip at all. Take each listed specific in this order.\n"
+    "1. Is it about what THIS trip gives the traveller: what the traveller does, gets, sees or meets, and when, "
+    "where, how and with whom, or the trip's pace, effort, comfort, safety or who it suits? If it is not, it is "
+    "supported, whatever the source says:\n"
+    + _V6_SET_ASIDE
+    + "  Lines under 'Place background' in the source support sentences about that place, and seeing a place's own "
+    "lasting features on a visit the source gives is background too.\n"
+    + _V6_NEVER_ASIDE + "\n"
+    "2. A trip specific is supported when the source states it anywhere (overview, highlights, any day, inclusions, "
+    "place background) in " + _V6_ONE_STEP + ".\n"
+    "3. Unsupported, the promises this check exists for: a number, name, day, time, order, route or means of travel "
+    "the source does not give or that goes against it; the character of a meal when the source names only the meal; "
+    "qualities of the guide; a group, social or crowd experience; a view from a place, its light, season or weather, "
+    "wildlife or a mood at a stop; access the source does not give; an activity or service the source does not give, "
+    "also one made by joining two source facts or by firming one side of an 'or'; pace, effort, comfort, safety or "
+    "who the trip suits when the source does not state it (rest days or short drives do not by themselves make a "
+    "trip slow or easy).\n"
+    "When the list says '(the whole sentence)', judge every trip specific of the sentence. Answer 'unsupported' when "
+    "at least one listed specific is a trip specific that the source does not give or that goes against it, and name "
+    "it in 'why'. Otherwise answer 'supported' and quote the source line you relied on (empty for background, the "
+    "writer's reading or wording). Reply with the JSON object only.")
+
 
 # ── user prompt builders (items are services.ground_truth.r1.Item; duck-typed to keep this module import-free) ──────
 
@@ -516,6 +633,8 @@ class PromptVersion:
 # The S279 pool (the 286 R1-fired claims of the held-out split, pool-v2.jsonl): the S279 panel read its whole
 # false-positive side to write v2, and every version since builds on v2.
 S279_POOL = "487bf4847b6136fe"
+# The fresh pool of S281 (fresh_pool.py, 104 R1-fired claims of the train split): v5's gated run 9b0d46f8 ran on it.
+FRESH_POOL = "716df551d458fee1"
 
 VERSIONS: dict[str, PromptVersion] = {
     "v1": PromptVersion("v1", ENTAILMENT_SYSTEM, EXTRACTION_SYSTEM, v1_entailment_user, extraction_user,
@@ -535,6 +654,17 @@ VERSIONS: dict[str, PromptVersion] = {
                          shaped_on_pools=(S279_POOL,), step="classify"),
     "v5j": PromptVersion("v5j", V5J_SYSTEM, "", v5j_user, extraction_user, (V5J_USER, NONE_TEXT, WHOLE_SENTENCE),
                          shaped_on=("3018008d", "33835b87", "2977dd78"), shaped_on_pools=(S279_POOL,), step="judge"),
+    # S282 two-step v6: written from the 25 false positives of v5's gated run 9b0d46f8 on the fresh pool (FRESH_POOL)
+    # as well, so that run is a shaping run too. Its false positives are held out claim by claim by the v6
+    # pre-registration (two_step.py: held_out); the pool itself is not a shaping pool (its other 41 sampled false
+    # positives were never read). v6c pins its reply schema in the tag.
+    "v6c": PromptVersion("v6c", V6C_SYSTEM, "", v2_entailment_user, extraction_user,
+                         (V2_ENTAILMENT_USER, NONE_TEXT, json.dumps(V6C_SCHEMA, sort_keys=True)),
+                         shaped_on=("3018008d", "33835b87", "2977dd78", "9b0d46f8"),
+                         shaped_on_pools=(S279_POOL,), step="classify"),
+    "v6j": PromptVersion("v6j", V6J_SYSTEM, "", v5j_user, extraction_user, (V5J_USER, NONE_TEXT, WHOLE_SENTENCE),
+                         shaped_on=("3018008d", "33835b87", "2977dd78", "9b0d46f8"), shaped_on_pools=(S279_POOL,),
+                         step="judge"),
 }
 
 
@@ -546,6 +676,7 @@ def get(version: str) -> PromptVersion:
 
 __all__ = ["DEFAULT", "ENTAILMENT_SYSTEM", "ENTAILMENT_SYSTEM_V2", "ENTAILMENT_SYSTEM_V3", "ENTAILMENT_SYSTEM_V4",
            "EXTRACTION_SYSTEM", "EXTRACTION_SYSTEM_V2", "EXTRACTION_SYSTEM_V3", "EXTRACTION_SYSTEM_V4",
-           "PromptVersion", "S279_POOL", "UnknownPromptVersion", "V5C_SYSTEM", "V5J_SYSTEM", "V5J_USER", "VERSIONS",
+           "FRESH_POOL", "PromptVersion", "S279_POOL", "UnknownPromptVersion", "V5C_SYSTEM", "V5J_SYSTEM", "V5J_USER",
+           "V6C_SCHEMA", "V6C_SYSTEM", "V6J_SYSTEM", "VERSIONS",
            "WHOLE_SENTENCE", "around", "extraction_user", "get", "v1_entailment_user", "v2_entailment_user",
            "v5j_user"]

@@ -17,7 +17,8 @@ from services.ground_truth import r1
 from services.ground_truth import r1_fire as rf
 
 SOURCE = "Day 1: Arrive in Pellow.\nDay 2: Walk the dunes of Sarrow.\nDay 3: Drive back to Pellow."
-SHAPED_RUNS = ["2977dd78", "3018008d", "33835b87"]
+# the shaping runs of the default step set (v6: the v2-v4 runs and v5's gated run 9b0d46f8)
+SHAPED_RUNS = ["2977dd78", "3018008d", "33835b87", "9b0d46f8"]
 
 
 def _h(n: int) -> str:
