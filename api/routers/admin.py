@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from api.core import e2e_tenant_writes, view_as
 from api.core.secret_compare import secrets_equal
 from api.core.staff_credential import principal_verified
+from api.routers._billing import plan_attached
 
 from services.acp_publish import daily_limit
 from services.acp_shared.audit_log import AdminTenantAuditAction, write_audit_log
@@ -409,6 +410,7 @@ async def list_tenants(
                 u.tours_quota_monthly,
                 u.api_calls_quota_monthly,
                 u.price_usd_monthly,
+                u.plan_key,                 -- AA-1116 (CIS 439): the live content plan; NULL = no plan
                 COALESCE(src.active, 0)     AS source_active,
                 COALESCE(src.superseded, 0) AS source_superseded,
                 COALESCE(src.trashed, 0)    AS source_trashed,
@@ -469,7 +471,8 @@ async def list_tenants(
                 "status":         tenant_status(r["is_active"], r["cancelled_at"]),
                 "cancelled_at":   r["cancelled_at"].isoformat() if r["cancelled_at"] else None,
                 "created_at":     r["created_at"].isoformat(),
-                "plan_attached":  r["tours_quota_monthly"] is not None,  # AA-798
+                # AA-798; AA-1116: a plan with no quota (Enterprise / internal, NULL) is still a plan
+                "plan_attached":  plan_attached(r),
                 "plan": {
                     "tours_quota_monthly":     r["tours_quota_monthly"],
                     "api_calls_quota_monthly": r["api_calls_quota_monthly"],
@@ -603,12 +606,9 @@ async def get_tenant_usage(
             SELECT COUNT(*) AS versions, COUNT(DISTINCT published_tour_id) AS tours
             FROM gold_aa_internal.tenant_tour_versions WHERE tenant_id = $1
         """, tenant_id)
-        # AA-797: quota by plan_id (what billing uses); plan_tier only for a row without one.
-        tours_quota = await conn.fetchval("""
-            SELECT tours_quota_monthly FROM shared.membership_plans
-            WHERE id = $1 OR ($1::uuid IS NULL AND plan_name = $2)
-            LIMIT 1
-        """, tenant["plan_id"], tenant["plan_tier"])
+        # AA-1116 (S5): the quota the rewrite path enforces (None = no quota), no longer shared.membership_plans
+        quota_row = await conn.fetchrow(tenant_plans.REWRITE_QUOTA_SQL, tenant_id)
+        tours_quota = quota_row["quota"] if quota_row else None
         # AA-819 — the publish/day limit in force and today's count (UTC), as v1_publish counts it
         publish_override = await daily_limit.tenant_override(conn, tenant_id)
         publishes_today = await daily_limit.count_today(conn, tenant_id)
@@ -622,7 +622,7 @@ async def get_tenant_usage(
         "status":      tenant_status(tenant["is_active"], tenant["cancelled_at"]),
         "limits": {
             "rate_limit_rpm":    tenant["rate_limit_rpm"],
-            "tours_per_month":   tours_quota,  # AA-640: shared.membership_plans
+            "tours_per_month":   tours_quota,  # AA-1116: resolved content.rewrite (None = no quota)
             "daily_publish_limit": publish_override,  # AA-819: null = the code default
             "daily_publish_limit_default": (dflt := daily_limit.platform_default_limit()),   # S280: the setting
             "daily_publish_limit_effective": dflt if publish_override is None else publish_override,

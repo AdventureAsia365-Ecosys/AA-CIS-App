@@ -31,6 +31,14 @@ export interface Plan {
   price_unit: "tenant" | "seat" | "site";
   seats_included: number | null;
   price_extra_seat_usd: string | null;
+  // AA-1116 option B (CIS 435): VND list, seat minimum, contract floor, overage rates, the day the price was set
+  price_vnd_monthly?: string | null;
+  price_extra_seat_vnd?: string | null;
+  seats_min?: number | null;
+  price_floor_usd_monthly?: string | null;
+  overage_usd_per_tour?: string | null;
+  overage_usd_per_1k_calls?: string | null;
+  price_set_at?: string | null;
   is_public: boolean;
   version: number;
   notes: string | null;
@@ -49,6 +57,10 @@ export const PLANS_API = "/api/admin/plans";
 export const FEATURES_API = "/api/admin/plans/features";
 export const PLANS_KEY = ["admin-plans"] as const;
 export const DEFAULT_UNIT: Record<Product, Plan["price_unit"]> = { content: "tenant", crm: "seat", tripplanner: "site" };
+export const PRICE_UNITS: Plan["price_unit"][] = ["tenant", "seat", "site"];
+/** AA-1116: the additive AI key a crm / tripplanner plan gives; never on a content plan (the API refuses it). There is
+ * no retail add-on plan (no custom-domain add-on, no AI pack). */
+export const AI_ADDON_KEY = "ai.budget_addon_usd_monthly";
 
 const DECIMAL = /^\d{1,12}(\.\d{1,2})?$/;
 const PLAN_KEY = /^[a-z]+\.[a-z][a-z0-9_]*$/;
@@ -68,8 +80,12 @@ export function tierChoices(plans: Plan[] | undefined, current?: string | null):
  * platform key (AI budget, notice policy) belongs to the base subscription: the resolver reads it from the content
  * plan only (CIS 361) and the API refuses it on an add-on plan (platform_key_content_only). */
 export function featuresFor(product: Product, catalogue: Feature[]): Feature[] {
+  // AA-1116: a crm / tripplanner plan gives its own features and the AI increment; content its own + platform keys
+  // but not the increment.
   const own = catalogue.filter((f) => f.product === product);
-  return product === "content" ? own.concat(catalogue.filter((f) => f.product === "platform")) : own;
+  if (product === "content") return own.concat(catalogue.filter((f) => f.product === "platform"
+    && f.feature_key !== AI_ADDON_KEY));
+  return own.concat(catalogue.filter((f) => f.feature_key === AI_ADDON_KEY));
 }
 
 // Bounds the API applies (services/tenant_account/plans.py bound_limit): whole numbers up to int4 for counts, seats,
@@ -119,35 +135,87 @@ export interface PlanDraft {
   price_unit: Plan["price_unit"];
   seats_included: string;
   price_extra_seat: string;
+  price_vnd: string;          // AA-1116: whole dong, "" = not priced in VND
+  price_extra_seat_vnd: string;
+  seats_min: string;
+  price_floor: string;
+  overage_tour: string;
+  overage_1k_calls: string;
   is_public: boolean;
   notes: string;
   /** feature_key -> "" (on, no limit) | a decimal; a key left out is off. */
   features: Record<string, string>;
 }
 
+/** AA-1116: the option B fields of a stored plan as draft text ("" = empty). Pure. */
+function priceListDraft(plan: Plan): Pick<PlanDraft, "price_vnd" | "price_extra_seat_vnd" | "seats_min" | "price_floor"
+    | "overage_tour" | "overage_1k_calls"> {
+  const s = (v: string | number | null | undefined) => (v == null ? "" : String(v));
+  return { price_vnd: s(plan.price_vnd_monthly), price_extra_seat_vnd: s(plan.price_extra_seat_vnd),
+           seats_min: s(plan.seats_min), price_floor: s(plan.price_floor_usd_monthly),
+           overage_tour: s(plan.overage_usd_per_tour), overage_1k_calls: s(plan.overage_usd_per_1k_calls) };
+}
+
 export function planDraftOf(plan: Plan | null, product: Product = "content"): PlanDraft {
   if (!plan) {
     return { plan_key: `${product}.`, product, tier: "", name: "", price: "", price_unit: DEFAULT_UNIT[product],
-             seats_included: "", price_extra_seat: "", is_public: false, notes: "", features: {} };
+             seats_included: "", price_extra_seat: "", price_vnd: "", price_extra_seat_vnd: "", seats_min: "",
+             price_floor: "", overage_tour: "", overage_1k_calls: "", is_public: false, notes: "", features: {} };
   }
   return {
     plan_key: plan.plan_key, product: plan.product, tier: plan.tier ?? "", name: plan.name,
     price: plan.price_usd_monthly ?? "", price_unit: plan.price_unit,
     seats_included: plan.seats_included == null ? "" : String(plan.seats_included),
     price_extra_seat: plan.price_extra_seat_usd ?? "", is_public: plan.is_public, notes: plan.notes ?? "",
+    ...priceListDraft(plan),
     features: Object.fromEntries(plan.features.map((f) => [f.feature_key, f.limit_value ?? ""])),
   };
 }
 
 export type PlanDraftError =
   | "key" | "name" | "price" | "seats" | "extraSeat" | "notes" | "limit" | "rpmRequired" | "enforcedRequired"
-  | "limitRemoved";
+  | "limitRemoved" | "vnd" | "seatsMin" | "floor" | "overage";
 
 export interface PlanBody {
   plan_key?: string; product?: Product; tier?: string | null; version?: number;
   name: string; price_usd_monthly: string | null; price_unit: Plan["price_unit"]; seats_included: number | null;
   price_extra_seat_usd: string | null; is_public: boolean; notes: string | null;
+  price_vnd_monthly: string | null; price_extra_seat_vnd: string | null; seats_min: number | null;
+  price_floor_usd_monthly: string | null; overage_usd_per_tour: string | null; overage_usd_per_1k_calls: string | null;
   features: { feature_key: string; limit_value: string | null }[];
+}
+
+const VND = /^\d{1,14}$/;
+const RATE4 = /^\d{1,6}(\.\d{1,4})?$/;
+
+const bad = (v: string, re: RegExp) => v.trim() !== "" && !re.test(v.trim());
+
+/** The first price / seat / note field the API would refuse (AA-1116: the VND list, the seat minimum, the floor and the
+ *  overage rates too), or null. Pure. */
+function priceFieldsError(d: PlanDraft): PlanDraftError | null {
+  const seats = d.seats_included.trim(), seatsMin = d.seats_min.trim();
+  const checks: [boolean, PlanDraftError][] = [
+    [bad(d.price, DECIMAL), "price"],
+    [!!seats && (!/^\d{1,6}$/.test(seats) || Number(seats) > 100000), "seats"],
+    [bad(d.price_extra_seat, DECIMAL), "extraSeat"],
+    [d.notes.length > 1000, "notes"],
+    [bad(d.price_vnd, VND) || bad(d.price_extra_seat_vnd, VND), "vnd"],
+    [!!seatsMin && (!/^\d{1,3}$/.test(seatsMin) || Number(seatsMin) < 1 || Number(seatsMin) > 500), "seatsMin"],
+    [bad(d.price_floor, DECIMAL), "floor"],
+    [bad(d.overage_tour, RATE4) || bad(d.overage_1k_calls, RATE4), "overage"],
+  ];
+  return checks.find(([fails]) => fails)?.[1] ?? null;
+}
+
+/** AA-1116: the option B fields of the request body (empty = null). Pure. */
+function priceListBody(d: PlanDraft): Pick<PlanBody, "price_vnd_monthly" | "price_extra_seat_vnd" | "seats_min"
+    | "price_floor_usd_monthly" | "overage_usd_per_tour" | "overage_usd_per_1k_calls"> {
+  const v = (x: string) => x.trim() || null;
+  return {
+    price_vnd_monthly: v(d.price_vnd), price_extra_seat_vnd: v(d.price_extra_seat_vnd),
+    seats_min: d.seats_min.trim() ? Number(d.seats_min.trim()) : null, price_floor_usd_monthly: v(d.price_floor),
+    overage_usd_per_tour: v(d.overage_tour), overage_usd_per_1k_calls: v(d.overage_1k_calls),
+  };
 }
 
 /** The request body of a create (``plan`` null) or an edit, or the first error (field) the API would refuse. */
@@ -158,13 +226,9 @@ export function planBody(d: PlanDraft, catalogue: Feature[], plan: Plan | null):
   }
   const name = d.name.trim();
   if (name.length < 1 || name.length > 100) return { body: null, error: "name" };
-  const price = d.price.trim();
-  if (price && !DECIMAL.test(price)) return { body: null, error: "price" };
-  const seats = d.seats_included.trim();
-  if (seats && (!/^\d{1,6}$/.test(seats) || Number(seats) > 100000)) return { body: null, error: "seats" };
-  const extra = d.price_extra_seat.trim();
-  if (extra && !DECIMAL.test(extra)) return { body: null, error: "extraSeat" };
-  if (d.notes.length > 1000) return { body: null, error: "notes" };
+  const fieldError = priceFieldsError(d);
+  if (fieldError) return { body: null, error: fieldError };
+  const price = d.price.trim(), seats = d.seats_included.trim(), extra = d.price_extra_seat.trim();
   const byKey = new Map(catalogue.map((f) => [f.feature_key, f]));
   const allowed = new Set(featuresFor(d.product, catalogue).map((f) => f.feature_key));
   const features: PlanBody["features"] = [];
@@ -196,6 +260,7 @@ export function planBody(d: PlanDraft, catalogue: Feature[], plan: Plan | null):
   const body: PlanBody = {
     name, price_usd_monthly: price || null, price_unit: d.price_unit, seats_included: seats ? Number(seats) : null,
     price_extra_seat_usd: extra || null, is_public: d.is_public, notes: d.notes.trim() || null, features,
+    ...priceListBody(d),
   };
   if (plan) body.version = plan.version;
   else Object.assign(body, { plan_key: d.plan_key, product: d.product, tier });
@@ -482,4 +547,60 @@ export async function runSaga(path: string, body: unknown, { timeoutMs = 30000, 
 
 export function sagaFailed(job: ProvisionJob): boolean {
   return job.status !== "succeeded";
+}
+
+// ── AA-1116 option B: commercial terms, billing details, quote ──────────────────────────────────────────────────────
+export const COMMERCIAL_TERMS_API = "/api/admin/plans/commercial-terms";
+export interface CommercialTerm { key: string; value: unknown; label: string }
+export interface PlanReview {
+  plan_key: string; name: string; price_set_at: string | null; price_review_due: string | null;
+  price_review_overdue: boolean; vnd_review_due: string | null; vnd_review_overdue: boolean;
+  vnd_drift_pct: string | null;
+}
+export interface CommercialTermsResp { terms: CommercialTerm[]; reviews: PlanReview[] }
+
+/** A term's value as text: lists joined, booleans on / off, numbers grouped. Pure. */
+export function termText(v: unknown, on: string, off: string): string {
+  if (Array.isArray(v)) return v.join(", ");
+  if (typeof v === "boolean") return v ? on : off;
+  if (typeof v === "number") return v.toLocaleString("en-US");
+  return v == null ? "—" : String(v);
+}
+
+export interface BillingDetails {
+  tenant_id: string; name: string; legal_entity_name: string | null; tax_id: string | null;
+  billing_email: string | null; billing_address: string | null; billing_country: string | null;
+  billing_currency: "USD" | "VND"; founding_offer_from: string | null; founding_offer_until: string | null;
+}
+export const billingDetailsPath = (tenantId: string) => `/api/admin/tenants/${tenantId}/billing-details`;
+export const billingDetailsKey = (tenantId: string) => ["tenant360", tenantId, "billing-details"] as const;
+export const subscriptionTermsPath = (tenantId: string, product: string) =>
+  `/api/admin/tenants/${tenantId}/subscriptions/${product}/terms`;
+
+export interface QuoteLine {
+  kind: "subscription"; product: string; plan_key: string; name: string; quantity: number;
+  unit_price: string | null; amount: string; discount: string; agreed: boolean; price_missing: boolean;
+  billing_interval: string; trialing: boolean;
+}
+export interface QuoteSubscription {
+  product: string; plan_key: string; status: string; billing_interval: "month" | "year";
+  agreed_price_monthly: string | null; agreed_currency: string | null; agreed_until: string | null;
+  price_floor_usd_monthly: string | null;
+}
+export interface TenantQuote {
+  currency: "USD" | "VND"; lines: QuoteLine[]; subtotal: string; discount_kind: "founding" | "combo" | null;
+  discount_pct: string; discount: string; pilot_free: boolean; monthly_total: string; annual_paid_months: number;
+  annual_total: string; reference: { currency: string; monthly_total: string; fx_vnd_per_usd: string } | null;
+  subscriptions: QuoteSubscription[];
+}
+export const quotePath = (tenantId: string) => `/api/admin/tenants/${tenantId}/quote`;
+export const quoteKey = (tenantId: string) => ["tenant360", tenantId, "quote"] as const;
+
+/** An amount in its currency: USD with two decimals and a $, VND whole with "₫". Pure. */
+export function money(v: string | number | null | undefined, currency: string): string {
+  if (v == null || v === "") return "—";
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(v);
+  if (currency === "VND") return `${Math.round(n).toLocaleString("en-US")} ₫`;
+  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }

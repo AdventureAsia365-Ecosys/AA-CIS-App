@@ -181,7 +181,7 @@ def test_wave_size_follows_the_setting(served):
 
 def test_tenant_ai_budget_defaults_fail_closed():
     from api.services import tenant_ai_budget
-    assert tenant_ai_budget.DEFAULTS["hard_stop"] is True
+    assert tenant_ai_budget.defaults()["hard_stop"] is True        # AA-1116: cis.billing.ai_hard_stop_default
 
 
 @pytest.mark.parametrize("stop_label,setting,paid", [(True, 3, 2), (True, 2, 2), (False, 3, 3), (False, 2, 2)])

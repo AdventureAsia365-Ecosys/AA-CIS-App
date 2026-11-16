@@ -42,7 +42,17 @@ AUDIT_RESOURCE = "shared.tenant_ai_budget"
 # The fields a PUT sets (every one, a PUT replaces the row's values).
 FIELDS = ("monthly_usd", "alert_pct", "approval_pct", "hard_stop", "notes")
 # S279 thresholds L1 (audit 3.3, tech lead Q8): hard_stop defaults to true (fail closed on money), as the PUT body does.
-DEFAULTS = {"monthly_usd": None, "alert_pct": 100, "approval_pct": 150, "hard_stop": True, "notes": None}
+# AA-1116 (CIS 436): a new row starts at the platform settings cis.billing.ai_alert_pct_default /
+# ai_approval_pct_default / ai_hard_stop_default (80 / 100 / on; it was 100 / 150 here, which silently moved the stop
+# to 150 % when staff created a row); monthly_usd empty follows the plan (CIS 437).
+
+
+def defaults() -> dict:
+    """The values a new budget row starts with (the settings in force); also served to the drawer's prefill."""
+    from shared import cost_guard      # lazy, like _effective: the gateway module is heavy at import
+
+    alert, approval, hard_stop = cost_guard.plan_budget_defaults()
+    return {"monthly_usd": None, "alert_pct": alert, "approval_pct": approval, "hard_stop": hard_stop, "notes": None}
 
 
 class TenantBudgetUnavailable(Exception):
@@ -151,8 +161,9 @@ def budget_view(row: dict, spend: Optional[tuple[float, int]] = None) -> dict:
     """One budget row with this month's spend and its state (``spend`` = (usd, calls), None = no call). Pure."""
     usd, calls = spend or (0.0, 0)
     monthly = None if row.get("monthly_usd") is None else float(row["monthly_usd"])
-    alert = int(row.get("alert_pct") or DEFAULTS["alert_pct"])
-    approval = int(row.get("approval_pct") or DEFAULTS["approval_pct"])
+    d = defaults()
+    alert = int(row.get("alert_pct") or d["alert_pct"])
+    approval = int(row.get("approval_pct") or d["approval_pct"])
     hard_stop = bool(row.get("hard_stop"))
     used, state = budget_state(monthly, float(usd), alert, approval, hard_stop)
     return {"tenant_id": row["tenant_id"], "tenant_name": row.get("tenant_name"), "monthly_usd": monthly,
@@ -287,7 +298,7 @@ async def read_one(pool, tenant_id: str, *, now: Optional[datetime] = None) -> O
             "budget": _with_actor(budget_view(dict(row), spend), names) if row is not None else None,
             "effective": effective,
             "month_spent_usd": round(float(usd), 4), "month_calls": int(calls), "month_start": start.isoformat(),
-            "defaults": dict(DEFAULTS)}
+            "defaults": defaults()}
 
 
 def _audit_details(before: Optional[dict], after: Optional[dict]) -> str:
@@ -299,7 +310,9 @@ def _audit_details(before: Optional[dict], after: Optional[dict]) -> str:
 async def upsert(pool, tenant_id: str, values: dict, *, actor: str, tighten_only: bool = False) -> dict:
     """Create or replace the tenant's budget (every field of ``values``; the router validated them) and write one
     audit row, in one transaction. LookupError: no such tenant. TenantBudgetUnavailable: table missing / no grant."""
-    after = {k: values.get(k, DEFAULTS[k]) for k in FIELDS}
+    d = defaults()
+    after = {k: (values[k] if values.get(k) is not None or k in ("monthly_usd", "notes") and k in values else d[k])
+             for k in FIELDS}
     async with pool.acquire() as conn:
         try:
             async with conn.transaction():

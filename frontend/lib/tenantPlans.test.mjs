@@ -9,7 +9,8 @@ import { fileURLToPath } from "node:url";
 
 import {
   INT4_MAX, RATE_LIMIT_RPM_MAX, defaultOverrideMode, featuresFor, limitText, lockedLimitKeys, overrideBody,
-  overrideDraftOf, overrideFeatures, overrideModes, planBody, planDraftOf, refusalOf, runSaga, tierChoices,
+  overrideDraftOf, overrideFeatures, overrideModes, planBody, planDraftOf, refusalOf, runSaga, tierChoices, money,
+  termText, PRODUCTS, PRICE_UNITS,
   addOnDecisionPath, addOnRequestPath, approveBody, requestShown, requestTone, sortAddOnRequests,
   END_PILOT_REASON_MAX, endPilotPath,
 } from "./tenantPlans.ts";
@@ -311,4 +312,51 @@ test("the End pilot button is admin only and confirms with a required reason", (
   assert.match(src, /if \(!isPilot \|\| !can\(role, "tenant\.write"\)\) return null;/);
   assert.match(src, /reason=\{\{ label: t\("endPilotReason"\), required: true/);
   assert.match(src, /testId="end-pilot-confirm"/);
+});
+
+// ── AA-1116 option B ───────────────────────────────────────────────────────────────────────────────────────────────
+test("AA-1116 decision 14: no retail add-on product or unit price unit in the plan catalogue", () => {
+  assert.deepEqual(PRODUCTS, ["content", "crm", "tripplanner"]);
+  assert.deepEqual(PRICE_UNITS, ["tenant", "seat", "site"]);
+  const src = readFileSync(fileURLToPath(new URL("../app/admin/tenants/_components/Tenant360Commercial.tsx",
+    import.meta.url)), "utf8");
+  assert.doesNotMatch(src, /\/addons\b|AddOns\b/);
+});
+
+const B_CATALOGUE = CATALOGUE.concat([
+  { feature_key: "ai.budget_addon_usd_monthly", product: "platform", value_kind: "limit", unit: "usd_month",
+    description: "AI added" },
+  { feature_key: "tp.custom_domain", product: "tripplanner", value_kind: "flag", unit: null, description: "Domain" },
+]);
+
+test("AA-1116: the AI increment is offered on crm and tripplanner plans, never on content", () => {
+  const keys = (p) => featuresFor(p, B_CATALOGUE).map((f) => f.feature_key);
+  assert.ok(!keys("content").includes("ai.budget_addon_usd_monthly"));
+  assert.ok(keys("content").includes("ai.budget_usd_monthly"));
+  assert.ok(keys("tripplanner").includes("ai.budget_addon_usd_monthly"));
+  assert.ok(!keys("tripplanner").includes("ai.budget_usd_monthly"));
+  assert.ok(keys("crm").includes("ai.budget_addon_usd_monthly") && !keys("crm").includes("tp.custom_domain"));
+});
+
+test("AA-1116: the option B fields reach the body and are validated", () => {
+  const d = { ...planDraftOf(null, "crm"), plan_key: "crm.zz", name: "Zz", price: "19", price_vnd: "490000",
+    seats_min: "3", overage_tour: "", overage_1k_calls: "0.6" };
+  const { body, error } = planBody(d, B_CATALOGUE, null);
+  assert.equal(error, null);
+  assert.equal(body.price_vnd_monthly, "490000");
+  assert.equal(body.seats_min, 3);
+  assert.equal(body.overage_usd_per_1k_calls, "0.6");
+  assert.equal(planBody({ ...d, price_vnd: "490000.5" }, B_CATALOGUE, null).error, "vnd");
+  assert.equal(planBody({ ...d, seats_min: "0" }, B_CATALOGUE, null).error, "seatsMin");
+  assert.equal(planBody({ ...d, overage_tour: "0.12345" }, B_CATALOGUE, null).error, "overage");
+  assert.equal(planDraftOf(null, "tripplanner").price_unit, "site");
+});
+
+test("AA-1116: money and term text", () => {
+  assert.equal(money("409.5", "USD"), "$409.50");
+  assert.equal(money("3790000", "VND"), "3,790,000 ₫");
+  assert.equal(money(null, "USD"), "—");
+  assert.equal(termText(["crm", "content"], "On", "Off"), "crm, content");
+  assert.equal(termText(true, "On", "Off"), "On");
+  assert.equal(termText(26000, "On", "Off"), "26,000");
 });

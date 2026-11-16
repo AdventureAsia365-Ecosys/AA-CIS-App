@@ -144,7 +144,9 @@ async def test_tenant_lifecycle_end_to_end(ctx):
         "INSERT INTO shared.tenant_api_usage (tenant_id, endpoint, method, status_code, response_ms) "
         "VALUES ($1::uuid, '/v1/quota', 'GET', $2, 20)", [(tid, 200), (tid, 200), (tid, 429)])
     usage = await admin.get_tenant_usage(uuid.UUID(tid), req, x_admin_secret="s", months=3)
-    assert usage["limits"]["tours_per_month"] == 200 and usage["t2_versions"] == 0
+    # AA-1116 (S5): the quota the rewrite path enforces, the business plan's resolved content.rewrite (CIS 355: 500),
+    # no longer the membership_plans row of plan_id
+    assert usage["limits"]["tours_per_month"] == 500 and usage["t2_versions"] == 0
     [m] = usage["monthly_usage"]
     assert (m["total_calls"], m["successful_calls"], m["rate_limited_calls"]) == (3, 2, 1)
 

@@ -192,6 +192,11 @@ class AdminTenantAuditAction:
     # AA-1086 G2 (root ADR 0019 d16): an admin ended the tenant's pilot (is_pilot / pilot_ends_at cleared, the Dev pilot
     # slot is free again; services/tenant_account/pilot.py). details: reason, the end date it had, ended_early.
     PILOT_ENDED = "tenant.pilot_ended"
+    # AA-1116 (option B, CIS 435): staff set the tenant's billing details (bill-to, currency, founding offer; the
+    # PII-tagged bill-to fields are audited as set / changed / cleared with a short hash, never in clear) or a
+    # subscription's commercial terms (interval, agreed price, price lock). details: before / after.
+    BILLING_DETAILS_SET = "tenant.billing_details_set"
+    SUBSCRIPTION_TERMS_SET = "tenant.subscription_terms_set"
 
 
 async def write_audit_log(

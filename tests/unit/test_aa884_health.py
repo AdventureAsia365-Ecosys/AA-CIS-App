@@ -164,7 +164,8 @@ def test_required_keys_run_from_the_baseline_to_the_required_schema():
 # AA-1093 L2 (S279): 408 / 409 / 411 (the tenant erasure saga tables, the feed event type, its settings) too.
 # AA-1105 (S281): 420 (schema learn, the AA Academy learning API) too.
 # AA-1090 (S281): 428 (shared.tenant_tripplanner_domain, the TripPlanner custom-domain editor and job) too.
-DEV_KEYS_WITHOUT_336 = [k for k in range(readiness.LEGACY_CIS_BASELINE + 1, 429) if k != 336]
+# AA-1116 (S282): 435 and 439 (the option B price columns, v_tenant_monthly_usage.plan_key) too; Dev after that batch.
+DEV_KEYS_WITHOUT_336 = [k for k in range(readiness.LEGACY_CIS_BASELINE + 1, 440) if k != 336]
 
 
 def test_the_time_gated_336_is_not_required_while_the_r2_keys_are():
@@ -191,6 +192,13 @@ async def test_dev_without_395_is_schema_behind():
     keys = [k for k in DEV_KEYS_WITHOUT_336 if k != 395]
     status, body = await readiness.readiness(_keys_pool(394, keys), now=0.0)
     assert status == 503 and body["missing_schema_versions"] == ["395"]
+
+
+@pytest.mark.asyncio
+async def test_dev_without_the_option_b_keys_is_schema_behind():
+    keys = [k for k in DEV_KEYS_WITHOUT_336 if k not in (435, 436, 437, 438, 439)]
+    status, body = await readiness.readiness(_keys_pool(434, keys), now=0.0)
+    assert status == 503 and body["missing_schema_versions"] == ["435", "439"]
 
 
 @pytest.mark.asyncio

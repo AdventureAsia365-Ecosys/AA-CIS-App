@@ -10,7 +10,7 @@ import {
   Badge, Button, Checkbox, ConfirmModal, Drawer, Field, Input, K, Select, Switch, Textarea, mono, useT, useToast,
 } from "../../../_kit";
 import {
-  DEFAULT_UNIT, PLANS_API, PLANS_KEY, PRODUCTS, TIERS, featuresFor, lockedLimitKeys, planBody, planDraftOf, sendJson,
+  DEFAULT_UNIT, PLANS_API, PLANS_KEY, PRICE_UNITS, PRODUCTS, TIERS, featuresFor, lockedLimitKeys, planBody, planDraftOf, sendJson,
   limitRangeText, unitText,
   type Feature, type Plan, type PlanDraft, type PlanDraftError, type Product,
 } from "@/lib/tenantPlans";
@@ -23,7 +23,8 @@ const grid = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(mi
 type KeyedError = "limit" | "enforcedRequired" | "limitRemoved";
 const ERR = {
   key: "err_key", name: "err_name", price: "err_price", seats: "err_seats", extraSeat: "err_extraSeat",
-  notes: "err_notes", rpmRequired: "err_rpmRequired",
+  notes: "err_notes", rpmRequired: "err_rpmRequired", vnd: "err_vnd", seatsMin: "err_seatsMin", floor: "err_floor",
+  overage: "err_overage",
 } as const satisfies Record<Exclude<PlanDraftError, KeyedError>, keyof typeof PLANS.en>;
 
 export function PlanDrawer({ plan, product, catalogue, onClose }: {
@@ -147,7 +148,7 @@ export function PlanDrawer({ plan, product, catalogue, onClose }: {
           <Field label={t("fieldUnit")}>
             <Select value={draft.price_unit} disabled={lock}
               onChange={(e) => set({ price_unit: e.target.value as PlanDraft["price_unit"] })}
-              options={(["tenant", "seat", "site"] as const).map((u) => ({ value: u, label: t(`unit_${u}`) }))} />
+              options={PRICE_UNITS.map((u) => ({ value: u, label: t(`unit_${u}`) }))} />
           </Field>
           <Field label={t("fieldSeats")} error={err("seats")}>
             <Input inputMode="numeric" value={draft.seats_included} disabled={lock}
@@ -158,6 +159,7 @@ export function PlanDrawer({ plan, product, catalogue, onClose }: {
               onChange={(e) => set({ price_extra_seat: e.target.value })} />
           </Field>
         </div>
+        <PriceListFields draft={draft} set={set} lock={lock} err={err} plan={plan} />
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <Switch checked={draft.is_public} disabled={lock} label={t("fieldPublic")}
             onChange={(v) => set({ is_public: v })} />
@@ -218,5 +220,50 @@ export function PlanDrawer({ plan, product, catalogue, onClose }: {
           reason={{ label: t("retireReason"), maxLength: 500 }} />
       )}
     </Drawer>
+  );
+}
+
+/** AA-1116 option B: the VND list, the seat minimum, the contract floor and (content) the overage rates. */
+function PriceListFields({ draft, set, lock, err, plan }: {
+  draft: PlanDraft; set: (p: Partial<PlanDraft>) => void; lock: boolean;
+  err: (k: PlanDraftError) => string | undefined; plan: Plan | null;
+}) {
+  const t = useT(PLANS);
+  const priceSetAt = plan?.price_set_at;
+  return (
+    <div data-testid="plan-option-b">
+      <div style={{ fontSize: 13, fontWeight: 600, color: K.ink, marginBottom: 6 }}>{t("optionBTitle")}</div>
+      {priceSetAt && <p style={{ ...small, marginBottom: 6 }}>{t("priceSetAt", priceSetAt)}</p>}
+      <div style={grid}>
+        <Field label={t("fieldPriceVnd")} hint={t("fieldPriceVndHint")} error={err("vnd")}>
+          <Input inputMode="numeric" value={draft.price_vnd} disabled={lock} data-testid="plan-price-vnd"
+            onChange={(e) => set({ price_vnd: e.target.value.replace(/[\s.,]/g, "") })} />
+        </Field>
+        <Field label={t("fieldExtraSeatVnd")}>
+          <Input inputMode="numeric" value={draft.price_extra_seat_vnd} disabled={lock}
+            onChange={(e) => set({ price_extra_seat_vnd: e.target.value.replace(/[\s.,]/g, "") })} />
+        </Field>
+        <Field label={t("fieldSeatsMin")} hint={t("fieldSeatsMinHint")} error={err("seatsMin")}>
+          <Input inputMode="numeric" value={draft.seats_min} disabled={lock} data-testid="plan-seats-min"
+            onChange={(e) => set({ seats_min: e.target.value })} />
+        </Field>
+        <Field label={t("fieldFloor")} hint={t("fieldFloorHint")} error={err("floor")}>
+          <Input inputMode="decimal" value={draft.price_floor} disabled={lock}
+            onChange={(e) => set({ price_floor: e.target.value })} />
+        </Field>
+        {draft.product === "content" && (
+          <>
+            <Field label={t("fieldOverageTour")} error={err("overage")}>
+              <Input inputMode="decimal" value={draft.overage_tour} disabled={lock}
+                onChange={(e) => set({ overage_tour: e.target.value })} />
+            </Field>
+            <Field label={t("fieldOverageCalls")}>
+              <Input inputMode="decimal" value={draft.overage_1k_calls} disabled={lock}
+                onChange={(e) => set({ overage_1k_calls: e.target.value })} />
+            </Field>
+          </>
+        )}
+      </div>
+    </div>
   );
 }

@@ -4,11 +4,14 @@ view (``GET /admin/billing``) and the tenant's own ``GET /v1/billing``.
 Two rules live here so they cannot drift between the two endpoints:
 
 * **No invented plan.** Both endpoints used to answer a missing usage row with a made-up Starter
-  plan (fixed price, 50 tours, 5000 calls, fixed overage rate). The view LEFT JOINs
-  ``shared.membership_plans`` on ``tenants.plan_id``, and every plan column there is NOT NULL, so
-  a NULL ``tours_quota_monthly`` means exactly "no plan attached". Then every plan-derived field
-  (quotas, price, overage rate, quota %, overage) is ``None`` and ``plan_attached`` is ``False``;
-  the UI shows "No plan attached" instead of a number nobody agreed to.
+  plan (fixed price, 50 tours, 5000 calls, fixed overage rate). Since CIS 439 (AA-1116) the view
+  reads the tenant's live content plan in ``shared.plan`` and names it in ``plan_key``: a NULL
+  ``plan_key`` means exactly "no plan attached". Then every plan-derived field (quotas, price,
+  overage rate, quota %, overage) is ``None`` and ``plan_attached`` is ``False``; the UI shows
+  "No plan attached" instead of a number nobody agreed to. A NULL quota with a plan means "no
+  quota" (Enterprise / internal by contract, S282 decision 11), never "no plan". A row without the
+  ``plan_key`` column (the view before 439) falls back to the old reading (a NULL
+  ``tours_quota_monthly`` = no plan, when the quotas came from NOT NULL membership_plans columns).
 * **LLM cost has one definition.** ``llm_cost_usd`` is read from the view as-is. Since migration
   223 it is ``SUM(shared.llm_call_log.cost_usd)`` for the tenant, current calendar month, Jev
   included, shadow rows excluded. No endpoint computes a second formula (the old
@@ -31,13 +34,22 @@ def _plain(v: Any) -> Any:
     return float(v) if hasattr(v, "__float__") else v
 
 
+def plan_attached(row: Any) -> bool:
+    """Whether a ``v_tenant_monthly_usage`` row has a live content plan: ``plan_key`` set (CIS 439); before 439 (no
+    ``plan_key`` column) a non-NULL ``tours_quota_monthly``."""
+    d = row if isinstance(row, dict) else dict(row)
+    if "plan_key" in d:
+        return d["plan_key"] is not None
+    return d.get("tours_quota_monthly") is not None
+
+
 def usage_row_to_dict(row: Any) -> dict:
     """A ``v_tenant_monthly_usage`` row (asyncpg Record or dict) as a JSON-ready dict.
 
-    Adds ``plan_attached``; nulls every plan-derived field when no plan is attached;
+    Adds ``plan_attached`` (:func:`plan_attached`); nulls every plan-derived field when no plan is attached;
     ``billing_month`` becomes ``YYYY-MM``."""
     d = dict(row)
-    attached = d.get("tours_quota_monthly") is not None
+    attached = plan_attached(d)
     out = {k: _plain(v) for k, v in d.items() if k != "billing_month"}
     if not attached:
         for k in PLAN_DERIVED_FIELDS:

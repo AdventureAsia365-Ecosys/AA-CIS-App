@@ -15,6 +15,7 @@ CIS 353 triggers re-sync the entitlements of every tenant on the plan (``aa.acto
 """
 from __future__ import annotations
 
+from datetime import date
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
@@ -23,6 +24,7 @@ from pydantic import BaseModel, Field
 from api.core.staff_authz import staff_policy
 from api.routers.admin import _admin_actor, _require_tenant_admin, verify_admin_secret
 from services.tenant_account import plans as pl
+from services.tenant_account import pricing_settings as ps
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(staff_policy)])
 
@@ -44,6 +46,13 @@ class PlanCreateIn(BaseModel):
     price_unit: Optional[Literal["tenant", "seat", "site"]] = None
     seats_included: Optional[int] = Field(None, ge=0, le=100000)
     price_extra_seat_usd: Decimalish = None
+    # AA-1116 option B (CIS 435): the VND list, the seat minimum, the contract floor and the overage rates
+    price_vnd_monthly: Decimalish = None
+    price_extra_seat_vnd: Decimalish = None
+    seats_min: Optional[int] = Field(None, ge=1, le=500)
+    price_floor_usd_monthly: Decimalish = None
+    overage_usd_per_tour: Decimalish = None
+    overage_usd_per_1k_calls: Decimalish = None
     is_public: bool = False
     notes: Optional[str] = Field(None, max_length=1000)
     features: list[PlanFeatureIn] = Field(default_factory=list, max_length=64)
@@ -56,6 +65,13 @@ class PlanPatchIn(BaseModel):
     price_unit: Optional[Literal["tenant", "seat", "site"]] = None
     seats_included: Optional[int] = Field(None, ge=0, le=100000)
     price_extra_seat_usd: Decimalish = None
+    # AA-1116 option B (CIS 435): the VND list, the seat minimum, the contract floor and the overage rates
+    price_vnd_monthly: Decimalish = None
+    price_extra_seat_vnd: Decimalish = None
+    seats_min: Optional[int] = Field(None, ge=1, le=500)
+    price_floor_usd_monthly: Decimalish = None
+    overage_usd_per_tour: Decimalish = None
+    overage_usd_per_1k_calls: Decimalish = None
     is_public: Optional[bool] = None
     notes: Optional[str] = Field(None, max_length=1000)
     features: Optional[list[PlanFeatureIn]] = Field(None, max_length=64,
@@ -70,6 +86,18 @@ class PlanRetireIn(BaseModel):
 def _refuse(e: pl.PlanError) -> HTTPException:
     return HTTPException(status_code=e.status, detail={"detail": e.code, "message": e.message},
                          headers={"X-Error-Code": e.code})
+
+
+@router.get("/plans/commercial-terms", summary="The commercial terms in force and the price review badges")
+async def commercial_terms(request: Request, x_admin_secret: str = Header(None)) -> dict:
+    """AA-1116: the option B commercial settings in force (edited on Platform › Settings, maker-checker) with their
+    labels, and per live priced plan its review dates and the VND drift against the reference rate."""
+    verify_admin_secret(x_admin_secret)
+    terms = ps.snapshot(ps.COMMERCIAL)
+    async with request.app.state.pool.acquire() as conn:
+        plans = await pl.list_plans(conn)
+    return {"terms": [{"key": k, "value": terms[k], "label": ps.label(k)} for k in ps.COMMERCIAL],
+            "reviews": pl.reviews(plans, terms, today=date.today())}
 
 
 @router.get("/plans", summary="The plan catalogue with features and live subscription counts")

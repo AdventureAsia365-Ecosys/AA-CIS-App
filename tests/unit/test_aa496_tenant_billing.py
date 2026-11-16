@@ -27,8 +27,9 @@ pytestmark = pytest.mark.usefixtures("seeded_plans")
 def _make_pool(row=None, activity=None, plans=None, rpm=300, daily=None):
     conn = AsyncMock()
     conn.fetchrow = AsyncMock(return_value=row)
-    # get_my_billing runs fetch() calls in order: activity, (AA-636) plans, (AA-638) daily usage.
-    conn.fetch = AsyncMock(side_effect=[activity or [], plans or [], daily or []])
+    # get_my_billing runs fetch() calls in order: activity, (AA-636) plans, (AA-638) daily usage, then (AA-1116) the
+    # quote's subscriptions (only when the tenant row is found).
+    conn.fetch = AsyncMock(side_effect=[activity or [], plans or [], daily or [], []])
     conn.fetchval = AsyncMock(return_value=rpm)
 
     pool = MagicMock()
@@ -135,9 +136,10 @@ class TestAA636BillingPlanFields:
     async def test_billing_returns_tenant_rate_limit_and_plans(self):
         plans = [
             {"plan_name": "starter", "tours_quota_monthly": 50, "api_calls_quota_monthly": 5000,
-             "price_usd_monthly": 299.0},
-            {"plan_name": "enterprise", "tours_quota_monthly": 999999, "api_calls_quota_monthly": 999999,
-             "price_usd_monthly": 0},
+             "price_usd_monthly": 299.0, "price_vnd_monthly": None},
+            # AA-1116: a contract plan has no list price in shared.plan (NULL)
+            {"plan_name": "enterprise", "tours_quota_monthly": None, "api_calls_quota_monthly": None,
+             "price_usd_monthly": None, "price_vnd_monthly": None},
         ]
         pool, conn = _make_pool(row=None, activity=[], plans=plans, rpm=1000)
         request = MagicMock()
@@ -150,7 +152,7 @@ class TestAA636BillingPlanFields:
         starter = result["plans"][0]
         assert starter["price_usd_monthly"] == 299.0
         assert starter["rate_limit_rpm"] == 60  # content.starter content.rate_limit_rpm (CIS 355 seed)
-        # enterprise's stored 0.00 means "negotiated" -> None ("Custom"), never "$0/mo"
+        # enterprise has no list price ("negotiated") -> None ("Custom"), never "$0/mo"
         assert result["plans"][1]["price_usd_monthly"] is None
         assert result["plans"][1]["rate_limit_rpm"] is None
 
@@ -162,10 +164,11 @@ class TestAA636BillingPlanFields:
         await v1_tours.get_my_billing(request, tenant={"sub": "tenant-1"})
 
         plans_sql = conn.fetch.await_args_list[1].args[0]
-        assert "membership_plans" in plans_sql
-        assert "plan_name <> 'internal'" in plans_sql
-        # custom-priced plans (NULL / 0) sort after the priced ones
-        assert "(price_usd_monthly IS NULL OR price_usd_monthly <= 0)" in plans_sql
+        # AA-1116 (S5): the public live content plans of shared.plan, never shared.membership_plans
+        assert "FROM shared.plan p" in plans_sql and "membership_plans" not in plans_sql
+        assert "p.tier::text <> 'internal'" in plans_sql and "p.is_public" in plans_sql
+        # contract plans (NULL price) sort after the priced ones
+        assert "ORDER BY p.price_usd_monthly IS NULL, p.price_usd_monthly" in plans_sql
 
 
 @pytest.mark.asyncio

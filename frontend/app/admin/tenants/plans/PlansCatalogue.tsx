@@ -10,10 +10,11 @@ import {
   Badge, Button, DataTable, ErrorState, K, PageHeader, Section, Switch, mono, useT, type ColumnDef,
 } from "../../../_kit";
 import {
-  FEATURES_API, PLANS_API, PLANS_KEY, PRODUCTS, sendJson, type Feature, type Plan, type PlansResp, type Product,
+  FEATURES_API, PLANS_API, PLANS_KEY, PRODUCTS, money, sendJson, type Feature, type Plan, type PlansResp, type Product,
 } from "@/lib/tenantPlans";
 import { PLANS } from "./plans.messages";
 import { PlanDrawer } from "./PlanDrawer";
+import { CommercialTerms } from "./CommercialTerms";
 
 export default function PlansCatalogue() {
   const t = useT(PLANS);
@@ -46,8 +47,15 @@ export default function PlansCatalogue() {
       accessorKey: "price_usd_monthly", header: t("colPrice"),
       cell: (c) => {
         const p = c.row.original;
-        return p.price_usd_monthly == null ? <span style={{ color: K.muted }}>{t("noPrice")}</span>
-          : t("perUnit", p.price_usd_monthly, t(`unit_${p.price_unit}`));
+        if (p.price_usd_monthly == null) return <span style={{ color: K.muted }}>{t("noPrice")}</span>;
+        return (
+          <span style={{ display: "flex", flexDirection: "column" }}>
+            <span>{t("perUnit", p.price_usd_monthly, t(`unit_${p.price_unit}`))}</span>
+            {p.price_vnd_monthly != null && (
+              <span style={{ fontSize: 11, color: K.muted }}>{money(p.price_vnd_monthly, "VND")}</span>
+            )}
+          </span>
+        );
       },
     },
     { id: "features", header: t("colFeatures"), cell: (c) => t("featureCount", c.row.original.features.length) },
@@ -90,6 +98,7 @@ export default function PlansCatalogue() {
         <Switch checked={showRetired} onChange={setShowRetired} label={t("showRetired")} />
         <span style={{ fontSize: 13, color: K.body }}>{t("showRetired")}</span>
       </div>
+      <CommercialTerms />
       {error ? <ErrorState message={`${t("loadError")}: ${error}`} onRetry={refresh} /> : (
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 16 }}>
           {PRODUCTS.map((p) => (

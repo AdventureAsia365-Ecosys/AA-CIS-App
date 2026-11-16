@@ -124,7 +124,9 @@ def test_dev_guard(monkeypatch):
     assert e.value.code == "dev_real_tenant_refused"
     pilot = pv.parse(_create(kind="agency", pilot_weeks=8))
     assert pilot.pilot_weeks == 8 and pv.parse(pilot.to_payload()) == pilot
-    for bad, code in ((9, "invalid_pilot_weeks"), (0, "invalid_pilot_weeks"), (True, "invalid_pilot_weeks")):
+    # AA-1116: 0 = until go-live (CIS 435); the bound is cis.tenant.pilot_max_weeks (default 8, CIS 436)
+    assert pv.parse(_create(kind="agency", pilot_weeks=0)).pilot_weeks == 0
+    for bad, code in ((9, "invalid_pilot_weeks"), (-1, "invalid_pilot_weeks"), (True, "invalid_pilot_weeks")):
         with pytest.raises(pv.ProvisionError) as e:
             pv.parse(_create(kind="agency", pilot_weeks=bad))
         assert e.value.code == code

@@ -142,7 +142,7 @@ _USAGE_SQL = """
 SELECT v.tenant_name, v.plan_tier, v.billing_month,
        v.tours_quota_monthly, v.api_calls_quota_monthly, v.price_usd_monthly,
        v.tours_rewritten, v.api_calls_used, v.quota_tours_pct, v.quota_calls_pct,
-       v.tours_overage, v.overage_usd, v.llm_cost_usd, v.overage_rate_usd_per_tour
+       v.tours_overage, v.overage_usd, v.llm_cost_usd, v.overage_rate_usd_per_tour, v.plan_key
 FROM shared.v_tenant_monthly_usage v
 WHERE v.tenant_id = $1::uuid
 """
