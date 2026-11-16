@@ -46,7 +46,7 @@ _PLACE_MONTHS_SQL = """
       JOIN acp_contract.search_volume_monthly h ON h.keyword = k.keyword AND h.market = $2
      WHERE k.subject_kind = 'place' AND k.subject = ANY($1::text[])
        AND NOT coalesce(k.jev_mode, '') LIKE 'rule:%'
-       AND NOT (k.jev_zone = 'reject' AND k.jev_mode = 'enforce')
+       AND NOT (coalesce(k.jev_zone, '') = 'reject' AND coalesce(k.jev_mode, '') = 'enforce')
 """
 
 _COUNTS_SQL = """
