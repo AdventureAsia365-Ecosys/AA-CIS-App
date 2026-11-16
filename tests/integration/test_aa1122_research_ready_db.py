@@ -68,8 +68,9 @@ async def _job(conn, kind: str, status: str = "succeeded", created_by: str | Non
                created_at: datetime | None = None, payload: dict | None = None) -> str:
     payload = {**({"scope": scope} if scope else {}), **(payload or {})}
     return str(await conn.fetchval(
-        "INSERT INTO shared.job (kind, payload, status, created_by, created_at, run_after) "
-        "VALUES ($1, $2::jsonb, $3, $4, coalesce($5, now()), now()) RETURNING id",
+        "INSERT INTO shared.job (kind, payload, status, created_by, created_at, run_after, locked_by, locked_until) "
+        "VALUES ($1, $2::jsonb, $3, $4, coalesce($5, now()), now(), CASE WHEN $3 = 'running' THEN 'zz-worker' END, "
+        "CASE WHEN $3 = 'running' THEN now() + interval '5 minutes' END) RETURNING id",
         kind, json.dumps(payload), status, created_by, created_at))
 
 
@@ -118,7 +119,8 @@ async def test_paying_research_lane_spans_both_research_kinds(tx):
     paid = await _job(tx, "tour_paa_backfill", "queued", payload={"paid": True})
     assert (await cg.other_paying_research_job(_Pool(tx), paid))["id"] == seg
     assert (await cg.active_paying_research_job(_Pool(tx)))["id"] == seg
-    await tx.execute("UPDATE shared.job SET status = 'running' WHERE id = $1::uuid", paid)
+    await tx.execute("UPDATE shared.job SET status = 'running', locked_by = 'zz-worker', "
+                     "locked_until = now() + interval '5 minutes' WHERE id = $1::uuid", paid)
     assert (await cg.other_paying_research_job(_Pool(tx), seg))["id"] == paid
     assert (await cg.other_paying_research_job(_Pool(tx), free))["kind"] in cg.RESEARCH_JOB_KINDS
 
