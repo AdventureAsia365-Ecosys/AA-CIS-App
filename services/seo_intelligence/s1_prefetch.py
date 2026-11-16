@@ -15,6 +15,9 @@ bills per task, up to 1,000 keywords), keywords_for_keywords ($0.09) and a SERP 
 4. **No separate search_volume task** — the ideas task returns volume for the seeds themselves.
 5. SERP stays per tour ($0.002) for People-Also-Ask, skipped when the research cache already has
    PAA for the tour's places.
+6. AA-1120 — ONE SERP per (seed, location): tours that share a seed (same country and activity) share the answer
+   within a run, and a later run reuses the SERP another tour's reusable row already holds for the same seed and
+   location (`seo_context.cache_key`, younger than REUSE_DAYS), instead of buying it once per tour.
 """
 from __future__ import annotations
 
@@ -181,6 +184,37 @@ async def fresh_tour_ids(conn, tour_ids: list[str]) -> set[str]:
     return {r["tour_id"] for r in rows}
 
 
+async def seed_serps(conn, keys: list[str]) -> dict[str, tuple[list[str], list[str]]]:
+    """AA-1120 — cache_key -> (PAA, related searches) of the newest reusable seo_context row of ANY tour with that key
+    (same seed and location, younger than REUSE_DAYS) that holds a SERP answer (PAA or related searches). Empty on
+    any error: the caller then buys, as before."""
+    if not keys:
+        return {}
+    try:
+        rows = await conn.fetch(
+            """SELECT DISTINCT ON (cache_key) cache_key, people_also_ask, related_keywords
+                 FROM silver_aa_internal.seo_context
+                WHERE cache_key = ANY($1::text[]) AND fetched_at > now() - make_interval(days => $2)
+                  AND (coalesce(people_also_ask, '[]'::jsonb) <> '[]'::jsonb
+                       OR coalesce(related_keywords, '[]'::jsonb) <> '[]'::jsonb)
+                ORDER BY cache_key, fetched_at DESC""",
+            sorted(set(keys)), REUSE_DAYS)
+    except Exception as e:  # noqa: BLE001 — a reuse is a saving, never a reason to fail the prefetch
+        logger.warning("s1_prefetch_seed_serps_unavailable", error=str(e)[:200])
+        return {}
+
+    def _j(v) -> list:
+        v = json.loads(v) if isinstance(v, str) else v
+        return [x for x in (v or []) if isinstance(x, str)]
+    out: dict[str, tuple[list[str], list[str]]] = {}
+    for r in rows:
+        try:
+            out[r["cache_key"]] = (_j(r["people_also_ask"]), _j(r["related_keywords"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
 async def load_fresh(conn, tour_id: str) -> dict | None:
     """seo_data shaped like DataForSEOClient.fetch_all() from a reusable row, else None."""
     row = await conn.fetchrow(
@@ -293,6 +327,30 @@ async def foreign_places(conn, country: str) -> frozenset[str]:
         return frozenset()
 
 
+async def _tour_serp(client, spec: dict, location_code: int, language_code: str, memo: dict,
+                     summary: dict) -> tuple[list[str], list[str]]:
+    """(PAA, related searches) of a tour with no research-cache PAA. AA-1120: one SERP per (seed, location): `memo`
+    (cache_key -> answer) holds the reusable rows of other tours (seed_serps) and this run's purchases, so a tour whose
+    seed is already answered buys nothing. A failed SERP is ([], []) (a budget stop is raised)."""
+    key = cache_key(spec["seed"], location_code)
+    if key in memo:
+        summary["serp_reused"] += 1
+        return list(memo[key][0]), list(memo[key][1])
+    try:
+        client.tour_id = spec["tour_id"]
+        serp = await client._serp_advanced(spec["seed"], location_code, language_code)
+        paa, related = client._parse_paa(serp), client._parse_related(serp)
+    except Exception as e:
+        from shared.cost_guard import BudgetExceeded
+        if isinstance(e, BudgetExceeded):
+            raise
+        logger.warning("s1_prefetch_serp_failed", tour_id=spec["tour_id"], error=str(e)[:200])
+        return [], []
+    memo[key] = (list(paa), list(related))
+    summary["serp_calls"] += 1
+    return paa, related
+
+
 async def prefetch(conn, rows: list[dict], *, tenant_id: str, location_code: int,
                    language_code: str, client=None, progress=None, pool=None, jev: bool = True) -> dict:
     """Fill seo_context for every tour in `rows` that has no reusable one. Returns a summary.
@@ -318,7 +376,9 @@ async def prefetch(conn, rows: list[dict], *, tenant_id: str, location_code: int
             d["people_also_ask"] = json.loads(d["people_also_ask"])
 
     summary = {"tours": len(specs), "reused": len(fresh), "from_research_cache": 0,
-               "ideas_tasks": 0, "serp_calls": 0}
+               "ideas_tasks": 0, "serp_calls": 0, "serp_reused": 0}
+    # AA-1120: one SERP per (seed, location): another tour's reusable row first, then this run's own answers.
+    serp_memo = await seed_serps(conn, [cache_key(s["seed"], location_code) for s in todo])
     cached: dict[str, tuple[list[dict], list[str]]] = {}
     buy: list[dict] = []
     for s in todo:
@@ -384,16 +444,7 @@ async def prefetch(conn, rows: list[dict], *, tenant_id: str, location_code: int
                                          ideas, pool=pool)
             related: list[str] = []
             if not paa:
-                try:
-                    client.tour_id = s["tour_id"]
-                    serp = await client._serp_advanced(s["seed"], location_code, language_code)
-                    paa, related = client._parse_paa(serp), client._parse_related(serp)
-                    summary["serp_calls"] += 1
-                except Exception as e:
-                    from shared.cost_guard import BudgetExceeded
-                    if isinstance(e, BudgetExceeded):
-                        raise
-                    logger.warning("s1_prefetch_serp_failed", tour_id=s["tour_id"], error=str(e)[:200])
+                paa, related = await _tour_serp(client, s, location_code, language_code, serp_memo, summary)
             # Commit this tour's row now (asyncpg auto-commits each statement) — a concurrent
             # s1_rewrite job polling for this tour_id sees it as soon as this returns.
             await _persist(conn, s, location_code, ideas[:25], paa, related, tenant_id)

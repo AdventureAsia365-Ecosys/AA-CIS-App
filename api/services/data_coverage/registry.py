@@ -318,7 +318,8 @@ ROWS: tuple[Row, ...] = (
         "info", "defect", unit="events", denominator=f("recompute_lag", "followed"),
         denominator_label="events followed by a finished recompute", drill="/admin/jobs",
         sources=("recompute_lag",)),
-    # AA-1055: per targeted market, the share of the research scope with no research or research older than FRESH_FOR
+    # AA-1055: per targeted market, the share of the research scope with no research or research older than the
+    # volume window (AA-1120: setting cis.seo.research_volume_fresh_days)
     # (services/acp_contract/research_coverage; a market no active tenant targets is hidden)
     *(Row(f"research.stale_share.{mk.lower()}", "aseries",
           f"Places with no fresh search demand research, {mk} market",

@@ -98,12 +98,19 @@ async def test_a_paid_call_keeps_the_client_stage(monkeypatch, rows):
 @pytest.mark.asyncio
 async def test_research_store_hit_row_carries_the_run_stage(monkeypatch):
     from services.acp_contract import segment_research_batch as rb
+    from services.seo_intelligence import research_cache as rc
 
     logged = []
 
     async def fake_log(pool, **kw):
         logged.append(kw)
-    monkeypatch.setattr(rb, "record_dfs_call_with_pool", fake_log)
+    # AA-1120: the store-hit row is written by the research cache, with the run's stage (windows pinned, not read).
+    monkeypatch.setattr(rc, "record_dfs_call_with_pool", fake_log)
+    from datetime import timedelta
+
+    async def fixed():
+        return rc.Windows(timedelta(days=365), timedelta(days=365), timedelta(days=7))
+    monkeypatch.setattr(rc, "fresh_windows", fixed)
 
     class _Conn:
         async def fetch(self, sql, *args):
