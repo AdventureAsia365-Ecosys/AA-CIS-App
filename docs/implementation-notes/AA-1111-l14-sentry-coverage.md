@@ -44,5 +44,9 @@ only the legacy `sentry.client/server/edge.config.ts`, which a Turbopack build o
   requests sent. The probe route was temporary and is not in the diff.
 - The build prints two old deprecation warnings from `next.config.ts` (`withSentryConfig` from `@sentry/nextjs`,
   and `disableLogger`). They become errors in v11. Left for the SDK upgrade.
-- After merge: set the `dev` variable `ADMIN_PUBLIC_SENTRY_DSN` (the DSN of aa-cis-frontend, public by design, never
-  in the repo) and run Deploy Admin Dev. The build arg wiring in `deploy-admin-dev.yml` is unchanged.
+- Order matters: set the `dev` variable `ADMIN_PUBLIC_SENTRY_DSN` (the DSN of aa-cis-frontend, public by design,
+  never in the repo) BEFORE this PR merges. The merge push already runs Deploy Admin Dev (path `frontend/**`) and
+  builds `dev-<merge sha>` with whatever the variable holds then. ECR `aa-cis-dev-admin` is IMMUTABLE and the build
+  step reuses an existing tag, so a later dispatch on the same commit ships the same image: if the variable was set
+  too late, only the next commit that touches `frontend/**` (or the workflow) builds an image with the DSN. The build
+  arg wiring in `deploy-admin-dev.yml` is unchanged; this PR only adds that warning to its configuration comment.
