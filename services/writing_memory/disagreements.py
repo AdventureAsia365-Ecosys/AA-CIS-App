@@ -23,6 +23,10 @@ from typing import Any, Optional
 
 import asyncpg
 
+from shared.repository.jsonb_sql import json_array  # S282: unnest gate_ledger only as an array
+
+_LEDGER = json_array("cp.gate_ledger")
+
 QUEUE_MAX = 10
 QUEUE_MIN = 5
 RESOLUTIONS = ("judge_right", "human_right", "unclear")
@@ -39,7 +43,7 @@ _GOLDEN_SQL = """
      ORDER BY r.created_at DESC
      LIMIT $3
 """
-_PIECE_SQL = """
+_PIECE_SQL = f"""
     SELECT cp.piece_id AS ref,
            CASE WHEN cp.writer_input->>'channel' = 'blog' THEN 't9_blog' ELSE 't9_social' END AS writer,
            'tenant' AS scope, cp.tenant_id::text AS tenant_id,
@@ -50,7 +54,7 @@ _PIECE_SQL = """
      WHERE l.labelled_at >= $1 AND l.labelled_at < $2
        AND ((cp.status = 'held' AND l.label IN ('as_is', 'light'))
             OR (cp.status = 'approved' AND l.label IN ('heavy', 'reject')
-                AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(cp.gate_ledger) g
+                AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements({_LEDGER}) g
                                  WHERE (g->>'passed')::boolean = false AND coalesce((g->>'blocking')::boolean, true))))
      ORDER BY l.labelled_at DESC
      LIMIT $3

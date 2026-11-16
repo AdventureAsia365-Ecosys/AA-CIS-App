@@ -137,7 +137,7 @@ INSERT_PIECE_SQL = """
     SELECT $1::uuid, $2::uuid,
            COALESCE((SELECT max(attempt_number) FROM acp_shared.content_piece WHERE angle_gate_request_id = $2::uuid),
                     0) + 1,
-           $3, 'approved', '{}'::jsonb, '[]'::jsonb, '[]'::jsonb, $4, $5, $6
+           $3, 'approved', '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, $4, $5, $6
     RETURNING piece_id::text
 """
 

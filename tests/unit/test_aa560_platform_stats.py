@@ -114,7 +114,8 @@ class TestGetPlatformStats:
 
         # 3rd conn.fetch call is the top-gate-failures query (by_status, by_channel, then this).
         top_gate_sql = conn.fetch.call_args_list[2].args[0]
-        assert "jsonb_array_elements(cp.gate_ledger)" in top_gate_sql
+        # S282: only an array-shaped ledger is unnested (one object-shaped row must not fail the query)
+        assert "jsonb_array_elements((CASE WHEN jsonb_typeof(cp.gate_ledger) = 'array'" in top_gate_sql
         assert "passed" in top_gate_sql
         assert "LIMIT $1" in top_gate_sql
         # No LIMIT/OFFSET on content_piece itself before the unnest — the whole table is scanned.

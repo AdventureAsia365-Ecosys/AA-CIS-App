@@ -79,6 +79,9 @@ from api.core.staff_authz import staff_policy
 
 from api.routers.admin import verify_admin_secret
 from shared import tour_liveness as _tl
+from shared.repository.jsonb_sql import json_array  # S282: unnest gate_ledger only as an array
+
+_LEDGER = json_array("cp.gate_ledger")
 
 logger = structlog.get_logger()
 # AA-882 (GĐ3): staff_policy narrows every route listed in api/core/staff_authz.py POLICY by role.
@@ -650,10 +653,10 @@ async def get_platform_stats(
             ORDER BY n DESC
         """)
 
-        top_gate_rows = await conn.fetch("""
+        top_gate_rows = await conn.fetch(f"""
             SELECT elem->>'gate' AS gate, count(*) AS fail_count
             FROM acp_shared.content_piece cp
-            CROSS JOIN LATERAL jsonb_array_elements(cp.gate_ledger) AS elem
+            CROSS JOIN LATERAL jsonb_array_elements({_LEDGER}) AS elem
             WHERE COALESCE((elem->>'passed')::boolean, false) = false
             GROUP BY 1
             ORDER BY fail_count DESC
@@ -762,7 +765,7 @@ async def get_gate_telemetry(
                 count(*) AS fail_count
             FROM acp_shared.content_piece cp
             JOIN acp_shared.angle_gate_request agr ON agr.request_id = cp.angle_gate_request_id
-            CROSS JOIN LATERAL jsonb_array_elements(cp.gate_ledger) AS elem
+            CROSS JOIN LATERAL jsonb_array_elements({_LEDGER}) AS elem
             WHERE {cp_where}
               AND COALESCE((elem->>'passed')::boolean, false) = false
             GROUP BY 1, 2, 3

@@ -60,6 +60,9 @@ from services.quality import registry as qr
 from services.quality import final_contract  # AA-1047 W1 (REPORT-mode exit contract)
 from services.writing_memory import signals as wm  # AA-916
 from services.writing_memory.reason_codes import FACT_NOT_IN_SOURCE, ReasonCode, suggested_reason
+from shared.repository.jsonb_sql import json_array  # S282: unnest gate_ledger only as an array
+
+_LEDGER = json_array("cp.gate_ledger")
 
 logger = structlog.get_logger()
 
@@ -107,8 +110,8 @@ _PIECE_FROM = """
         OR (cp.angle_gate_option_id IS NULL AND ago.request_id = agr.request_id AND ago.chosen = true)
 """
 
-_FAILED_GATES_SQL = """
-    COALESCE((SELECT jsonb_agg(DISTINCT g->>'gate') FROM jsonb_array_elements(cp.gate_ledger) g
+_FAILED_GATES_SQL = f"""
+    COALESCE((SELECT jsonb_agg(DISTINCT g->>'gate') FROM jsonb_array_elements({_LEDGER}) g
               WHERE (g->>'passed')::boolean = false AND COALESCE((g->>'blocking')::boolean, true)),
              '[]'::jsonb) AS failed_gates,
     COALESCE((SELECT jsonb_agg(DISTINCT g->>'gate') FROM jsonb_array_elements(COALESCE(cp.flags, '[]'::jsonb)) g),
@@ -1186,7 +1189,7 @@ async def stats(request: Request, days: int = Query(30, ge=1, le=365), tenant_id
                    count(*) FILTER (WHERE (g->>'passed')::boolean = false) AS failed,
                    count(*) FILTER (WHERE (g->>'passed')::boolean = false
                                       AND COALESCE((g->>'blocking')::boolean, true)) AS blocking_failed
-            FROM acp_shared.content_piece cp, jsonb_array_elements(cp.gate_ledger) g
+            FROM acp_shared.content_piece cp, jsonb_array_elements({_LEDGER}) g
             WHERE cp.created_at > now() - make_interval(days => $1) AND cp.status <> 'processing' {tenant_clause}
             GROUP BY 1, 2 ORDER BY failed DESC, gate
             """, *params)
@@ -1208,7 +1211,7 @@ async def stats(request: Request, days: int = Query(30, ge=1, le=365), tenant_id
         f9_rows = await conn.fetch(
             f"""
             SELECT COALESCE(cp.channel, 'unknown') AS channel, g AS entry
-            FROM acp_shared.content_piece cp, jsonb_array_elements(cp.gate_ledger) g
+            FROM acp_shared.content_piece cp, jsonb_array_elements({_LEDGER}) g
             WHERE cp.created_at > now() - make_interval(days => $1) AND cp.status <> 'processing' {tenant_clause}
               AND g->>'gate' = '{qr.F9_CTA_FACT}' AND (g->>'passed')::boolean = false
             """, *params)
