@@ -23,7 +23,9 @@ name: Deploy Admin Dev
 #   vars.STAFF_WEB_ENABLED  "true" once staff_web.tf is applied; otherwise a push run is red (nothing to deploy to)
 #   vars.STAFF_WEB_ALB_DNS  the shared ALB's DNS name (not secret). The verify resolves aa-cis. to it on this runner
 #                           only, so the ECS copy is checked before the cut-over (no effect after it)
-#   vars.ADMIN_PUBLIC_SENTRY_DSN  browser Sentry DSN baked in at build time (public by design; empty = off)
+#   vars.ADMIN_PUBLIC_SENTRY_DSN  browser + server Sentry DSN baked in at build time (public by design; empty = off).
+#                           A new value needs a new image: the IMMUTABLE tag of an already-built commit is reused,
+#                           so set it before the merge that should carry it, or dispatch after a new commit.
 # The cluster, service, family, container and repository names are fixed below (Terraform outputs staff_web_*["cis"]).
 #
 # Pull requests that touch the Dockerfile or this workflow run only the image build (no AWS, no push).
