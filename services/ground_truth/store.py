@@ -65,6 +65,25 @@ async def read_rows(conn, set_id: str, set_version: str) -> list[dict]:
     return [dict(r) for r in await conn.fetch(_READ_SQL, set_id, set_version)]
 
 
+_READ_MANY_SQL = (f"SELECT label_id::text AS label_id, created_at, {_SELECT_COLS} "
+                  "FROM shared.eval_claim_label WHERE (set_id, set_version) IN "
+                  "(SELECT * FROM unnest($1::text[], $2::text[])) "
+                  "ORDER BY set_id, set_version, claim_hash, labeller_kind, lens NULLS LAST")
+
+
+async def read_rows_many(conn, keys: Iterable[tuple[str, str]]) -> dict[tuple[str, str], list[dict]]:
+    """read_rows of several (set_id, set_version) in ONE query (S282, Sentry AA-CIS-API-1A: the set list made two
+    queries per set). Each version's rows keep read_rows' order; a version with no rows maps to []."""
+    keys = sorted(set(keys))
+    out: dict[tuple[str, str], list[dict]] = {k: [] for k in keys}
+    if not keys:
+        return out
+    a, b = (list(x) for x in zip(*keys))
+    for r in await conn.fetch(_READ_MANY_SQL, a, b):
+        out[(r["set_id"], r["set_version"])].append(dict(r))
+    return out
+
+
 async def existing_judgements(conn, set_id: str, set_version: str) -> dict[tuple, tuple[str, str]]:
     """(claim_hash, labeller_kind, lens) -> (claim_class, label) of the rows a version already holds (the import's
     idempotency check, services/ground_truth/importer.py). Labels and keys only: no text is read."""

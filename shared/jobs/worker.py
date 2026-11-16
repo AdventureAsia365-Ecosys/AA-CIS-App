@@ -36,7 +36,9 @@ from shared.llm_client.tenant_budget import approval_stop_in
 from shared.sentry_init import release  # AA-884: APP_GIT_SHA of this image, written to shared.job_worker
 
 from . import queue
-from .registry import RESCHEDULE_MAX_COUNT, JobContext, NonRetryable, OutputFailed, Reschedule, kinds, run_terminal_hook
+from .registry import (
+    HANDLED_FAILURES, RESCHEDULE_MAX_COUNT, JobContext, NonRetryable, Reschedule, kinds, run_terminal_hook,
+)
 
 logger = structlog.get_logger()
 
@@ -142,9 +144,20 @@ def failure_outcome(exc: BaseException) -> tuple[str, bool, Optional[str]]:
         if not body.startswith(LLM_ACCESS_DENIED_REASON):
             body = f"{LLM_ACCESS_DENIED_REASON}: {body}"
         return body[:900 + len(LLM_ACCESS_DENIED_REASON) + 2], False, LLM_ACCESS_DENIED_REASON
-    if isinstance(exc, OutputFailed):   # AA-1078: the error starts with its typed code (no class-name prefix)
+    if isinstance(exc, HANDLED_FAILURES):   # AA-1078 / S282 Refused: the error starts with its typed code (no prefix)
         return str(exc)[:900], False, exc.code
     return f"{type(exc).__name__}: {str(exc)[:900]}", not isinstance(exc, NonRetryable), None
+
+
+def log_job_failed(log, exc: BaseException, *, next_status: Optional[str], reason: Optional[str]) -> None:
+    """The `job_failed` event of a failed attempt; call it inside the except block (log.exception reads the active
+    exception). Same event name either way, so the metric filters still count it.
+
+    S282 (Sentry AA-CIS-API-1C / -1D): a typed, handled end (HANDLED_FAILURES: an output the handler stored as failed,
+    a business-rule refusal) is already on the row with its code: a warning, no traceback, no Sentry error event.
+    Anything else: .exception, the traceback reaches Sentry with the event."""
+    emit = log.warning if isinstance(exc, HANDLED_FAILURES) else log.exception
+    emit("job_failed", next_status=next_status, error=str(exc)[:300], reason=reason)
 
 
 OPS_FLUSH_EVERY_S = 300.0     # S263: same cadence as the api ops sampler
@@ -454,8 +467,7 @@ class Worker:
             error, retryable, reason = failure_outcome(e)
             status = await queue.fail(self.pool, job, self.worker_id, error, retryable=retryable,
                                       cost_usd=round(ctx.cost_usd, 6), result=ctx.result)
-            # .exception: the traceback reaches Sentry with the event (event name unchanged: metric filters).
-            log.exception("job_failed", next_status=status, error=str(e)[:300], reason=reason)
+            log_job_failed(log, e, next_status=status, reason=reason)
             if status == "failed":
                 await run_terminal_hook(self.pool, job.id)
 

@@ -49,6 +49,7 @@ from services.ground_truth import claims as cl
 from services.ground_truth import panel as pn
 from services.ground_truth import policy
 from services.ground_truth import store
+from services.ground_truth.set_list import list_sets  # S282: moved; re-exported (the router calls rv.list_sets)
 
 ANSWERS = {"correct": "ok", "wrong": "violation", "unsure": "unsure"}
 LABEL_ANSWER = {v: k for k, v in ANSWERS.items()}
@@ -1064,23 +1065,6 @@ async def import_proposals(conn, *, run_id: str, proposals: list[dict], apply: b
         await write_audit_log(conn, tenant_id=None, actor=actor[:128], action=AUDIT_PROPOSALS,
                               resource_type="eval_claim_proposal", resource_id=run_id[:64],
                               details={k: out[k] for k in ("lines", "new", "unchanged", "not_queued", "inserted")})
-    return out
-
-
-async def list_sets(conn) -> list[dict]:
-    """Every label set version with its counts (set_summary) and its queue items per state."""
-    sets = [(r["set_id"], r["set_version"]) for r in await conn.fetch(
-        "SELECT DISTINCT set_id, set_version FROM shared.eval_claim_label ORDER BY set_id, set_version LIMIT 200")]
-    queue = {(r["set_id"], r["set_version"], r["status"]): int(r["n"]) for r in await conn.fetch(
-        "SELECT l.set_id, l.set_version, d.status, count(*) AS n FROM shared.writing_memory_disagreement d "
-        "JOIN shared.eval_claim_label l ON l.label_id = d.source_ref WHERE d.source = 'golden_claim' "
-        "GROUP BY 1, 2, 3")}
-    out = []
-    for set_id, version in sets:
-        rows = await store.read_rows(conn, set_id, version)
-        relabels = await read_relabels_soft(conn, set_id, version)
-        out.append({"set_id": set_id, "set_version": version, **set_summary(rows, relabels),
-                    "queue": {s: queue.get((set_id, version, s), 0) for s in ("open", "resolved")}})
     return out
 
 

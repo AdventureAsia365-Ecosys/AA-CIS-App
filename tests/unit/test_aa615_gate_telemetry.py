@@ -146,7 +146,8 @@ class TestGetGateTelemetry:
         assert "cp.attempt_number >= 2" in by_tc_sql
         # gate-failure query unnests server-side, same as platform-stats
         top_gate_sql = conn.fetch.call_args_list[1].args[0]
-        assert "jsonb_array_elements(cp.gate_ledger)" in top_gate_sql
+        # S282: only an array-shaped ledger is unnested (one object-shaped row must not fail the query)
+        assert "jsonb_array_elements((CASE WHEN jsonb_typeof(cp.gate_ledger) = 'array'" in top_gate_sql
 
     async def test_date_filters_scope_all_three_windows(self):
         from api.routers.admin_a4 import get_gate_telemetry
