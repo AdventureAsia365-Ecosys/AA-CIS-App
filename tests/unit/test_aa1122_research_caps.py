@@ -5,6 +5,7 @@ Every paid research path buys through a budgeted DataForSEO client, the keyword 
 each one checks the SharedCap(s) attached to its RunBudget before the paid call. The guard drives each path with
 fakes until the month cap stops it and asserts that the spend charged never passes the cap. No DB, no provider call;
 invented places only."""
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -214,6 +215,138 @@ def test_guard_every_paid_research_entry_point_is_capped():
     assert "with_caps" in inspect.getsource(segment_research_job.run)
     assert "with_caps" in inspect.getsource(tour_paa_job.paid_budget)
     assert "load_research_month_cap" in inspect.getsource(tour_paa_job.paid_budget)
+
+
+# ── THE GUARD: paying research is one lane over every research kind (S282 review) ─────────────────────────────────
+class _JobTable:
+    """An in-memory shared.job for the lane queries: claimed jobs are 'running' (the runner marks a job running when
+    it claims it, before the handler starts)."""
+
+    def __init__(self):
+        self.jobs: dict[str, dict] = {}
+
+    def claim(self, job_id: str, kind: str, paid: bool | None = None) -> None:
+        self.jobs[job_id] = {"id": job_id, "kind": kind, "status": "running", "paid": paid}
+
+    def _paying(self, j: dict) -> bool:
+        return j["kind"] == "segment_research" or (j["kind"] == "tour_paa_backfill" and bool(j["paid"]))
+
+    @asynccontextmanager
+    async def acquire(self):
+        table = self
+
+        class _Conn:
+            async def fetchrow(self, sql, *args):
+                assert sql in (cg.OTHER_PAYING_RUNNING_SQL, cg.ACTIVE_PAYING_SQL)
+                me = args[0] if args else None
+                hit = [j for j in table.jobs.values() if j["id"] != me and table._paying(j)]
+                return {k: hit[0][k] for k in ("id", "kind", "status")} if hit else None
+        yield _Conn()
+
+
+def _job_ctx(pool, job_id, kind, payload):
+    return SimpleNamespace(pool=pool, job_id=job_id, payload=payload, progress=AsyncMock(), add_cost=MagicMock(),
+                           set_result=MagicMock(), job=SimpleNamespace(created_by="admin:zz", attempt=1, progress={}))
+
+
+@pytest.mark.asyncio
+async def test_guard_two_research_kinds_never_pay_against_one_month_at_once():
+    """A segment research run and a paid tour PAA backfill each have concurrency 1, but per kind: two attempts of the
+    two kinds both claimed means at most one reads the month and pays; the other goes back to the queue."""
+    from services.jobs import segment_research_job as srj
+    from services.jobs import tour_paa_job
+    from shared.jobs.registry import Reschedule
+
+    table = _JobTable()
+    read_month = []
+
+    async def _caps(pool, job_id, scope):
+        read_month.append(job_id)
+        raise cost_guard.BudgetExceeded("stop here: the month was read", "research", "per_month")
+
+    async def _paid_budget(pool, job_id):
+        read_month.append(job_id)
+        return None, "stop here: the month was read"
+
+    # 1) the segment run is claimed and starts alone: it reads the month
+    table.claim("seg-1", "segment_research")
+    with patch.object(srj, "open_caps", _caps):
+        with pytest.raises(cost_guard.BudgetExceeded):
+            await srj.run(_job_ctx(table, "seg-1", "segment_research", {"markets": ["US"]}))
+    # 2) a paid tour PAA backfill is claimed while it runs: it waits, before it reads the month
+    table.claim("paa-1", "tour_paa_backfill", paid=True)
+    with patch.object(tour_paa_job, "paid_budget", _paid_budget), \
+            patch("services.seo_intelligence.tour_paa.run", AsyncMock(return_value={})):
+        with pytest.raises(Reschedule) as e:
+            await tour_paa_job.run(_job_ctx(table, "paa-1", "tour_paa_backfill", {"paid": True}))
+    assert "seg-1" in e.value.reason and e.value.progress["phase"] == "waiting_research_lane"
+    # 3) both claimed before either checked: both wait, neither pays (they look again later)
+    with patch.object(srj, "open_caps", _caps):
+        with pytest.raises(Reschedule):
+            await srj.run(_job_ctx(table, "seg-1", "segment_research", {"markets": ["US"]}))
+    assert read_month == ["seg-1"]
+    # 4) the segment run ends: the backfill now reads the month
+    del table.jobs["seg-1"]
+    with patch.object(tour_paa_job, "paid_budget", _paid_budget), \
+            patch("services.seo_intelligence.tour_paa.run", AsyncMock(return_value={})), \
+            patch("services.seo_intelligence.tour_paa.coverage", AsyncMock(return_value={})):
+        await tour_paa_job.run(_job_ctx(table, "paa-1", "tour_paa_backfill", {"paid": True}))
+    assert read_month == ["seg-1", "paa-1"]
+
+
+@pytest.mark.asyncio
+async def test_a_store_only_backfill_never_waits_for_the_lane():
+    """The free derive a research run enqueues (paid false) reads the store only: it runs beside the research run."""
+    from services.jobs import tour_paa_job
+
+    table = _JobTable()
+    table.claim("seg-1", "segment_research")
+    table.claim("paa-free", "tour_paa_backfill", paid=False)
+    run = AsyncMock(return_value={})
+    with patch("services.seo_intelligence.tour_paa.run", run), \
+            patch("services.seo_intelligence.tour_paa.coverage", AsyncMock(return_value={})):
+        await tour_paa_job.run(_job_ctx(table, "paa-free", "tour_paa_backfill", {"paid": False}))
+    assert run.await_args.kwargs["paid"] is False
+    assert await cg.other_paying_research_job(table, "seg-1") is None   # a free backfill never blocks a research run
+
+
+@pytest.mark.asyncio
+async def test_run_endpoints_refuse_while_any_paying_research_job_is_active():
+    from fastapi import HTTPException
+
+    from api.routers import admin_segment_research as r
+
+    request = MagicMock()
+    request.app.state.pool = MagicMock()
+    busy = AsyncMock(return_value={"id": "paa-7", "kind": "tour_paa_backfill", "status": "running"})
+    with patch.object(r, "verify_admin_secret"), \
+            patch.object(r.job_queue, "latest", AsyncMock(return_value=None)), \
+            patch("shared.research_budget.active_paying_research_job", busy), \
+            patch.object(r, "load_budgets", AsyncMock()) as budgets:
+        with pytest.raises(HTTPException) as e:
+            await r.run_research(r.ResearchScope(markets=["US"]), request, "s", "a")
+    assert e.value.status_code == 409 and "paa-7" in e.value.detail
+    budgets.assert_not_awaited()
+
+    busy = AsyncMock(return_value={"id": "seg-7", "kind": "segment_research", "status": "queued"})
+    with patch.object(r, "verify_admin_secret"), \
+            patch.object(r, "_month_cap", AsyncMock(return_value=cg.SharedCap("month", 50.0))), \
+            patch.object(r.job_queue, "latest", AsyncMock(return_value=None)), \
+            patch("shared.research_budget.active_paying_research_job", busy), \
+            patch.object(r, "enqueue", AsyncMock(return_value=("paa-8", True))) as m_enqueue:
+        with pytest.raises(HTTPException) as e:
+            await r.tour_paa_run(r.TourPaaScope(paid=True), request, "s", "a")
+        assert e.value.status_code == 409 and "seg-7" in e.value.detail
+        m_enqueue.assert_not_awaited()
+        out = await r.tour_paa_run(r.TourPaaScope(paid=False), request, "s", "a")   # the free store pass may run
+    assert out["job_id"] == "paa-8" and out["paid"] is False
+
+
+def test_paying_sql_counts_every_segment_run_and_only_paid_backfills():
+    for sql in (cg.ACTIVE_PAYING_SQL, cg.OTHER_PAYING_RUNNING_SQL):
+        assert "kind = 'segment_research'" in sql and "kind = 'tour_paa_backfill'" in sql and "payload->'paid'" in sql
+    assert "status = 'running'" in cg.OTHER_PAYING_RUNNING_SQL and "id <> $1::uuid" in cg.OTHER_PAYING_RUNNING_SQL
+    assert "'queued', 'running'" in cg.ACTIVE_PAYING_SQL
 
 
 # ── selection order ─────────────────────────────────────────────────────────────────────────────────────────────────

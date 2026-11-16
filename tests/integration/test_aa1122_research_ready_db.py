@@ -65,8 +65,8 @@ async def tx():
 
 
 async def _job(conn, kind: str, status: str = "succeeded", created_by: str | None = None, scope: str | None = None,
-               created_at: datetime | None = None) -> str:
-    payload = {"scope": scope} if scope else {}
+               created_at: datetime | None = None, payload: dict | None = None) -> str:
+    payload = {**({"scope": scope} if scope else {}), **(payload or {})}
     return str(await conn.fetchval(
         "INSERT INTO shared.job (kind, payload, status, created_by, created_at, run_after) "
         "VALUES ($1, $2::jsonb, $3, $4, coalesce($5, now()), now()) RETURNING id",
@@ -102,6 +102,25 @@ async def test_month_spend_sums_research_jobs_by_job_whatever_the_stage(tx):
     got = await cg.research_month_spend(_Pool(tx))
     assert got["total_usd"] == pytest.approx(0.0746)
     assert await cg.job_spend(_Pool(tx), run) == pytest.approx(1.0726)
+
+
+@pytest.mark.asyncio
+async def test_paying_research_lane_spans_both_research_kinds(tx):
+    """S282 review: the lane queries on the real shared.job: a running segment run blocks a paid backfill and the
+    other way round; a store-only backfill blocks nothing; a job never blocks itself."""
+    await tx.execute("UPDATE shared.job SET status = 'cancelled' WHERE status IN ('queued', 'running') "
+                     "AND kind = ANY($1::text[])", list(cg.RESEARCH_JOB_KINDS))   # rolled back with the test
+    assert await cg.active_paying_research_job(_Pool(tx)) is None
+    free = await _job(tx, "tour_paa_backfill", "running", payload={"paid": False})
+    assert await cg.active_paying_research_job(_Pool(tx)) is None
+    seg = await _job(tx, "segment_research", "running", scope="auto_new")
+    assert await cg.other_paying_research_job(_Pool(tx), seg) is None
+    paid = await _job(tx, "tour_paa_backfill", "queued", payload={"paid": True})
+    assert (await cg.other_paying_research_job(_Pool(tx), paid))["id"] == seg
+    assert (await cg.active_paying_research_job(_Pool(tx)))["id"] == seg
+    await tx.execute("UPDATE shared.job SET status = 'running' WHERE id = $1::uuid", paid)
+    assert (await cg.other_paying_research_job(_Pool(tx), seg))["id"] == paid
+    assert (await cg.other_paying_research_job(_Pool(tx), free))["kind"] in cg.RESEARCH_JOB_KINDS
 
 
 @pytest.mark.asyncio
