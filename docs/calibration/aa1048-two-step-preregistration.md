@@ -5,6 +5,10 @@ Registered 15/11/2026, before any data of the run exists. The machine-readable c
 reads only that committed file and refuses while the settings, prompt texts, shaping runs and pools, candidate or vote
 count in force differ from it. Root ADR 0020 W2.
 
+**Outcome (S282).** The one gated run (`9b0d46f8`) was no_go: false positives dropped 32 %, stored violations kept
+95.2 %. v5 is now a closed step set (every live run refused in code). The next iteration is v6:
+`aa1048-two-step-v6-preregistration.md`.
+
 ## Question
 
 Does the two-step claim instrument drop the false positives of the R1 fired claims and keep the stored violations, on a
