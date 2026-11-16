@@ -266,9 +266,13 @@ class ResearchCache:
             rows = await conn.fetch(_VOLUMES_SQL, market, kws, self.windows.volume)
         return {r["keyword"]: r["search_volume"] for r in rows}
 
-    async def put_volumes(self, market: str, answers: dict[str, int | None]) -> None:
+    async def put_volumes(self, market: str, answers: dict[str, int | None], history=None) -> None:
         """Write bought volumes back (an answered keyword with no DataForSEO row is stored as NULL = measured). Raises
-        PaidNotStored when the store refuses them: the purchase is paid, so the caller must not buy them again."""
+        PaidNotStored when the store refuses them: the purchase is paid, so the caller must not buy them again.
+
+        AA-1122: ``history`` (keyword -> (source, months), search_history) is the 12 monthly volumes of the same answer,
+        written to acp_contract.search_volume_monthly after the volumes (never overwritten; a refused history write is
+        logged, never raised: the volumes are stored)."""
         if not answers:
             return
         try:
@@ -279,6 +283,9 @@ class ResearchCache:
                            error=str(exc)[:200])
             raise PaidNotStored(f"research store refused {len(answers)} bought volumes in {market}: "
                                 f"{str(exc)[:200]}") from exc
+        if history:
+            from services.seo_intelligence import search_history
+            await search_history.write(self.pool, market, history)
 
     async def serps(self, keywords: Sequence[str], market: str) -> dict[str, CachedSerp]:
         """keyword -> its stored SERP for every keyword of ``keywords`` whose SERP is fresh in ``market``."""

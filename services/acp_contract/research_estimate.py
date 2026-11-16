@@ -51,25 +51,28 @@ async def estimate_deduped(places: list, cache: ResearchCache, queue: str = "liv
 
     best: dict[str, int] = {}
     known: set[str] = set()
-    for per in stored.values():
+    per_market: dict[str, dict[str, int]] = {}    # AA-1122: the demand-group key (demand_groups)
+    for m, per in stored.items():
         for kw, v in per.items():
             best[kw] = max(best.get(kw, 0), v or 0)
             known.add(kw)
+            if v is not None:
+                per_market.setdefault(kw, {})[m] = v
     candidates: dict[str, int] = {}
-    unknown = 0
     no_volume = 0
-    for p in places:
-        if not p.serp:
-            continue
-        if not p.has_map or not p.keywords or any(kw not in known for kw in p.keywords):
-            unknown += 1 if p.keywords or not p.has_map else 0
-            continue
-        top = best_keyword(p, best)
+    priced = [p for p in places if p.serp and p.has_map and p.keywords and all(kw in known for kw in p.keywords)]
+    priced_ids = {id(p) for p in priced}
+    unknown = sum(1 for p in places if p.serp and id(p) not in priced_ids and (p.keywords or not p.has_map))
+    # AA-1122: a variant whose SERP is fresh is chosen (nothing to buy), as phase C does (best_keyword)
+    group_kws = sorted({kw for p in priced for kw in p.keywords})
+    fresh = await cache.serps(group_kws, SERP_MARKET) if group_kws else {}
+    for p in priced:
+        top = best_keyword(p, best, serp_fresh=set(fresh), per_market=per_market)
         if top is None:
             no_volume += 1
             continue
         candidates[top] = candidates.get(top, 0) + 1
-    fresh = await cache.serps(list(candidates), SERP_MARKET) if candidates else {}
+    fresh = {kw: v for kw, v in fresh.items() if kw in candidates}
     serp_known = [kw for kw in candidates if kw not in fresh]
     serp_calls = len(serp_known) + math.ceil(unknown * SERP_HIT_RATE)
     serp_requests = math.ceil(serp_calls / 100) if queue == "standard" else serp_calls

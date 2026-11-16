@@ -35,8 +35,10 @@ from .seed_builder import (
 logger = structlog.get_logger()
 
 SEO_FORMAT = "ideas_v3"          # marker in seo_context.cache_key for rows built this way
-# 180 days: Google Ads volumes are 12-month averages (seasonality already inside), but keyword
-# ideas and PAA drift with trends — two refreshes a year at most, and only when a tour is rewritten.
+# 180 days: keyword ideas and PAA drift with trends — two refreshes a year at most, and only when a tour is rewritten.
+# AA-1122: a Google Ads volume is a 12-month AVERAGE: it hides the season, it does not hold it. The months themselves
+# (monthly_searches) are kept in acp_contract.search_volume_monthly by every volume purchase (search_history), so the
+# season of a place survives this reuse window and every refresh.
 REUSE_DAYS = int(os.environ.get("S1_SEO_REUSE_DAYS", "180"))
 # AA-706 — Jev judges each candidate idea (shadow until calibrated; see migration 196).
 JEV_STAGE = "a1_seo"
@@ -156,6 +158,33 @@ async def jev_review(spec: dict, candidates: list[dict], kept: list[dict], *, po
     return sorted(keep.values(), key=lambda i: (_vol(i) == 0, -_vol(i)))
 
 
+def paa_caps() -> tuple[int, int]:
+    """AA-1122 — (questions taken per research keyword, questions per tour): the settings cis.seo.tour_paa_per_keyword
+    and cis.seo.tour_paa_max (were the literals 5 and 10)."""
+    from shared import settings
+
+    from .research_settings import TOUR_PAA_MAX, TOUR_PAA_PER_KEYWORD
+    return int(settings.get(TOUR_PAA_PER_KEYWORD)), int(settings.get(TOUR_PAA_MAX))
+
+
+def paa_from_rows(hits: list[dict], per_keyword: int, most: int) -> list[str]:
+    """The PAA questions of research rows, in row order: at most ``per_keyword`` from one row, ``most`` in all, no
+    repeat. Pure (the one rule S1 and the tour PAA backfill share)."""
+    paa: list[str] = []
+    for r in hits:
+        qs = r.get("people_also_ask") or []
+        if isinstance(qs, str):
+            try:
+                qs = json.loads(qs)
+            except ValueError:
+                qs = []
+        for q in list(qs)[:per_keyword]:
+            q = q if isinstance(q, str) else (q.get("question") or q.get("title") or "")
+            if q and q not in paa:
+                paa.append(q)
+    return paa[:most]
+
+
 def cached_ideas(spec: dict, demand_rows: list[dict]) -> tuple[list[dict], list[str]]:
     """(ideas, paa) for one tour from search_demand rows naming one of its strong places."""
     terms = strong_terms(spec["places"])
@@ -164,14 +193,10 @@ def cached_ideas(spec: dict, demand_rows: list[dict]) -> tuple[list[dict], list[
     hits = [r for r in demand_rows if any(t in r["keyword"].lower() for t in terms)]
     ideas = [{"keyword": r["keyword"], "search_volume": r["search_volume"], "competition": None,
               "competition_index": None, "cpc": None, "source": "search_demand"} for r in hits]
-    paa: list[str] = []
-    for r in hits:
-        for q in (r.get("people_also_ask") or [])[:5]:
-            q = q if isinstance(q, str) else (q.get("question") or q.get("title") or "")
-            if q and q not in paa:
-                paa.append(q)
+    per_keyword, most = paa_caps()
     return rank_keyword_ideas(ideas, spec["places"], activity_words=spec["activity"],
-                              country=spec["country"], foreign_places=spec.get("foreign")), paa[:10]
+                              country=spec["country"], foreign_places=spec.get("foreign")), \
+        paa_from_rows(hits, per_keyword, most)
 
 
 async def fresh_tour_ids(conn, tour_ids: list[str]) -> set[str]:
@@ -312,6 +337,17 @@ async def _persist(conn, spec: dict, location_code: int, ideas: list[dict], paa:
     })
 
 
+async def _write_history(conn, client, location_code: int) -> int:
+    """AA-1122 — the monthly volumes of the ideas task just bought (search_history), never overwritten; 0 on error."""
+    from .search_history import MonthlyBuffer, write
+
+    buffer = getattr(client, "monthly", None)
+    market = LOCATION_CODE_TO_MARKET.get(location_code)
+    if market is None or not isinstance(buffer, MonthlyBuffer):
+        return 0
+    return await write(conn, market, buffer.pop(location_code))
+
+
 async def foreign_places(conn, country: str) -> frozenset[str]:
     """Lowercase names of places in OTHER countries (shared.destinations, read only), minus names
     that also exist in `country` and generic words. Empty on any error."""
@@ -418,6 +454,8 @@ async def prefetch(conn, rows: list[dict], *, tenant_id: str, location_code: int
                 ideas = await client.fetch_keyword_ideas_multi(seeds[:MAX_SEEDS_PER_TASK], location_code,
                                                                language_code, limit=300)
                 summary["ideas_tasks"] += 1
+                summary["history_rows"] = summary.get("history_rows", 0) + await _write_history(
+                    conn, client, location_code)
             except Exception as e:  # BudgetExceeded included: stop buying, keep what we have
                 from shared.cost_guard import BudgetExceeded
                 if isinstance(e, BudgetExceeded):

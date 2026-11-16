@@ -53,6 +53,7 @@ from services.seo_intelligence.dataforseo_client import DataForSEOClient, as_dfs
 from services.seo_intelligence.dfs_queue import QueuedTaskFailed
 from services.acp_contract.research_estimate import estimate_deduped
 from services.seo_intelligence.research_cache import CachedSerp, PaidNotStored, ResearchCache
+from services.seo_intelligence.search_history import with_history
 from services.seo_intelligence.seed_builder import DFS_LOCATION_MAP, LOCATION_CODE_TO_MARKET
 from shared.cost_guard import (DFS_RESEARCH_ENDPOINTS, BudgetExceeded, RunBudget, dfs_call_estimate_usd,
                                dfs_research_prices)
@@ -551,9 +552,18 @@ async def _purchase_volumes(chunk: list[str], loc: int, lang: str, client: DataF
     if missing:
         volumes = await client.fetch_volumes_bulk(missing, loc, lang, raise_on_error=True)
         bought = {kw: volumes.get(kw) for kw in missing}
-        await cache.put_volumes(market, bought)
+        await cache.put_volumes(market, bought, **with_history(client_history(client, loc, missing)))
         out.update(bought)
     return out
+
+
+def client_history(client, location_code: int, keywords) -> dict:
+    """AA-1122 — the monthly volumes the client parsed for ``keywords`` in ``location_code`` (search_history), taken out
+    of its buffer; {} for a client without one (a test double)."""
+    from services.seo_intelligence.search_history import MonthlyBuffer
+
+    buffer = getattr(client, "monthly", None)
+    return buffer.pop(location_code, keywords) if isinstance(buffer, MonthlyBuffer) else {}
 
 
 async def _buy_volumes(places: list[_Place], markets: list[tuple[int, str, str]], client: DataForSEOClient,
@@ -656,10 +666,13 @@ def _serp_targets(wanted: list[_Place], rows, stats: dict) -> tuple[dict[str, li
     log rows of the places with nothing to buy (no volume anywhere it was measured, or a fresh SERP). A place whose
     SERP-market volumes are not all known waits. `rows` = _SERP_STATE_SQL rows; `stats` is counted in place."""
     best_volume: dict[str, int] = {}
+    per_market: dict[str, dict[str, int]] = {}   # AA-1122: keyword -> market -> volume (the demand-group key)
     fresh: set[str] = set()
     known: set[str] = set()     # keywords whose SERP_MARKET volume is measured (None = DataForSEO has no row = 0)
     for r in rows:
         best_volume[r["keyword"]] = max(best_volume.get(r["keyword"], 0), r["search_volume"] or 0)
+        if r["search_volume"] is not None:
+            per_market.setdefault(r["keyword"], {})[r["market"]] = r["search_volume"]
         if r["market"] == SERP_MARKET and r["serp_fresh"]:
             fresh.add(r["keyword"])
         if r["market"] == SERP_MARKET and r["volume_fresh"]:
@@ -667,12 +680,15 @@ def _serp_targets(wanted: list[_Place], rows, stats: dict) -> tuple[dict[str, li
     for p in wanted:   # this run's answers too (a mock or a store write that has not landed)
         for kw, per in p.volumes.items():
             best_volume[kw] = max(best_volume.get(kw, 0), *[(v or 0) for v in per.values()], 0)
+            per_market.setdefault(kw, {}).update({m: v for m, v in per.items() if v is not None})
             if SERP_MARKET in per:
                 known.add(kw)
     by_kw: dict[str, list[_Place]] = {}
     logs: list[tuple[str, str, str]] = []
     for p in wanted:
-        top = best_keyword(p, best_volume)
+        groups = demand_groups(p.keywords, per_market)
+        stats["serp_variant_groups"] = stats.get("serp_variant_groups", 0) + sum(1 for g in groups if len(g) > 1)
+        top = best_keyword(p, best_volume, serp_fresh=fresh, per_market=per_market)
         if top is None and not all(kw in known for kw in p.keywords):
             # A keyword's SERP-market volume is not known yet (a new map, a failed or skipped volume task, a run
             # without the volume tier): the place stays stale and the next run decides.
@@ -693,7 +709,7 @@ async def _buy_serps(places: list[_Place], client: DataForSEOClient, pool, guard
                      cache: ResearchCache | None = None) -> dict:
     """Phase C: one SERP per place (module docstring); AA-1120: one purchase per distinct keyword."""
     stats = {"serp_calls": 0, "serp_fresh_skips": 0, "serp_no_volume": 0, "serp_waiting_volume": 0,
-             "serp_shared_keyword": 0}
+             "serp_shared_keyword": 0, "serp_variant_groups": 0}
     cache = cache or await ResearchCache.for_client(pool, client, RESEARCH_STAGE)
     serp_label = DFS_RESEARCH_ENDPOINTS["standard" if queue is not None else "live"][1]
     empty = [p for p in places if p.serp and not p.failed and not p.keywords]   # nothing to buy (see _buy_volumes)
@@ -793,13 +809,39 @@ async def _buy_serps(places: list[_Place], client: DataForSEOClient, pool, guard
     return stats
 
 
-def best_keyword(place: _Place, best_volume: dict[str, int]) -> str | None:
-    """The place's keyword with the highest known volume in any market (ties: the earlier keyword of its map), or None
-    when none is above 0. The one SERP of the place is bought for it. Pure."""
-    ranked = sorted(((best_volume.get(kw, 0), -i, kw) for i, kw in enumerate(place.keywords)), reverse=True)
-    if not ranked or ranked[0][0] <= 0:
+def demand_groups(keywords: list[str], per_market: dict[str, dict[str, int]]) -> list[list[str]]:
+    """AA-1122 item 2 — the place's keywords grouped by demand: keywords whose volume is identical in every market it
+    was measured in (and above 0 somewhere) are ONE demand group. Google Ads answers close variants ("tiger nest
+    hike" / "tigers nest hike") with the volume of their whole group, the same number for each, so they are not
+    separate demand and their volumes must never be added or compared as if they were (critic C5 of the S282 DFS
+    audit: sending them in separate tasks does not split them either). A keyword with no volume above 0 is its own
+    group. Groups keep the map order of their first keyword; inside a group, the map order. Pure."""
+    groups: dict[object, list[str]] = {}
+    for i, kw in enumerate(keywords):
+        vols = per_market.get(kw) or {}
+        key: object = tuple(sorted(vols.items())) if any(v > 0 for v in vols.values()) else ("solo", i)
+        groups.setdefault(key, []).append(kw)
+    return list(groups.values())
+
+
+def best_keyword(place: _Place, best_volume: dict[str, int], *, serp_fresh: set[str] | frozenset = frozenset(),
+                 per_market: dict[str, dict[str, int]] | None = None) -> str | None:
+    """The keyword the one SERP of the place is bought for, or None when none has a volume above 0 (pure).
+
+    The demand group (demand_groups) with the highest known volume in any market wins (ties: the group whose first
+    keyword comes earlier in the map). AA-1122: INSIDE the group the keyword is chosen by SERP presence, then by
+    naturalness, never by volume (the variants share one number): a variant whose SERP is already fresh in the store
+    (`serp_fresh`: nothing to buy), else the most natural phrasing, i.e. the earliest in the map (the plain place name
+    first, then the proposals in the order a traveller types them), then the fewest words. Without `per_market` every
+    keyword is its own group (the pre-AA-1122 rule)."""
+    if not place.keywords:
         return None
-    return ranked[0][2]
+    order = {kw: i for i, kw in enumerate(place.keywords)}
+    groups = demand_groups(place.keywords, per_market) if per_market is not None else [[kw] for kw in place.keywords]
+    top = max(groups, key=lambda g: (max(best_volume.get(kw, 0) for kw in g), -order[g[0]]))
+    if max(best_volume.get(kw, 0) for kw in top) <= 0:
+        return None
+    return min(top, key=lambda kw: (kw not in serp_fresh, order[kw], len(kw.split())))
 
 
 async def _place_countries(pool, names: list[str]) -> dict[str, str]:
@@ -886,7 +928,8 @@ async def _buy_suggestions(places: list[_Place], markets: list[tuple[int, str, s
                     ideas_with_volume=len(rows), seed_sample=seeds[:5], sample=[r[0] for r in rows[:5]])
         if rows:
             await (cache or await ResearchCache.for_client(pool, client, RESEARCH_STAGE)).put_volumes(
-                market, {kw: v for kw, _m, v in rows})
+                market, {kw: v for kw, _m, v in rows},
+                **with_history(client_history(client, loc, [kw for kw, _m, _v in rows])))
             stats["ideas_stored"] += len(rows)
     return stats
 
@@ -944,5 +987,5 @@ async def research_batch(
 
 __all__ = ["research_batch", "estimate_plan", "estimate_cost", "select_within_usd", "clean_keyword", "load_maps",
            "keywords_from_map", "reusable_keywords", "PROMPT_VERSION", "SERP_MARKET", "best_keyword",
-           "estimate_deduped",
+           "demand_groups", "client_history", "estimate_deduped",
            "PlacePurchaseFailed"]
