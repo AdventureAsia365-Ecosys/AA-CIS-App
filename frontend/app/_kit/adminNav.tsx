@@ -21,7 +21,7 @@ import {
   Puzzle, ListChecks, Scale, Search, Image as ImageIcon, BookOpen, BarChart3, ShieldAlert, ShieldCheck,
   Boxes, ScrollText, FlaskConical, BellRing, MapPin, Network, Eraser, Building2, FileText, Hotel, Table2, BookMarked, Quote,
   Newspaper, CreditCard, FileStack, PenLine, UserCheck, ChartColumn, Palette, MapPinned,
-  CalendarCheck, Receipt, Layers, Briefcase, Tag, Server, Map as MapIcon,
+  CalendarCheck, Receipt, Layers, Briefcase, Tag, Server, Map as MapIcon, GitBranch,
 } from "lucide-react";
 import { useCallback } from "react";
 import { canSeeNavItem, type Capability } from "@/lib/rbac";
@@ -92,6 +92,7 @@ const ICONS: Record<NavIcon, React.ReactNode> = {
   docs: <BookMarked size={16} />,
   uiKit: <Palette size={16} />,
   productMap: <MapIcon size={16} />,
+  delivery: <GitBranch size={16} />,
   bookingAdmin: <CalendarCheck size={16} />,
   agencyBilling: <Receipt size={16} />,
   agencyTiers: <Layers size={16} />,

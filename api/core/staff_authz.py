@@ -601,7 +601,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/settings/registry"): OPS_READ, ("GET", "/admin/settings/registry/{key}/history"): OPS_READ,
     ("POST", "/admin/settings/registry/{key}/proposals"): SETTINGS_WRITE,
     **{("POST", "/admin/settings/registry/proposals/{value_id}/" + a): SETTINGS_APPROVE for a in ("approve", "reject")},
-    ("GET", "/admin/platform/catalogue"): OPS_READ,  # AA-1106: Platform › Product map, the root product catalogue
+    ("GET", "/admin/platform/catalogue"): OPS_READ, ("GET", "/admin/platform/delivery"): OPS_READ,  # AA-1106, AA-1108
     # ── admin_photos — Drive sync + assignment (Photos page, admin-only)
     ("POST", "/admin/photos/sync"): PHOTOS_WRITE,
     ("POST", "/admin/photos/sync/schedule"): PHOTOS_WRITE,   # AA-844, daily (MACHINE_ROUTES)

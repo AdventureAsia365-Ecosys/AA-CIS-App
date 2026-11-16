@@ -612,11 +612,12 @@ kpis:
   used_by:
   - CIS-01
 - id: K-CI-MAINFAIL
-  version: 1
+  version: 2
   name: CI failure rate on main
-  definition: Failed ci.yml runs on main / runs
+  definition: Failed CI and deploy workflow runs on each app's default branch (push, schedule or manual) / completed
+    runs, from the GitHub delivery summary (AA-1108)
   unit: ratio
-  threshold: < 5 %
+  threshold: < 5 % (information; no setting yet)
   sources: []
   defined_in: DEV-01
   used_by:
@@ -1203,44 +1204,58 @@ kpis:
   used_by:
   - BK-06
 - id: K-DORA-CFR
-  version: 1
+  version: 2
   name: Change failure rate
-  definition: Deploys followed within 24 h by a rollback, a fix PR on the same area, a failed post-deploy-verify or an incident
-    / deploys
+  definition: Deploys that failed (post-deploy verify red, deploy job failed, rolled back, its PR reverted, or a fix PR naming
+    its PR merged within 48 h) / deploys that reached Dev, per app (AA-1108, docs/guides/delivery-metrics.md)
   unit: ratio
-  threshold: < 15 %
+  threshold: setting cis.delivery.cfr_green_pct (15 %), amber to cis.delivery.cfr_amber_pct (30 %)
   sources: []
   defined_in: DEV-01
   used_by:
   - DEV-01
 - id: K-DORA-DF
-  version: 1
+  version: 2
   name: Deployment frequency
-  definition: Successful deploy runs per app per week (deploy-dev.yml for CIS, Booking, Partner; deploy-admin-dev.yml
-    for CIS, Booking; deploy-web-dev.yml / deploy-portal-dev.yml for Partner; deploy-lambdas.yml and deploy-web-dev.yml
-    for TripPlanner)
+  definition: Green deploys per app per week to Dev - runs of the app's deploy workflows on the default branch whose deploy
+    job and post-deploy verify passed, runs of one commit that overlap counted once, a redeploy of the live commit not
+    counted (root tools/delivery/apps.json lists the workflows per app)
   unit: count
-  threshold: '>= daily on active apps (elite band, context only)'
+  threshold: setting cis.delivery.deploys_per_week_green (1 a week, DORA high band), amber from cis.delivery.deploys_per_week_amber
+    (0.25)
   sources: []
   defined_in: DEV-01
   used_by:
   - DEV-01
 - id: K-DORA-LT
-  version: 1
+  version: 2
   name: Lead time for changes
-  definition: Median time from PR first commit to the successful deploy that contains the merge SHA
+  definition: Median time from a PR opened to the post-deploy verify of the first green deploy that contains its merge commit,
+    per app; bot PRs and docs-only PRs left out (segments - first green CI, merge queue, merged, deployed, verified)
   unit: hours
-  threshold: < 1 day
+  threshold: setting cis.delivery.lead_time_green_hours (24 h), amber to cis.delivery.lead_time_amber_hours (168 h)
   sources: []
   defined_in: DEV-01
   used_by:
   - DEV-01
 - id: K-DORA-MTTR
-  version: 1
-  name: Time to restore
-  definition: Median OPS-04 time to restore
+  version: 2
+  name: Failed deployment recovery time
+  definition: Median time from a failed deploy to the green deploy that repairs it (the next green deploy, the rollback, or the
+    deploy that ships the revert or hotfix), per app; incidents join from prod on
   unit: hours
-  threshold: < 1 day
+  threshold: setting cis.delivery.recovery_green_hours (24 h), amber to cis.delivery.recovery_amber_hours (168 h)
+  sources: []
+  defined_in: DEV-01
+  used_by:
+  - DEV-01
+- id: K-DORA-RW
+  version: 1
+  name: Rework rate
+  definition: Deploys that are a rollback or ship a revert or hotfix PR (a fix PR naming a PR deployed within 48 h) / deploys
+    that reached Dev, per app
+  unit: ratio
+  threshold: setting cis.delivery.rework_green_pct (10 %), amber to cis.delivery.rework_amber_pct (20 %)
   sources: []
   defined_in: DEV-01
   used_by:

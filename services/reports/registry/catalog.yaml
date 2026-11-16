@@ -1773,9 +1773,11 @@ reports:
   - K-DORA-LT
   - K-DORA-CFR
   - K-DORA-MTTR
+  - K-DORA-RW
   - K-CI-MAINFAIL
   sections:
-  - 'DORA per app: deployment frequency, lead time for changes, change failure rate, time to restore'
+  - 'DORA per app: deployment frequency, lead time for changes, change failure rate, failed deployment recovery time,
+    rework rate (GitHub delivery summary, the numbers of Platform › Delivery)'
   - 'CI health: duration, failure rate on main, re-runs, flaky tests, Actions minutes'
   - Release versions shipped (DEV-02)
   - Post-deploy verify failures and rollbacks

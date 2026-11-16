@@ -635,6 +635,10 @@
     "capability": "tenant.read|tenant.book.read",
     "module": "api.routers.admin_crm_console"
   },
+  "GET /admin/platform/delivery": {
+    "capability": "ops.read",
+    "module": "api.routers.admin_platform_delivery"
+  },
   "GET /admin/platform/infra": {
     "capability": "ops.read",
     "module": "api.routers.admin_platform_ops"

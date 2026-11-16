@@ -74,6 +74,7 @@ export const NAV_MESSAGES = defineMessages(
     "Data model": "Data model",
     "Docs": "Docs",
     "Product map": "Product map",
+    "Delivery": "Delivery",
     "UI kit": "UI kit",
     "Admin": "Admin",
     // bottom nav (phone)
@@ -137,6 +138,7 @@ export const NAV_MESSAGES = defineMessages(
     "Data model": "Mô hình dữ liệu",
     "Docs": "Tài liệu",
     "Product map": "Bản đồ sản phẩm",
+    "Delivery": "Phát hành",
     "UI kit": "Bộ UI",
     "Admin": "Quản trị",
     "Review": "Duyệt",

@@ -1,0 +1,38 @@
+"""AA-1108 — Platform › Delivery: CI/CD and DORA per app for the admin page /admin/platform/delivery.
+
+  GET /admin/platform/delivery[?refresh=1]     the delivery summary per app (five DORA keys with n, lead-time
+                                               segments, CI health per workflow, main state, merge-queue wait,
+                                               flaky jobs, deploys and failed deploys with recovery time, 12-week
+                                               trend), each metric's colour and the thresholds in force
+                                                                                                    ops.read (admin)
+
+Read only. The summary comes from the root repo workflow "Delivery metrics" through S3
+(api/services/delivery_metrics.py), cached in this process; nothing here touches the database except the settings
+reader. `refresh` re-reads the published file (the workflow itself runs hourly). Admin only: POLICY = ops.read, and
+the BFF refuses every other role first (frontend/lib/rbac.ts API_READ_RULES "platform").
+
+Included in main.py WITHOUT an include prefix: staff_policy reads the route template from scope["route"].path.
+"""
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
+
+from api.core.staff_authz import staff_policy
+from api.services import delivery_metrics
+
+router = APIRouter(prefix="/admin/platform/delivery", tags=["admin-platform-delivery"],
+                   dependencies=[Depends(staff_policy)])
+
+_NO_STORE = {"Cache-Control": "private, no-store"}
+
+
+@router.get("", summary="CI/CD and DORA per app: deploys, lead time, failures, recovery, CI health (Dev numbers)")
+async def get_delivery(refresh: bool = Query(False, description="re-read the published summary (at most every 30 s)")):
+    try:
+        body = await delivery_metrics.view(refresh=refresh)
+    except delivery_metrics.DeliveryMissing as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except delivery_metrics.DeliveryUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    return JSONResponse(body, headers=_NO_STORE)

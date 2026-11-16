@@ -301,7 +301,7 @@ def test_dev03_lists_deploys_schema_changes_and_unavailable_sources():
     assert {k["status"] for k in out.output["kpis"]} == {"not wired"}
     assert [d["git_sha"] for d in out.output["cis_deploys"]] == ["bbb"]
     assert out.output["schema"]["owners"]["cis"]["applied"] == 1
-    assert "1 CIS deploy(s), 1 migration(s) registered" in out.summary
+    assert "1 CIS deploy(s) seen by the worker, 1 migration(s) registered" in out.summary
     assert "plan.json" in out.markdown and "Source not available" in out.markdown
     json.dumps(out.output, default=str)                                   # storable as report_run.output
 
@@ -322,8 +322,10 @@ def test_dev01_merges_weekly_outputs_with_the_rows_still_kept():
     k = _kpis(out)
     assert k["K-DORA-DF"]["value"] == pytest.approx(round(3 / (31 / 7), 2))
     assert "14 of 31 days not covered" in k["K-DORA-DF"]["note"]
-    assert k["K-DORA-CFR"]["value"] == pytest.approx(1 / 3, abs=1e-4) and k["K-DORA-CFR"]["status"] == "amber"
-    assert {k[i]["status"] for i in ("K-DORA-LT", "K-DORA-MTTR", "K-CI-MAINFAIL")} == {"not wired"}
+    # AA-1108: without the GitHub delivery summary (no "delivery" part here) the worker rows are the fallback, and
+    # without the delivery thresholds (no "thresholds" part) the rate is information only
+    assert k["K-DORA-CFR"]["value"] == pytest.approx(1 / 3, abs=1e-4) and k["K-DORA-CFR"]["status"] == "info"
+    assert {k[i]["status"] for i in ("K-DORA-LT", "K-DORA-MTTR", "K-DORA-RW", "K-CI-MAINFAIL")} == {"not wired"}
 
 
 def test_dev01_with_nothing_covered_is_no_data():
