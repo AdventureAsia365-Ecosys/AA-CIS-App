@@ -136,14 +136,20 @@ REWRITES_SQL = """
      WHERE year_month = ANY($1::text[])
 """
 # The onboarding steps of every partner (agency, not a canary) up to $1 (exclusive): the first time each was reached.
-# A brand brief is the oldest brand rules row (one row per version; updated_at, NOT NULL: created_at is not on every
-# database).
+# A brand brief is the oldest brand rules row that holds brief content (one row per version; updated_at, NOT NULL:
+# created_at is not on every database). Provisioning inserts an empty placeholder row (brand name only) at tenant
+# creation (services/tenant_account/provision.py, api/routers/admin.py); a row with no prompt, style guide, core idea
+# or source document is that placeholder and is no brief. A brief written onto the placeholder in place bumps its
+# updated_at, so the step reads the time the content arrived.
 STEPS_SQL = """
     SELECT t.tenant_id::text AS tenant_id, t.account_status, t.created_at,
            (SELECT min(e.occurred_at) FROM shared.tenant_membership_event e
              WHERE e.tenant_id = t.tenant_id AND e.type = 'membership.activated' AND e.occurred_at < $1) AS member_at,
            (SELECT min(b.updated_at) FROM shared.tenant_brand_rules b
-             WHERE b.tenant_id = t.tenant_id AND b.updated_at < $1) AS brief_at,
+             WHERE b.tenant_id = t.tenant_id AND b.updated_at < $1
+               AND coalesce(nullif(btrim(b.system_prompt), ''), nullif(btrim(b.style_guide), ''),
+                            nullif(btrim(b.core_idea), ''), nullif(btrim(b.source_docx_s3_key), '')) IS NOT NULL
+           ) AS brief_at,
            (SELECT min(p.created_at) FROM acp_shared.content_piece p
              WHERE p.tenant_id = t.tenant_id AND p.status = 'approved' AND p.created_at < $1) AS approved_at,
            (SELECT min(l.published_at) FROM acp_shared.publish_log l
@@ -244,6 +250,11 @@ def live_at(sub: dict, ts: datetime) -> bool:
     return started is not None and started < ts and (canceled is None or canceled >= ts)
 
 
+def is_paying(sub: dict, plans: dict, end: datetime) -> bool:
+    """A paying subscription at the period's end: live then (as the end MRR counts it), active or past due, priced."""
+    return live_at(sub, end) and sub.get("status") in PAYING and monthly_price(sub, plans) > 0
+
+
 def growth(facts: dict, first: date, last: date) -> dict:
     """Per product and in total: subscriptions and partners at the start, new, cancelled, at the end; MRR bridge;
     paying partners; logo churn. Pure. {"error"} when tenants or subscriptions cannot be read."""
@@ -262,8 +273,7 @@ def growth(facts: dict, first: date, last: date) -> dict:
             "new": sum(start <= (_ts(s["started_at"]) or end) < end for s in mine),
             "cancelled": sum(1 for s in mine if (c := _ts(s.get("canceled_at"))) and start <= c < end),
             "end": sum(live_at(s, end) for s in mine),
-            "paying": len({s["tenant_id"] for s in mine if s["status"] in PAYING
-                           and monthly_price(s, plans) > 0}),
+            "paying": len({s["tenant_id"] for s in mine if is_paying(s, plans, end)}),
             "trialing": sum(1 for s in mine if s["status"] == "trialing"),
         }
     mrr_end = sum(monthly_price(s, plans) for s in subs if live_at(s, end) and s["status"] in PAYING)
@@ -277,7 +287,7 @@ def growth(facts: dict, first: date, last: date) -> dict:
     cancelled_accounts = {t["tenant_id"] for t in facts["tenants"] if t["tenant_id"] in partners
                           and (c := _ts(t.get("cancelled_at"))) and start <= c < end}
     churned = (live_start - live_end) | (cancelled_accounts & live_start)
-    paying = {s["tenant_id"] for s in subs if s["status"] in PAYING and monthly_price(s, plans) > 0}
+    paying = {s["tenant_id"] for s in subs if is_paying(s, plans, end)}
     kinds: dict[str, int] = {}
     for t in facts["tenants"]:
         if t["tenant_id"] not in partners:
@@ -670,7 +680,8 @@ def render_ex07(reg: Registry, report: Report, first: date, last: date, facts: d
                 + ("" if isinstance(inputs, dict) else "; crm.ops.v1 not read (scheduled run)"))
     body = ["## Content studio funnel", "",
             "Agency tenants that are not canaries. \"First member active\" is the first accepted invitation (the "
-            "member signed in); a brand brief is the first brand rules row.", ""]
+            "member signed in); a brand brief is the first brand rules row with brief content (the empty row "
+            "provisioning creates is not a brief).", ""]
     body += table(["Step", "Reached by the end", "Reached in the period"],
                   [[label, fn["reached"][k], fn["during"][k]] for k, label in STEPS])
     body += ["", "### Median days per step, by sign-up month", ""]

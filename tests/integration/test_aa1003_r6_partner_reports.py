@@ -105,6 +105,14 @@ async def test_ex07_reads_the_onboarding_steps(conn):
     assert _unread(facts) == {}, facts
     mine = next(s for s in facts["steps"] if s["tenant_id"] == tid)
     assert mine["publish_at"] is None and mine["has_seo_config"] in (True, False)
+    # provisioning made an empty brand rules placeholder: that is no brand brief
+    assert await conn.fetchval("SELECT count(*) FROM shared.tenant_brand_rules WHERE tenant_id = $1::uuid", tid) >= 1
+    assert mine["brief_at"] is None
+    await conn.execute("""
+        INSERT INTO shared.tenant_brand_rules (tenant_id, brand_name, version, is_active, updated_at, style_guide)
+        VALUES ($1::uuid, 'zz-brief', 1, true, now(), 'Invented style notes for a synthetic brand')""", tid)
+    briefed = await partners.collect_ex07(conn, first, last)
+    assert next(s for s in briefed["steps"] if s["tenant_id"] == tid)["brief_at"] is not None
     later = datetime.now(UTC) + timedelta(days=30)            # a month later the new agency is stuck at "created"
     fn = partners.funnel(facts["steps"], first, last, TH["stuck_days"], later)
     assert tid[:8] in {r["partner"] for r in fn["stuck"]}

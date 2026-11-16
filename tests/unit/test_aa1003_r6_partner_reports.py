@@ -205,6 +205,17 @@ def test_growth_counts_partners_only_and_bridges_mrr():
     assert gr["churn_reasons_recorded"] == 1
 
 
+def test_paying_counts_only_subscriptions_live_at_the_period_end():
+    # an October report generated in November: T_E's content and T_A's tripplanner both started after 31 October
+    late = [dict(s, started_at=_t(2026, 11, 2)) if s["tenant_id"] == T_E else s for s in SUBS]
+    late.append({"tenant_id": T_A, "product": "tripplanner", "plan_key": "content.growth", "status": "active",
+                 "seats": None, "started_at": _t(2026, 11, 3), "canceled_at": None, "trial_ends_at": None})
+    gr = partners.growth(_ex03_facts(subscriptions=late), OCT1, OCT31)
+    assert gr["paying"] == 2                       # A, B; E only pays from November
+    assert gr["by_product"]["content"]["paying"] == 2 and gr["by_product"]["tripplanner"]["paying"] == 0
+    assert gr["mrr"]["end"] == 250.0                # the headline's paying count and MRR agree on the same end
+
+
 def test_activation_counts_only_closed_windows():
     act = partners.activation(STEPS, OCT1, OCT31, 10, NOW)
     assert act == {"cohort": 1, "complete": 1, "activated": 0, "pending": 0, "rate": 0.0}
