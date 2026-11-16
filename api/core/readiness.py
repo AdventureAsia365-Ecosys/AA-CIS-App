@@ -96,7 +96,12 @@ REQUIRED_CIS_SCHEMA = 322
 # 428 (AA-1090 R8 — the Tenant 360 custom-domain editor and the tripplanner_custom_domain job read and write
 # shared.tenant_tripplanner_domain and read its six cis.tripplanner.custom_domain_* settings). 429 (the TripPlanner
 # view column) is not needed by this code.
-REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 395, 397, 398, 402, 408, 409, 411, 420, 428)
+# 435 / 439 (AA-1116 option B — the Plans routes, Tenant 360 billing details / terms / quote and /v1/billing read and
+# write the 435 columns of shared.plan, shared.tenant_subscription and shared.tenants; /admin/billing, /v1/billing, the
+# tenant list and Tenant 360 read v_tenant_monthly_usage.plan_key (439)). 436 (settings: the readers fall back to the
+# compiled defaults), 437 (the resolver body) and 438 (the Booking / TripPlanner contract views) are not needed by
+# this code; they ship in the same batch, applied in order.
+REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 395, 397, 398, 402, 408, 409, 411, 420, 428, 435, 439)
 # Versions this code needs that were registered after a higher one (reserved numbers): 297 (AA-920 WM-25) was reserved
 # in S255 and applied after 299. max() is already 299 without it, so the version reported is capped below the lowest
 # listed version that is not registered (297 missing -> 296 -> "schema_behind").
