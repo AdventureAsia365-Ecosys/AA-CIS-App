@@ -3704,7 +3704,14 @@ Masters (`v_active_tour_atoms`) minus the ranking exclusions; a place's keyword 
 and kept in `acp_contract.place_keyword` (with Jev's verdict and the prompt version); volume is bought
 per market and logged per place in `segment_research_log` tier `volume`; each place gets ONE SERP
 (US / English, tier `serp`), whose PAA, related searches and domains sit on the keyword's US row
-(`paa_retrieved_on`, `serp_location`). Both tiers are fresh for 365 days. A run is bounded by a USD
+(`paa_retrieved_on`, `serp_location`). Both tiers are fresh for 365 days (AA-1120: the settings
+`cis.seo.research_volume_fresh_days` / `cis.seo.research_serp_fresh_days`). AA-1120: every read and write of the store
+goes through ONE research cache (`services/seo_intelligence/research_cache.py`), the Standard queue included (it takes
+the cache at construction, deduplicates its asks, answers from the store first, collects free a task paid for and never
+collected within `cis.seo.dfs_queue_recover_days` — the post row's meta `posted` lists each task id with its keywords —
+and writes every answer back); one SERP per distinct keyword; hits are 0 USD `cache_hit` rows under the endpoint label
+the run buys through; a guard test fails on any paid call site not listed in `research_cache.DFS_CALL_SITES`; the
+preview shows `estimate.deduped` (`research_estimate.py`) beside the upper bound. A run is bounded by a USD
 cap (not a place count, at most 50 USD) that is also its hard DFS spend limit, checked against the
 DFS balance; the per-place ReAct loop strategy is retired. A run enqueues one debounced platform
 recompute for the places it changed (more than 300 Segments outside the night window wait for the
