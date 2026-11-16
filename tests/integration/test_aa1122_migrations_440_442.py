@@ -1,4 +1,4 @@
-"""AA-1122 (S282) — CIS 440-452 (conftest replays every migration).
+"""AA-1122 (S282) — CIS 440-442 (conftest replays every migration).
 
 440: acp_contract.search_volume_monthly — a month is stored once (the primary key), the month is the first of a month,
      the runtime role reads and inserts but never updates nor deletes, a re-run changes nothing.

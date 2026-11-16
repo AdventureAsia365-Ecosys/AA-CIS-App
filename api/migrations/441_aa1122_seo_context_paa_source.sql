@@ -31,7 +31,7 @@
 -- constraint to it. MIG-4: a migration-only PR (with 440 and 442), applied on Dev by Infra Migration Apply when every
 -- job table is idle (ADR 0017a), then the code PR.
 --
--- Number. Follows 440 (this lane: 440-452). If the owner main max + 1 differs at merge, renumber (git grep '441_' and
+-- Number. Follows 440 (this lane: 440-442). If the owner main max + 1 differs at merge, renumber (git grep '441_' and
 -- '441' here, in tests/integration/test_aa1122_migrations_440_442.py and docs/implementation-notes/AA-1122.md).
 --
 -- Locks. ALTER TABLE takes an ACCESS EXCLUSIVE lock for a catalog-only change (~918 rows); lock_timeout 5s, so a busy

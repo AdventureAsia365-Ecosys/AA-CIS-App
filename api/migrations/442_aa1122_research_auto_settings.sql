@@ -42,7 +42,7 @@
 -- Apply when every job table is idle (ADR 0017a), then the code PR (no readiness raise: a reader falls back to the
 -- compiled defaults). DM-6.1: no personal data. DM-7.1: no new table.
 --
--- Number. Follows 441 (this lane: 440-452). If the owner main max + 1 differs at merge, renumber (git grep '442_' and
+-- Number. Follows 441 (this lane: 440-442). If the owner main max + 1 differs at merge, renumber (git grep '442_' and
 -- '442' here, in tests/integration/test_aa1122_migrations_440_442.py, compiled_defaults.json's _generated line and
 -- docs/implementation-notes/AA-1122.md).
 --
