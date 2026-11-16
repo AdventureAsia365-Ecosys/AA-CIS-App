@@ -406,9 +406,6 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/tenants/provision/{job_id}"): TENANT_READ,
     # AA-1028 R1 slice 3 — saga cancel of add-ons, Tenant 360 › Subscription (overrides), the plan catalogue
     ("POST", "/admin/tenants/{tenant_id}/provision/cancel"): TENANT_WRITE,
-    ("GET", "/admin/tenants/{tenant_id}/subscription"): _TENANT_BILLING_READ,
-    ("PUT", "/admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}"): TENANT_WRITE,
-    ("DELETE", "/admin/tenants/{tenant_id}/entitlement-overrides/{feature_key}"): TENANT_WRITE,
     # Tenant 360 › Subscription: the TripPlanner lead route (AA-1038 S272, CIS 390), own domains (AA-1090 R8, CIS 428)
     **{(m, "/admin/tenants/{tenant_id}/tripplanner-site/" + p): _TENANT_BILLING_READ if m == "GET" else TENANT_WRITE
        for m, p in (("GET", "lead-route"), ("PUT", "lead-route"), ("GET", "domains"), ("POST", "domains"),
@@ -420,21 +417,14 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/tenants/{tenant_id}/addon-requests/{request_id}"): _TENANT_BILLING_READ,
     ("POST", "/admin/tenants/{tenant_id}/addon-requests/{request_id}/approve"): _TENANT_BOOK_WRITE,
     ("POST", "/admin/tenants/{tenant_id}/addon-requests/{request_id}/decline"): _TENANT_BOOK_WRITE,
-    ("GET", "/admin/plans"): _TENANT_BILLING_READ,
-    ("GET", "/admin/plans/features"): _TENANT_BILLING_READ,
-    # AA-1116 (option B): the commercial terms in force (Plans page panel; values are edited on Platform › Settings),
-    # Tenant 360 › Add-ons (shared.tenant_addon), Billing details, subscription terms and the quote
-    ("GET", "/admin/plans/commercial-terms"): _TENANT_BILLING_READ,
-    ("GET", "/admin/tenants/{tenant_id}/addons"): _TENANT_BILLING_READ,
-    ("POST", "/admin/tenants/{tenant_id}/addons"): TENANT_WRITE,
-    ("POST", "/admin/tenants/{tenant_id}/addons/{addon_id}/cancel"): TENANT_WRITE,
-    ("GET", "/admin/tenants/{tenant_id}/billing-details"): _TENANT_BILLING_READ,
-    ("PUT", "/admin/tenants/{tenant_id}/billing-details"): TENANT_WRITE,
-    ("PUT", "/admin/tenants/{tenant_id}/subscriptions/{product}/terms"): TENANT_WRITE,
-    ("GET", "/admin/tenants/{tenant_id}/quote"): _TENANT_BILLING_READ,
-    ("POST", "/admin/plans"): TENANT_WRITE,
-    ("PATCH", "/admin/plans/{plan_key}"): TENANT_WRITE,
-    ("POST", "/admin/plans/{plan_key}/retire"): TENANT_WRITE,
+    # Plans (slice 3, AA-1116 terms), Tenant 360 › Subscription (overrides; AA-1116 add-ons, billing, terms, quote)
+    **{(m, "/admin/plans" + p): _TENANT_BILLING_READ if m == "GET" else TENANT_WRITE for m, p in (
+        ("GET", ""), ("GET", "/features"), ("POST", ""), ("PATCH", "/{plan_key}"), ("POST", "/{plan_key}/retire"),
+        ("GET", "/commercial-terms"))},
+    **{(m, "/admin/tenants/{tenant_id}/" + p): _TENANT_BILLING_READ if m == "GET" else TENANT_WRITE for m, p in (
+        ("GET", "subscription"), ("PUT", "entitlement-overrides/{feature_key}"), ("GET", "addons"), ("POST", "addons"),
+        ("DELETE", "entitlement-overrides/{feature_key}"), ("POST", "addons/{addon_id}/cancel"), ("GET", "quote"),
+        ("GET", "billing-details"), ("PUT", "billing-details"), ("PUT", "subscriptions/{product}/terms"))},
     # AA-1035: field-level in the route (finance: plan_tier / is_active only; customer_success: every other field;
     # admin.py _require_tenant_patch)
     ("PATCH", "/admin/tenants/{tenant_id}"): any_of(TENANT_WRITE, BILLING_WRITE, TENANT_BOOK_WRITE),

@@ -428,6 +428,7 @@ class TestUsageSql:
             {"name": "T", "slug": "t", "plan_tier": "growth", "plan_id": PLAN_ID, "rate_limit_rpm": 300,
              "is_active": True, "cancelled_at": None},
             {"versions": 4, "tours": 2},
+            {"plan": "growth", "quota": 30},          # AA-1116: plans.REWRITE_QUOTA_SQL (what the rewrite path enforces)
         ]
         conn.fetch.return_value = [{"month": CANCELLED, "total_calls": 3, "successful_calls": 2,
                                     "rate_limited_calls": 1, "avg_response_ms": None}]

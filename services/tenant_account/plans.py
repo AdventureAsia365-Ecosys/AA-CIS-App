@@ -260,6 +260,18 @@ class PlanDraft:
         return (self.price_usd_monthly, self.price_extra_seat_usd, self.price_vnd_monthly, self.price_extra_seat_vnd)
 
 
+def _platform_rule(key: str, feature_product: str, product: str) -> None:
+    """The AI increment (AA-1116) goes on crm / tripplanner / add-on plans, never on content; every other platform key
+    (AI budget, notice policy) belongs to the base subscription: the resolver takes it from the content plan only
+    (CIS 361), so on another plan it would be shown but never applied."""
+    if key == AI_ADDON_KEY:
+        if product == "content":
+            raise PlanError("ai_addon_not_on_content",
+                            f"{key} adds to the AI budget of the content plan; set {AI_BUDGET_KEY} there instead")
+    elif feature_product == "platform" and product != "content":
+        raise PlanError("platform_key_content_only", f"{key} is set on the content plan, not on a {product} plan")
+
+
 def _features(raw: Any, product: str, catalogue: dict[str, dict]) -> tuple[PlanFeature, ...]:
     if not isinstance(raw, list):
         raise PlanError("invalid_features", "features is a list of {feature_key, limit_value}")
@@ -275,14 +287,7 @@ def _features(raw: Any, product: str, catalogue: dict[str, dict]) -> tuple[PlanF
             # an add-on plan may give any product's feature (the custom domain: tp.custom_domain + crm.custom_domain,
             # CIS 435); the resolver serves it only where that product is live (CIS 437)
             raise PlanError("feature_product_mismatch", f"{key} is a {f['product']} feature, the plan is {product}")
-        if key == AI_ADDON_KEY:
-            if product == "content":
-                raise PlanError("ai_addon_not_on_content",
-                                f"{key} adds to the AI budget of the content plan; set {AI_BUDGET_KEY} there instead")
-        elif f["product"] == "platform" and product != "content":
-            # a platform key (AI budget, notice policy) belongs to the base subscription: the resolver takes it from
-            # the content plan only (CIS 361), so on an add-on plan it would be shown but never applied
-            raise PlanError("platform_key_content_only", f"{key} is set on the content plan, not on a {product} plan")
+        _platform_rule(key, f["product"], product)
         if key in out:
             raise PlanError("invalid_features", f"{key} is listed twice")
         limit = bound_limit(key, f.get("unit"), _decimal(item.get("limit_value"), f"{key} limit", LIMIT_MAX))
@@ -338,28 +343,53 @@ def draft(payload: dict, *, product: str, tier: Optional[str], catalogue: dict[s
         if given[AI_BUDGET_KEY].limit_value is None and tier not in UNLIMITED_AI_TIERS:
             raise PlanError("enforced_limit_required",
                             f"{AI_BUDGET_KEY} needs a number on the {tier} plan (0 = no AI spend included)")
+    return PlanDraft(name=name.strip(), price_usd_monthly=_decimal(pick("price_usd_monthly"), "price", PRICE_MAX),
+                     price_unit=unit, seats_included=seats,
+                     price_extra_seat_usd=_decimal(pick("price_extra_seat_usd"), "extra seat price", PRICE_MAX),
+                     is_public=is_public, notes=notes, features=features, **_option_b(pick))
+
+
+def _option_b(pick) -> dict:
+    """AA-1116 (CIS 435): the VND list, the seat minimum, the contract floor and the overage rates, validated."""
     seats_min = pick("seats_min")
     if seats_min is not None and (isinstance(seats_min, bool) or not isinstance(seats_min, int)
                                   or not 1 <= seats_min <= SEATS_MIN_MAX):
         raise PlanError("invalid_seats_min", f"seats_min: 1-{SEATS_MIN_MAX} (empty = no minimum)")
-    vnd = _whole(_decimal(pick("price_vnd_monthly"), "VND price", VND_MAX), "VND price")
-    vnd_seat = _whole(_decimal(pick("price_extra_seat_vnd"), "VND extra seat price", VND_MAX), "VND extra seat price")
-    return PlanDraft(name=name.strip(), price_usd_monthly=_decimal(pick("price_usd_monthly"), "price", PRICE_MAX),
-                     price_unit=unit, seats_included=seats,
-                     price_extra_seat_usd=_decimal(pick("price_extra_seat_usd"), "extra seat price", PRICE_MAX),
-                     is_public=is_public, notes=notes, features=features,
-                     price_vnd_monthly=vnd, price_extra_seat_vnd=vnd_seat, seats_min=seats_min,
-                     price_floor_usd_monthly=_decimal(pick("price_floor_usd_monthly"), "price floor", PRICE_MAX),
-                     overage_usd_per_tour=_decimal(pick("overage_usd_per_tour"), "overage per tour", OVERAGE_MAX,
-                                                   places=4),
-                     overage_usd_per_1k_calls=_decimal(pick("overage_usd_per_1k_calls"), "overage per 1k calls",
-                                                       OVERAGE_MAX, places=4))
+    return {
+        "price_vnd_monthly": _whole(_decimal(pick("price_vnd_monthly"), "VND price", VND_MAX), "VND price"),
+        "price_extra_seat_vnd": _whole(_decimal(pick("price_extra_seat_vnd"), "VND extra seat price", VND_MAX),
+                                       "VND extra seat price"),
+        "seats_min": seats_min,
+        "price_floor_usd_monthly": _decimal(pick("price_floor_usd_monthly"), "price floor", PRICE_MAX),
+        "overage_usd_per_tour": _decimal(pick("overage_usd_per_tour"), "overage per tour", OVERAGE_MAX, places=4),
+        "overage_usd_per_1k_calls": _decimal(pick("overage_usd_per_1k_calls"), "overage per 1k calls", OVERAGE_MAX,
+                                             places=4),
+    }
 
 
 def _whole(v: Optional[Decimal], what: str) -> Optional[Decimal]:
     if v is not None and v != v.to_integral_value():
         raise PlanError("invalid_price", f"{what} is a whole number of dong")
     return v
+
+
+# AA-1116 (S5): the rewrite quota the API enforces: an active disabled override = 0, else the resolved content.rewrite,
+# else the tier's live content plan value (shared.plan); NULL = no quota (decision 11: Enterprise / internal by
+# contract). shared.membership_plans is no longer read.
+NO_QUOTA = 2147483647        # technical-constant: int4 max, "no quota" (the rewrite counter is int4)
+REWRITE_QUOTA_SQL = """
+    SELECT t.plan_tier::text AS plan,
+           COALESCE((SELECT 0 FROM shared.tenant_entitlement_override o
+                      WHERE o.tenant_id = t.tenant_id AND o.feature_key = 'content.rewrite' AND NOT o.enabled
+                        AND (o.expires_at IS NULL OR o.expires_at > now())),
+                    (SELECT LEAST(e.limit_value, 2147483647)::int FROM shared.v_tenant_entitlement_resolved e
+                      WHERE e.tenant_id = t.tenant_id AND e.feature_key = 'content.rewrite'),
+                    (SELECT LEAST(pf.limit_value, 2147483647)::int FROM shared.plan p
+                       JOIN shared.plan_feature pf ON pf.plan_key = p.plan_key AND pf.feature_key = 'content.rewrite'
+                      WHERE p.product = 'content' AND p.tier = t.plan_tier AND p.retired_at IS NULL)) AS quota
+      FROM shared.tenants t
+     WHERE t.tenant_id = $1::uuid
+"""
 
 
 # ── Writes ─────────────────────────────────────────────────────────────────────────────────────────────────────

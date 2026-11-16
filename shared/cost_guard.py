@@ -25,6 +25,7 @@ from typing import Optional
 import structlog
 
 from shared import settings as _settings
+from shared.ai_budget_defaults import plan_budget_defaults
 
 logger = structlog.get_logger()
 
@@ -603,9 +604,8 @@ async def maybe_alert_central(conn, summary: dict, *, alert_pct: int, stopped: b
 # (``shared.v_tenant_entitlement_resolved``: an override > the AA-1016 row of ``shared.tenant_ai_budget`` > the plan of
 # its live content subscription, 15 / 40 / 80 USD on Starter / Growth / Business; NULL = unlimited, e.g. AA itself).
 # The thresholds come from the tenant's ``shared.tenant_ai_budget`` row when it has one (alert_pct, approval_pct,
-# hard_stop, as AA-1016); a plan budget with no row uses the settings cis.billing.ai_alert_pct_default /
-# ai_approval_pct_default / ai_hard_stop_default (80 / 100 / on: the included spend is the ceiling, fail closed at
-# 100 %). A tenant with no resolved key keeps its AA-1016 row, if any,
+# hard_stop, as AA-1016); a plan budget with no row uses plan_budget_defaults() (fail closed at 100 % by default). A
+# tenant with no resolved key keeps its AA-1016 row, if any,
 # else the ai.budget_usd_monthly of its content subscription's plan while that subscription is not canceled (S266
 # review: never "no budget" for a customer whose resolver rows are momentarily absent, e.g. a trial past its end
 # before CIS 361 or an unpaid / paused subscription). A budget of 0 USD always stops (hard stop on whatever the
@@ -615,19 +615,6 @@ async def maybe_alert_central(conn, summary: dict, *, alert_pct: int, stopped: b
 # Before CIS 353 (no resolver view) the AA-1016 row alone decides, as before.
 
 AI_BUDGET_KEY = "ai.budget_usd_monthly"
-# AA-1116 (CIS 436): the alert / stop shares and the hard stop of a tenant with no AA-1016 row are settings (Platform ›
-# Settings, area billing), read per check; they replaced the PLAN_ALERT_PCT / PLAN_APPROVAL_PCT constants (80 / 100).
-PLAN_ALERT_PCT_KEY = "cis.billing.ai_alert_pct_default"
-PLAN_APPROVAL_PCT_KEY = "cis.billing.ai_approval_pct_default"
-PLAN_HARD_STOP_KEY = "cis.billing.ai_hard_stop_default"
-
-
-def plan_budget_defaults() -> tuple[int, int, bool]:
-    """(alert %, approval %, hard stop) of a tenant without its own AA-1016 row: the settings in force."""
-    return (int(_settings.get("cis.billing.ai_alert_pct_default")),
-            int(_settings.get("cis.billing.ai_approval_pct_default")),
-            bool(_settings.get("cis.billing.ai_hard_stop_default")))
-
 TENANT_BUDGET_ALERT_EVENT = BUDGET_ALERT_EVENT       # same bell type as the job and connection budgets
 # Fail closed on "off" (S266 review of slice 3): the resolver drops a disabled key, which for a limit would read as
 # "no budget". subscription.set_override refuses enabled=false on a limit; an active disabled override of the key
@@ -778,8 +765,7 @@ async def tenant_budget_check(conn, tenant_id: str) -> Optional[TenantAIBudget]:
     """The AI budget state of ``tenant_id`` this UTC month (one query), or None when it has no budget (no resolved
     limit and no AA-1016 amount) or the tables do not exist yet (before migration 321)."""
     row = None
-    alert, approval, hard_stop = plan_budget_defaults()
-    for sql, args in ((_TENANT_BUDGET_SQL, (str(tenant_id), alert, approval, hard_stop)),
+    for sql, args in ((_TENANT_BUDGET_SQL, (str(tenant_id), *plan_budget_defaults())),
                       (_LEGACY_TENANT_BUDGET_SQL, (str(tenant_id),))):
         try:
             row = await conn.fetchrow(sql, *args)

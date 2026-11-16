@@ -11,7 +11,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Badge, Button, ConfirmModal, DataTable, Drawer, Field, Input, K, Section, Select, mono, useT, useToast,
-  type ColumnDef,
+  type ColumnDef, type Translator,
 } from "../../../_kit";
 import {
   PLANS_API, billingDetailsKey, billingDetailsPath, money, quoteKey, quotePath, sendJson, subscriptionTermsPath,
@@ -148,18 +148,8 @@ function Billing({ tenantId, canWrite }: { tenantId: string; canWrite: boolean }
   const [editing, setEditing] = useState(false);
   const [terms, setTerms] = useState<QuoteSubscription | null>(null);
   const d = q.data;
-  const rows: [string, string | null | undefined][] = d ? [
-    [t("fieldLegal"), d.legal_entity_name], [t("fieldTaxId"), d.tax_id], [t("fieldEmail"), d.billing_email],
-    [t("fieldAddress"), d.billing_address], [t("fieldCountry"), d.billing_country], [t("fieldCurrency"), d.billing_currency],
-    [t("fieldFoundingFrom"), d.founding_offer_from], [t("fieldFoundingUntil"), d.founding_offer_until],
-  ] : [];
-  const termCols: ColumnDef<QuoteSubscription, unknown>[] = [
-    { accessorKey: "product", header: t("colProduct"), cell: (c) => c.row.original.plan_key },
-    { id: "interval", header: t("colInterval"), cell: (c) => t(`interval_${c.row.original.billing_interval}`) },
-    { id: "agreed", header: t("colAgreed"), cell: (c) => c.row.original.agreed_price_monthly == null ? t("none")
-      : money(c.row.original.agreed_price_monthly, c.row.original.agreed_currency ?? "USD") },
-    { id: "until", header: t("colUntil"), cell: (c) => c.row.original.agreed_until ?? t("none") },
-  ];
+  const rows = billingRows(d, t);
+  const termCols = termColumns(t);
   return (
     <Section title={t("billingTitle")} description={t("billingHint")} testId="tenant360-billing-details"
       actions={canWrite && d ? <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>{t("edit")}</Button>
@@ -167,7 +157,7 @@ function Billing({ tenantId, canWrite }: { tenantId: string; canWrite: boolean }
       <dl style={{ ...grid, margin: 0 }}>
         {rows.map(([label, value]) => (
           <div key={label}><dt style={small}>{label}</dt><dd style={{ margin: 0, color: K.ink, overflowWrap: "anywhere" }}>
-            {value ?? t("none")}</dd></div>
+            {value}</dd></div>
         ))}
       </dl>
       <div style={{ marginTop: 14, fontSize: 13, fontWeight: 600, color: K.ink }}>{t("termsTitle")}</div>
@@ -175,10 +165,31 @@ function Billing({ tenantId, canWrite }: { tenantId: string; canWrite: boolean }
         columns={termCols} getRowId={(r) => r.product} paginate={false} compact tableMinWidth={560}
         emptyTitle={t("none")} onRowClick={canWrite ? (r) => setTerms(r) : undefined} />
       {editing && d && <BillingDrawer tenantId={tenantId} details={d} onClose={() => setEditing(false)} />}
-      {terms && <TermsDrawer tenantId={tenantId} sub={terms} currency={d?.billing_currency ?? "USD"}
-        onClose={() => setTerms(null)} />}
+      {terms && <TermsDrawer tenantId={tenantId} sub={terms} details={d} onClose={() => setTerms(null)} />}
     </Section>
   );
+}
+
+type CT = Translator<typeof T360_COMMERCIAL.en>;
+
+function billingRows(d: BillingDetails | undefined, t: CT): [string, string][] {
+  if (!d) return [];
+  const rows: [string, string | null][] = [
+    [t("fieldLegal"), d.legal_entity_name], [t("fieldTaxId"), d.tax_id], [t("fieldEmail"), d.billing_email],
+    [t("fieldAddress"), d.billing_address], [t("fieldCountry"), d.billing_country], [t("fieldCurrency"), d.billing_currency],
+    [t("fieldFoundingFrom"), d.founding_offer_from], [t("fieldFoundingUntil"), d.founding_offer_until],
+  ];
+  return rows.map(([label, value]) => [label, value ?? t("none")]);
+}
+
+function termColumns(t: CT): ColumnDef<QuoteSubscription, unknown>[] {
+  return [
+    { accessorKey: "product", header: t("colProduct"), cell: (c) => c.row.original.plan_key },
+    { id: "interval", header: t("colInterval"), cell: (c) => t(`interval_${c.row.original.billing_interval}`) },
+    { id: "agreed", header: t("colAgreed"), cell: (c) => c.row.original.agreed_price_monthly == null ? t("none")
+      : money(c.row.original.agreed_price_monthly, c.row.original.agreed_currency ?? "USD") },
+    { id: "until", header: t("colUntil"), cell: (c) => c.row.original.agreed_until ?? t("none") },
+  ];
 }
 
 function BillingDrawer({ tenantId, details, onClose }: { tenantId: string; details: BillingDetails;
@@ -245,8 +256,9 @@ function BillingDrawer({ tenantId, details, onClose }: { tenantId: string; detai
   );
 }
 
-function TermsDrawer({ tenantId, sub, currency, onClose }: { tenantId: string; sub: QuoteSubscription;
-                                                             currency: string; onClose: () => void }) {
+function TermsDrawer({ tenantId, sub, details, onClose }: { tenantId: string; sub: QuoteSubscription;
+                                                            details?: BillingDetails; onClose: () => void }) {
+  const currency = details?.billing_currency ?? "USD";
   const t = useT(T360_COMMERCIAL);
   const toast = useToast();
   const refresh = useRefresh(tenantId);

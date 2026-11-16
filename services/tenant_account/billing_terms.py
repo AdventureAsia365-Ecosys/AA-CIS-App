@@ -27,7 +27,7 @@ INTERVALS = ("month", "year")
 # technical-constant: the CIS 354 / 435 CHECK lengths of the bill-to fields (the database refuses longer)
 TEXT_LIMITS = {"legal_entity_name": 300, "tax_id": 64, "billing_email": 254, "billing_address": 1000}
 COUNTRY_RE = re.compile(r"^[A-Z]{2}$")
-AGREED_MAX = Decimal("999999999999.99")         # numeric(14,2)
+AGREED_MAX = Decimal(10) ** 12 - Decimal("0.01")   # numeric(14,2) max (written so: twelve nines read as an id)
 DETAIL_FIELDS = ("legal_entity_name", "tax_id", "billing_email", "billing_address", "billing_country",
                  "billing_currency", "founding_offer_from", "founding_offer_until")
 
@@ -216,6 +216,38 @@ def _agreed_price(v: Any) -> Optional[Decimal]:
     return d
 
 
+def _agreed_terms(sub: dict, payload: dict, currency: str, today: date) -> tuple:
+    """(price, currency, until) after the payload: a lock, a new agreed price, a new end, or unchanged."""
+    price, cur, until = sub["agreed_price_monthly"], sub["agreed_currency"], sub["agreed_until"]
+    if payload.get("lock"):
+        line = qt.subscription_line({**sub, "agreed_price_monthly": None}, currency, today)
+        if line.price_missing:
+            raise TermsError("price_missing", f"the plan has no {currency} price to lock", 409)
+        months = ps.int_value(ps.PRICE_LOCK_MONTHS)
+        return line.amount, currency, (_months_after(today, months) if months else None)
+    if "agreed_price_monthly" in payload:
+        price = _agreed_price(payload["agreed_price_monthly"])
+        if price is None:
+            return None, None, None
+        cur = payload.get("agreed_currency", cur or currency)
+        until = _date(payload.get("agreed_until"), "agreed_until")
+    elif "agreed_until" in payload and price is not None:
+        until = _date(payload["agreed_until"], "agreed_until")
+    if price is not None and cur not in CURRENCIES:
+        raise TermsError("invalid_currency", "agreed_currency: USD or VND", field="agreed_currency")
+    return price, cur, until
+
+
+def _check_floor(price: Optional[Decimal], cur: Optional[str], floor: Optional[Decimal]) -> None:
+    """A contract plan refuses an agreed price under its floor (USD; a VND price at the reference rate)."""
+    if price is None or floor is None:
+        return
+    in_usd = price if cur == "USD" else price / Decimal(str(ps.value(ps.FX_VND_PER_USD)))
+    if in_usd < floor:
+        raise TermsError("below_price_floor", f"the agreed price is under the plan's floor of {floor} USD a month",
+                         field="agreed_price_monthly")
+
+
 async def set_terms(conn, tenant_id: str, product: str, payload: dict, *, actor: str,
                     today: Optional[date] = None) -> dict:
     """Billing interval / agreed price / price lock of one subscription. ``lock: true`` = the list price in the tenant's
@@ -231,28 +263,8 @@ async def set_terms(conn, tenant_id: str, product: str, payload: dict, *, actor:
         interval = payload.get("billing_interval", sub["billing_interval"])
         if interval not in INTERVALS:
             raise TermsError("invalid_interval", "billing_interval: month or year", field="billing_interval")
-        price, cur, until = sub["agreed_price_monthly"], sub["agreed_currency"], sub["agreed_until"]
-        if payload.get("lock"):
-            line = qt.subscription_line({**dict(sub), "agreed_price_monthly": None}, currency, today)
-            if line.price_missing:
-                raise TermsError("price_missing", f"the plan has no {currency} price to lock", 409)
-            months = ps.int_value(ps.PRICE_LOCK_MONTHS)
-            price, cur, until = line.amount, currency, (_months_after(today, months) if months else None)
-        elif "agreed_price_monthly" in payload:
-            price = _agreed_price(payload["agreed_price_monthly"])
-            cur = payload.get("agreed_currency", cur or currency) if price is not None else None
-            until = _date(payload.get("agreed_until"), "agreed_until") if price is not None else None
-        elif "agreed_until" in payload and price is not None:
-            until = _date(payload["agreed_until"], "agreed_until")
-        if price is not None and cur not in CURRENCIES:
-            raise TermsError("invalid_currency", "agreed_currency: USD or VND", field="agreed_currency")
-        floor = sub["price_floor_usd_monthly"]
-        if price is not None and floor is not None:
-            fx = Decimal(str(ps.value(ps.FX_VND_PER_USD)))
-            in_usd = price if cur == "USD" else price / fx
-            if in_usd < floor:
-                raise TermsError("below_price_floor", f"the agreed price is under the plan's floor of {floor} USD "
-                                 "a month", field="agreed_price_monthly")
+        price, cur, until = _agreed_terms(dict(sub), payload, currency, today)
+        _check_floor(price, cur, sub["price_floor_usd_monthly"])
         await conn.execute(UPDATE_TERMS_SQL, tenant_id, product, interval, price, cur, until, actor[:64])
         before = {"billing_interval": sub["billing_interval"], "agreed_price_monthly": sub["agreed_price_monthly"],
                   "agreed_currency": sub["agreed_currency"], "agreed_until": sub["agreed_until"]}
@@ -262,3 +274,30 @@ async def set_terms(conn, tenant_id: str, product: str, payload: dict, *, actor:
             await _audit(conn, tenant_id, actor, AdminTenantAuditAction.SUBSCRIPTION_TERMS_SET,
                          {"product": product, "plan_key": sub["plan_key"], "before": before, "after": after})
     return {"product": product, **{k: _iso(v) for k, v in after.items()}}
+
+
+# ── /v1/billing (AA-1116 S5): the public content plans and the agency's view of its quote ──────────────────────────
+PUBLIC_CONTENT_PLANS_SQL = """
+    SELECT p.tier::text AS plan_name, p.price_usd_monthly, p.price_vnd_monthly,
+           (SELECT LEAST(pf.limit_value, 2147483647)::int FROM shared.plan_feature pf
+             WHERE pf.plan_key = p.plan_key AND pf.feature_key = 'content.rewrite') AS tours_quota_monthly,
+           (SELECT LEAST(pf.limit_value, 2147483647)::int FROM shared.plan_feature pf
+             WHERE pf.plan_key = p.plan_key AND pf.feature_key = 'api.calls_monthly') AS api_calls_quota_monthly
+      FROM shared.plan p
+     WHERE p.product = 'content' AND p.retired_at IS NULL AND p.is_public AND p.tier IS NOT NULL
+       AND p.tier::text <> 'internal'
+     ORDER BY p.price_usd_monthly IS NULL, p.price_usd_monthly, p.plan_key
+"""
+QUOTE_VIEW_KEYS = ("currency", "lines", "subtotal", "discount_kind", "discount_pct", "discount", "pilot_free",
+                   "monthly_total", "annual_paid_months", "annual_total")
+
+
+def plan_price(p: Any, currency: str) -> Optional[float]:
+    """A public plan's monthly price in ``currency`` (None = not priced in it: "Custom")."""
+    v = p["price_vnd_monthly"] if currency == "VND" else p["price_usd_monthly"]
+    return None if v is None else float(v)
+
+
+def tenant_quote_view(quote: Optional[dict]) -> Optional[dict]:
+    """The agency's view of its quote: totals and lines, never the staff-only terms (agreed until, price floor)."""
+    return None if not quote else {k: quote[k] for k in QUOTE_VIEW_KEYS}

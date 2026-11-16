@@ -404,46 +404,17 @@ def _current_year_month_and_reset() -> tuple:
     return now_utc.strftime("%Y-%m"), next_month
 
 
-NO_QUOTA = 2147483647        # technical-constant: int4 max, "no quota" (the rewrite counter is int4)
-
-
 async def _get_tenant_plan_limit(conn, tenant_id: str) -> tuple:
     """(plan_tier str, tours_quota_monthly int) — plan read live from shared.tenants, not the
     JWT's own plan_tier claim (same rationale AA-432 established for rate_limit_rpm/is_active: a
-    plan change shouldn't take up to 24h, the JWT's TTL, to take effect). The quota comes from
-    tier's live content plan (AA-1116 S5; shared.membership_plans before), NULL = no quota (decision 11).
-    AA-1028 R1 slice 3 (root ADR 0019 d2): the tenant's resolved entitlement ``content.rewrite`` comes first (its
-    plan's value, edited on Tenants › Plans & add-ons, or an override; CIS 355 seeded the same 50 / 200 / 500); the
-    membership_plans read stays only for a tenant with no numeric key (no live content subscription, or a plan
-    without a rewrite limit such as Enterprise / AA internal), so no existing tenant's number changes.
-    S266 review: an override is honoured. Tenant 360 › Subscription refuses "off" and "no limit" for this key
-    (services/tenant_account/subscription.py: the quota is published as a number), so an override always carries a
-    number; an active disabled override that exists anyway counts as 0 (never falls back to the plan's quota)."""
-    row = await conn.fetchrow("""
-        SELECT t.plan_tier::text AS plan,
-               COALESCE((SELECT 0 FROM shared.tenant_entitlement_override o
-                          WHERE o.tenant_id = t.tenant_id AND o.feature_key = 'content.rewrite' AND NOT o.enabled
-                            AND (o.expires_at IS NULL OR o.expires_at > now())),
-                        (SELECT LEAST(e.limit_value, 2147483647)::int FROM shared.v_tenant_entitlement_resolved e
-                          WHERE e.tenant_id = t.tenant_id AND e.feature_key = 'content.rewrite'),
-                        -- AA-1116 (S5): no resolved number = the tier's live content plan value (shared.plan, edited
-                        -- on Plans & add-ons); NULL there (Enterprise / internal by contract) = no quota
-                        (SELECT LEAST(pf.limit_value, 2147483647)::int FROM shared.plan p
-                           JOIN shared.plan_feature pf ON pf.plan_key = p.plan_key
-                                                      AND pf.feature_key = 'content.rewrite'
-                          WHERE p.product = 'content' AND p.tier = t.plan_tier AND p.retired_at IS NULL)) AS quota,
-               EXISTS (SELECT 1 FROM shared.v_tenant_entitlement_resolved e
-                        WHERE e.tenant_id = t.tenant_id AND e.feature_key = 'content.rewrite'
-                          AND e.limit_value IS NULL) AS unlimited
-        FROM shared.tenants t
-        WHERE t.tenant_id = $1::uuid
-    """, tenant_id)
+    plan change shouldn't take up to 24h, the JWT's TTL, to take effect). AA-1028 R1 slice 3 / AA-1116 S5: the
+    tenant's resolved ``content.rewrite`` (an override is honoured; an active disabled one counts as 0), else the
+    tier's live content plan in shared.plan; no number anywhere = no quota (``tenant_plans.REWRITE_QUOTA_SQL``)."""
+    row = await conn.fetchrow(tenant_plans.REWRITE_QUOTA_SQL, tenant_id)
     if not row:
         return "starter", 0
-    if row["quota"] is None:
-        # AA-1116 decision 11: no number anywhere (an Enterprise / internal plan, or an override without a limit) =
-        # no quota by contract; served as the int4 ceiling so the callers' "used > limit" never trips
-        return str(row["plan"]), NO_QUOTA
+    if row["quota"] is None:            # AA-1116 decision 11: no quota by contract (int4 max: never "over")
+        return str(row["plan"]), tenant_plans.NO_QUOTA
     return str(row["plan"]), int(row["quota"])
 
 
@@ -521,33 +492,6 @@ async def get_quota(request: Request, tenant=Depends(get_tenant)):
 # query param), reusing the exact same v_tenant_monthly_usage view + shape the admin view
 # already returns (so BillingTab.tsx/DashboardTab.tsx need zero shape changes) — frontend
 # repointed from /api/admin/billing to /api/tenant/v1/billing (see those 2 files' own diffs).
-PUBLIC_CONTENT_PLANS_SQL = """
-    SELECT p.tier::text AS plan_name, p.price_usd_monthly, p.price_vnd_monthly,
-           (SELECT LEAST(pf.limit_value, 2147483647)::int FROM shared.plan_feature pf
-             WHERE pf.plan_key = p.plan_key AND pf.feature_key = 'content.rewrite') AS tours_quota_monthly,
-           (SELECT LEAST(pf.limit_value, 2147483647)::int FROM shared.plan_feature pf
-             WHERE pf.plan_key = p.plan_key AND pf.feature_key = 'api.calls_monthly') AS api_calls_quota_monthly
-      FROM shared.plan p
-     WHERE p.product = 'content' AND p.retired_at IS NULL AND p.is_public AND p.tier IS NOT NULL
-       AND p.tier::text <> 'internal'
-     ORDER BY p.price_usd_monthly IS NULL, p.price_usd_monthly, p.plan_key
-"""
-
-
-def _plan_price(p, currency: str):
-    v = p["price_vnd_monthly"] if currency == "VND" else p["price_usd_monthly"]
-    return None if v is None else float(v)
-
-
-def _tenant_quote_view(quote) -> dict | None:
-    """The agency's view of its quote: totals and lines, never the staff-only terms (agreed until, price floor)."""
-    if not quote:
-        return None
-    keep = ("currency", "lines", "subtotal", "discount_kind", "discount_pct", "discount", "pilot_free",
-            "monthly_total", "annual_paid_months", "annual_total")
-    return {k: quote[k] for k in keep}
-
-
 @quota_router.get("/billing")
 async def get_my_billing(request: Request, tenant=Depends(get_tenant)):
     tenant_id = tenant["sub"]
@@ -586,7 +530,7 @@ async def get_my_billing(request: Request, tenant=Depends(get_tenant)):
         currency = await conn.fetchval(
             "SELECT billing_currency::text FROM shared.tenants WHERE tenant_id = $1::uuid", tenant_id)
         currency = currency if currency in billing_terms.CURRENCIES else "USD"
-        plan_rows = await conn.fetch(PUBLIC_CONTENT_PLANS_SQL)
+        plan_rows = await conn.fetch(billing_terms.PUBLIC_CONTENT_PLANS_SQL)
         # AA-1028 R1 slice 3: each plan's RPM from its live content plan (content.rate_limit_rpm), not PLAN_LIMITS
         rpm_by_tier = await tenant_plans.rate_limits_by_tier(conn)
         # AA-638 — per-day API calls + tour rewrites for the current month (Dashboard sparkline).
@@ -627,7 +571,7 @@ async def get_my_billing(request: Request, tenant=Depends(get_tenant)):
             "price_usd_monthly": float(p["price_usd_monthly"]) if p["price_usd_monthly"] is not None else None,
             # AA-1116: the price in the tenant's billing currency (None = not priced in it: "Custom")
             "currency": currency,
-            "price_monthly": _plan_price(p, currency),
+            "price_monthly": billing_terms.plan_price(p, currency),
             "rate_limit_rpm": rpm_by_tier.get(p["plan_name"]),
         }
         for p in plan_rows
@@ -643,7 +587,7 @@ async def get_my_billing(request: Request, tenant=Depends(get_tenant)):
         # AA-1116: what the agency pays a month in its billing currency (option B rules, the Tenant 360 quote without
         # the staff-only fields)
         "billing_currency": currency,
-        "quote": _tenant_quote_view(quote),
+        "quote": billing_terms.tenant_quote_view(quote),
         "daily": daily,
         "activity": [
             {

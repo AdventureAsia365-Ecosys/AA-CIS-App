@@ -151,6 +151,15 @@ export interface PlanDraft {
   features: Record<string, string>;
 }
 
+/** AA-1116: the option B fields of a stored plan as draft text ("" = empty). Pure. */
+function priceListDraft(plan: Plan): Pick<PlanDraft, "price_vnd" | "price_extra_seat_vnd" | "seats_min" | "price_floor"
+    | "overage_tour" | "overage_1k_calls"> {
+  const s = (v: string | number | null | undefined) => (v == null ? "" : String(v));
+  return { price_vnd: s(plan.price_vnd_monthly), price_extra_seat_vnd: s(plan.price_extra_seat_vnd),
+           seats_min: s(plan.seats_min), price_floor: s(plan.price_floor_usd_monthly),
+           overage_tour: s(plan.overage_usd_per_tour), overage_1k_calls: s(plan.overage_usd_per_1k_calls) };
+}
+
 export function planDraftOf(plan: Plan | null, product: PlanProduct = "content"): PlanDraft {
   if (!plan) {
     return { plan_key: `${product}.`, product, tier: "", name: "", price: "", price_unit: DEFAULT_UNIT[product],
@@ -162,9 +171,7 @@ export function planDraftOf(plan: Plan | null, product: PlanProduct = "content")
     price: plan.price_usd_monthly ?? "", price_unit: plan.price_unit,
     seats_included: plan.seats_included == null ? "" : String(plan.seats_included),
     price_extra_seat: plan.price_extra_seat_usd ?? "", is_public: plan.is_public, notes: plan.notes ?? "",
-    price_vnd: plan.price_vnd_monthly ?? "", price_extra_seat_vnd: plan.price_extra_seat_vnd ?? "",
-    seats_min: plan.seats_min == null ? "" : String(plan.seats_min), price_floor: plan.price_floor_usd_monthly ?? "",
-    overage_tour: plan.overage_usd_per_tour ?? "", overage_1k_calls: plan.overage_usd_per_1k_calls ?? "",
+    ...priceListDraft(plan),
     features: Object.fromEntries(plan.features.map((f) => [f.feature_key, f.limit_value ?? ""])),
   };
 }
@@ -185,6 +192,36 @@ export interface PlanBody {
 const VND = /^\d{1,14}$/;
 const RATE4 = /^\d{1,6}(\.\d{1,4})?$/;
 
+const bad = (v: string, re: RegExp) => v.trim() !== "" && !re.test(v.trim());
+
+/** The first price / seat / note field the API would refuse (AA-1116: the VND list, the seat minimum, the floor and the
+ *  overage rates too), or null. Pure. */
+function priceFieldsError(d: PlanDraft): PlanDraftError | null {
+  const seats = d.seats_included.trim(), seatsMin = d.seats_min.trim();
+  const checks: [boolean, PlanDraftError][] = [
+    [bad(d.price, DECIMAL), "price"],
+    [!!seats && (!/^\d{1,6}$/.test(seats) || Number(seats) > 100000), "seats"],
+    [bad(d.price_extra_seat, DECIMAL), "extraSeat"],
+    [d.notes.length > 1000, "notes"],
+    [bad(d.price_vnd, VND) || bad(d.price_extra_seat_vnd, VND), "vnd"],
+    [!!seatsMin && (!/^\d{1,3}$/.test(seatsMin) || Number(seatsMin) < 1 || Number(seatsMin) > 500), "seatsMin"],
+    [bad(d.price_floor, DECIMAL), "floor"],
+    [bad(d.overage_tour, RATE4) || bad(d.overage_1k_calls, RATE4), "overage"],
+  ];
+  return checks.find(([fails]) => fails)?.[1] ?? null;
+}
+
+/** AA-1116: the option B fields of the request body (empty = null). Pure. */
+function priceListBody(d: PlanDraft): Pick<PlanBody, "price_vnd_monthly" | "price_extra_seat_vnd" | "seats_min"
+    | "price_floor_usd_monthly" | "overage_usd_per_tour" | "overage_usd_per_1k_calls"> {
+  const v = (x: string) => x.trim() || null;
+  return {
+    price_vnd_monthly: v(d.price_vnd), price_extra_seat_vnd: v(d.price_extra_seat_vnd),
+    seats_min: d.seats_min.trim() ? Number(d.seats_min.trim()) : null, price_floor_usd_monthly: v(d.price_floor),
+    overage_usd_per_tour: v(d.overage_tour), overage_usd_per_1k_calls: v(d.overage_1k_calls),
+  };
+}
+
 /** The request body of a create (``plan`` null) or an edit, or the first error (field) the API would refuse. */
 export function planBody(d: PlanDraft, catalogue: Feature[], plan: Plan | null):
     { body: PlanBody | null; error: PlanDraftError | null; field?: string } {
@@ -193,22 +230,9 @@ export function planBody(d: PlanDraft, catalogue: Feature[], plan: Plan | null):
   }
   const name = d.name.trim();
   if (name.length < 1 || name.length > 100) return { body: null, error: "name" };
-  const price = d.price.trim();
-  if (price && !DECIMAL.test(price)) return { body: null, error: "price" };
-  const seats = d.seats_included.trim();
-  if (seats && (!/^\d{1,6}$/.test(seats) || Number(seats) > 100000)) return { body: null, error: "seats" };
-  const extra = d.price_extra_seat.trim();
-  if (extra && !DECIMAL.test(extra)) return { body: null, error: "extraSeat" };
-  if (d.notes.length > 1000) return { body: null, error: "notes" };
-  const vnd = d.price_vnd.trim(), vndSeat = d.price_extra_seat_vnd.trim(), seatsMin = d.seats_min.trim();
-  if ((vnd && !VND.test(vnd)) || (vndSeat && !VND.test(vndSeat))) return { body: null, error: "vnd" };
-  if (seatsMin && (!/^\d{1,3}$/.test(seatsMin) || Number(seatsMin) < 1 || Number(seatsMin) > 500)) {
-    return { body: null, error: "seatsMin" };
-  }
-  const floor = d.price_floor.trim();
-  if (floor && !DECIMAL.test(floor)) return { body: null, error: "floor" };
-  const ovTour = d.overage_tour.trim(), ovCalls = d.overage_1k_calls.trim();
-  if ((ovTour && !RATE4.test(ovTour)) || (ovCalls && !RATE4.test(ovCalls))) return { body: null, error: "overage" };
+  const fieldError = priceFieldsError(d);
+  if (fieldError) return { body: null, error: fieldError };
+  const price = d.price.trim(), seats = d.seats_included.trim(), extra = d.price_extra_seat.trim();
   const byKey = new Map(catalogue.map((f) => [f.feature_key, f]));
   const allowed = new Set(featuresFor(d.product, catalogue).map((f) => f.feature_key));
   const features: PlanBody["features"] = [];
@@ -240,9 +264,7 @@ export function planBody(d: PlanDraft, catalogue: Feature[], plan: Plan | null):
   const body: PlanBody = {
     name, price_usd_monthly: price || null, price_unit: d.price_unit, seats_included: seats ? Number(seats) : null,
     price_extra_seat_usd: extra || null, is_public: d.is_public, notes: d.notes.trim() || null, features,
-    price_vnd_monthly: vnd || null, price_extra_seat_vnd: vndSeat || null, seats_min: seatsMin ? Number(seatsMin) : null,
-    price_floor_usd_monthly: floor || null, overage_usd_per_tour: ovTour || null,
-    overage_usd_per_1k_calls: ovCalls || null,
+    ...priceListBody(d),
   };
   if (plan) body.version = plan.version;
   else Object.assign(body, { plan_key: d.plan_key, product: d.product, tier });

@@ -603,16 +603,9 @@ async def get_tenant_usage(
             SELECT COUNT(*) AS versions, COUNT(DISTINCT published_tour_id) AS tours
             FROM gold_aa_internal.tenant_tour_versions WHERE tenant_id = $1
         """, tenant_id)
-        # AA-1116 (S5): the quota the rewrite path enforces (the resolved content.rewrite, else the tier's live content
-        # plan; NULL = no quota), no longer shared.membership_plans
-        tours_quota = await conn.fetchval("""
-            SELECT coalesce(
-                (SELECT LEAST(e.limit_value, 2147483647)::int FROM shared.tenant_entitlement e
-                  WHERE e.tenant_id = $1 AND e.feature_key = 'content.rewrite'),
-                (SELECT LEAST(pf.limit_value, 2147483647)::int FROM shared.plan p
-                   JOIN shared.plan_feature pf ON pf.plan_key = p.plan_key AND pf.feature_key = 'content.rewrite'
-                  WHERE p.product = 'content' AND p.tier = $2::plan_tier_enum AND p.retired_at IS NULL))
-        """, tenant_id, tenant["plan_tier"])
+        # AA-1116 (S5): the quota the rewrite path enforces (None = no quota), no longer shared.membership_plans
+        quota_row = await conn.fetchrow(tenant_plans.REWRITE_QUOTA_SQL, tenant_id)
+        tours_quota = quota_row["quota"] if quota_row else None
         # AA-819 — the publish/day limit in force and today's count (UTC), as v1_publish counts it
         publish_override = await daily_limit.tenant_override(conn, tenant_id)
         publishes_today = await daily_limit.count_today(conn, tenant_id)
