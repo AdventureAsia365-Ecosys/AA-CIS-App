@@ -1,11 +1,11 @@
--- Migration 438: AA-1107 (S282, C4.3 W47 finding 2) — the catalog HTTP places read gets fast: catalog.v_tour_place
+-- Migration 432: AA-1107 (S282, C4.3 W47 finding 2) — the catalog HTTP places read gets fast: catalog.v_tour_place
 -- reads the atoms per live tour, catalog._tour_day_text matches a day heading once per chunk, and geo.name_norm skips
 -- its accent table on an ASCII-only name. Same rows, same columns, same function results.
 --
 -- Why. The catalog HTTP places read (services/catalog_http/reader.py, `places`: WHERE source_system = 'cis' AND
 -- tour_id = ANY($1)) took 606 ms on Dev for 50 listed tours (S282 audit c43-w47, explain-places-50-tours.txt, all
 -- buffer hits: the time is CPU):
---   * ~310 ms: the place-pipeline lookup on geo.tour_place ran geo.name_norm on every candidate row. CIS 437 indexes
+--   * ~310 ms: the place-pipeline lookup on geo.tour_place ran geo.name_norm on every candidate row. CIS 431 indexes
 --     (source_id, day_index, geo.name_norm(name)), so only the place name's key is computed, once per output row.
 --     That one call is still most of it: geo.name_norm spends ~80 % of its time in translate() over its 504-character
 --     accent table (local measure: 30 us per call, 5 us without translate; Dev's CPU is a few times slower).
@@ -21,7 +21,7 @@
 --      of the accent table and of the six replace() patterns is non-ASCII, so on such an input translate() and the
 --      replaces are the identity: the result is the same string by construction. Non-ASCII and NULL inputs take 226's
 --      path unchanged. Same signature, IMMUTABLE PARALLEL SAFE, owner and grants kept (CREATE OR REPLACE). The
---      expression index of 437 stays valid (same results). The twin services/places/names.py::name_norm is unchanged.
+--      expression index of 431 stays valid (same results). The twin services/places/names.py::name_norm is unchanged.
 --   2. catalog._tour_day_text: 289's statement with the heading match in a LATERAL subquery (OFFSET 0, so it is
 --      evaluated once per chunk); same columns, same rows, security_barrier kept.
 --   3. catalog.v_tour_place: 256's statement with ONE change in the `atom` step: the atoms of a tour are read in a
@@ -29,10 +29,10 @@
 --      cannot reach; the partial index idx_tour_atoms_tour_id serves it), with the same predicates (the
 --      v_active_tour_atoms rule of 203 on the base table, a non-blank place) and the same output; CROSS JOIN LATERAL
 --      drops a tour without placed atoms exactly like the JOIN. Same columns, same rows, security_barrier kept, grants
---      restated. The pipeline lookup text is 256's: 437 makes its name match an index condition.
+--      restated. The pipeline lookup text is 256's: 431 makes its name match an index condition.
 -- Not here: catalog.v_tour_place_name (298, Booking) and catalog.v_tour_day pick up 1 and 2 without a restatement.
 --
--- Guards (RAISE rolls the whole file back). Before: 253, 256, 289 and 437 registered, the objects present, schema
+-- Guards (RAISE rolls the whole file back). Before: 253, 256, 289 and 431 registered, the objects present, schema
 -- catalog owned by cis_owner, the database encoding UTF8 (the fast path's premise). geo.name_norm: its result over
 -- every distinct place string the catalogue holds (geo.tour_place.name, acp_contract.tour_atoms.place and its btrim,
 -- shared.destinations.name, acp_shared.place_card.display_name) is identical before and after (md5 in "C" order). As
@@ -43,16 +43,16 @@
 -- IMMUTABLE.
 --
 -- Class: contract (root ADR 0017 d3: a function and two view definitions change). On Dev, Infra Migration Apply
--- applies it once every job table is idle (root ADR 0017a), after 437.
+-- applies it once every job table is idle (root ADR 0017a), after 431.
 --
 -- Recipe. The function as the file's role (cis_owner, its owner). The views by the X1 S22 catalog recipe, as 253 /
 -- 256 / 289 / 298: GRANT CREATE ON SCHEMA catalog TO catalog_owner; SET LOCAL ROLE catalog_owner; the view DDL; SET
 -- LOCAL ROLE cis_owner; REVOKE CREATE. Never RESET ROLE, no SECURITY DEFINER, no role DDL. The conftest replay skips
--- this file (it needs 253 / 256 / 289 and the catalog recipe); tests/integration/test_aa1107_migration_438.py applies
--- 253 + 256 + 257 + 258 + 273 + 289 + 437 + 438 the DB Migrate way inside one transaction and rolls back.
+-- this file (it needs 253 / 256 / 289 and the catalog recipe); tests/integration/test_aa1107_migration_432.py applies
+-- 253 + 256 + 257 + 258 + 273 + 289 + 431 + 432 the DB Migrate way inside one transaction and rolls back.
 --
--- Number. 429 is the highest on main (16/11/2026); 430-436 are taken by the other lanes of the S282 wave; 437 is the
--- index the v_tour_place lookup uses.
+-- Number. 430 is the highest on main (16/11/2026, CIS 430 of AA-1003 R6); 431 is the index the v_tour_place
+-- lookup uses and this file is 432.
 --
 -- Locks. No table is locked beyond ACCESS SHARE. ACCESS EXCLUSIVE on catalog._tour_day_text and catalog.v_tour_place
 -- from their replace until COMMIT: the closing checks read v_tour_place, _tour_day_text and v_tour_day once over every
@@ -62,7 +62,7 @@
 --
 -- Rollback: re-run 226's geo.name_norm statement as cis_owner, and 289's catalog._tour_day_text and 256's
 -- catalog.v_tour_place statements under the catalog recipe (same columns, so CREATE OR REPLACE works), then DELETE FROM
--- shared.schema_versions WHERE version = '438'. Readers see no difference either way.
+-- shared.schema_versions WHERE version = '432'. Readers see no difference either way.
 
 BEGIN;
 SET LOCAL lock_timeout = '10s';
@@ -71,20 +71,20 @@ SET LOCAL statement_timeout = '5min';
 -- ── Preconditions (as the file's role: cis_owner on Dev) ─────────────────────────────────────────────────────────
 DO $$
 BEGIN
-    IF (SELECT count(*) FROM shared.schema_versions WHERE version IN ('253', '256', '289', '437')) <> 4 THEN
-        RAISE EXCEPTION 'migration 438: apply 253, 256, 289 and 437 first';
+    IF (SELECT count(*) FROM shared.schema_versions WHERE version IN ('253', '256', '289', '431')) <> 4 THEN
+        RAISE EXCEPTION 'migration 432: apply 253, 256, 289 and 431 first';
     END IF;
     IF to_regclass('catalog._live_tour') IS NULL OR to_regclass('catalog._tour_day_text') IS NULL
        OR to_regclass('catalog.v_tour_place') IS NULL OR to_regclass('catalog.v_tour_day') IS NULL
        OR to_regprocedure('geo.name_norm(text)') IS NULL THEN
-        RAISE EXCEPTION 'migration 438: catalog._live_tour / _tour_day_text / v_tour_place / v_tour_day or '
+        RAISE EXCEPTION 'migration 432: catalog._live_tour / _tour_day_text / v_tour_place / v_tour_day or '
                         'geo.name_norm(text) missing';
     END IF;
     IF (SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = 'catalog') <> 'cis_owner' THEN
-        RAISE EXCEPTION 'migration 438: schema catalog is not owned by cis_owner (apply 245 first)';
+        RAISE EXCEPTION 'migration 432: schema catalog is not owned by cis_owner (apply 245 first)';
     END IF;
     IF current_setting('server_encoding') <> 'UTF8' THEN
-        RAISE EXCEPTION 'migration 438: the geo.name_norm ASCII fast path needs a UTF8 database (found %)',
+        RAISE EXCEPTION 'migration 432: the geo.name_norm ASCII fast path needs a UTF8 database (found %)',
                         current_setting('server_encoding');
     END IF;
 END $$;
@@ -131,7 +131,7 @@ LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $fn$
       FROM (
         SELECT btrim(regexp_replace(
                    replace(lower(
-                       -- 438: no multi-byte character, so nothing for the accent table or the replaces below
+                       -- 432: no multi-byte character, so nothing for the accent table or the replaces below
                        CASE WHEN octet_length(p) = char_length(p) THEN p
                        ELSE translate(
                        replace(replace(replace(replace(replace(replace(COALESCE(p, ''),
@@ -143,7 +143,7 @@ LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $fn$
 $fn$;
 COMMENT ON FUNCTION geo.name_norm(text) IS
     'AA-712 — place-name key (accent-folded, lowercased, punctuation to space, leading the/a/an dropped). '
-    'Twin of services/places/names.py::name_norm. 438: an ASCII-only input skips the accent table (identity there).';
+    'Twin of services/places/names.py::name_norm. 432: an ASCII-only input skips the accent table (identity there).';
 
 -- ── After, as cis_owner: the same key for every place string ─────────────────────────────────────────────────────
 DO $$
@@ -159,10 +159,10 @@ BEGIN
             UNION SELECT name FROM shared.destinations
             UNION SELECT display_name FROM acp_shared.place_card) corpus;
     IF got <> current_setting('aa1107.norm') THEN
-        RAISE EXCEPTION 'migration 438: geo.name_norm results changed (now %, before %)', got,
+        RAISE EXCEPTION 'migration 432: geo.name_norm results changed (now %, before %)', got,
                         current_setting('aa1107.norm');
     END IF;
-    RAISE NOTICE 'migration 438: geo.name_norm identical on the catalogue''s place strings (%)', got;
+    RAISE NOTICE 'migration 432: geo.name_norm identical on the catalogue''s place strings (%)', got;
 END $$;
 
 SET LOCAL ROLE catalog_owner;
@@ -175,7 +175,7 @@ WITH chunk AS (
      CROSS JOIN LATERAL regexp_split_to_table(t.aa_itineraries,
                                               '\n(?=Days?\s+\d+(?:[ \t]*(?:[-–]|to)[ \t]*\d{1,3})?\s+—)')
            WITH ORDINALITY AS c(txt, ord)
-     -- 438: OFFSET 0 keeps the match from being substituted into each m[...] reference below
+     -- 432: OFFSET 0 keeps the match from being substituted into each m[...] reference below
      CROSS JOIN LATERAL (
          SELECT regexp_match(btrim(c.txt, E' \t\r\n'),
                              '^Days?\s+(\d+)(?:[ \t]*(?:[-–]|to)[ \t]*(\d{1,3}))?\s+—[ \t]*([^\n]*)(.*)$') AS m
@@ -218,7 +218,7 @@ WITH atom AS (
             FROM catalog._tour_day_text d
            WHERE d.tour_id = t.tour_id
       ) dm
-      -- 438: the v_active_tour_atoms rule (203) on the base table, keyed by this live tour (an index scan per tour);
+      -- 432: the v_active_tour_atoms rule (203) on the base table, keyed by this live tour (an index scan per tour);
       -- OFFSET 0 keeps the subquery from being flattened into a join the tour filter cannot reach
       CROSS JOIN LATERAL (
           SELECT ta.itinerary_day, btrim(ta.place) AS place, ta.atom_id, ta.activity_type, ta.created_at
@@ -279,7 +279,7 @@ SELECT g.source_system, g.source_id, g.tour_id, g.day_number,
   FROM grouped g
   LEFT JOIN acp_shared.place_card pc ON pc.card_id = g.place_card_id
   -- 1. the place pipeline's link: the component of this source, day and place (component identity
-  --    is name_norm of the itinerary spelling, 226 / services/places/components.py); 437 indexes
+  --    is name_norm of the itinerary spelling, 226 / services/places/components.py); 431 indexes
   --    (source_id, day_index, geo.name_norm(name)), so the name match is an index condition
   LEFT JOIN LATERAL (
       SELECT gp.destination_id
@@ -337,22 +337,22 @@ BEGIN
                                            ''))
       INTO got FROM catalog.v_tour_place v;
     IF got <> current_setting('aa1107.place') THEN
-        RAISE EXCEPTION 'migration 438: catalog.v_tour_place changed (now %, before %)', got,
+        RAISE EXCEPTION 'migration 432: catalog.v_tour_place changed (now %, before %)', got,
                         current_setting('aa1107.place');
     END IF;
     SELECT count(*) || ' ' || md5(COALESCE(string_agg(v::text, E'\n' ORDER BY v.tour_id, v.day_number), ''))
       INTO got FROM catalog._tour_day_text v;
     IF got <> current_setting('aa1107.day_text') THEN
-        RAISE EXCEPTION 'migration 438: catalog._tour_day_text changed (now %, before %)', got,
+        RAISE EXCEPTION 'migration 432: catalog._tour_day_text changed (now %, before %)', got,
                         current_setting('aa1107.day_text');
     END IF;
     SELECT count(*) || ' ' || md5(COALESCE(string_agg(v::text, E'\n' ORDER BY v.tour_id, v.day_number), ''))
       INTO got FROM catalog.v_tour_day v;
     IF got <> current_setting('aa1107.day') THEN
-        RAISE EXCEPTION 'migration 438: catalog.v_tour_day changed (now %, before %)', got,
+        RAISE EXCEPTION 'migration 432: catalog.v_tour_day changed (now %, before %)', got,
                         current_setting('aa1107.day');
     END IF;
-    RAISE NOTICE 'migration 438: as catalog_owner v_tour_place (%), _tour_day_text (%), v_tour_day (%) unchanged',
+    RAISE NOTICE 'migration 432: as catalog_owner v_tour_place (%), _tour_day_text (%), v_tour_day (%) unchanged',
                  current_setting('aa1107.place'), current_setting('aa1107.day_text'), current_setting('aa1107.day');
     PERFORM set_config('app.tenant_id', '', true);
 END $$;
@@ -367,12 +367,12 @@ DECLARE
 BEGIN
     IF (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid = 'catalog.v_tour_place'::regclass)
        <> 'catalog_owner' THEN
-        RAISE EXCEPTION 'migration 438: catalog.v_tour_place is not catalog_owner''s';
+        RAISE EXCEPTION 'migration 432: catalog.v_tour_place is not catalog_owner''s';
     END IF;
     IF EXISTS (SELECT 1 FROM pg_class
                 WHERE oid IN ('catalog.v_tour_place'::regclass, 'catalog._tour_day_text'::regclass)
                   AND NOT 'security_barrier=true' = ANY(COALESCE(reloptions, '{}'))) THEN
-        RAISE EXCEPTION 'migration 438: catalog.v_tour_place / _tour_day_text is not security_barrier';
+        RAISE EXCEPTION 'migration 432: catalog.v_tour_place / _tour_day_text is not security_barrier';
     END IF;
     IF (SELECT string_agg(a.attname || ' ' || format_type(a.atttypid, a.atttypmod), ', ' ORDER BY a.attnum)
           FROM pg_attribute a
@@ -383,24 +383,30 @@ BEGIN
           'activity_types text[], atom_count bigint, located_by text, precision text, segment jsonb, '
           'segment_basis text, segment_from_destination_id uuid, segment_to_destination_id uuid, '
           'segment_km double precision' THEN
-        RAISE EXCEPTION 'migration 438: catalog.v_tour_place columns changed';
+        RAISE EXCEPTION 'migration 432: catalog.v_tour_place columns changed';
     END IF;
     IF pg_catalog.has_schema_privilege('catalog_owner', 'catalog', 'CREATE') THEN
-        RAISE EXCEPTION 'migration 438: catalog_owner still has CREATE on schema catalog';
+        RAISE EXCEPTION 'migration 432: catalog_owner still has CREATE on schema catalog';
     END IF;
     IF (SELECT provolatile FROM pg_proc WHERE oid = 'geo.name_norm(text)'::regprocedure) <> 'i' THEN
-        RAISE EXCEPTION 'migration 438: geo.name_norm is not IMMUTABLE (437''s index needs it)';
+        RAISE EXCEPTION 'migration 432: geo.name_norm is not IMMUTABLE (431''s index needs it)';
     END IF;
     FOREACH r IN ARRAY ARRAY['aa_app_user', 'tripplanner', 'booking'] LOOP
         IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = r)
            AND NOT pg_catalog.has_table_privilege(r, 'catalog.v_tour_place', 'SELECT') THEN
-            RAISE EXCEPTION 'migration 438: % cannot read catalog.v_tour_place', r;
+            RAISE EXCEPTION 'migration 432: % cannot read catalog.v_tour_place', r;
         END IF;
     END LOOP;
 END $$;
 
+-- S282 review: 431's expression index evaluates geo.name_norm on every geo.tour_place write as the writing role
+-- (cis_app, place_extract). Today cis_app has EXECUTE only through the default PUBLIC grant; 228 grants it explicitly
+-- to catalog_owner, aa_app_user, tripplanner and booking. Grant it to cis_app too, so a later REVOKE ... FROM PUBLIC on
+-- geo cannot break place_extract writes.
+GRANT EXECUTE ON FUNCTION geo.name_norm(text) TO cis_app;
+
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('438', now(), 'AA-1107: fast catalog places read: v_tour_place reads atoms per live tour, _tour_day_text '
+VALUES ('432', now(), 'AA-1107: fast catalog places read: v_tour_place reads atoms per live tour, _tour_day_text '
                       'matches a heading once per chunk, geo.name_norm ASCII fast path; same rows and results')
 ON CONFLICT (version) DO NOTHING;
 

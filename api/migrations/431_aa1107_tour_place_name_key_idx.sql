@@ -1,5 +1,5 @@
 -- migrate: expand
--- Migration 437: AA-1107 (S282, C4.3 W47 finding 2) — an index that serves catalog.v_tour_place's place-pipeline
+-- Migration 431: AA-1107 (S282, C4.3 W47 finding 2) — an index that serves catalog.v_tour_place's place-pipeline
 -- lookup on geo.tour_place without evaluating geo.name_norm on every candidate row.
 --
 -- Why. catalog.v_tour_place (CIS 256) resolves each tour-day place through a LATERAL lookup:
@@ -13,7 +13,7 @@
 --
 -- What. One non-unique btree on (source_id, day_index, geo.name_norm(name)). geo.name_norm is IMMUTABLE and PARALLEL
 -- SAFE (CIS 226), so an expression index is valid and the view's predicate becomes an Index Cond with the place
--- name's key computed once per lookup. No view text changes here (CIS 438 restates the view for the atoms scan).
+-- name's key computed once per lookup. No view text changes here (CIS 432 restates the view for the atoms scan).
 --
 -- Class: expand (root ADR 0017 d3): a new non-unique index on an existing table. geo.tour_place is ~13,400 rows
 -- (2026-11-15 dump, below the 100k MIG-10 lock-risk threshold), so a plain CREATE INDEX inside the transaction is
@@ -33,10 +33,10 @@ CREATE INDEX IF NOT EXISTS tour_place_source_day_name_norm_idx
     ON geo.tour_place (source_id, day_index, geo.name_norm(name));
 
 COMMENT ON INDEX geo.tour_place_source_day_name_norm_idx IS
-    'AA-1107 (437): catalog.v_tour_place place-pipeline lookup (source, day, name_norm of the itinerary spelling)';
+    'AA-1107 (431): catalog.v_tour_place place-pipeline lookup (source, day, name_norm of the itinerary spelling)';
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('437', now(), 'AA-1107: geo.tour_place index on (source_id, day_index, geo.name_norm(name)) for catalog.v_tour_place')
+VALUES ('431', now(), 'AA-1107: geo.tour_place index on (source_id, day_index, geo.name_norm(name)) for catalog.v_tour_place')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

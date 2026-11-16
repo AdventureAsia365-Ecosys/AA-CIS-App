@@ -1,14 +1,14 @@
-"""AA-1107 (S282) — migrations 437 + 438: the catalog HTTP places read (catalog.v_tour_place, tour_id = ANY) without a
+"""AA-1107 (S282) — migrations 431 + 432: the catalog HTTP places read (catalog.v_tour_place, tour_id = ANY) without a
 full acp_contract.tour_atoms scan, without a per-row geo.name_norm filter on geo.tour_place, with the day heading
 matched once per chunk (catalog._tour_day_text) and geo.name_norm's ASCII fast path.
 
-437 (expand) is replayed by conftest like any file; test_aa712_migration_226 drops schema geo, so the module fixture
-re-applies 255 and 437 (both idempotent). conftest skips 438 (catalog recipe, needs 253 / 256 / 289). Each test runs in
+431 (expand) is replayed by conftest like any file; test_aa712_migration_226 drops schema geo, so the module fixture
+re-applies 255 and 431 (both idempotent). conftest skips 432 (catalog recipe, needs 253 / 256 / 289). Each test runs in
 ONE transaction on the RDS-like state of test_aa860_migration_245 (module fixture): 253 / 256 / 257 / 258 / 273 / 289
 are applied as cis_owner (DB Migrate's live-owner switch), the tours are seeded, every row of v_tour_place is read as
-the catalog reader (aa_app_user), 438 is applied, the checks run, and the transaction is rolled back.
+the catalog reader (aa_app_user), 432 is applied, the checks run, and the transaction is rolled back.
 
-Checks: the same rows, every column, before and after 438 (several tours, multi-day places, a ranged day heading,
+Checks: the same rows, every column, before and after 432 (several tours, multi-day places, a ranged day heading,
 spelling and accent variants, a pipeline link through an accent variant, a card, a legacy name match, a line stretch,
 a place without coordinates, deleted / empty-marker / blank atoms, a tour that is not live, a live tour without placed
 atoms) and over the whole view; catalog._tour_day_text and catalog.v_tour_day unchanged; geo.name_norm gives the same
@@ -35,8 +35,8 @@ from test_aa860_migration_245 import rds_like_245  # noqa: E402,F401  (module fi
 MIG = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations")
 BEFORE = ("253_catalog_l4_read_model.sql", "256_catalog_line_places.sql", "257_geo_place_dedupe.sql",
           "258_catalog_live_source_key.sql", "273_published_tours_updated_at.sql", "289_catalog_ranged_day_heading.sql")
-INDEX = "437_aa1107_tour_place_name_key_idx.sql"
-MIGRATION = "438_aa1107_catalog_places_read_fast.sql"
+INDEX = "431_aa1107_tour_place_name_key_idx.sql"
+MIGRATION = "432_aa1107_catalog_places_read_fast.sql"
 # services/catalog_http/reader.py _DETAIL_SQL["places"] with DETAIL_COND (psycopg2 placeholder)
 READER_SQL = ("SELECT source_id, day_number, position, place_name, place_display_name, destination_id, "
               "destination_name, country, lat, lng, precision FROM catalog.v_tour_place "
@@ -57,8 +57,8 @@ LINE = {"type": "LineString", "coordinates": [[100.1, 20.1], [100.2, 20.2], [100
 
 
 @pytest.fixture(scope="module", autouse=True)
-def geo_255_437():
-    """test_aa712_migration_226 drops schema geo and re-applies 226 only: re-apply 255 and 437 (idempotent)."""
+def geo_255_431():
+    """test_aa712_migration_226 drops schema geo and re-applies 226 only: re-apply 255 and 431 (idempotent)."""
     c = t245._connect()
     c.autocommit = True
     for name in ("255_geo_place_shape.sql", INDEX):
@@ -116,7 +116,7 @@ def _norms(c):
 
 
 class _Cur(psycopg2.extensions.cursor):
-    """Carries the seeded ids and the rows read before 438."""
+    """Carries the seeded ids and the rows read before 432."""
 
 
 @pytest.fixture
@@ -291,25 +291,31 @@ def test_columns_types_owner_barrier_grants(cur):
         assert cur.fetchone()[0] is True, role
     cur.execute("SELECT has_schema_privilege('catalog_owner', 'catalog', 'CREATE')")
     assert cur.fetchone()[0] is False
+    # S282 review: 431's expression index evaluates geo.name_norm as the writing role (cis_app, place_extract).
+    cur.execute("""SELECT has_function_privilege('cis_app', 'geo.name_norm(text)', 'EXECUTE'),
+                          EXISTS (SELECT 1 FROM pg_proc p, aclexplode(p.proacl) a
+                                   WHERE p.oid = 'geo.name_norm(text)'::regprocedure
+                                     AND a.grantee = 'cis_app'::regrole AND a.privilege_type = 'EXECUTE')""")
+    assert cur.fetchone() == (True, True)
 
 
 def test_registered_once_and_rerunnable(cur):
     _apply(cur, MIGRATION)
-    cur.execute("SELECT version, count(*) FROM shared.schema_versions WHERE version IN ('437', '438') "
+    cur.execute("SELECT version, count(*) FROM shared.schema_versions WHERE version IN ('431', '432') "
                 "GROUP BY version ORDER BY version")
-    assert cur.fetchall() == [("437", 1), ("438", 1)]
+    assert cur.fetchall() == [("431", 1), ("432", 1)]
     assert _rows(cur, cur.seeded["tours"]) == cur.rows_before
 
 
-def test_needs_437(cur):
+def test_needs_431(cur):
     cur.execute("SAVEPOINT s")
-    cur.execute("DELETE FROM shared.schema_versions WHERE version = '437'")
-    with pytest.raises(psycopg2.errors.RaiseException, match="apply 253, 256, 289 and 437 first"):
+    cur.execute("DELETE FROM shared.schema_versions WHERE version = '431'")
+    with pytest.raises(psycopg2.errors.RaiseException, match="apply 253, 256, 289 and 431 first"):
         _apply(cur, MIGRATION)
     cur.execute("ROLLBACK TO SAVEPOINT s")
 
 
-def test_437_index_is_the_name_key(cur):
+def test_431_index_is_the_name_key(cur):
     cur.execute("SELECT indexdef FROM pg_indexes WHERE schemaname = 'geo' "
                 "AND indexname = 'tour_place_source_day_name_norm_idx'")
     assert cur.fetchone()[0].endswith("USING btree (source_id, day_index, geo.name_norm(name))")
