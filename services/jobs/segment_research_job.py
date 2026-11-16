@@ -55,8 +55,8 @@ AUTO_CREATOR = "system:auto"     # created_by of the nightly tick's runs (resear
 
 
 def check_scope(payload: dict, created_by: Optional[str]) -> Optional[str]:
-    """AA-1122 (critic C8) — the run's scope, or NonRetryable: an unknown scope, or an automatic run without one (it would
-    otherwise select everything stale in every market, bounded only by money)."""
+    """AA-1122 (critic C8) — the run's scope, or NonRetryable: an unknown scope, or an automatic run without one (it
+    would otherwise select everything stale in every market, bounded only by money)."""
     from services.acp_contract.segment_research import SCOPES
 
     scope = payload.get("scope")

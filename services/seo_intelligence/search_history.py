@@ -244,5 +244,6 @@ async def counts(pool) -> dict:
             "last_month": row["last_month"].isoformat() if row["last_month"] else None}
 
 
-__all__ = ["MonthlyBuffer", "Season", "with_history", "monthly_from_answer", "monthly_from_results", "series_of", "rows_for", "write",
+__all__ = ["MonthlyBuffer", "Season", "with_history", "monthly_from_answer", "monthly_from_results", "series_of",
+           "rows_for", "write",
            "seasonality", "place_seasonality", "counts"]

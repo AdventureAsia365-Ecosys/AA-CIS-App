@@ -415,7 +415,8 @@ def _usd(value) -> float:
 
 
 def jev_ask_estimate_usd() -> float:
-    """AA-1122 — the reserved worst-case price of one Jev keyword question (setting cis.spend.research_jev_ask_estimate_usd)."""
+    """AA-1122 — the reserved worst-case price of one Jev keyword question (setting
+    cis.spend.research_jev_ask_estimate_usd)."""
     from services.seo_intelligence.research_settings import JEV_ASK_ESTIMATE_USD
     from shared import settings
     return float(settings.get(JEV_ASK_ESTIMATE_USD))

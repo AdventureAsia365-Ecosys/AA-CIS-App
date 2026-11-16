@@ -538,7 +538,13 @@ async def test_job_runs_with_its_budget_narrowed_and_refuses_the_loop_strategy()
         seen.update(kw)
         return {"aborted": False}
 
+    from shared.cost_guard import SharedCap
+
+    # AA-1122: the month cap and this job's earlier spend are read from the ledger (here: an empty month)
+    ctx.payload["scope"] = None
     with patch.object(srj, "load_budgets", AsyncMock(return_value=(dfs, llm))), \
+         patch.object(srj, "shared_caps", AsyncMock(return_value=(SharedCap("month", 50.0), None, 0.0))), \
+         patch.object(srj, "enqueue_paa_derive", AsyncMock(return_value=None)), \
          patch.object(srj, "dfs_balance", AsyncMock(return_value=40.0)), \
          patch.object(srj, "maybe_alert", AsyncMock()), \
          patch("services.acp_contract.segment_research.run_segment_research", fake_run):

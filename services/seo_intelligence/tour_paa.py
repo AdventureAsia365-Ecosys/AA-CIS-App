@@ -1,8 +1,8 @@
 """services/seo_intelligence/tour_paa.py — AA-1122 item 5: the People Also Ask backfill of published tours.
 
-A tour's PAA questions (``silver_aa_internal.seo_context.people_also_ask``, one row per tour) are what S1 and T2 hand the
-writers. About 258 of 892 published tours had an empty list: the one SERP the S1 prefetch bought for the tour's seed had
-no PAA box. This module fills them, cheapest first:
+A tour's PAA questions (``silver_aa_internal.seo_context.people_also_ask``, one row per tour) are what S1 and T2 hand
+the writers. About 258 of 892 published tours had an empty list: the one SERP the S1 prefetch bought for the tour's
+seed had no PAA box. This module fills them, cheapest first:
 
   1. **store** ($0) — the PAA segment research already bought for the tour's places (``acp_contract.search_demand``,
      the SERP market US and the US-PAA2 top-up rows): the rows whose keyword names one of the tour's strong places
@@ -13,7 +13,8 @@ no PAA box. This module fills them, cheapest first:
      the store, through the research cache (read before, written back, the purchase checked against the run budget and
      the shared caps before it is posted);
   3. **none** (paid runs only) — nothing found (no stored question and no keyword left to buy, or a bought SERP
-     with no PAA box): the row is marked so the next run waits for the SERP freshness window before it looks again (critic C4 of the S282
+     with no PAA box): the row is marked so the next run waits for the SERP freshness window before it looks again
+     (critic C4 of the S282
      design: an answered-but-empty SERP is never bought again in a loop).
 
 Rules: a list S1 or T2 wrote (``paa_source`` NULL, not empty) is never overwritten; ``fetched_at`` is never touched (it

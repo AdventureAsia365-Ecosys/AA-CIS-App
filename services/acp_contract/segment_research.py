@@ -814,7 +814,8 @@ async def _plan(pool, by_place: dict[str, list[str]], market_codes: list[str], t
 
 
 async def plan_selection(pool, by_place: dict[str, list[str]], market_codes: list[str], tiers: tuple[str, ...],
-                         windows=None, *, info: dict | None = None, scope: str | None = None, ahead_windows: Windows | None = None,
+                         windows=None, *, info: dict | None = None, scope: str | None = None,
+                         ahead_windows: Windows | None = None,
                 ahead_share_pct: float = 0.0, requalify_max: int | None = None) -> Selection:
     """The places to research as batch `_Place`s IN PRIORITY ORDER (AA-1122; select_within_usd keeps the longest
     prefix that fits the caps, so the order decides who waits when money is short), with their stale volume markets,
@@ -828,7 +829,8 @@ async def plan_selection(pool, by_place: dict[str, list[str]], market_codes: lis
          a block bought in one week does not expire in one week. The run buys them through a cache with the same
          narrowed windows (run_segment_research), so a refresh always buys before it stamps a new log row;
       4. **requalify** — fresh places whose stored map the keyword rules would change (needs_requalify): last, and at
-         most `requalify_max` (cis.seo.research_requalify_max_places) per run; the rest wait (counts["requalify_waiting"])
+         most `requalify_max` (cis.seo.research_requalify_max_places) per run; the rest wait
+         (counts["requalify_waiting"])
          because a rebuilt map buys its new keywords in every requested market (critic C6).
 
     Scope auto_new keeps bucket 1 only. A stale or new place with no usable map (none stored, or an older one the rules

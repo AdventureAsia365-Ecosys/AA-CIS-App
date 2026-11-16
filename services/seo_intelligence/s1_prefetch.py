@@ -454,8 +454,9 @@ async def prefetch(conn, rows: list[dict], *, tenant_id: str, location_code: int
                 ideas = await client.fetch_keyword_ideas_multi(seeds[:MAX_SEEDS_PER_TASK], location_code,
                                                                language_code, limit=300)
                 summary["ideas_tasks"] += 1
-                summary["history_rows"] = summary.get("history_rows", 0) + await _write_history(
-                    conn, client, location_code)
+                kept = await _write_history(conn, client, location_code)
+                if kept:
+                    summary["history_rows"] = summary.get("history_rows", 0) + kept
             except Exception as e:  # BudgetExceeded included: stop buying, keep what we have
                 from shared.cost_guard import BudgetExceeded
                 if isinstance(e, BudgetExceeded):

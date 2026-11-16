@@ -1209,8 +1209,9 @@ async def run_segment_matching(tour_id: str, pool) -> dict:
 
 logger = structlog.get_logger()
 
-# AA-1122 — research carried to a place's new name (segment_research_log + its keyword map). The log rows keep the newest
-# researched_at per (market, tier); the map is copied only when the new name has none (never mixed into another map).
+# AA-1122 — research carried to a place's new name (segment_research_log + its keyword map). The log rows keep the
+# newest researched_at per (market, tier); the map is copied only when the new name has none (never mixed into
+# another map).
 _CARRY_LOG_SQL = """
     INSERT INTO acp_contract.segment_research_log (canonical_place, market, tier, researched_at)
     SELECT $2, market, tier, researched_at FROM acp_contract.segment_research_log WHERE canonical_place = $1

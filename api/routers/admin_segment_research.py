@@ -141,8 +141,9 @@ async def _month_cap(pool):
 
 def _refuse_spent_month(month) -> None:
     if month.remaining() <= 0:
-        raise HTTPException(status_code=409, detail=f"month cap reached: spent ${month.spent:.2f} of "
-                                                    f"${month.cap_usd:.2f} (setting cis.spend.research_max_usd_per_month)")
+        raise HTTPException(status_code=409,
+                            detail=f"month cap reached: spent ${month.spent:.2f} of ${month.cap_usd:.2f} "
+                                   "(setting cis.spend.research_max_usd_per_month)")
 
 
 @router.post("/preview", summary="Scope + stale count + spend ceiling (no LLM/DFS spend)")
