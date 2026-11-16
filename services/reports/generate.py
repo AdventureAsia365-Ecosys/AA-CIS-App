@@ -20,6 +20,9 @@ Generators (catalog.yaml `generator: cis`):
   AA-900 (S271 W0): CIS-08 daily content quality funnel and watchdog findings (services/reports/funnel_report.py).
   R5 (B2B, root ADR 0019; services/reports/b2b_ops.py): FI-08 monthly tenant entitlements and AI spend against the
          cap, BK-03 weekly agency receivables aging, FI-07 weekly bookings flash (counts only).
+  R6 (partners and agencies; services/reports/partners.py): EX-03 monthly partner growth and churn, EX-07 weekly
+         onboarding funnel, CRM-04 monthly CRM AI roll-up. Their CRM part reads crm.ops.v1 numbers the API captured
+         with the administrator's token when the run was asked for (the run's `inputs`).
 
 Each renderer is pure (data in, (summary, output JSON, Markdown) out); the loaders read the DB. Reports read stored
 rows only: no LLM, no paid API, no recomputation of history (automation-plan.md §5).
@@ -361,6 +364,13 @@ async def _delivery(conn, reg: Registry, report: Report, first: date, last: date
     return await delivery.render(conn, reg, report, first, last, now)
 
 
+async def _partners(conn, reg: Registry, report: Report, first: date, last: date, now: datetime,
+                    inputs: Optional[dict] = None) -> Rendered:
+    from services.reports import partners
+
+    return await partners.render(conn, reg, report, first, last, now, inputs)
+
+
 # AA-1003 R2: OPS-12 daily digest (services/reports/digest.py); TP-03 (inquiry handoff) was retired by the R0 hotfix.
 # R3 (services/reports/money.py): weekly EX-01, FI-02; monthly FI-01, FI-03, FI-04, FI-05, FI-06, OPS-08.
 # R4: catalog and AI quality (services/reports/quality.py): weekly CIS-01, event CIS-06, CIS-07; reliability and data
@@ -370,6 +380,9 @@ async def _delivery(conn, reg: Registry, report: Report, first: date, last: date
 # AA-900 (S271 W0): daily CIS-08 content quality funnel + watchdog findings (funnel_report.py).
 # R5 (B2B, b2b_ops.py): monthly FI-08 tenant entitlements and AI spend vs the cap; weekly BK-03 agency receivables,
 # weekly FI-07 bookings flash (Booking contract views only).
+# R6 (partners and agencies, partners.py): monthly EX-03 partner growth and churn, weekly EX-07 onboarding funnel,
+# monthly CRM-04 CRM AI roll-up; their crm.ops.v1 part comes in the run's `inputs` (captured by the API with the staff
+# member's token at POST /admin/reports/{id}/run; a scheduled run has none).
 RENDERERS: dict[str, Renderer] = {"EX-04": _scorecard, "EX-06": _register, "OPS-12": _digest,
                                   "EX-01": _money_week, "FI-02": _money_week,
                                   **{rid: _money_month for rid in ("FI-01", "FI-03", "FI-04", "FI-05", "FI-06",
@@ -380,7 +393,10 @@ RENDERERS: dict[str, Renderer] = {"EX-04": _scorecard, "EX-06": _register, "OPS-
                                   "TP-01": _planner, "SEC-03": _security, "SEC-08": _security,
                                   **{rid: _delivery for rid in ("DEV-01", "DEV-03", "OPS-15")},
                                   "CIS-08": _funnel,
-                                  **{rid: _b2b_ops for rid in ("FI-08", "BK-03", "FI-07")}}
+                                  **{rid: _b2b_ops for rid in ("FI-08", "BK-03", "FI-07")},
+                                  **{rid: _partners for rid in ("EX-03", "EX-07", "CRM-04")}}
+# The renderers that also take the run's captured `inputs` (the job payload).
+TAKES_INPUTS = frozenset({"EX-03", "EX-07", "CRM-04"})
 
 
 def default_period(report: Report, now: Optional[datetime] = None) -> tuple[date, date]:
@@ -389,8 +405,10 @@ def default_period(report: Report, now: Optional[datetime] = None) -> tuple[date
 
 
 async def render(conn, reg: Registry, report: Report, first: date, last: date,
-                 now: Optional[datetime] = None) -> Rendered:
+                 now: Optional[datetime] = None, inputs: Optional[dict] = None) -> Rendered:
     fn = RENDERERS.get(report.id)
     if fn is None:
         raise LookupError(f"no generator for report {report.id}")
+    if report.id in TAKES_INPUTS:
+        return await fn(conn, reg, report, first, last, now or periods.now_utc(), inputs)
     return await fn(conn, reg, report, first, last, now or periods.now_utc())

@@ -879,9 +879,10 @@ kpis:
   used_by:
   - CRM-03
 - id: K-CRM04-AI-CALLS-PER-ACTIVE-MEMBER
-  version: 1
+  version: 2
   name: AI calls per active member
-  definition: crm.llm_call rows per tenant_id / active crm.member rows
+  definition: crm.ops.v1 GET /llm/calls rows (shadow out) of agencies with calls / their members active in 30 days (crm.ops.v1
+    usage meters)
   unit: count
   threshold: Adoption trend
   sources:
@@ -891,9 +892,10 @@ kpis:
   used_by:
   - CRM-04
 - id: K-CRM04-COST-PER-AGENCY
-  version: 1
+  version: 2
   name: Cost per agency
-  definition: sum crm.llm_call.cost_usd_est per tenant_id in the month vs entitlement (allowed_features contains ai_assist)
+  definition: Sum of crm.ops.v1 GET /llm/calls cost_usd per agency in the period vs the AI budget its crm.ops.v1 usage meter
+    shows when read (the agency's own budget)
   unit: usd
   threshold: <= entitlement
   sources:
@@ -902,20 +904,20 @@ kpis:
   used_by:
   - CRM-04
 - id: K-CRM04-FAILURE-RATE
-  version: 1
+  version: 2
   name: Failure rate
-  definition: crm.llm_usage_daily.failed_calls / calls (platform-wide; table has no tenant column)
+  definition: crm.ops.v1 GET /llm/usage failed_calls / calls (crm.llm_usage_daily, platform-wide)
   unit: ratio
-  threshold: < 3 %
+  threshold: Trend; a flag level becomes a setting before the report colours it
   sources:
   - crm.llm_usage_daily
   defined_in: CRM-04
   used_by:
   - CRM-04
 - id: K-CRM04-LATENCY-P95
-  version: 1
+  version: 2
   name: Latency p95
-  definition: p95 crm.llm_call.latency_ms
+  definition: p95 latency_ms of crm.ops.v1 GET /llm/calls rows (shadow out)
   unit: seconds
   threshold: Trend
   sources:
@@ -924,11 +926,11 @@ kpis:
   used_by:
   - CRM-04
 - id: K-CRM04-REFUSAL-RATE
-  version: 1
+  version: 2
   name: Refusal rate
-  definition: crm.llm_call with refusal_code not null / calls, per tenant
+  definition: crm.ops.v1 GET /llm/calls rows with status refused or a refusal_code / calls (shadow out)
   unit: ratio
-  threshold: Flag > 5 %
+  threshold: Trend; a flag level becomes a setting before the report colours it
   sources:
   - crm.llm_call
   defined_in: CRM-04
@@ -1809,10 +1811,10 @@ kpis:
   used_by:
   - DATA-05
 - id: K-ONB-CRM
-  version: 1
+  version: 2
   name: CRM activation
-  definition: Agencies (crm.tenant, is_synthetic false) with a crm.proposal within 14 days of crm.tenant.created_at / agencies
-    created
+  definition: Agencies with a first proposal within 14 days of creation / agencies created; proposals are CRM business data
+    that crm.ops.v1 does not carry, so CIS reports it as not published
   unit: count
   threshold: '>= 50 % (set after the first 5 agencies)'
   sources:
@@ -1822,22 +1824,31 @@ kpis:
   used_by:
   - EX-07
 - id: K-ONB-STUCK
-  version: 1
+  version: 2
   name: Stuck partners
-  definition: Partners with no step progress for more than 7 days before activation
+  definition: 'Partners not activated with more than cis.reports.partner_stuck_days (default 7) days since their last onboarding
+    step (Content studio: created, first membership.activated, brand brief (the first brand rules row with content, not the
+    empty row made at provisioning), first approved piece; CRM via crm.ops.v1: agency created without an active owner)'
   unit: count
   threshold: 0 without an owner note
-  sources: []
+  sources:
+  - shared.tenants
+  - shared.tenant_membership_event
+  - shared.tenant_brand_rules
+  - acp_shared.content_piece
   defined_in: EX-07
   used_by:
   - EX-07
 - id: K-ONB-TTV
-  version: 1
+  version: 2
   name: Time to first value
-  definition: Median days from tenant or agency creation to first publish (Content studio) or first proposal (CRM)
-  unit: usd
+  definition: Median days from tenant creation to first publish (acp_shared.publish_log published_at) over partners that published;
+    CRM first proposal is not published to CIS
+  unit: days
   threshold: <= 7 days
-  sources: []
+  sources:
+  - shared.tenants
+  - acp_shared.publish_log
   defined_in: EX-07
   used_by:
   - EX-07
@@ -1863,10 +1874,11 @@ kpis:
   used_by:
   - OPS-12
 - id: K-PART-ACT
-  version: 1
+  version: 2
   name: Activation rate (Content studio)
-  definition: Tenants created in the cohort month (shared.tenants.created_at, is_canary not true) with a first acp_shared.publish_log
-    row of status 'published' within 14 days / tenants created
+  definition: Partners created in the cohort (shared.tenants kind agency, is_canary not true) with a first acp_shared.publish_log
+    published_at within the activation days setting (cis.reports.partner_activation_days, default 14) / partners whose window
+    has closed
   unit: ratio
   threshold: '>= 60 %'
   sources:
@@ -1877,28 +1889,28 @@ kpis:
   - EX-03
   - EX-07
 - id: K-PART-CHURN
-  version: 1
+  version: 2
   name: Logo churn rate
-  definition: Partners with shared.tenants.cancelled_at in the month or crm.tenant status moved to 'offboarding'/'offboarded'
-    in the month / active at month start
+  definition: Partners with a subscription live at the month start and none live at its end, or with shared.tenants.cancelled_at
+    in the month / partners with a subscription live at the month start
   unit: ratio
-  threshold: Amber > 2 %, red > 5 % per month
+  threshold: Trend; amber/red levels become settings before the report colours them
   sources:
   - shared.tenants
-  - crm.tenant
+  - shared.tenant_subscription
   defined_in: EX-03
   used_by:
   - EX-03
 - id: K-PART-MRR
-  version: 1
+  version: 2
   name: MRR (USD)
-  definition: Sum shared.membership_plans.price_usd_monthly of active non-canary tenants + CRM plan price (price list to
-    be set by the business owner) + overage_usd from shared.v_tenant_monthly_usage
+  definition: Sum of shared.plan list prices of partners' active and past_due subscriptions at the month end (per-seat plans
+    times seats, extra seats at the extra-seat price; trials 0), with a start/new/cancelled/residual bridge
   unit: usd
   threshold: Net revenue retention >= 100 %
   sources:
-  - shared.membership_plans
-  - shared.v_tenant_monthly_usage
+  - shared.tenant_subscription
+  - shared.plan
   defined_in: EX-03
   used_by:
   - EX-03
@@ -1913,19 +1925,17 @@ kpis:
   used_by:
   - EX-05
 - id: K-PART-PAYING
-  version: 1
+  version: 2
   name: Active paying partners
-  definition: shared.tenants is_active and is_canary not true, joined on plan_id to shared.membership_plans with price_usd_monthly
-    > 0, plus crm.tenant status 'active' and is_synthetic false with crm.tenant_entitlement.plan in ('core','pro'), plus
-    booking.b2b_partners status active
+  definition: Partners (shared.tenants kind agency, is_canary not true) with a shared.tenant_subscription live at the period's
+    end (started before it, not cancelled by it) in status active or past_due on a plan with a shared.plan list price > 0,
+    any product (content, crm, tripplanner); Booking B2B partners are not published to CIS
   unit: count
   threshold: Trend; business owner sets the yearly goal
   sources:
   - shared.tenants
-  - shared.membership_plans
-  - crm.tenant
-  - crm.tenant_entitlement
-  - booking.b2b_partners
+  - shared.tenant_subscription
+  - shared.plan
   defined_in: EX-03
   used_by:
   - EX-02
@@ -1933,16 +1943,17 @@ kpis:
   report_thresholds:
     EX-02: Trend; 0 until first paying tenant
 - id: K-PART-QUOTA
-  version: 1
+  version: 2
   name: Quota utilisation
-  definition: Per-tenant quota_tours_pct / quota_calls_pct from shared.v_tenant_monthly_usage; CRM active crm.member rows
-    / crm.tenant_entitlement.member_limit
+  definition: 'Per partner: shared.tenant_rewrite_usage rewrite_count per month / the rewrite quota the API enforces (content.rewrite
+    entitlement, else the membership plan); CRM seats used / allowed from crm.ops.v1 usage meters. Upsell at or above cis.reports.partner_upsell_quota_pct;
+    churn risk under cis.reports.partner_low_use_quota_pct for cis.reports.partner_low_use_months months'
   unit: ratio
-  threshold: '> 80 % upsell flag; < 10 % for 2 months churn-risk flag'
+  threshold: Settings (default upsell >= 80 %, churn risk < 10 % for 2 months)
   sources:
-  - shared.v_tenant_monthly_usage
-  - crm.member
-  - crm.tenant_entitlement
+  - shared.tenant_rewrite_usage
+  - shared.membership_plans
+  - shared.v_tenant_entitlement_resolved
   defined_in: EX-03
   used_by:
   - EX-03

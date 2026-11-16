@@ -15,7 +15,9 @@
                       no value and is listed under `unavailable` in the result; that alone never fails the job.
                       Scheduled once a day by the api's ops metrics sampler (api/core/ops_metrics_sampler.py,
                       _reports_part) from 00:30 UTC, idempotency key kpi_snapshot_daily:<day>.
-  report_generate     payload {"run_id": <shared.report_run id>, "report_id", "period_start", "period_end"}
+  report_generate     payload {"run_id": <shared.report_run id>, "report_id", "period_start", "period_end",
+                               "inputs"? (R6: crm.ops.v1 numbers captured at a manual run,
+                               api/services/report_crm_inputs.py)}
                       Renders the report (services/reports/generate.py) into its report_run row: status running ->
                       succeeded (summary, output JSON, output_markdown) or failed (error). Created with its run row by
                       enqueue_report_run (POST /admin/reports/{id}/run, or the chain above). A job that ends without
@@ -94,11 +96,13 @@ async def compute_day(conn, ctx: DayContext,
 
 
 async def enqueue_report_run(pool, report: Report, first: date, last: date, *, trigger: str, triggered_by: str,
-                             parent_job_id: Optional[str] = None) -> Optional[dict]:
+                             parent_job_id: Optional[str] = None, inputs: Optional[dict] = None) -> Optional[dict]:
     """A queued shared.report_run row + its report_generate job. None when a scheduled run of the same report and
     period exists already. Row and job commit together: the job always finds its row, and a failed enqueue leaves no
     scheduled row behind, so the snapshot job's retry chains the report again (report_run_schedule_uq would refuse a
-    second scheduled row for the period)."""
+    second scheduled row for the period). R6: `inputs` (the crm.ops.v1 numbers the API read with the staff member's
+    token, api/services/report_crm_inputs.py) ride in the job payload for the renderer; never a token."""
+    payload_extra = {"inputs": inputs} if inputs is not None else {}
     async with pool.acquire() as conn:
         async with conn.transaction():
             run_id = await store.create_run(conn, report.id, first, last, trigger=trigger,
@@ -108,7 +112,7 @@ async def enqueue_report_run(pool, report: Report, first: date, last: date, *, t
             job_id, _ = await enqueue(
                 conn, REPORT_KIND,
                 {"run_id": run_id, "report_id": report.id, "period_start": first.isoformat(),
-                 "period_end": last.isoformat()},
+                 "period_end": last.isoformat(), **payload_extra},
                 idempotency_key=f"{REPORT_KIND}:{run_id}", created_by=triggered_by, parent_job_id=parent_job_id)
             await store.set_job(conn, run_id, job_id)
     return {"run_id": run_id, "job_id": job_id, "report_id": report.id, "period_start": first.isoformat(),
@@ -199,7 +203,8 @@ async def run_report(ctx: JobContext) -> dict:
             raise NonRetryable(msg)
         await store.mark_running(conn, run_id, ctx.job_id)
         try:
-            out = await generate.render(conn, reg, report, run["period_start"], run["period_end"])
+            out = await generate.render(conn, reg, report, run["period_start"], run["period_end"],
+                                        inputs=(ctx.payload or {}).get("inputs"))
         except Exception as e:
             await store.finish_failed(conn, run_id, f"{type(e).__name__}: {str(e)[:1000]}")
             raise
