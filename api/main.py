@@ -147,6 +147,9 @@ async def lifespan(app: FastAPI):
     redis_url, redis_kwargs = redis_conn_args()
     redis = build_api_redis(redis_url, **redis_kwargs)
     app.state.redis = redis
+    # S282: one PING now, so the first tenant requests on this task reuse an open connection (warning on failure).
+    from api.core.redis_client import warm_api_redis
+    await warm_api_redis(redis)
     pool = await asyncpg.create_pool(
         os.environ["DATABASE_URL"], min_size=2, max_size=10,
         # AA-824: one application_name per pool, so pg_stat_activity / pg_stat_statements show who

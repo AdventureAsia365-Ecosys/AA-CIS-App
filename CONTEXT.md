@@ -3315,8 +3315,10 @@ Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`
   `publish_log_listed` with `used_tenant_pool=true`, then drop `publish_log_listed` from
   `tenant_pool_known_rollback_events` in AA-CIS-Infra `accounts/aa365/tenant_pool_alarms.tf` and this note.
   **Flags fail closed (S241 D-12):** only an explicit OFF value puts a route back on the main pool;
-  `true`, a missing key, any other value, a Redis error or a read slower than 0.5 s all mean the tenant
-  pool (`aa817_tenant_flag_read_failed` at ERROR on a failed read, `aa817_tenant_flag_unrecognized` at
+  `true`, a missing key, any other value, a Redis error or a read slower than `FLAG_READ_TIMEOUT_S` (above the
+  Redis client's own worst case, S282) all mean the tenant pool (`aa817_tenant_flag_read_failed` at ERROR on a
+  failed read, at WARNING on a timeout since S282; the api warms its Redis client with one PING at start-up;
+  `aa817_tenant_flag_unrecognized` at
   ERROR on a value that is neither ON nor OFF). The decision is read once per request (memoised on
   `request.state`), so a multi-block route (unpublish, disconnect) never switches pools mid-request.
   Rollback = `SET <key> false`, no deploy. Accepted OFF values (after trim + lower-case): `false` (what

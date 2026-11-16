@@ -20,8 +20,11 @@ health-check PING times out first). The single retry already covers a stale pool
 from __future__ import annotations
 
 import redis.asyncio as aioredis
+import structlog
 from redis.asyncio.retry import Retry
 from redis.backoff import NoBackoff
+
+logger = structlog.get_logger()
 
 REDIS_SOCKET_CONNECT_TIMEOUT_S = 0.5
 REDIS_SOCKET_TIMEOUT_S = 0.5
@@ -39,3 +42,17 @@ def build_api_redis(url: str, *, socket_connect_timeout: float = REDIS_SOCKET_CO
         retry=Retry(NoBackoff(), REDIS_RETRIES), retry_on_timeout=True,
         **conn_kwargs,
     )
+
+
+async def warm_api_redis(redis) -> bool:
+    """S282 (Sentry AA-CIS-API-1B): open one connection at start-up (one PING, under the client's own bounds), so the
+    first tenant requests on a new task reuse it instead of doing the TLS + AUTH handshake during their burst. Best
+    effort: a failure is a warning and the app starts anyway (every Redis caller already fails open / closed)."""
+    if redis is None:
+        return False
+    try:
+        await redis.ping()
+        return True
+    except Exception as e:  # noqa: BLE001 — start-up never fails on Redis
+        logger.warning("api_redis_warm_failed", error=repr(e)[:200])
+        return False
