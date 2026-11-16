@@ -2159,8 +2159,10 @@ class LLMClient:
         # writer would change vendor unseen (ADR 0005 §4) — only the judge routes list an OpenAI-API last resort,
         # explicitly. Shared by _legacy_chain and the S3 alias path (_run_alias).
         if not (openai_platform_allowed("gpt-4.1") and openai_scope_allowed(stage_scopes(request))):
-            logger.error("t3_skipped_gpt41_retired", tier=tier,
-                         reason="GPT-4.1 retired (S235); no OpenAI last resort for legacy tiers")
+            # S282 (Sentry AA-CIS-API-T): a warning; the raise below is the failure the caller (or the job runner)
+            # reports, so an error here only duplicated it as a second Sentry issue with no stack.
+            logger.warning("t3_skipped_gpt41_retired", tier=tier,
+                           reason="GPT-4.1 retired (S235); no OpenAI last resort for legacy tiers")
             message = "All LLM providers failed (Bedrock tiers down; GPT-4.1 retired)"
             roles = [str(f) for f in failures if isinstance(f, RouteRoleNotServed)]
             if roles:

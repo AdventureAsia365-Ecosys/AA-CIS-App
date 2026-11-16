@@ -57,6 +57,21 @@ class OutputFailed(NonRetryable):
         super().__init__(f"{code}: {detail}" if detail else code)
 
 
+class Refused(NonRetryable):
+    """S282 (Sentry AA-CIS-API-1D): the handler refused the request on a business rule (a slug already taken, the one
+    pilot tenant already there). Like OutputFailed: the job fails at once and its error starts with ``code``; the
+    runner logs it as a warning (a handled outcome), never as an error event with a traceback."""
+
+    def __init__(self, code: str, detail: str = ""):
+        self.code = code
+        self.detail = detail
+        super().__init__(f"{code}: {detail}" if detail else code)
+
+
+# Typed, handled ends of a job: written as `<code>: <detail>` (reason = code) and logged at warning (S282).
+HANDLED_FAILURES = (OutputFailed, Refused)
+
+
 # AA-993 G3 / AA-1056: the worker container's ECS stopTimeout (AA-CIS-Infra modules/ecs). A kind whose handler runs in
 # a thread that outlives its cancel (a3_atomize, recompute) sets release_delay_seconds to this, so the old task is gone
 # before another worker re-claims the released row.
