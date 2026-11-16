@@ -417,13 +417,13 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/tenants/{tenant_id}/addon-requests/{request_id}"): _TENANT_BILLING_READ,
     ("POST", "/admin/tenants/{tenant_id}/addon-requests/{request_id}/approve"): _TENANT_BOOK_WRITE,
     ("POST", "/admin/tenants/{tenant_id}/addon-requests/{request_id}/decline"): _TENANT_BOOK_WRITE,
-    # Plans (slice 3, AA-1116 terms), Tenant 360 › Subscription (overrides; AA-1116 add-ons, billing, terms, quote)
+    # Plans (slice 3, AA-1116 terms), Tenant 360 › Subscription (overrides; AA-1116 billing, terms, quote)
     **{(m, "/admin/plans" + p): _TENANT_BILLING_READ if m == "GET" else TENANT_WRITE for m, p in (
         ("GET", ""), ("GET", "/features"), ("POST", ""), ("PATCH", "/{plan_key}"), ("POST", "/{plan_key}/retire"),
         ("GET", "/commercial-terms"))},
     **{(m, "/admin/tenants/{tenant_id}/" + p): _TENANT_BILLING_READ if m == "GET" else TENANT_WRITE for m, p in (
-        ("GET", "subscription"), ("PUT", "entitlement-overrides/{feature_key}"), ("GET", "addons"), ("POST", "addons"),
-        ("DELETE", "entitlement-overrides/{feature_key}"), ("POST", "addons/{addon_id}/cancel"), ("GET", "quote"),
+        ("GET", "subscription"), ("PUT", "entitlement-overrides/{feature_key}"),
+        ("DELETE", "entitlement-overrides/{feature_key}"), ("GET", "quote"),
         ("GET", "billing-details"), ("PUT", "billing-details"), ("PUT", "subscriptions/{product}/terms"))},
     # AA-1035: field-level in the route (finance: plan_tier / is_active only; customer_success: every other field;
     # admin.py _require_tenant_patch)

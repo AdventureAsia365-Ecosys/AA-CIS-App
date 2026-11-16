@@ -3,10 +3,13 @@
 Tenant 360 › Billing details (admin, ``tenant.write``; audited ``tenant.billing_details_set``): the bill-to fields CIS
 holds (legal entity, tax id, billing e-mail / address / country; until now no page edited them), the billing currency
 (USD | VND, CIS 435) and the founding-agency offer (from / until; at most ``cis.billing.founding_max_agencies``
-agencies, only for a tenant with a live subscription on an eligible plan).
+agencies, only for a tenant with a live subscription on an eligible plan). The audit row never holds a PII-tagged
+bill-to value (CIS 354 tags: pii:name, pii:government_id, pii:contact): acp_shared.audit_log is an append-only hash
+chain the tenant erasure keeps, so those fields are audited as set / changed / cleared only (:data:`PII_FIELDS`).
 Tenant 360 › Subscription terms (audited ``tenant.subscription_terms_set``): billing interval (month | year), an agreed
-monthly price in a currency with an optional end (a contract price, or ``lock`` = the list price now, locked for
-``cis.billing.price_lock_months``), refused under the plan's ``price_floor_usd_monthly`` (the Enterprise floor).
+monthly price per billed unit in a currency with an optional end (a contract price, or ``lock`` = the list unit price
+now, per seat on a per-seat plan, locked for ``cis.billing.price_lock_months``), refused under the plan's
+``price_floor_usd_monthly`` (the Enterprise floor; compared with the line the agreed price gives).
 The quote (:mod:`services.tenant_account.quote`) reads the same rows.
 """
 from __future__ import annotations
@@ -30,6 +33,8 @@ COUNTRY_RE = re.compile(r"^[A-Z]{2}$")
 AGREED_MAX = Decimal(10) ** 12 - Decimal("0.01")   # numeric(14,2) max (written so: twelve nines read as an id)
 DETAIL_FIELDS = ("legal_entity_name", "tax_id", "billing_email", "billing_address", "billing_country",
                  "billing_currency", "founding_offer_from", "founding_offer_until")
+# The bill-to fields CIS 354 tags as personal data: audited without their values (set / changed / cleared).
+PII_FIELDS = frozenset({"legal_entity_name", "tax_id", "billing_email", "billing_address"})
 
 
 class TermsError(ValueError):
@@ -53,13 +58,6 @@ SUBS_SQL = """
       JOIN shared.plan p ON p.plan_key = s.plan_key
      WHERE s.tenant_id = $1::uuid
      ORDER BY CASE s.product WHEN 'content' THEN 0 WHEN 'crm' THEN 1 ELSE 2 END
-"""
-ADDONS_SQL = """
-    SELECT a.plan_key, p.name AS plan_name, a.quantity, a.status, p.price_usd_monthly, p.price_vnd_monthly,
-           (a.status IN ('trialing', 'active') AND a.starts_at <= now()
-            AND (a.ends_at IS NULL OR a.ends_at > now())) AS live
-      FROM shared.tenant_addon a JOIN shared.plan p ON p.plan_key = a.plan_key
-     WHERE a.tenant_id = $1::uuid AND a.status <> 'canceled'
 """
 FOUNDING_COUNT_SQL = """
     SELECT count(*) FROM shared.tenants WHERE founding_offer_from IS NOT NULL AND tenant_id <> $1::uuid
@@ -119,9 +117,8 @@ async def tenant_quote(conn, tenant_id: str, *, today: Optional[date] = None) ->
     if tenant is None:
         return None
     subs = [dict(r) for r in await conn.fetch(SUBS_SQL, tenant_id)]
-    addons = [dict(r) for r in await conn.fetch(ADDONS_SQL, tenant_id)]
     terms = ps.snapshot(ps.COMMERCIAL)
-    q = qt.build(dict(tenant), subs, addons, terms, today=today or date.today()).out()
+    q = qt.build(dict(tenant), subs, terms, today=today or date.today()).out()
     q["subscriptions"] = [{"product": s["product"], "plan_key": s["plan_key"], "status": s["status"],
                            "billing_interval": s["billing_interval"],
                            "agreed_price_monthly": _iso(s["agreed_price_monthly"]),
@@ -177,9 +174,23 @@ async def set_details(conn, tenant_id: str, payload: dict, *, actor: str) -> dic
         changed = sorted(k for k in DETAIL_FIELDS if before[k] != after[k])
         if changed:
             await _audit(conn, tenant_id, actor, AdminTenantAuditAction.BILLING_DETAILS_SET,
-                         {"fields": changed, "before": {k: before[k] for k in changed},
-                          "after": {k: after[k] for k in changed}})
+                         details_audit(changed, before, after))
     return {**(await details(conn, tenant_id)), "changed": changed}
+
+
+def _pii_change(old: Any, new: Any) -> str:
+    if old is None:
+        return "set"
+    return "cleared" if new is None else "changed"
+
+
+def details_audit(changed: list[str], before: dict, after: dict) -> dict:
+    """The audit details of a billing-details change: the changed field names, the before / after values of the
+    non-personal fields (currency, country, founding dates) and, for :data:`PII_FIELDS`, only set / changed / cleared.
+    Pure (tested: no raw tax id or e-mail ever reaches acp_shared.audit_log)."""
+    plain = [k for k in changed if k not in PII_FIELDS]
+    return {"fields": changed, "before": {k: before[k] for k in plain}, "after": {k: after[k] for k in plain},
+            "personal": {k: _pii_change(before[k], after[k]) for k in changed if k in PII_FIELDS}}
 
 
 async def _founding(conn, tenant_id: str, payload: dict, after: dict) -> None:
@@ -220,11 +231,13 @@ def _agreed_terms(sub: dict, payload: dict, currency: str, today: date) -> tuple
     """(price, currency, until) after the payload: a lock, a new agreed price, a new end, or unchanged."""
     price, cur, until = sub["agreed_price_monthly"], sub["agreed_currency"], sub["agreed_until"]
     if payload.get("lock"):
+        # the list UNIT price (per seat on a per-seat plan): the agreed price is per billed unit, so a seat added
+        # during the lock is billed at the locked seat price (quote.subscription_line)
         line = qt.subscription_line({**sub, "agreed_price_monthly": None}, currency, today)
         if line.price_missing:
             raise TermsError("price_missing", f"the plan has no {currency} price to lock", 409)
         months = ps.int_value(ps.PRICE_LOCK_MONTHS)
-        return line.amount, currency, (_months_after(today, months) if months else None)
+        return line.unit_price, currency, (_months_after(today, months) if months else None)
     if "agreed_price_monthly" in payload:
         price = _agreed_price(payload["agreed_price_monthly"])
         if price is None:
@@ -238,11 +251,15 @@ def _agreed_terms(sub: dict, payload: dict, currency: str, today: date) -> tuple
     return price, cur, until
 
 
-def _check_floor(price: Optional[Decimal], cur: Optional[str], floor: Optional[Decimal]) -> None:
-    """A contract plan refuses an agreed price under its floor (USD; a VND price at the reference rate)."""
+def _check_floor(sub: dict, price: Optional[Decimal], cur: Optional[str], today: date) -> None:
+    """A contract plan refuses an agreed price whose monthly line is under its floor (USD; a VND price at the reference
+    rate). The agreed price is per billed unit, so the line (x max(seats, seats_min) on a per-seat plan) is compared."""
+    floor = sub.get("price_floor_usd_monthly")
     if price is None or floor is None:
         return
-    in_usd = price if cur == "USD" else price / Decimal(str(ps.value(ps.FX_VND_PER_USD)))
+    line = qt.subscription_line({**sub, "agreed_price_monthly": price, "agreed_currency": cur, "agreed_until": None},
+                                cur, today).amount
+    in_usd = line if cur == "USD" else line / Decimal(str(ps.value(ps.FX_VND_PER_USD)))
     if in_usd < floor:
         raise TermsError("below_price_floor", f"the agreed price is under the plan's floor of {floor} USD a month",
                          field="agreed_price_monthly")
@@ -250,8 +267,9 @@ def _check_floor(price: Optional[Decimal], cur: Optional[str], floor: Optional[D
 
 async def set_terms(conn, tenant_id: str, product: str, payload: dict, *, actor: str,
                     today: Optional[date] = None) -> dict:
-    """Billing interval / agreed price / price lock of one subscription. ``lock: true`` = the list price in the tenant's
-    currency now, until today + cis.billing.price_lock_months."""
+    """Billing interval / agreed price / price lock of one subscription. The agreed price is per billed unit (per seat
+    on a per-seat plan). ``lock: true`` = the list unit price in the tenant's currency now, until today +
+    cis.billing.price_lock_months."""
     today = today or date.today()
     async with conn.transaction():
         await conn.execute("SELECT set_config('aa.actor', $1, true)", actor[:64])
@@ -264,7 +282,7 @@ async def set_terms(conn, tenant_id: str, product: str, payload: dict, *, actor:
         if interval not in INTERVALS:
             raise TermsError("invalid_interval", "billing_interval: month or year", field="billing_interval")
         price, cur, until = _agreed_terms(dict(sub), payload, currency, today)
-        _check_floor(price, cur, sub["price_floor_usd_monthly"])
+        _check_floor(dict(sub), price, cur, today)
         await conn.execute(UPDATE_TERMS_SQL, tenant_id, product, interval, price, cur, until, actor[:64])
         before = {"billing_interval": sub["billing_interval"], "agreed_price_monthly": sub["agreed_price_monthly"],
                   "agreed_currency": sub["agreed_currency"], "agreed_until": sub["agreed_until"]}

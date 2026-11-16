@@ -1,34 +1,10 @@
-// app/admin/tenants/_components/commercial.messages.ts — Tenant 360 › Subscription: add-ons, billing details and the
-// quote (AA-1116 option B), English and Vietnamese. Amounts, plan keys and dates are shown as the API sends them.
+// app/admin/tenants/_components/commercial.messages.ts — Tenant 360 › Subscription: billing details, subscription terms
+// and the quote (AA-1116 option B), English and Vietnamese. Amounts, plan keys and dates are shown as the API sends them.
 
 import { defineMessages } from "../../../_kit/core/i18n";
 
 export const T360_COMMERCIAL = defineMessages(
   {
-    addOnsTitle: "Add-ons",
-    addOnsHint: "Custom domain and AI packs. A new add-on starts its free trial; a cancelled one that comes back does "
-      + "not trial again. Each AI pack adds its amount to the AI budget.",
-    grant: "Grant an add-on",
-    colAddOn: "Add-on",
-    colQuantity: "Quantity",
-    colStatus: "Status",
-    colTrialEnds: "Trial ends",
-    colEnds: "Ends",
-    colPrice: "Price a month",
-    status_trialing: "Trial",
-    status_active: "Active",
-    status_canceled: "Cancelled",
-    ended: "Ended",
-    noAddOns: "No add-on.",
-    cancel: "Cancel",
-    cancelTitle: (name: string) => `Cancel ${name}?`,
-    cancelBody: "The add-on stops now and its features and AI amount are removed.",
-    reason: "Reason (recorded in the audit trail)",
-    grantTitle: "Grant an add-on",
-    fieldPlan: "Add-on",
-    fieldQuantity: "Quantity",
-    fieldEnds: "Ends on (optional)",
-    fieldEndsHint: "Empty: until cancelled. A date for an AI pack bought for one month.",
     save: "Save",
     close: "Close",
     saved: "Saved",
@@ -56,12 +32,14 @@ export const T360_COMMERCIAL = defineMessages(
     editTerms: "Edit terms",
     termsDrawerTitle: (p: string) => `Terms of ${p}`,
     fieldInterval: "Billed",
-    fieldAgreed: "Agreed monthly price",
-    fieldAgreedHint: "Empty: the list price. A contract plan refuses a price under its floor.",
+    fieldAgreed: "Agreed monthly price per unit",
+    fieldAgreedHint: "Per seat on a per-seat plan (billed for the seats in use, at least the plan minimum); the plan "
+      + "fee on other plans. Empty: the list price. A contract plan refuses a price under its floor.",
     fieldAgreedCurrency: "Currency",
     fieldAgreedUntil: "Agreed until (optional)",
     lock: "Lock today's list price",
-    lockHint: "Sets the agreed price to the list price now, for the lock length set on Platform › Settings.",
+    lockHint: "Sets the agreed price to today's list price per unit (per seat on a per-seat plan, so seats added later "
+      + "keep the locked seat price), for the lock length set on Platform › Settings.",
     quoteTitle: "Quote",
     quoteHint: "What the agency pays from the list, its agreed prices and the offers in force.",
     colLine: "Item",
@@ -79,30 +57,6 @@ export const T360_COMMERCIAL = defineMessages(
     pilotFree: "Pilot: not invoiced",
   },
   {
-    addOnsTitle: "Add-on",
-    addOnsHint: "Tên miền riêng và gói AI. Add-on mới bắt đầu dùng thử miễn phí; add-on đã huỷ rồi gắn lại thì không "
-      + "dùng thử lần nữa. Mỗi gói AI cộng thêm số tiền của nó vào ngân sách AI.",
-    grant: "Gắn add-on",
-    colAddOn: "Add-on",
-    colQuantity: "Số lượng",
-    colStatus: "Trạng thái",
-    colTrialEnds: "Hết dùng thử",
-    colEnds: "Kết thúc",
-    colPrice: "Giá một tháng",
-    status_trialing: "Dùng thử",
-    status_active: "Đang dùng",
-    status_canceled: "Đã huỷ",
-    ended: "Đã hết hạn",
-    noAddOns: "Chưa có add-on.",
-    cancel: "Huỷ",
-    cancelTitle: (name: string) => `Huỷ ${name}?`,
-    cancelBody: "Add-on dừng ngay, các tính năng và số tiền AI của nó bị gỡ.",
-    reason: "Lý do (ghi vào nhật ký kiểm toán)",
-    grantTitle: "Gắn add-on",
-    fieldPlan: "Add-on",
-    fieldQuantity: "Số lượng",
-    fieldEnds: "Kết thúc ngày (không bắt buộc)",
-    fieldEndsHint: "Để trống: tới khi huỷ. Đặt ngày cho gói AI mua trong một tháng.",
     save: "Lưu",
     close: "Đóng",
     saved: "Đã lưu",
@@ -131,12 +85,14 @@ export const T360_COMMERCIAL = defineMessages(
     editTerms: "Sửa điều khoản",
     termsDrawerTitle: (p: string) => `Điều khoản của ${p}`,
     fieldInterval: "Kỳ thanh toán",
-    fieldAgreed: "Giá thoả thuận mỗi tháng",
-    fieldAgreedHint: "Để trống: giá niêm yết. Gói hợp đồng từ chối giá thấp hơn giá sàn.",
+    fieldAgreed: "Giá thoả thuận mỗi tháng cho một đơn vị",
+    fieldAgreedHint: "Theo chỗ với gói tính theo chỗ (tính cho số chỗ đang dùng, ít nhất mức tối thiểu của gói); là "
+      + "phí gói với các gói khác. Để trống: giá niêm yết. Gói hợp đồng từ chối giá thấp hơn giá sàn.",
     fieldAgreedCurrency: "Tiền tệ",
     fieldAgreedUntil: "Thoả thuận tới ngày (không bắt buộc)",
     lock: "Khoá giá niêm yết hôm nay",
-    lockHint: "Đặt giá thoả thuận bằng giá niêm yết hiện tại, trong thời hạn khoá giá đặt ở Platform › Settings.",
+    lockHint: "Đặt giá thoả thuận bằng giá niêm yết hôm nay cho một đơn vị (theo chỗ với gói tính theo chỗ, nên chỗ "
+      + "thêm sau vẫn giữ giá đã khoá), trong thời hạn khoá giá đặt ở Platform › Settings.",
     quoteTitle: "Báo giá",
     quoteHint: "Số tiền đại lý trả theo bảng giá, giá thoả thuận và các ưu đãi đang áp dụng.",
     colLine: "Hạng mục",

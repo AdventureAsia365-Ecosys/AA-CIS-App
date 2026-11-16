@@ -33,7 +33,7 @@ async def get_admin_billing(
                 v.tours_rewritten, v.api_calls_used,
                 v.quota_tours_pct, v.quota_calls_pct,
                 v.tours_overage, v.overage_usd, v.llm_cost_usd,
-                v.overage_rate_usd_per_tour
+                v.overage_rate_usd_per_tour, v.plan_key
             FROM shared.v_tenant_monthly_usage v
             WHERE v.tenant_id = $1::uuid
         """, tenant_id)

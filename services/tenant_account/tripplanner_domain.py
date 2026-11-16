@@ -259,7 +259,7 @@ async def add_domain(conn, tenant_id: str, *, domain: Any, actor: str) -> dict:
         await _locked_tenant(conn, tenant_id)
         if not await conn.fetchval(HAS_TRIPPLANNER_SQL, tenant_id):
             raise DomainError("no_tripplanner", status=409)
-        # AA-1116: a custom host needs the tp.custom_domain entitlement (TripPlanner Pro, or the custom-domain add-on)
+        # AA-1116: a custom host needs the tp.custom_domain entitlement (a TripPlanner Pro feature only, decision 14)
         if not await conn.fetchval(CUSTOM_DOMAIN_ENTITLED_SQL, tenant_id):
             raise DomainError("custom_domain_not_included", status=409)
         if await conn.fetchval(TAKEN_SQL, host):

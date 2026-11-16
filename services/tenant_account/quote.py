@@ -1,8 +1,8 @@
 """AA-1116 (option B) — the monthly software quote of a tenant, from data only. Pure: no DB, no clock.
 
 Every number comes from its caller: the plan rows (Plans & add-ons: USD and VND list prices, unit, included seats, seat
-minimum, extra-seat prices), the subscriptions (seats, interval, agreed price / currency / until), the add-ons
-(quantity), the tenant (billing currency, founding-offer dates, pilot) and the commercial settings in force
+minimum, extra-seat prices), the subscriptions (seats, interval, agreed price / currency / until), the tenant (billing
+currency, founding-offer dates, pilot) and the commercial settings in force
 (:mod:`services.tenant_account.pricing_settings`, Platform › Settings). Booking drafts the invoice; this quote is what
 staff see on Tenant 360 and the agency sees on its Billing tab, so both read one rule.
 
@@ -11,7 +11,12 @@ Rules (S282 decisions):
     that currency is a 0 line flagged ``price_missing``;
   * per-seat plans bill max(seats, seats_min) seats (decision 2); other plans bill the plan price plus the seats above
     ``seats_included`` at the extra-seat price;
-  * an agreed price in the billing currency replaces the list price while ``agreed_until`` is empty or not past;
+  * an agreed price in the billing currency replaces the list unit price while ``agreed_until`` is empty or not past.
+    It is per billed unit, like the list price (CIS 435 column comment, contract tenant.entitlements.v1 1.9): on a
+    per-seat plan the line is agreed x max(seats, seats_min), so a seat added during a price lock is billed at the
+    locked seat price; on any other plan it replaces the plan fee and seats above ``seats_included`` stay at the
+    extra-seat list price;
+  * there is no retail add-on line (S282 decision 14: no custom-domain add-on, no AI pack);
   * founding offer: ``founding_discount_pct`` on the lines whose plan is eligible while today is inside the offer;
     combo: ``combo_discount_pct`` on every line when the tenant holds every product of ``combo_products``; they never
     stack, the larger discount applies (decision 6);
@@ -50,7 +55,7 @@ def eligible(plan_key: str, patterns: Iterable[str]) -> bool:
 
 @dataclass
 class Line:
-    kind: str                      # subscription | addon
+    kind: str                      # subscription
     product: str
     plan_key: str
     name: str
@@ -130,7 +135,9 @@ def _agreed(sub: dict, currency: str, today: date) -> Optional[Decimal]:
 
 
 def subscription_line(sub: dict, currency: str, today: date) -> Line:
-    unit = _unit_price(sub, currency)
+    """One subscription's line. An agreed price in force replaces the list UNIT price (per seat on a per-seat plan)."""
+    agreed = _agreed(sub, currency, today)
+    unit = agreed if agreed is not None else _unit_price(sub, currency)
     seats_min = sub.get("seats_min")
     if sub.get("price_unit") == "seat":
         qty = max(int(sub.get("seats") or sub.get("seats_included") or 1), int(seats_min or 1))
@@ -142,20 +149,9 @@ def subscription_line(sub: dict, currency: str, today: date) -> Line:
         extra = _unit_price(sub, currency, extra_seat=True)
         if extra is not None and included is not None and seats is not None and seats > included:
             amount += extra * (seats - included)
-    line = Line("subscription", sub["product"], sub["plan_key"], sub.get("plan_name") or sub["plan_key"], qty, unit,
-                amount, price_missing=unit is None, billing_interval=sub.get("billing_interval") or "month",
-                trialing=sub.get("status") == "trialing")
-    agreed = _agreed(sub, currency, today)
-    if agreed is not None:
-        line.amount, line.agreed, line.price_missing = agreed, True, False
-    return line
-
-
-def addon_line(addon: dict, currency: str) -> Line:
-    unit = _unit_price(addon, currency)
-    qty = int(addon.get("quantity") or 1)
-    return Line("addon", "addon", addon["plan_key"], addon.get("plan_name") or addon["plan_key"], qty, unit,
-                (unit or Decimal(0)) * qty, price_missing=unit is None, trialing=addon.get("status") == "trialing")
+    return Line("subscription", sub["product"], sub["plan_key"], sub.get("plan_name") or sub["plan_key"], qty, unit,
+                amount, agreed=agreed is not None, price_missing=unit is None,
+                billing_interval=sub.get("billing_interval") or "month", trialing=sub.get("status") == "trialing")
 
 
 def _in_offer(tenant: dict, today: date) -> bool:
@@ -167,13 +163,12 @@ def _in_offer(tenant: dict, today: date) -> bool:
     return start <= today <= end
 
 
-def build(tenant: dict, subscriptions: list[dict], addons: list[dict], terms: dict, *, today: date) -> Quote:
-    """The quote of the live subscriptions and add-ons. ``terms`` = :func:`pricing_settings.snapshot`."""
+def build(tenant: dict, subscriptions: list[dict], terms: dict, *, today: date) -> Quote:
+    """The quote of the live subscriptions. ``terms`` = :func:`pricing_settings.snapshot`."""
     currency = tenant.get("billing_currency") or "USD"
     q = Quote(currency=currency, terms=terms)
     live_subs = [s for s in subscriptions if s.get("status") in LIVE]
     q.lines = [subscription_line(s, currency, today) for s in live_subs]
-    q.lines += [addon_line(a, currency) for a in addons if a.get("live", a.get("status") in ("trialing", "active"))]
     q.pilot_free = bool(tenant.get("is_pilot")) and bool(terms.get(ps.PILOT_FREE))
     # discounts: founding on eligible lines, combo on every line when every combo product is live; the larger wins
     founding_pct = _d(terms.get(ps.FOUNDING_DISCOUNT_PCT)) or Decimal(0)

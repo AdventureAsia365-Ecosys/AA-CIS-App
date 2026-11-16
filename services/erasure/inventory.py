@@ -128,8 +128,6 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     _d("shared.staff_view_as_session", "the read-only view-as sessions staff opened on the tenant"),
     # AA-1036 R3 (374): the tenant's add-on requests (its note, the staff decision); FK cascade as the backstop.
     _d("shared.tenant_addon_request", "the tenant's add-on requests and the staff decisions"),
-    # AA-1116 (435): the add-ons the tenant holds (custom domain, AI pack); FK cascade as the backstop.
-    _d("shared.tenant_addon", "the tenant's add-ons (custom domain, AI pack: quantity, dates, the staff reason)"),
     # AA-1038 R5 slice 2 (379): the TripPlanner site settings (theme tokens, locale); FK cascade as the backstop.
     _d("shared.tenant_tripplanner_site", "the tenant's TripPlanner site settings (theme, locale, lead route)"),
     # AA-1090 R8 (428): the tenant's custom TripPlanner hosts; FK cascade as the backstop. The ACM certificate and the

@@ -78,8 +78,6 @@ export const PLANS = defineMessages(
     err_extraSeat: "A number with at most 2 decimals.",
     err_notes: "At most 1,000 characters.",
     // AA-1116 option B
-    product_addon: "Add-on (custom domain, AI pack)",
-    unit_unit: "unit",
     optionBTitle: "Price list and terms",
     fieldPriceVnd: "Price (VND a month)",
     fieldPriceVndHint: "Whole dong. Agencies invoiced in VND pay this price.",
@@ -204,8 +202,6 @@ export const PLANS = defineMessages(
     err_extraSeat: "Một số có tối đa 2 chữ số thập phân.",
     err_notes: "Tối đa 1.000 ký tự.",
     // AA-1116 phương án B
-    product_addon: "Add-on (tên miền riêng, gói AI)",
-    unit_unit: "đơn vị",
     optionBTitle: "Bảng giá và điều khoản",
     fieldPriceVnd: "Giá (VND một tháng)",
     fieldPriceVndHint: "Số đồng chẵn. Đại lý xuất hoá đơn bằng VND trả giá này.",

@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from api.core import e2e_tenant_writes, view_as
 from api.core.secret_compare import secrets_equal
 from api.core.staff_credential import principal_verified
+from api.routers._billing import plan_attached
 
 from services.acp_publish import daily_limit
 from services.acp_shared.audit_log import AdminTenantAuditAction, write_audit_log
@@ -409,6 +410,7 @@ async def list_tenants(
                 u.tours_quota_monthly,
                 u.api_calls_quota_monthly,
                 u.price_usd_monthly,
+                u.plan_key,                 -- AA-1116 (CIS 439): the live content plan; NULL = no plan
                 COALESCE(src.active, 0)     AS source_active,
                 COALESCE(src.superseded, 0) AS source_superseded,
                 COALESCE(src.trashed, 0)    AS source_trashed,
@@ -469,7 +471,8 @@ async def list_tenants(
                 "status":         tenant_status(r["is_active"], r["cancelled_at"]),
                 "cancelled_at":   r["cancelled_at"].isoformat() if r["cancelled_at"] else None,
                 "created_at":     r["created_at"].isoformat(),
-                "plan_attached":  r["tours_quota_monthly"] is not None,  # AA-798
+                # AA-798; AA-1116: a plan with no quota (Enterprise / internal, NULL) is still a plan
+                "plan_attached":  plan_attached(r),
                 "plan": {
                     "tours_quota_monthly":     r["tours_quota_monthly"],
                     "api_calls_quota_monthly": r["api_calls_quota_monthly"],

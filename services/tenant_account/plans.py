@@ -40,10 +40,11 @@ from typing import Any, Optional
 
 from services.acp_shared.audit_log import write_audit_log
 
-PRODUCTS = ("content", "crm", "tripplanner", "addon")
-PRICE_UNITS = ("tenant", "seat", "site", "unit")
-# AA-1116 (CIS 435): the additive AI key an add-on / crm / tripplanner plan gives (summed into the content plan's
-# ai.budget_usd_monthly by the resolver, CIS 437); refused on a content plan, where the budget itself lives.
+PRODUCTS = ("content", "crm", "tripplanner")
+PRICE_UNITS = ("tenant", "seat", "site")
+# AA-1116 (CIS 435): the additive AI key a crm / tripplanner plan gives (summed into the content plan's
+# ai.budget_usd_monthly by the resolver, CIS 437); refused on a content plan, where the budget itself lives. There is
+# no retail add-on product (S282 decision 14: no custom-domain add-on, no AI pack).
 AI_ADDON_KEY = "ai.budget_addon_usd_monthly"
 VND_MAX = Decimal("99999999999999")             # numeric(14,0)
 OVERAGE_MAX = Decimal("999999.9999")            # numeric(10,4)
@@ -146,8 +147,7 @@ PLANS_SQL = """
                        FROM shared.plan_feature pf WHERE pf.plan_key = p.plan_key), '[]'::json) AS features
       FROM shared.plan p
      WHERE ($1::text IS NULL OR p.product = $1) AND ($2 OR p.retired_at IS NULL)
-     ORDER BY CASE p.product WHEN 'content' THEN 0 WHEN 'crm' THEN 1 WHEN 'tripplanner' THEN 2 ELSE 3 END,
-              p.retired_at IS NOT NULL,
+     ORDER BY CASE p.product WHEN 'content' THEN 0 WHEN 'crm' THEN 1 ELSE 2 END, p.retired_at IS NOT NULL,
               p.price_usd_monthly NULLS LAST, p.plan_key
 """
 PLAN_SQL = PLANS_SQL.replace("WHERE ($1::text IS NULL OR p.product = $1) AND ($2 OR p.retired_at IS NULL)",
@@ -261,7 +261,7 @@ class PlanDraft:
 
 
 def _platform_rule(key: str, feature_product: str, product: str) -> None:
-    """The AI increment (AA-1116) goes on crm / tripplanner / add-on plans, never on content; every other platform key
+    """The AI increment (AA-1116) goes on crm / tripplanner plans, never on content; every other platform key
     (AI budget, notice policy) belongs to the base subscription: the resolver takes it from the content plan only
     (CIS 361), so on another plan it would be shown but never applied."""
     if key == AI_ADDON_KEY:
@@ -283,9 +283,7 @@ def _features(raw: Any, product: str, catalogue: dict[str, dict]) -> tuple[PlanF
         f = catalogue.get(key)
         if f is None:
             raise PlanError("unknown_feature", f"no live feature key {key!r}")
-        if f["product"] not in (product, "platform") and product != "addon":
-            # an add-on plan may give any product's feature (the custom domain: tp.custom_domain + crm.custom_domain,
-            # CIS 435); the resolver serves it only where that product is live (CIS 437)
+        if f["product"] not in (product, "platform"):
             raise PlanError("feature_product_mismatch", f"{key} is a {f['product']} feature, the plan is {product}")
         _platform_rule(key, f["product"], product)
         if key in out:
@@ -309,7 +307,7 @@ def draft(payload: dict, *, product: str, tier: Optional[str], catalogue: dict[s
     name = pick("name")
     if not isinstance(name, str) or not 1 <= len(name.strip()) <= 100:
         raise PlanError("invalid_name", "name: 1-100 characters")
-    unit = pick("price_unit", {"content": "tenant", "crm": "seat", "tripplanner": "site", "addon": "unit"}[product])
+    unit = pick("price_unit", {"content": "tenant", "crm": "seat", "tripplanner": "site"}[product])
     if unit not in PRICE_UNITS:
         raise PlanError("invalid_price_unit", f"price_unit must be one of {', '.join(PRICE_UNITS)}")
     seats = pick("seats_included")

@@ -9,8 +9,6 @@
 // their catalogue description.
 
 export type Product = "content" | "crm" | "tripplanner";
-/** AA-1116: the plan catalogue also holds add-on plans (custom domain, AI pack), never a subscription product. */
-export type PlanProduct = Product | "addon";
 export type FeatureProduct = Product | "platform";
 export type ValueKind = "flag" | "limit" | "seats" | "policy";
 
@@ -26,11 +24,11 @@ export interface PlanFeatureRow { feature_key: string; limit_value: string | nul
 
 export interface Plan {
   plan_key: string;
-  product: PlanProduct;
+  product: Product;
   name: string;
   tier: string | null;
   price_usd_monthly: string | null;
-  price_unit: "tenant" | "seat" | "site" | "unit";
+  price_unit: "tenant" | "seat" | "site";
   seats_included: number | null;
   price_extra_seat_usd: string | null;
   // AA-1116 option B (CIS 435): VND list, seat minimum, contract floor, overage rates, the day the price was set
@@ -53,15 +51,15 @@ export interface Plan {
 
 export interface PlansResp { plans: Plan[]; assignable_tiers: string[] }
 
-export const PRODUCTS: PlanProduct[] = ["content", "crm", "tripplanner", "addon"];
+export const PRODUCTS: Product[] = ["content", "crm", "tripplanner"];
 export const TIERS = ["starter", "growth", "business", "enterprise", "internal"] as const;
 export const PLANS_API = "/api/admin/plans";
 export const FEATURES_API = "/api/admin/plans/features";
 export const PLANS_KEY = ["admin-plans"] as const;
-export const DEFAULT_UNIT: Record<PlanProduct, Plan["price_unit"]> = { content: "tenant", crm: "seat", tripplanner: "site",
-  addon: "unit" };
-export const PRICE_UNITS: Plan["price_unit"][] = ["tenant", "seat", "site", "unit"];
-/** AA-1116: the additive AI key a crm / tripplanner / add-on plan gives; never on a content plan (the API refuses it). */
+export const DEFAULT_UNIT: Record<Product, Plan["price_unit"]> = { content: "tenant", crm: "seat", tripplanner: "site" };
+export const PRICE_UNITS: Plan["price_unit"][] = ["tenant", "seat", "site"];
+/** AA-1116: the additive AI key a crm / tripplanner plan gives; never on a content plan (the API refuses it). There is
+ * no retail add-on plan (no custom-domain add-on, no AI pack). */
 export const AI_ADDON_KEY = "ai.budget_addon_usd_monthly";
 
 const DECIMAL = /^\d{1,12}(\.\d{1,2})?$/;
@@ -81,11 +79,9 @@ export function tierChoices(plans: Plan[] | undefined, current?: string | null):
 /** The features a plan of `product` may give: the product's keys, then (content plans only) the platform keys. A
  * platform key (AI budget, notice policy) belongs to the base subscription: the resolver reads it from the content
  * plan only (CIS 361) and the API refuses it on an add-on plan (platform_key_content_only). */
-export function featuresFor(product: PlanProduct, catalogue: Feature[]): Feature[] {
-  // AA-1116: an add-on plan may give any product's feature (the custom domain: tp.custom_domain + crm.custom_domain)
-  // and the AI increment; a crm / tripplanner plan its own features and the AI increment; content its own + platform
-  // keys but not the increment.
-  if (product === "addon") return catalogue.filter((f) => f.product !== "platform" || f.feature_key === AI_ADDON_KEY);
+export function featuresFor(product: Product, catalogue: Feature[]): Feature[] {
+  // AA-1116: a crm / tripplanner plan gives its own features and the AI increment; content its own + platform keys
+  // but not the increment.
   const own = catalogue.filter((f) => f.product === product);
   if (product === "content") return own.concat(catalogue.filter((f) => f.product === "platform"
     && f.feature_key !== AI_ADDON_KEY));
@@ -132,7 +128,7 @@ export function lockedLimitKeys(plan: Plan | null, catalogue: Feature[]): Set<st
 
 export interface PlanDraft {
   plan_key: string;
-  product: PlanProduct;
+  product: Product;
   tier: string;               // "" = none
   name: string;
   price: string;              // "" = no price
@@ -160,7 +156,7 @@ function priceListDraft(plan: Plan): Pick<PlanDraft, "price_vnd" | "price_extra_
            overage_tour: s(plan.overage_usd_per_tour), overage_1k_calls: s(plan.overage_usd_per_1k_calls) };
 }
 
-export function planDraftOf(plan: Plan | null, product: PlanProduct = "content"): PlanDraft {
+export function planDraftOf(plan: Plan | null, product: Product = "content"): PlanDraft {
   if (!plan) {
     return { plan_key: `${product}.`, product, tier: "", name: "", price: "", price_unit: DEFAULT_UNIT[product],
              seats_included: "", price_extra_seat: "", price_vnd: "", price_extra_seat_vnd: "", seats_min: "",
@@ -181,7 +177,7 @@ export type PlanDraftError =
   | "limitRemoved" | "vnd" | "seatsMin" | "floor" | "overage";
 
 export interface PlanBody {
-  plan_key?: string; product?: PlanProduct; tier?: string | null; version?: number;
+  plan_key?: string; product?: Product; tier?: string | null; version?: number;
   name: string; price_usd_monthly: string | null; price_unit: Plan["price_unit"]; seats_included: number | null;
   price_extra_seat_usd: string | null; is_public: boolean; notes: string | null;
   price_vnd_monthly: string | null; price_extra_seat_vnd: string | null; seats_min: number | null;
@@ -553,7 +549,7 @@ export function sagaFailed(job: ProvisionJob): boolean {
   return job.status !== "succeeded";
 }
 
-// ── AA-1116 option B: commercial terms, add-ons, billing details, quote ─────────────────────────────────────────────
+// ── AA-1116 option B: commercial terms, billing details, quote ──────────────────────────────────────────────────────
 export const COMMERCIAL_TERMS_API = "/api/admin/plans/commercial-terms";
 export interface CommercialTerm { key: string; value: unknown; label: string }
 export interface PlanReview {
@@ -571,14 +567,6 @@ export function termText(v: unknown, on: string, off: string): string {
   return v == null ? "—" : String(v);
 }
 
-export interface TenantAddOn {
-  addon_id: string; plan_key: string; plan_name: string; quantity: number; status: "trialing" | "active" | "canceled";
-  trial_ends_at: string | null; starts_at: string; ends_at: string | null; canceled_at: string | null; reason: string;
-  price_usd_monthly: string | null; price_vnd_monthly: string | null; live: boolean; updated_by: string;
-}
-export const tenantAddOnsPath = (tenantId: string) => `/api/admin/tenants/${tenantId}/addons`;
-export const tenantAddOnsKey = (tenantId: string) => ["tenant360", tenantId, "addons"] as const;
-
 export interface BillingDetails {
   tenant_id: string; name: string; legal_entity_name: string | null; tax_id: string | null;
   billing_email: string | null; billing_address: string | null; billing_country: string | null;
@@ -590,7 +578,7 @@ export const subscriptionTermsPath = (tenantId: string, product: string) =>
   `/api/admin/tenants/${tenantId}/subscriptions/${product}/terms`;
 
 export interface QuoteLine {
-  kind: "subscription" | "addon"; product: string; plan_key: string; name: string; quantity: number;
+  kind: "subscription"; product: string; plan_key: string; name: string; quantity: number;
   unit_price: string | null; amount: string; discount: string; agreed: boolean; price_missing: boolean;
   billing_interval: string; trialing: boolean;
 }

@@ -10,7 +10,7 @@ import {
   Badge, Button, DataTable, ErrorState, K, PageHeader, Section, Switch, mono, useT, type ColumnDef,
 } from "../../../_kit";
 import {
-  FEATURES_API, PLANS_API, PLANS_KEY, PRODUCTS, money, sendJson, type Feature, type Plan, type PlansResp, type PlanProduct,
+  FEATURES_API, PLANS_API, PLANS_KEY, PRODUCTS, money, sendJson, type Feature, type Plan, type PlansResp, type Product,
 } from "@/lib/tenantPlans";
 import { PLANS } from "./plans.messages";
 import { PlanDrawer } from "./PlanDrawer";
@@ -20,7 +20,7 @@ export default function PlansCatalogue() {
   const t = useT(PLANS);
   const qc = useQueryClient();
   const [showRetired, setShowRetired] = useState(false);
-  const [open, setOpen] = useState<{ plan: Plan | null; product: PlanProduct } | null>(null);
+  const [open, setOpen] = useState<{ plan: Plan | null; product: Product } | null>(null);
   const plansQ = useQuery({
     queryKey: [...PLANS_KEY, showRetired],
     queryFn: () => sendJson<PlansResp>(`${PLANS_API}${showRetired ? "?include_retired=true" : ""}`, "GET"),
@@ -74,7 +74,7 @@ export default function PlansCatalogue() {
 
   const refresh = () => { void qc.invalidateQueries({ queryKey: PLANS_KEY }); };
   const error = plansQ.error ? (plansQ.error as Error).message : featuresQ.error ? (featuresQ.error as Error).message : null;
-  const byProduct = (p: PlanProduct) => (plansQ.data?.plans ?? []).filter((x) => x.product === p);
+  const byProduct = (p: Product) => (plansQ.data?.plans ?? []).filter((x) => x.product === p);
 
   return (
     <>

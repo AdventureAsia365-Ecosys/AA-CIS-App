@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import HTTPException
 
-from api.routers import _billing, admin, admin_pipeline, admin_overview, admin_settings, v1_tours
+from api.routers import _billing, admin, admin_overview, admin_pipeline, admin_settings, admin_tenant360, v1_tours
 
 # AA-1028 R1 slice 3: the plan readers that replaced PLAN_LIMITS answer with the CIS 355 seed (tests/unit/conftest.py)
 pytestmark = pytest.mark.usefixtures("seeded_plans")
@@ -54,7 +54,7 @@ def _usage_row(**over):
         "quota_tours_pct": Decimal("6.0"), "quota_calls_pct": Decimal("1.7"),
         "tours_overage": 0, "overage_usd": Decimal("0.00"),
         "llm_cost_usd": Decimal("6.7812"),
-        "overage_rate_usd_per_tour": Decimal("3.0000"),
+        "overage_rate_usd_per_tour": Decimal("3.0000"), "plan_key": "content.growth",
     }
     row.update(over)
     return row
@@ -64,7 +64,7 @@ def _no_plan_row():
     # What the view yields for plan_id IS NULL: LEFT JOIN membership_plans gives NULL plan
     # columns, the CASE gives 0 %, GREATEST(0, n - NULL) gives 0, overage_usd is NULL.
     return _usage_row(tours_quota_monthly=None, api_calls_quota_monthly=None, price_usd_monthly=None,
-                      overage_rate_usd_per_tour=None, quota_tours_pct=Decimal("0"),
+                      overage_rate_usd_per_tour=None, plan_key=None, quota_tours_pct=Decimal("0"),
                       quota_calls_pct=Decimal("0"), tours_overage=0, overage_usd=None)
 
 
@@ -115,6 +115,26 @@ class TestNoInventedPlan:
         assert out["tours_rewritten"] == 12
         assert out["llm_cost_usd"] == pytest.approx(6.7812)
 
+    @pytest.mark.asyncio
+    async def test_plan_without_quota_is_still_attached(self):
+        # AA-1116 (CIS 439, decision 11): Enterprise / internal hold a plan whose quota is NULL (no quota). That is a
+        # plan with no quota, never "no plan": the price and the margin stay.
+        row = _usage_row(plan_key="content.enterprise", plan_tier="enterprise", tours_quota_monthly=None,
+                         api_calls_quota_monthly=None, quota_tours_pct=None, quota_calls_pct=None, tours_overage=0,
+                         overage_usd=Decimal("0.00"), price_usd_monthly=Decimal("1200.00"))
+        out, _ = await _admin_billing(row)
+        assert out["plan_attached"] is True
+        assert out["price_usd_monthly"] == 1200.0 and out["tours_quota_monthly"] is None
+        margin = admin_tenant360.margin_block(_billing.usage_row_to_dict(row), 10.0)
+        assert margin["plan_attached"] is True and margin["revenue_usd"] == 1200.0
+        assert margin["margin_usd"] == pytest.approx(1190.0)
+
+    def test_plan_attached_reads_plan_key_then_the_pre_439_quota(self):
+        assert _billing.plan_attached({"plan_key": "content.enterprise", "tours_quota_monthly": None}) is True
+        assert _billing.plan_attached({"plan_key": None, "tours_quota_monthly": 50}) is False
+        assert _billing.plan_attached({"tours_quota_monthly": 50}) is True          # a row of the view before 439
+        assert _billing.plan_attached({"tours_quota_monthly": None}) is False
+
     def test_no_starter_literals_in_billing_paths(self):
         for fn in (admin_pipeline.get_admin_billing, v1_tours.get_my_billing):
             src = inspect.getsource(fn)
@@ -125,7 +145,7 @@ class TestNoInventedPlan:
     async def test_tenant_billing_null_plan_has_no_cost_and_no_invented_plan(self):
         conn = AsyncMock()
         conn.fetchrow = AsyncMock(return_value={k: v for k, v in _no_plan_row().items() if k != "llm_cost_usd"})
-        conn.fetch = AsyncMock(side_effect=[[], [], [], [], []])      # + the AA-1116 quote's subscriptions, add-ons
+        conn.fetch = AsyncMock(side_effect=[[], [], [], []])          # + the AA-1116 quote's subscriptions
         conn.fetchval = AsyncMock(return_value=300)
         out = await v1_tours.get_my_billing(_request(conn), tenant={"sub": TENANT_ID})
         assert out["plan_attached"] is False
@@ -142,6 +162,7 @@ class TestNoInventedPlan:
             "api_calls_used": 0, "quota_tours_pct": 0, "quota_calls_pct": 0, "tours_overage": 0,
             "overage_usd": 0, "llm_cost_usd": Decimal("1.2345"),
             "tours_quota_monthly": None, "api_calls_quota_monthly": None, "price_usd_monthly": None,
+            "plan_key": None,
             "source_active": 0, "source_superseded": 0, "source_trashed": 0,
             "master_active": 0, "master_inactive": 0, "master_trashed": 0,
             # AA-993: the full column set list_tenants reads, the AA-819 override read included (see
@@ -169,6 +190,8 @@ class TestViewReadersShape:
             "api_calls_quota_monthly", "price_usd_monthly", "overage_rate_usd_per_tour",
             "billing_month", "tours_rewritten", "api_calls_used", "quota_tours_pct",
             "quota_calls_pct", "tours_overage", "overage_usd", "llm_cost_usd",
+            # AA-1116: CIS 439 appends plan_key (the live content plan); the code PR ships after 439 (MIG-4 chain)
+            "plan_key",
         }
         sources = [inspect.getsource(admin_pipeline.get_admin_billing),
                    inspect.getsource(v1_tours.get_my_billing),

@@ -12,7 +12,7 @@ import {
 import {
   DEFAULT_UNIT, PLANS_API, PLANS_KEY, PRICE_UNITS, PRODUCTS, TIERS, featuresFor, lockedLimitKeys, planBody, planDraftOf, sendJson,
   limitRangeText, unitText,
-  type Feature, type Plan, type PlanDraft, type PlanDraftError, type PlanProduct,
+  type Feature, type Plan, type PlanDraft, type PlanDraftError, type Product,
 } from "@/lib/tenantPlans";
 import { PLANS } from "./plans.messages";
 
@@ -28,7 +28,7 @@ const ERR = {
 } as const satisfies Record<Exclude<PlanDraftError, KeyedError>, keyof typeof PLANS.en>;
 
 export function PlanDrawer({ plan, product, catalogue, onClose }: {
-  plan: Plan | null; product: PlanProduct; catalogue: Feature[]; onClose: () => void;
+  plan: Plan | null; product: Product; catalogue: Feature[]; onClose: () => void;
 }) {
   const t = useT(PLANS);
   const units = useMemo(() => ({ usdMonth: t("unit_usdMonth"), perMinute: t("unit_perMinute"), seats: t("unit_seats"),
@@ -119,7 +119,7 @@ export function PlanDrawer({ plan, product, catalogue, onClose }: {
             <Field label={t("fieldProduct")}>
               <Select value={draft.product} disabled={busy}
                 onChange={(e) => {
-                  const p = e.target.value as PlanProduct;
+                  const p = e.target.value as Product;
                   set({ product: p, plan_key: `${p}.${draft.plan_key.split(".")[1] ?? ""}`, tier: "",
                         price_unit: DEFAULT_UNIT[p], features: {} });
                 }}

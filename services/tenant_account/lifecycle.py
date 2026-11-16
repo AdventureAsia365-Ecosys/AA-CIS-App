@@ -55,14 +55,6 @@ END_ACCOUNT_TRIAL_SQL = """
                         WHERE s.tenant_id = t.tenant_id AND s.status = 'trialing' AND s.trial_ends_at > now())
     RETURNING t.account_status
 """
-# AA-1116 (CIS 435): an add-on of shared.tenant_addon whose trial ended is active (billed) from now; its trigger
-# re-syncs the tenant (the AI pack's full increment).
-END_ADDON_TRIALS_SQL = """
-    UPDATE shared.tenant_addon
-       SET status = 'active', updated_by = $1
-     WHERE status = 'trialing' AND trial_ends_at <= now()
-    RETURNING tenant_id::text AS tenant_id, plan_key
-"""
 SYNC_DUE_SQL = "SELECT shared.tenant_entitlement_sync_due()"
 PILOT_ENDED_SQL = """
     SELECT tenant_id::text AS tenant_id, pilot_ends_at FROM shared.tenants WHERE is_pilot AND pilot_ends_at <= now()
@@ -105,16 +97,6 @@ async def end_trials(pool, *, actor: str) -> dict[str, Any]:
     return out
 
 
-async def end_addon_trials(pool, *, actor: str) -> int:
-    """Step 1b (AA-1116): add-ons whose trial ended become active; returns how many."""
-    async with pool.acquire() as conn, conn.transaction():
-        await _set_actor(conn, actor)
-        rows = await conn.fetch(END_ADDON_TRIALS_SQL, actor)
-    for r in rows:
-        logger.info("tenant_addon_trial_ended", tenant_id=r["tenant_id"], plan_key=r["plan_key"])
-    return len(rows)
-
-
 async def sync_expired(pool, *, actor: str) -> int:
     """Step 2: the number of entitlement rows the sweep changed."""
     async with pool.acquire() as conn, conn.transaction():
@@ -134,8 +116,6 @@ async def ended_pilots(pool) -> list[dict]:
 async def tick(pool, *, job_id: str) -> dict[str, Any]:
     actor = actor_for(job_id)
     trials = await end_trials(pool, actor=actor)
-    addon_trials = await end_addon_trials(pool, actor=actor)
     synced = await sync_expired(pool, actor=actor)
     pilots = await ended_pilots(pool)
-    return {"trials": trials, "addon_trials_ended": addon_trials, "expired_entitlements_synced": synced,
-            "pilots_ended": pilots}
+    return {"trials": trials, "expired_entitlements_synced": synced, "pilots_ended": pilots}

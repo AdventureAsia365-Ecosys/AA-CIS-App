@@ -13,7 +13,7 @@ from services.tenant_account import quote as qt
 
 TODAY = date(2027, 6, 15)
 TERMS = {ps.ANNUAL_PAID_MONTHS: 10, ps.FOUNDING_DISCOUNT_PCT: 30, ps.FOUNDING_MONTHS: 12,
-         ps.FOUNDING_ELIGIBLE_PLANS: ["content.growth", "content.business", "crm.*", "tripplanner.*", "addon.*"],
+         ps.FOUNDING_ELIGIBLE_PLANS: ["content.growth", "content.business", "crm.*", "tripplanner.*"],
          ps.COMBO_DISCOUNT_PCT: 10, ps.COMBO_PRODUCTS: ["content", "crm", "tripplanner"], ps.FX_VND_PER_USD: 26000,
          ps.PILOT_FREE: True}
 GROWTH = {"product": "content", "plan_key": "content.growth", "plan_name": "Growth", "status": "active",
@@ -23,12 +23,10 @@ CRM = {"product": "crm", "plan_key": "crm.core", "plan_name": "CRM Core", "statu
 TP = {"product": "tripplanner", "plan_key": "tripplanner.hosted", "plan_name": "Hosted", "status": "active",
       "price_unit": "site", "price_usd_monthly": "49", "price_vnd_monthly": "1250000"}
 STARTER = {**GROWTH, "plan_key": "content.starter", "plan_name": "Starter", "price_usd_monthly": "149"}
-PACK = {"plan_key": "addon.ai_pack", "plan_name": "AI pack", "quantity": 2, "status": "active",
-        "price_usd_monthly": "19", "price_vnd_monthly": "490000", "live": True}
 
 
-def _q(tenant=None, subs=(GROWTH,), addons=()):
-    return qt.build({"billing_currency": "USD", **(tenant or {})}, list(subs), list(addons), TERMS, today=TODAY).out()
+def _q(tenant=None, subs=(GROWTH,)):
+    return qt.build({"billing_currency": "USD", **(tenant or {})}, list(subs), TERMS, today=TODAY).out()
 
 
 def test_combo_on_three_products():
@@ -57,9 +55,7 @@ def test_vnd_tenant_uses_the_vnd_list_and_a_usd_reference():
     assert out["reference"]["currency"] == "USD" and out["reference"]["monthly_total"] == "345.77"
 
 
-def test_ai_pack_times_quantity_and_a_missing_price():
-    out = _q(addons=(PACK,))
-    assert out["lines"][1]["amount"] == "38.00"
+def test_a_missing_price():
     out = _q(subs=({**TP, "price_usd_monthly": None},))
     assert out["lines"][0]["price_missing"] is True and out["monthly_total"] == "0.00"
 
@@ -73,6 +69,54 @@ def test_agreed_price_inside_and_after_the_lock():
     assert _q(subs=(other_currency,))["monthly_total"] == "349.00"
 
 
+def test_locked_seat_price_follows_a_seat_increase():
+    # the agreed price is per billed unit (per seat): 3 seats locked at 19, the agency grows to 10 seats -> 10 x 19
+    locked = {**CRM, "agreed_price_monthly": "19", "agreed_currency": "USD", "agreed_until": "2027-12-31"}
+    line = _q(subs=(locked,))["lines"][0]
+    assert (line["quantity"], line["unit_price"], line["amount"], line["agreed"]) == (3, "19.00", "57.00", True)
+    line = _q(subs=({**locked, "seats": 10},))["lines"][0]
+    assert (line["quantity"], line["unit_price"], line["amount"]) == (10, "19.00", "190.00")
+    # an agreed seat price under the list (17) applies to every billed seat, the minimum included
+    line = _q(subs=({**locked, "agreed_price_monthly": "17", "seats": 1},))["lines"][0]
+    assert (line["quantity"], line["amount"]) == (3, "51.00")
+
+
+def test_lock_stores_the_unit_price_not_the_line(monkeypatch):
+    monkeypatch.setattr(bt.ps, "int_value", lambda key: {ps.PRICE_LOCK_MONTHS: 12}[key])
+    sub = {**CRM, "seats": 3, "agreed_price_monthly": None, "agreed_currency": None, "agreed_until": None}
+    assert bt._agreed_terms(sub, {"lock": True}, "USD", TODAY) == (Decimal("19"), "USD", date(2028, 6, 14))
+    tp = {**TP, "agreed_price_monthly": None, "agreed_currency": None, "agreed_until": None}
+    assert bt._agreed_terms(tp, {"lock": True}, "VND", TODAY)[:2] == (Decimal("1250000"), "VND")
+
+
+def test_floor_compares_the_line_the_agreed_price_gives():
+    enterprise = {**GROWTH, "plan_key": "content.enterprise", "price_usd_monthly": None, "price_floor_usd_monthly": 699}
+    with pytest.raises(bt.TermsError) as e:
+        bt._check_floor(enterprise, Decimal("600"), "USD", TODAY)
+    assert e.value.code == "below_price_floor"
+    bt._check_floor(enterprise, Decimal("699"), "USD", TODAY)
+    seat_plan = {**CRM, "seats": 1, "price_floor_usd_monthly": 50}
+    bt._check_floor(seat_plan, Decimal("19"), "USD", TODAY)          # 3 billed seats x 19 = 57 >= 50
+    with pytest.raises(bt.TermsError):
+        bt._check_floor(seat_plan, Decimal("15"), "USD", TODAY)      # 3 x 15 = 45 < 50
+
+
+def test_billing_details_audit_never_holds_personal_values():
+    before = {"legal_entity_name": None, "tax_id": "0312345678", "billing_email": "old@zz-lotus.example",
+              "billing_address": "1 Zz Road", "billing_country": "VN", "billing_currency": "USD",
+              "founding_offer_from": None, "founding_offer_until": None}
+    after = {**before, "legal_entity_name": "Zz Lotus Travel Co", "tax_id": "0399999999", "billing_email": None,
+             "billing_currency": "VND"}
+    changed = sorted(k for k in before if before[k] != after[k])
+    out = bt.details_audit(changed, before, after)
+    text = repr(out)
+    for raw in ("0312345678", "0399999999", "old@zz-lotus.example", "Zz Lotus Travel Co"):
+        assert raw not in text
+    assert out["fields"] == ["billing_currency", "billing_email", "legal_entity_name", "tax_id"]
+    assert out["before"] == {"billing_currency": "USD"} and out["after"] == {"billing_currency": "VND"}
+    assert out["personal"] == {"billing_email": "cleared", "legal_entity_name": "set", "tax_id": "changed"}
+
+
 def test_pilot_is_free_and_trials_are_listed():
     out = _q({"is_pilot": True}, subs=({**GROWTH, "status": "trialing"},))
     assert out["pilot_free"] is True and out["monthly_total"] == "0.00" and out["lines"][0]["trialing"] is True
@@ -83,7 +127,7 @@ def test_canceled_subscription_is_not_quoted():
 
 
 @pytest.mark.parametrize("plan_key,ok", [("crm.pro", True), ("content.growth", True), ("content.starter", False),
-                                         ("addon.custom_domain", True), ("crmx.pro", False)])
+                                         ("tripplanner.pro", True), ("crmx.pro", False)])
 def test_eligible_patterns(plan_key, ok):
     assert qt.eligible(plan_key, TERMS[ps.FOUNDING_ELIGIBLE_PLANS]) is ok
 
@@ -106,14 +150,25 @@ CATALOGUE = {"ai.budget_usd_monthly": {"product": "platform", "value_kind": "lim
              "crm.custom_domain": {"product": "crm", "value_kind": "flag", "unit": None}}
 
 
-def test_draft_option_b_fields_and_addon_features():
-    d = pl.draft({"name": "Domain", "price_usd_monthly": 15, "price_vnd_monthly": 390000, "overage_usd_per_tour": "3.5",
-                  "overage_usd_per_1k_calls": "0.6", "features": [{"feature_key": "tp.custom_domain"},
-                                                                  {"feature_key": "crm.custom_domain"}]},
-                 product="addon", tier=None, catalogue=CATALOGUE)
-    assert (d.price_unit, d.price_vnd_monthly, d.overage_usd_per_1k_calls) == ("unit", Decimal("390000"),
+def test_draft_option_b_fields():
+    d = pl.draft({"name": "Pro", "price_usd_monthly": 99, "price_vnd_monthly": 2570000, "overage_usd_per_tour": "3.5",
+                  "overage_usd_per_1k_calls": "0.6", "features": [{"feature_key": "tp.custom_domain"}]},
+                 product="tripplanner", tier=None, catalogue=CATALOGUE)
+    assert (d.price_unit, d.price_vnd_monthly, d.overage_usd_per_1k_calls) == ("site", Decimal("2570000"),
                                                                               Decimal("0.6000"))
-    assert len(d.features) == 2
+    assert len(d.features) == 1
+
+
+def test_no_retail_addon_product():
+    # S282 decision 14: no addon.* plans (no custom-domain add-on, no AI pack), so no add-on product or unit price
+    assert "addon" not in pl.PRODUCTS and "unit" not in pl.PRICE_UNITS
+    with pytest.raises(pl.PlanError) as e:
+        pl.draft({"name": "Zz", "price_unit": "unit"}, product="crm", tier=None, catalogue=CATALOGUE)
+    assert e.value.code == "invalid_price_unit"
+    with pytest.raises(pl.PlanError) as e:          # the custom domain stays a TripPlanner (Pro) feature
+        pl.draft({"name": "Zz", "features": [{"feature_key": "tp.custom_domain"}]}, product="crm", tier=None,
+                 catalogue=CATALOGUE)
+    assert e.value.code == "feature_product_mismatch"
 
 
 def test_ai_addon_key_on_tripplanner_but_not_on_content():

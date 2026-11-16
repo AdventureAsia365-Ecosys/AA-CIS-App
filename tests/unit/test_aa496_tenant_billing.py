@@ -28,8 +28,8 @@ def _make_pool(row=None, activity=None, plans=None, rpm=300, daily=None):
     conn = AsyncMock()
     conn.fetchrow = AsyncMock(return_value=row)
     # get_my_billing runs fetch() calls in order: activity, (AA-636) plans, (AA-638) daily usage, then (AA-1116) the
-    # quote's subscriptions and add-ons (only when the tenant row is found).
-    conn.fetch = AsyncMock(side_effect=[activity or [], plans or [], daily or [], [], []])
+    # quote's subscriptions (only when the tenant row is found).
+    conn.fetch = AsyncMock(side_effect=[activity or [], plans or [], daily or [], []])
     conn.fetchval = AsyncMock(return_value=rpm)
 
     pool = MagicMock()

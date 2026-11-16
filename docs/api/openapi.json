@@ -571,47 +571,6 @@
         "title": "AddRecipientBody",
         "type": "object"
       },
-      "AddonIn": {
-        "properties": {
-          "ends_at": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Optional end (an AI pack for one month); null = no end",
-            "title": "Ends At"
-          },
-          "plan_key": {
-            "maxLength": 64,
-            "pattern": "^addon\\.[a-z][a-z0-9_]*$",
-            "title": "Plan Key",
-            "type": "string"
-          },
-          "quantity": {
-            "default": 1,
-            "minimum": 1.0,
-            "title": "Quantity",
-            "type": "integer"
-          },
-          "reason": {
-            "maxLength": 500,
-            "minLength": 3,
-            "title": "Reason",
-            "type": "string"
-          }
-        },
-        "required": [
-          "plan_key",
-          "reason"
-        ],
-        "title": "AddonIn",
-        "type": "object"
-      },
       "AdminLoginRequest": {
         "properties": {
           "password": {
@@ -7117,8 +7076,7 @@
                 "enum": [
                   "tenant",
                   "seat",
-                  "site",
-                  "unit"
+                  "site"
                 ],
                 "type": "string"
               },
@@ -7166,8 +7124,7 @@
             "enum": [
               "content",
               "crm",
-              "tripplanner",
-              "addon"
+              "tripplanner"
             ],
             "title": "Product",
             "type": "string"
@@ -7402,8 +7359,7 @@
                 "enum": [
                   "tenant",
                   "seat",
-                  "site",
-                  "unit"
+                  "site"
                 ],
                 "type": "string"
               },
@@ -8670,21 +8626,6 @@
           "git_sha"
         ],
         "title": "Readiness",
-        "type": "object"
-      },
-      "ReasonIn": {
-        "properties": {
-          "reason": {
-            "maxLength": 500,
-            "minLength": 3,
-            "title": "Reason",
-            "type": "string"
-          }
-        },
-        "required": [
-          "reason"
-        ],
-        "title": "ReasonIn",
         "type": "object"
       },
       "RecheckBody": {
@@ -33854,8 +33795,7 @@
                   "enum": [
                     "content",
                     "crm",
-                    "tripplanner",
-                    "addon"
+                    "tripplanner"
                   ],
                   "type": "string"
                 },
@@ -44281,299 +44221,6 @@
           }
         },
         "summary": "Decline an add-on request with a reason the tenant sees (audited)",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/admin/tenants/{tenant_id}/addons": {
-      "get": {
-        "operationId": "get_addons_admin_tenants__tenant_id__addons_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "tenant_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Tenant Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-admin-secret",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Admin-Secret"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-admin-role",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Admin-Role"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Addons Admin Tenants  Tenant Id  Addons Get",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "The tenant's add-ons (custom domain, AI pack)",
-        "tags": [
-          "admin"
-        ]
-      },
-      "post": {
-        "operationId": "post_addon_admin_tenants__tenant_id__addons_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "tenant_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Tenant Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-admin-secret",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Admin-Secret"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-admin-user-id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Admin-User-Id"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-admin-role",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Admin-Role"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AddonIn"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Post Addon Admin Tenants  Tenant Id  Addons Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Grant an add-on or change its quantity / end (audited)",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
-    "/admin/tenants/{tenant_id}/addons/{addon_id}/cancel": {
-      "post": {
-        "operationId": "cancel_addon_admin_tenants__tenant_id__addons__addon_id__cancel_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "tenant_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Tenant Id",
-              "type": "string"
-            }
-          },
-          {
-            "description": "The add-on row id",
-            "in": "path",
-            "name": "addon_id",
-            "required": true,
-            "schema": {
-              "description": "The add-on row id",
-              "format": "uuid",
-              "title": "Addon Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-admin-secret",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Admin-Secret"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-admin-user-id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Admin-User-Id"
-            }
-          },
-          {
-            "in": "header",
-            "name": "x-admin-role",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Admin-Role"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ReasonIn"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Cancel Addon Admin Tenants  Tenant Id  Addons  Addon Id  Cancel Post",
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Cancel an add-on (audited)",
         "tags": [
           "admin"
         ]

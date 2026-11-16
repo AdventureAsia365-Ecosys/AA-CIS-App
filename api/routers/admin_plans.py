@@ -28,7 +28,7 @@ from services.tenant_account import pricing_settings as ps
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(staff_policy)])
 
-Product = Literal["content", "crm", "tripplanner", "addon"]
+Product = Literal["content", "crm", "tripplanner"]
 Decimalish = Optional[str | float | int]
 
 
@@ -43,7 +43,7 @@ class PlanCreateIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     tier: Optional[Literal["starter", "growth", "business", "enterprise", "internal"]] = None
     price_usd_monthly: Decimalish = None
-    price_unit: Optional[Literal["tenant", "seat", "site", "unit"]] = None
+    price_unit: Optional[Literal["tenant", "seat", "site"]] = None
     seats_included: Optional[int] = Field(None, ge=0, le=100000)
     price_extra_seat_usd: Decimalish = None
     # AA-1116 option B (CIS 435): the VND list, the seat minimum, the contract floor and the overage rates
@@ -62,7 +62,7 @@ class PlanPatchIn(BaseModel):
     version: int = Field(..., ge=1, description="The version the edit was made from")
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     price_usd_monthly: Decimalish = None
-    price_unit: Optional[Literal["tenant", "seat", "site", "unit"]] = None
+    price_unit: Optional[Literal["tenant", "seat", "site"]] = None
     seats_included: Optional[int] = Field(None, ge=0, le=100000)
     price_extra_seat_usd: Decimalish = None
     # AA-1116 option B (CIS 435): the VND list, the seat minimum, the contract floor and the overage rates
