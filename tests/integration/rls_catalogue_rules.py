@@ -132,6 +132,8 @@ ALLOWLIST: dict[str, dict[str, str]] = {
         # AA-1036 R3 (CIS 374): the agency's add-on requests, read and written only by the CIS API (tenant id from the
         # verified token or the staff path).
         "shared.tenant_addon_request": f"add-on requests and staff decisions (AA-1036, 374); {_CIS_ONLY}",
+        # AA-1116 (CIS 435): the add-ons a tenant holds (custom domain, AI pack); Booking reads them via a catalog view.
+        "shared.tenant_addon": f"add-ons held (custom domain, AI pack; AA-1116, 435); {_CIS_ONLY}",
         # AA-1038 R5 slice 2 (CIS 379): TripPlanner site settings, read by TripPlanner only through the catalog view.
         "shared.tenant_tripplanner_site": f"TripPlanner site theme and locale (AA-1038, 379); {_CIS_ONLY}",
         # AA-1090 R8 (CIS 428): the custom hosts of a TripPlanner site, read by TripPlanner only through the catalog view.

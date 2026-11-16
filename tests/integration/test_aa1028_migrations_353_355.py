@@ -183,7 +183,7 @@ async def test_plan_defaults_and_trial(conn):
     assert await _materialised(conn, tid) == ents
     await _subscribe(conn, tid, status="trialing")
     ents = await _ents(conn, tid)
-    assert ents["ai.budget_usd_monthly"] == (15.0, "trial")
+    assert ents["ai.budget_usd_monthly"] == (7.5, "trial")       # 15 x cis.billing.trial_ai_budget_pct 50 % (CIS 437)
     assert ents["content.rewrite"] == (50.0, "trial")
     assert ents["content.social"] == (None, "trial")
     assert ents["policy.notice_days"] == (7.0, "trial")
@@ -213,7 +213,8 @@ async def test_override_beats_legacy_budget_beats_plan(conn):
                        "VALUES ($1, 5, 'admin:test')", tid)
     assert (await _ents(conn, tid))["ai.budget_usd_monthly"] == (5.0, "override")
     await conn.execute("UPDATE shared.tenant_ai_budget SET monthly_usd = NULL WHERE tenant_id = $1", tid)
-    assert (await _ents(conn, tid))["ai.budget_usd_monthly"] == (None, "override")     # NULL = unlimited (321)
+    # NULL follows the plan since CIS 437 (AA-1116 decision 5; unlimited only for kind internal, 321 before)
+    assert (await _ents(conn, tid))["ai.budget_usd_monthly"][1] == "plan"
     await conn.execute("INSERT INTO shared.tenant_entitlement_override (tenant_id, feature_key, limit_value, reason, "
                        "granted_by) VALUES ($1, 'ai.budget_usd_monthly', 0.01, 'fail-closed probe', 'admin:test')", tid)
     assert (await _ents(conn, tid))["ai.budget_usd_monthly"] == (0.01, "override")
@@ -430,7 +431,8 @@ async def test_inserts_and_vocabularies(conn):
     await _refused(conn, "23514", "UPDATE shared.tenants SET kind = 'partner' WHERE tenant_id = $1", tid)
     await _refused(conn, "23514", "UPDATE shared.tenants SET account_status = 'frozen' WHERE tenant_id = $1", tid)
     await _refused(conn, "23514", "UPDATE shared.tenants SET billing_country = 'vn' WHERE tenant_id = $1", tid)
-    await _refused(conn, "23514", "UPDATE shared.tenants SET is_pilot = true WHERE tenant_id = $1", tid)
+    # CIS 435 (AA-1116 decision 8): a pilot may run "until go-live" (no end date); a non-pilot still has no end date
+    await _refused(conn, "23514", "UPDATE shared.tenants SET pilot_ends_at = now() WHERE tenant_id = $1", tid)
     await conn.execute("UPDATE shared.tenants SET legal_entity_name = 'Synthetic Lotus Travel Co', billing_country = "
                        "'VN', billing_email = 'billing@synthetic.example', segment = 'tech_touch' WHERE tenant_id = $1",
                        tid)
