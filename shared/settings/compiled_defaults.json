@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -7318,6 +7318,42 @@
    }
   },
   {
+   "key": "cis.seo.dfs_queue_recover_days",
+   "app": "cis",
+   "area": "seo",
+   "label": "Keyword research: days to collect a paid queued task again",
+   "description": "Research cache (AA-1120): a DataForSEO Standard queue task that was paid for at post but never collected (a worker restart or a job retry during the wait) is collected free by the next run that needs the same keywords, when it was posted within this many days, instead of being posted and paid again. 0 = never collect an older task. DataForSEO keeps a task's result for 30 days. Read by services/seo_intelligence/dfs_queue.py before every queued post.",
+   "value_type": "int",
+   "unit": "days",
+   "min_value": 0,
+   "max_value": 30,
+   "allowed_values": null,
+   "default_value": 7,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How far back research looks for keyword data it already paid for in the DataForSEO queue but never received (a restart during the wait). Such data is fetched free instead of being bought again.",
+     "raise": "Older paid tasks are still fetched instead of bought again; DataForSEO keeps a task for 30 days at most.",
+     "lower": "Only recent paid tasks are fetched; an older one is bought again. 0 turns the recovery off.",
+     "when": "Raise it when research runs are days apart and a restart cut a run short; lower it only to test a fresh purchase.",
+     "example": "With the default of 7 days, a run on Friday fetches free the results a run on Monday paid for but lost in a restart."
+    },
+    "vi": {
+     "what": "Research nhìn lại bao xa để tìm dữ liệu từ khoá đã trả tiền trong hàng đợi DataForSEO nhưng chưa nhận về (khởi động lại trong lúc chờ). Dữ liệu đó được lấy miễn phí thay vì mua lại.",
+     "raise": "Task đã trả tiền cũ hơn vẫn được lấy về thay vì mua lại; DataForSEO giữ một task tối đa 30 ngày.",
+     "lower": "Chỉ task đã trả tiền gần đây được lấy về; task cũ hơn bị mua lại. 0 là tắt việc lấy lại.",
+     "when": "Tăng khi các lần research cách nhau nhiều ngày và một lần khởi động lại đã cắt ngang một lần chạy; chỉ giảm để thử một lần mua mới.",
+     "example": "Với mặc định 7 ngày, lần chạy thứ Sáu lấy miễn phí kết quả mà lần chạy thứ Hai đã trả tiền nhưng bị mất khi khởi động lại."
+    }
+   }
+  },
+  {
    "key": "cis.seo.meta_max",
    "app": "cis",
    "area": "seo",
@@ -7386,6 +7422,78 @@
      "lower": "Chữ ngắn hơn được chấp nhận; có thể trông sơ sài trong kết quả tìm kiếm.",
      "when": "Khi công cụ tìm kiếm đổi lượng chữ hiển thị, hoặc báo cáo tìm kiếm cho thấy chữ bị cắt hay quá mỏng.",
      "example": "Với mặc định 140 ký tự: ngắn hơn 140 bị từ chối hoặc phải kéo dài."
+    }
+   }
+  },
+  {
+   "key": "cis.seo.research_serp_fresh_days",
+   "app": "cis",
+   "area": "seo",
+   "label": "Keyword research: days a search results page stays fresh",
+   "description": "Research cache (AA-1120): a keyword's search results page (People Also Ask questions, related searches, organic domains), bought from DataForSEO, is reused without a new purchase for this many days (acp_contract.search_demand.paa_retrieved_on), and a place's SERP research (segment_research_log tier serp) counts as fresh for as long. Read by services/seo_intelligence/research_cache.py before every SERP purchase, by the stale plan and by the preview estimate of segment research.",
+   "value_type": "int",
+   "unit": "days",
+   "min_value": 30,
+   "max_value": 730,
+   "allowed_values": null,
+   "default_value": 365,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How long the search results page bought for a keyword (the questions people also ask, related searches and the sites that rank) is reused before research buys it again.",
+     "raise": "Fewer pages are bought again, so research costs less; the questions can be older.",
+     "lower": "Pages are refreshed more often, so research costs more; blogs get newer questions.",
+     "when": "Lower it when reviewers find the questions in blogs out of date; raise it to keep keyword data spend low.",
+     "example": "With the default of 365 days, a results page bought on 9 November is reused until 9 November next year."
+    },
+    "vi": {
+     "what": "Trang kết quả tìm kiếm mua cho một từ khoá (các câu hỏi người dùng cũng hỏi, tìm kiếm liên quan và các trang đang xếp hạng) được dùng lại bao lâu trước khi research mua lại.",
+     "raise": "Ít trang bị mua lại hơn nên research rẻ hơn; câu hỏi có thể cũ hơn.",
+     "lower": "Trang được làm mới thường hơn nên research tốn hơn; blog có câu hỏi mới hơn.",
+     "when": "Giảm khi người duyệt thấy câu hỏi trong blog đã lỗi thời; tăng để giữ chi phí dữ liệu từ khoá thấp.",
+     "example": "Với mặc định 365 ngày, trang kết quả mua ngày 9/11 được dùng lại tới ngày 9/11 năm sau."
+    }
+   }
+  },
+  {
+   "key": "cis.seo.research_volume_fresh_days",
+   "app": "cis",
+   "area": "seo",
+   "label": "Keyword research: days a search volume stays fresh",
+   "description": "Research cache (AA-1120): a keyword's search volume in a market, bought from DataForSEO, is reused without a new purchase for this many days (acp_contract.search_demand.retrieved_on), and a place's volume research (segment_research_log tier volume) counts as fresh for as long. Read by services/seo_intelligence/research_cache.py before every volume purchase, by the stale plan and by the preview estimate of segment research.",
+   "value_type": "int",
+   "unit": "days",
+   "min_value": 30,
+   "max_value": 730,
+   "allowed_values": null,
+   "default_value": 365,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How long a monthly search volume bought from DataForSEO for a keyword in one market is reused before research buys it again. Google's volume is a 12-month average, so it changes slowly.",
+     "raise": "Fewer volumes are bought again, so research costs less; demand numbers can be older.",
+     "lower": "Volumes are refreshed more often, so research costs more; demand numbers are newer.",
+     "when": "Lower it when the business owner wants newer demand numbers before a season or a market launch; raise it to keep keyword data spend low.",
+     "example": "With the default of 365 days, a volume bought on 9 November is reused until 9 November next year."
+    },
+    "vi": {
+     "what": "Lượng tìm kiếm hằng tháng của một từ khoá ở một thị trường, mua từ DataForSEO, được dùng lại bao lâu trước khi research mua lại. Lượng của Google là trung bình 12 tháng nên đổi chậm.",
+     "raise": "Ít lượng tìm kiếm bị mua lại hơn nên research rẻ hơn; số nhu cầu có thể cũ hơn.",
+     "lower": "Lượng tìm kiếm được làm mới thường hơn nên research tốn hơn; số nhu cầu mới hơn.",
+     "when": "Giảm khi chủ doanh nghiệp muốn số nhu cầu mới hơn trước một mùa hoặc trước khi mở một thị trường; tăng để giữ chi phí dữ liệu từ khoá thấp.",
+     "example": "Với mặc định 365 ngày, lượng tìm kiếm mua ngày 9/11 được dùng lại tới ngày 9/11 năm sau."
     }
    }
   },
