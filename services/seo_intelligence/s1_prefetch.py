@@ -327,6 +327,30 @@ async def foreign_places(conn, country: str) -> frozenset[str]:
         return frozenset()
 
 
+async def _tour_serp(client, spec: dict, location_code: int, language_code: str, memo: dict,
+                     summary: dict) -> tuple[list[str], list[str]]:
+    """(PAA, related searches) of a tour with no research-cache PAA. AA-1120: one SERP per (seed, location): `memo`
+    (cache_key -> answer) holds the reusable rows of other tours (seed_serps) and this run's purchases, so a tour whose
+    seed is already answered buys nothing. A failed SERP is ([], []) (a budget stop is raised)."""
+    key = cache_key(spec["seed"], location_code)
+    if key in memo:
+        summary["serp_reused"] += 1
+        return list(memo[key][0]), list(memo[key][1])
+    try:
+        client.tour_id = spec["tour_id"]
+        serp = await client._serp_advanced(spec["seed"], location_code, language_code)
+        paa, related = client._parse_paa(serp), client._parse_related(serp)
+    except Exception as e:
+        from shared.cost_guard import BudgetExceeded
+        if isinstance(e, BudgetExceeded):
+            raise
+        logger.warning("s1_prefetch_serp_failed", tour_id=spec["tour_id"], error=str(e)[:200])
+        return [], []
+    memo[key] = (list(paa), list(related))
+    summary["serp_calls"] += 1
+    return paa, related
+
+
 async def prefetch(conn, rows: list[dict], *, tenant_id: str, location_code: int,
                    language_code: str, client=None, progress=None, pool=None, jev: bool = True) -> dict:
     """Fill seo_context for every tour in `rows` that has no reusable one. Returns a summary.
@@ -419,22 +443,8 @@ async def prefetch(conn, rows: list[dict], *, tenant_id: str, location_code: int
                 ideas = await jev_review(s, [i for i in candidates if not is_lodging_search(i["keyword"])],
                                          ideas, pool=pool)
             related: list[str] = []
-            key = cache_key(s["seed"], location_code)
-            if not paa and key in serp_memo:
-                paa, related = (list(x) for x in serp_memo[key])
-                summary["serp_reused"] += 1
-            elif not paa:
-                try:
-                    client.tour_id = s["tour_id"]
-                    serp = await client._serp_advanced(s["seed"], location_code, language_code)
-                    paa, related = client._parse_paa(serp), client._parse_related(serp)
-                    serp_memo[key] = (list(paa), list(related))
-                    summary["serp_calls"] += 1
-                except Exception as e:
-                    from shared.cost_guard import BudgetExceeded
-                    if isinstance(e, BudgetExceeded):
-                        raise
-                    logger.warning("s1_prefetch_serp_failed", tour_id=s["tour_id"], error=str(e)[:200])
+            if not paa:
+                paa, related = await _tour_serp(client, s, location_code, language_code, serp_memo, summary)
             # Commit this tour's row now (asyncpg auto-commits each statement) — a concurrent
             # s1_rewrite job polling for this tour_id sees it as soon as this returns.
             await _persist(conn, s, location_code, ideas[:25], paa, related, tenant_id)

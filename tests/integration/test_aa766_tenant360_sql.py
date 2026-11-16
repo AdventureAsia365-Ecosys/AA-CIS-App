@@ -140,7 +140,7 @@ async def test_markets_sql(ctx):
     tm = await p.fetchval(t360._SEO_CONFIG_SQL, tid)
     codes, unsupported, _ = t360.seo_market_codes(tm)
     assert codes == ["UK"] and unsupported == ["AE"]
-    rows = await p.fetch(t360._MARKET_COVERAGE_SQL, tid, False, codes, t360.fresh_days())
+    rows = await p.fetch(t360._MARKET_COVERAGE_SQL, tid, False, codes, 365)  # the seeded research volume window (AA-1120 setting)
     # no adopted tours -> empty scope, one row per market, nothing researched
     assert [(r["market"], r["places_in_scope"], r["researched"], r["fresh"]) for r in rows] == [("UK", 0, 0, 0)]
     unmapped = await p.fetch(t360._UNMAPPED_SQL, tid)

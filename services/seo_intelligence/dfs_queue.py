@@ -393,8 +393,6 @@ class StandardQueue:
         raised instead (no index is reported for the asks still to post)."""
         out: dict[int, dict | Exception | CachedSerp] = {}
         unique, where = dedupe(asks)
-        all_posted: list[PostedTask] = []
-        all_tags: dict[str, int] = {}
 
         async def _settle(u: int, value) -> None:
             if isinstance(value, dict):
@@ -407,30 +405,7 @@ class StandardQueue:
         todo = list(range(len(unique)))
         if self.cache is not None:
             todo = await self._serps_from_cache(unique, todo, _settle)
-        # Every request is posted first, then all tasks are waited for together: the queue works on them in
-        # parallel, so a run of thousands of places waits about as long as one request.
-        for start in range(0, len(todo), POST_MAX_TASKS):
-            part = todo[start:start + POST_MAX_TASKS]
-            tags = {f"{u}-{uuid.uuid4().hex[:8]}": u for u in part}
-            payload = [{"keyword": unique[u][0], "location_code": unique[u][1], "language_code": unique[u][2],
-                        "tag": tag} for tag, u in tags.items()]
-            try:
-                posted = await self._post(_SERP, SERP_ENDPOINT, payload, keyword_count=len(payload),
-                                          location_code=payload[0]["location_code"])
-            except (DFSCallError, BudgetExceeded) as err:
-                if isinstance(err, BudgetExceeded) or err.fatal:
-                    if not all_posted:
-                        raise
-                    # A budget stop or a fatal answer stops posting; the tasks already paid for are still
-                    # collected below and the rest carry this error (the caller's guard aborts on it).
-                    for rest in todo[start:]:
-                        await _settle(rest, err)
-                    break
-                for u in tags.values():
-                    await _settle(u, err)
-                continue
-            all_posted.extend(posted)
-            all_tags.update(tags)
+        all_posted, all_tags = await self._post_serps(unique, todo, _settle)
 
         async def _collected(tag: str, value: dict | DFSCallError) -> None:
             if tag in all_tags:
@@ -443,6 +418,36 @@ class StandardQueue:
             if u not in settled:
                 await _settle(u, DFSCallError("DataForSEO queue did not accept the SERP task"))
         return out
+
+    async def _post_serps(self, unique: list[tuple[str, int, str]], todo: list[int],
+                          settle) -> tuple[list[PostedTask], dict[str, int]]:
+        """Post the asks ``todo`` (indexes of ``unique``), 100 per request, all before the first poll: the queue works
+        on them in parallel, so a run of thousands of places waits about as long as one request. A refused request
+        settles its asks with the error; a budget stop or a fatal answer stops posting (raised when nothing was posted
+        yet, else every ask still to post carries it and the tasks already paid for are still collected)."""
+        all_posted: list[PostedTask] = []
+        all_tags: dict[str, int] = {}
+        for start in range(0, len(todo), POST_MAX_TASKS):
+            part = todo[start:start + POST_MAX_TASKS]
+            tags = {f"{u}-{uuid.uuid4().hex[:8]}": u for u in part}
+            payload = [{"keyword": unique[u][0], "location_code": unique[u][1], "language_code": unique[u][2],
+                        "tag": tag} for tag, u in tags.items()]
+            try:
+                posted = await self._post(_SERP, SERP_ENDPOINT, payload, keyword_count=len(payload),
+                                          location_code=payload[0]["location_code"])
+            except (DFSCallError, BudgetExceeded) as err:
+                if isinstance(err, BudgetExceeded) or err.fatal:
+                    if not all_posted:
+                        raise
+                    for rest in todo[start:]:
+                        await settle(rest, err)
+                    break
+                for u in tags.values():
+                    await settle(u, err)
+                continue
+            all_posted.extend(posted)
+            all_tags.update(tags)
+        return all_posted, all_tags
 
     async def _serps_from_cache(self, unique: list[tuple[str, int, str]], todo: list[int], settle) -> list[int]:
         """Settle the asks the fresh store or a paid, uncollected task answers; the asks still to post."""

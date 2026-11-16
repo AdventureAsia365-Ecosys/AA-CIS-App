@@ -145,7 +145,7 @@ def test_the_queue_reads_the_cache_before_its_first_post():
     for name, reader in (("volumes", "_cached_volumes"), ("serps", "_serps_from_cache")):
         calls = [n for n in ast.walk(methods[name]) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)]
         read = min(n.lineno for n in calls if n.func.attr == reader)
-        post = min(n.lineno for n in calls if n.func.attr == "_post")
+        post = min(n.lineno for n in calls if n.func.attr.startswith("_post"))
         assert read < post, f"StandardQueue.{name} posts before it reads the research cache"
 
 

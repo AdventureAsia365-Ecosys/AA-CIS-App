@@ -70,10 +70,8 @@ MAX_SUGGESTIONS = 1
 # $10.27 / 7,856 calls ≈ $0.0013; rounded up for the budget check.
 LLM_CALL_ESTIMATE_USD = 0.005
 
-# AA-1055 — 365 days (was 182, STEP0b). Google Ads volume is a 12-month average, so a refresh twice a year buys almost
-# nothing new (design docs/audits/2026-11-08-S273-session/dfs-cost-audit/design.vi.md section 5). AA-1120: the window
-# is the setting cis.seo.research_volume_fresh_days (research_cache.volume_fresh_for / fresh_windows), not a constant;
-# it governs the volume tier of segment_research_log and the volume store; the SERP tier has its own setting.
+# AA-1055 / AA-1120 — the volume freshness (365 days, design.vi.md section 5 of the S273 DFS audit) is the setting
+# cis.seo.research_volume_fresh_days (research_cache.fresh_windows): the volume tier of the log and the volume store.
 
 # How many places' ReAct loops run concurrently. Ms. Thư tunes WORKERS=16 against her own
 # per-minute DataForSEO account allowance and measured request-count curve (research.py:99-105)
@@ -706,8 +704,7 @@ async def _places_in_scope(
 
 
 async def _fresh_tiers(pool, names: list[str], windows: Windows | None = None) -> dict[str, set[tuple[str, str]]]:
-    """place -> {(market, tier)} rows of segment_research_log that are still fresh (AA-1120: the volume / SERP windows
-    of the settings registry, read when `windows` is None)."""
+    """place -> {(market, tier)} rows of segment_research_log still fresh (AA-1120: the settings windows)."""
     if not names:
         return {}
     windows = windows or await fresh_windows()
@@ -731,8 +728,7 @@ def stale_tiers(got: set[tuple[str, str]], market_codes: list[str], tiers: tuple
     return markets, serp
 
 
-async def _plan(pool, by_place: dict[str, list[str]], market_codes: list[str], tiers: tuple[str, ...],
-                windows: Windows | None = None):
+async def _plan(pool, by_place: dict[str, list[str]], market_codes: list[str], tiers: tuple[str, ...], windows=None):
     """The stale places as batch `_Place`s (sorted by name), with their stale volume markets, SERP need and map.
 
     A stale place with no usable map (none stored, or an older one the qualification rules flag or that lacks the
@@ -874,8 +870,6 @@ async def run_segment_research(
     markets = resolve_buyer_markets(target_market)
     market_codes = [LOCATION_CODE_TO_MARKET[loc] for loc, _name, _lang in markets]
     by_place = await _places_in_scope(pool, places, tour_ids, country, cached_only=dry_run, reatomized=reatomized)
-    # AA-1120: ONE research cache for the run (windows from the settings registry): the plan, the deduped estimate,
-    # both buy phases and the Standard queue read and write the store through it.
     cache = ResearchCache(pool, stage=rb.RESEARCH_STAGE, windows=await fresh_windows(),
                           meta={"job": "segment_research", "queue": queue_mode})
     stale = await _plan(pool, by_place, market_codes, tiers_t, cache.windows)
@@ -899,10 +893,8 @@ async def run_segment_research(
         "max_usd": max_usd,
         "strategy": strategy,
         "use_suggestions": use_suggestions,
-        "estimate": rb.estimate_plan(selected, use_suggestions, queue_mode),
+        "estimate": rb.estimate_plan(selected, use_suggestions, queue_mode),   # upper bound; AA-1120 adds `deduped`
     }
-    # AA-1120: what the run will really buy after the store and the deduplication (0 USD reads), beside the upper
-    # bound above (which still bounds the selection and the balance check).
     summary["estimate"]["deduped"] = await rb.estimate_deduped(selected, cache, queue_mode, use_suggestions)
     if dry_run or not selected:
         return {**summary, "places_researched": 0, "places_failed": 0, "cost_usd": 0.0,

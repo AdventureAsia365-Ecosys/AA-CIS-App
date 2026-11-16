@@ -99,14 +99,9 @@ router = APIRouter(prefix="/admin/tenants", tags=["admin-tenant360"], dependenci
 
 AA_INTERNAL_TENANT = "00000000-0000-0000-0000-000000000001"
 
-
-
-def fresh_days() -> int:
-    """The research cache's own freshness horizon in force (AA-1120: setting cis.seo.research_volume_fresh_days,
-    services/seo_intelligence/research_cache.py, the same value admin_seo.py reads; was the literal 365)."""
+def fresh_days() -> int:  # AA-1120: the research volume window in force (setting, the value admin_seo.py reads)
     from services.seo_intelligence.research_cache import volume_fresh_for
     return volume_fresh_for().days
-
 
 # Channel -> piece kind for the "$/piece blog vs social" split. Channels follow
 # services/acp_planning/models.py's Channel literal (admin.py _VALID_CHANNELS).

@@ -50,7 +50,7 @@ PAID_QUEUE_METHODS = frozenset({"volumes", "serps", "_post"})
 # "<path>::<function>" -> the cache that covers the paid calls in it. "research_cache" = this module (the guard checks
 # the function uses it); any other value names the cache of a path that does not buy research data, with the reason.
 DFS_CALL_SITES: dict[str, str] = {
-    "services/acp_contract/segment_research_batch.py::_buy_volumes._market._buy": "research_cache",
+    "services/acp_contract/segment_research_batch.py::_purchase_volumes": "research_cache",
     "services/acp_contract/segment_research_batch.py::_buy_serps._one": "research_cache",
     "services/acp_contract/segment_research_batch.py::_buy_serps": "research_cache",
     "services/acp_contract/segment_research_batch.py::_buy_suggestions":
@@ -62,8 +62,9 @@ DFS_CALL_SITES: dict[str, str] = {
     "services/seo_intelligence/handler.py::process_seo":
         "S1 SEO fetch: Redis cache per (seed, market), 7 days (AA-625), + seo_context per tour",
     "services/seo_intelligence/s1_prefetch.py::prefetch":
-        "S1 prefetch: seo_context reuse per tour (S1_SEO_REUSE_DAYS) and the research store read first (AA-653); "
-        "one SERP per (seed, location) per run (AA-1120)",
+        "S1 prefetch ideas: seo_context reuse per tour (S1_SEO_REUSE_DAYS) and the research store read first (AA-653)",
+    "services/seo_intelligence/s1_prefetch.py::_tour_serp":
+        "S1 SERP: one per (seed, location): another tour's reusable seo_context row, then this run's answers (AA-1120)",
     "services/acp_shared/question_topup.py::run_topup":
         "admin top-up: its own search_demand market, a rerun skips stored places, $3 cap in all (AA-779)",
     "scripts/aa1055/dfs_queue_trial.py::main": "adhoc trial of one task per kind (AA-1055), no research data",
@@ -140,7 +141,7 @@ def parse_serp(client, data: dict) -> tuple[list[str], list[str], list[str]]:
 
 @dataclass
 class PendingTask:
-    """A queued task paid for at post (shared.dfs_call_log meta ``posted``) whose keywords are not fresh in the store."""
+    """A queued task paid for at post (dfs_call_log meta ``posted``) whose keywords are not fresh in the store."""
     task_id: str
     keywords: list[str]
     location_code: int | None
@@ -238,6 +239,14 @@ class ResearchCache:
     async def load(cls, pool, *, stage: str, meta: dict | None = None) -> "ResearchCache":
         """A cache with the windows in force (settings)."""
         return cls(pool, stage=stage, windows=await fresh_windows(), meta=meta)
+
+    @classmethod
+    async def for_client(cls, pool, client, default_stage: str) -> "ResearchCache":
+        """A cache with the windows in force for a caller that passed none: the client's stage, else ``default_stage``
+        (a mock client without one in tests)."""
+        stage = getattr(client, "stage", None)
+        return await cls.load(pool, stage=stage if isinstance(stage, str) and stage else default_stage,
+                              meta={"job": "segment_research"})
 
     async def volumes(self, keywords: Sequence[str], market: str) -> dict[str, int | None]:
         """keyword -> stored volume for every keyword of ``keywords`` fresh in ``market`` (None = measured, no data)."""

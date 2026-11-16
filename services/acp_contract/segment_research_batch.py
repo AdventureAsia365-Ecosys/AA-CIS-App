@@ -29,12 +29,9 @@ price). This module runs research as phases over the whole selection, so each pa
 No log row is ever written for a place whose purchase failed or was not made (AA-647): an abort, a budget stop or a
 DFS error leave it stale for the next run, which resumes where this one stopped.
 
-AA-1120 — every read and write of the store goes through ONE research cache (services/seo_intelligence/
-research_cache.py, freshness windows from the settings registry), in both modes: phase B reads the fresh volumes and
-writes what it buys back (the queue writes its own answers back), phase C reads the fresh SERPs, buys ONE SERP per
-distinct keyword (places that share their best keyword share it) and writes it back. Store hits are logged as 0 USD
-cache_hit rows under the endpoint label the run buys through (search_volume_bulk_queue / serp_advanced_queue in queue
-mode). The preview's ``estimate.deduped`` is the plan after the store and the deduplication (``estimate_deduped``).
+AA-1120 — every store read and write goes through ONE research cache (seo_intelligence/research_cache.py, windows from
+the settings registry), live and queue alike; phase C buys ONE SERP per distinct keyword; store hits are 0 USD
+cache_hit rows under the run's endpoint label; ``estimate.deduped`` (research_estimate.py) prices the deduped plan.
 """
 from __future__ import annotations
 
@@ -54,15 +51,11 @@ from services.acp_contract.segment_research import (
 )
 from services.seo_intelligence.dataforseo_client import DataForSEOClient, as_dfs_error
 from services.seo_intelligence.dfs_queue import QueuedTaskFailed
-from services.seo_intelligence.research_cache import CachedSerp, ResearchCache, fresh_windows
+from services.acp_contract.research_estimate import estimate_deduped
+from services.seo_intelligence.research_cache import CachedSerp, ResearchCache
 from services.seo_intelligence.seed_builder import DFS_LOCATION_MAP, LOCATION_CODE_TO_MARKET
-from shared.cost_guard import (
-    DFS_RESEARCH_ENDPOINTS,
-    BudgetExceeded,
-    RunBudget,
-    dfs_call_estimate_usd,
-    dfs_research_prices,
-)
+from shared.cost_guard import (DFS_RESEARCH_ENDPOINTS, BudgetExceeded, RunBudget, dfs_call_estimate_usd,
+                               dfs_research_prices)
 from shared.llm_client.call_log import billed_fields, record_call_with_pool
 from shared.llm_client.client import LLMClient
 from shared.llm_client.decide import decide
@@ -133,7 +126,6 @@ Respond with ONLY a JSON object, no markdown fences:
 # AA-1055 — the map's prompt_version: a changed prompt re-proposes every place on its next run.
 PROMPT_VERSION = "a3_propose@" + hashlib.sha256(PROPOSE_SYSTEM.encode("utf-8")).hexdigest()[:12]
 
-# AA-1120: the volume and SERP upserts live in services/seo_intelligence/research_cache.py (the one writer).
 _PLACE_COUNTRY_SQL = """
     SELECT s.canonical_place, mode() WITHIN GROUP (ORDER BY rt.country) AS country
     FROM acp_contract.atom_segment s
@@ -182,8 +174,8 @@ _INSERT_MAP_SQL = """
         jev_zone = excluded.jev_zone, jev_mode = excluded.jev_mode, jev_probability = excluded.jev_probability,
         proposed_at = excluded.proposed_at
 """
-# serp_fresh: the row holds a SERP of the SERP window with related searches; volume_fresh: its volume was measured within
-# the volume window (a SERP-only row has retrieved_on at the epoch, so it is not). Windows: research_cache.Windows.
+# serp_fresh: the row holds a SERP of the SERP window with related searches; volume_fresh: its volume was measured
+# within the volume window (a SERP-only row has retrieved_on at the epoch, so it is not). Windows: research_cache.
 _SERP_STATE_SQL = """
     SELECT keyword, market, search_volume,
            (paa_retrieved_on IS NOT NULL AND paa_retrieved_on > now() - $2::interval
@@ -303,83 +295,6 @@ def select_within_usd(places: list[_Place], max_usd: float | None, use_suggestio
         else:
             hi = mid - 1
     return list(places[:lo])
-
-
-async def estimate_deduped(places: list[_Place], cache: ResearchCache, queue: str = "live",
-                           use_suggestions: bool = False) -> dict:
-    """AA-1120 — the DataForSEO calls a run over `places` really makes after the research cache and the deduplication,
-    and their USD (store reads only: 0 USD, no provider call). `estimate_plan` stays the upper bound the USD cap and
-    the balance check use; this is the figure the preview shows next to it (`estimate.deduped`).
-
-      - volume: per market, the DISTINCT keywords of the mapped places that are not fresh in the store, plus
-        REAL_KEYWORDS_PER_PLACE new keywords per place without a usable map (new keywords are not in the store yet), in
-        tasks of up to VOLUME_TASK_MAX keywords;
-      - SERP: a mapped place whose keywords all have a fresh volume (any requested market or the SERP market) gets its
-        best keyword (best_keyword); ONE SERP per distinct best keyword not fresh in the SERP market. A place whose
-        volumes are still unknown counts SERP_HIT_RATE of a SERP (no dedupe possible before its volumes are bought);
-      - `calls` = the rows the ledger will get: volume tasks + SERP requests (queue mode: posts of up to 100 SERPs).
-    """
-    volume_price, serp_price = _prices(queue)
-    markets = sorted({m for p in places for m in p.markets} | ({SERP_MARKET} if any(p.serp for p in places) else set()))
-    mapped_kws = sorted({kw for p in places if p.has_map for kw in p.keywords})
-    stored: dict[str, dict[str, int | None]] = {m: await cache.volumes(mapped_kws, m) for m in markets} \
-        if mapped_kws else {}
-    to_buy: dict[str, set[str]] = {}
-    asked: dict[str, int] = {}
-    new_kw: dict[str, float] = {}
-    for p in places:
-        for m in p.markets:
-            if p.has_map:
-                asked[m] = asked.get(m, 0) + len(p.keywords)
-                to_buy.setdefault(m, set()).update(kw for kw in p.keywords if kw not in stored.get(m, {}))
-            else:
-                new_kw[m] = new_kw.get(m, 0.0) + REAL_KEYWORDS_PER_PLACE
-    keywords_to_buy = {m: len(to_buy.get(m, ())) + math.ceil(new_kw.get(m, 0.0)) for m in set(to_buy) | set(new_kw)}
-    volume_tasks = sum(math.ceil(n / VOLUME_TASK_MAX) for n in keywords_to_buy.values() if n > 0)
-    cached = sum(len(v) for m, v in stored.items() if any(m in p.markets for p in places))
-
-    best: dict[str, int] = {}
-    known: set[str] = set()
-    for per in stored.values():
-        for kw, v in per.items():
-            best[kw] = max(best.get(kw, 0), v or 0)
-            known.add(kw)
-    candidates: dict[str, int] = {}
-    unknown = 0
-    no_volume = 0
-    for p in places:
-        if not p.serp:
-            continue
-        if not p.has_map or not p.keywords or any(kw not in known for kw in p.keywords):
-            unknown += 1 if p.keywords or not p.has_map else 0
-            continue
-        top = best_keyword(p, best)
-        if top is None:
-            no_volume += 1
-            continue
-        candidates[top] = candidates.get(top, 0) + 1
-    fresh = await cache.serps(list(candidates), SERP_MARKET) if candidates else {}
-    serp_known = [kw for kw in candidates if kw not in fresh]
-    serp_calls = len(serp_known) + math.ceil(unknown * SERP_HIT_RATE)
-    serp_requests = math.ceil(serp_calls / 100) if queue == "standard" else serp_calls
-    idea_tasks = math.ceil(len(places) / IDEAS_SEEDS_PER_TASK) if use_suggestions else 0
-    ideas = idea_tasks * dfs_call_estimate_usd().get("keywords_for_keywords", 0.1)
-    return {
-        "volume_tasks": volume_tasks,
-        "keywords_asked": sum(asked.values()) + sum(math.ceil(n) for n in new_kw.values()),
-        "keywords_to_buy": sum(keywords_to_buy.values()),
-        "keywords_cached": cached,
-        "serp_calls": serp_calls,
-        "serp_requests": serp_requests,
-        "serp_cached": len(fresh),
-        "serp_shared_keyword": sum(n - 1 for n in candidates.values()),
-        "serp_no_volume": no_volume,
-        "serp_unknown_volume": unknown,
-        "idea_tasks": idea_tasks,
-        "calls": volume_tasks + serp_requests + idea_tasks,
-        "dfs_usd": round(volume_tasks * volume_price + serp_calls * serp_price + ideas, 4),
-        "queue": queue,
-    }
 
 
 def _parse_proposals(raw: str) -> dict[str, list[str]]:
@@ -623,25 +538,30 @@ async def _write_logs(pool, rows: list[tuple[str, str, str]]) -> None:
             await conn.executemany(LOG_RESEARCHED_SQL, rows)
 
 
-def _labels(queue) -> tuple[str, str]:
-    """(volume, SERP) endpoint labels the run buys through: its cache-hit rows carry them too (AA-1120)."""
-    return DFS_RESEARCH_ENDPOINTS["standard" if queue is not None else "live"]
-
-
-async def _cache_for(pool, client: DataForSEOClient, cache: ResearchCache | None) -> ResearchCache:
-    """The run's research cache; built with the windows in force when the caller passed none."""
-    if cache is not None:
-        return cache
-    return ResearchCache(pool, stage=getattr(client, "stage", None) or RESEARCH_STAGE, windows=await fresh_windows(),
-                         meta={"job": "segment_research"})
+async def _purchase_volumes(chunk: list[str], loc: int, lang: str, client: DataForSEOClient, queue,
+                            cache: ResearchCache) -> dict[str, int | None]:
+    """AA-1120 — one volume purchase of `chunk` in one market. The queue reads the store and paid, uncollected tasks
+    first and writes back itself; the live path does the same here: a keyword fresh in the store (a concurrent run
+    stored it since phase B read) is not bought, the bought answers are written back."""
+    if queue is not None:
+        return await queue.volumes(chunk, loc, lang)
+    market = LOCATION_CODE_TO_MARKET[loc]
+    out = await cache.volumes(chunk, market)
+    missing = [kw for kw in chunk if kw not in out]
+    if missing:
+        volumes = await client.fetch_volumes_bulk(missing, loc, lang, raise_on_error=True)
+        bought = {kw: volumes.get(kw) for kw in missing}
+        await cache.put_volumes(market, bought)
+        out.update(bought)
+    return out
 
 
 async def _buy_volumes(places: list[_Place], markets: list[tuple[int, str, str]], client: DataForSEOClient,
                        pool, guard: _RunGuard, queue=None, cache: ResearchCache | None = None) -> dict:
     """Phase B. `queue` = a dfs_queue.StandardQueue, None = the live endpoint. `cache` = the run's research cache."""
     stats = {"volume_tasks": 0, "keywords_bought": 0, "keywords_cached": 0, "volume_splits": 0}
-    cache = await _cache_for(pool, client, cache)
-    volume_label, _serp_label = _labels(queue)
+    cache = cache or await ResearchCache.for_client(pool, client, RESEARCH_STAGE)
+    volume_label = DFS_RESEARCH_ENDPOINTS["standard" if queue is not None else "live"][0]
 
     async def _market(loc: int, lang: str) -> None:
         """One market: read the fresh store, buy the rest, log each place as soon as it is complete."""
@@ -687,11 +607,7 @@ async def _buy_volumes(places: list[_Place], markets: list[tuple[int, str, str]]
                 failed_kw.update(chunk)
                 return
             try:
-                if queue is not None:
-                    # AA-1120: the queue reads the store and paid, uncollected tasks first and writes back itself.
-                    volumes = await queue.volumes(chunk, loc, lang)
-                else:
-                    volumes = await client.fetch_volumes_bulk(chunk, loc, lang, raise_on_error=True)
+                volumes = await _purchase_volumes(chunk, loc, lang, client, queue, cache)
             except BudgetExceeded as exc:
                 guard.record(exc)
                 failed_kw.update(chunk)
@@ -715,8 +631,6 @@ async def _buy_volumes(places: list[_Place], markets: list[tuple[int, str, str]]
                 return
             stats["volume_tasks"] += 1
             stats["keywords_bought"] += len(chunk)
-            if queue is None:
-                await cache.put_volumes(market, {kw: volumes.get(kw) for kw in chunk})
             answers.update({kw: volumes.get(kw) for kw in chunk})
             bought.update(chunk)
             await _settle()          # each place is logged as soon as it is complete
@@ -737,25 +651,10 @@ async def _buy_volumes(places: list[_Place], markets: list[tuple[int, str, str]]
     return stats
 
 
-async def _buy_serps(places: list[_Place], client: DataForSEOClient, pool, guard: _RunGuard, queue=None,
-                     cache: ResearchCache | None = None) -> dict:
-    """Phase C: one SERP per place (module docstring); AA-1120: one purchase per distinct keyword."""
-    stats = {"serp_calls": 0, "serp_fresh_skips": 0, "serp_no_volume": 0, "serp_waiting_volume": 0,
-             "serp_shared_keyword": 0}
-    cache = await _cache_for(pool, client, cache)
-    _volume_label, serp_label = _labels(queue)
-    empty = [p for p in places if p.serp and not p.failed and not p.keywords]   # nothing to buy (see _buy_volumes)
-    for p in empty:
-        stats["serp_no_volume"] += 1
-        p.logged.add((SERP_MARKET, "serp"))
-    await _write_logs(pool, [(p.name, SERP_MARKET, "serp") for p in empty])
-    wanted = [p for p in places if p.serp and not p.failed and p.keywords]
-    if not wanted:
-        return stats
-    loc = DFS_LOCATION_MAP[SERP_MARKET][0]
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(_SERP_STATE_SQL, sorted({kw for p in wanted for kw in p.keywords}),
-                                cache.windows.serp, cache.windows.volume)
+def _serp_targets(wanted: list[_Place], rows, stats: dict) -> tuple[dict[str, list[_Place]], list[tuple]]:
+    """Phase C's choice (module docstring): best keyword -> the places whose one SERP it is (not fresh yet), and the
+    log rows of the places with nothing to buy (no volume anywhere it was measured, or a fresh SERP). A place whose
+    SERP-market volumes are not all known waits. `rows` = _SERP_STATE_SQL rows; `stats` is counted in place."""
     best_volume: dict[str, int] = {}
     fresh: set[str] = set()
     known: set[str] = set()     # keywords whose SERP_MARKET volume is measured (None = DataForSEO has no row = 0)
@@ -770,29 +669,46 @@ async def _buy_serps(places: list[_Place], client: DataForSEOClient, pool, guard
             best_volume[kw] = max(best_volume.get(kw, 0), *[(v or 0) for v in per.values()], 0)
             if SERP_MARKET in per:
                 known.add(kw)
-
     by_kw: dict[str, list[_Place]] = {}
     logs: list[tuple[str, str, str]] = []
     for p in wanted:
         top = best_keyword(p, best_volume)
-        if top is None:
-            if all(kw in known for kw in p.keywords):
-                # Nobody searches any keyword of the place where we measured each one: nothing to buy, fresh for a
-                # year.
-                stats["serp_no_volume"] += 1
-                logs.append((p.name, SERP_MARKET, "serp"))
-                p.logged.add((SERP_MARKET, "serp"))
-            else:
-                # A keyword's SERP-market volume is not known yet (a new map, a failed or skipped volume task, a
-                # run without the volume tier): the place stays stale and the next run decides.
-                stats["serp_waiting_volume"] += 1
+        if top is None and not all(kw in known for kw in p.keywords):
+            # A keyword's SERP-market volume is not known yet (a new map, a failed or skipped volume task, a run
+            # without the volume tier): the place stays stale and the next run decides.
+            stats["serp_waiting_volume"] += 1
             continue
-        if top in fresh:
-            stats["serp_fresh_skips"] += 1
+        if top is None or top in fresh:
+            # Nobody searches any keyword of the place where we measured each one, or its SERP is fresh: nothing to
+            # buy, fresh for the SERP window.
+            stats["serp_no_volume" if top is None else "serp_fresh_skips"] += 1
             logs.append((p.name, SERP_MARKET, "serp"))
             p.logged.add((SERP_MARKET, "serp"))
             continue
         by_kw.setdefault(top, []).append(p)
+    return by_kw, logs
+
+
+async def _buy_serps(places: list[_Place], client: DataForSEOClient, pool, guard: _RunGuard, queue=None,
+                     cache: ResearchCache | None = None) -> dict:
+    """Phase C: one SERP per place (module docstring); AA-1120: one purchase per distinct keyword."""
+    stats = {"serp_calls": 0, "serp_fresh_skips": 0, "serp_no_volume": 0, "serp_waiting_volume": 0,
+             "serp_shared_keyword": 0}
+    cache = cache or await ResearchCache.for_client(pool, client, RESEARCH_STAGE)
+    serp_label = DFS_RESEARCH_ENDPOINTS["standard" if queue is not None else "live"][1]
+    empty = [p for p in places if p.serp and not p.failed and not p.keywords]   # nothing to buy (see _buy_volumes)
+    for p in empty:
+        stats["serp_no_volume"] += 1
+        p.logged.add((SERP_MARKET, "serp"))
+    await _write_logs(pool, [(p.name, SERP_MARKET, "serp") for p in empty])
+    wanted = [p for p in places if p.serp and not p.failed and p.keywords]
+    if not wanted:
+        return stats
+    loc = DFS_LOCATION_MAP[SERP_MARKET][0]
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(_SERP_STATE_SQL, sorted({kw for p in wanted for kw in p.keywords}),
+                                cache.windows.serp, cache.windows.volume)
+    by_kw, logs = _serp_targets(wanted, rows, stats)
     await _write_logs(pool, logs)
     await cache.log_hits(serp_label, count=stats["serp_fresh_skips"], location_code=loc,
                          meta={"job": "segment_research", "phase": "serp"})
@@ -969,7 +885,8 @@ async def _buy_suggestions(places: list[_Place], markets: list[tuple[int, str, s
         logger.info("segment_research_ideas_task", seeds=len(seeds), ideas_returned=len(ideas),
                     ideas_with_volume=len(rows), seed_sample=seeds[:5], sample=[r[0] for r in rows[:5]])
         if rows:
-            await (await _cache_for(pool, client, cache)).put_volumes(market, {kw: v for kw, _m, v in rows})
+            await (cache or await ResearchCache.for_client(pool, client, RESEARCH_STAGE)).put_volumes(
+                market, {kw: v for kw, _m, v in rows})
             stats["ideas_stored"] += len(rows)
     return stats
 
@@ -985,7 +902,7 @@ async def research_batch(
 ) -> dict:
     """Research `places` (selected, with their stale markets / SERP need and stored maps) in phases. `cache` = the
     run's research cache (AA-1120; built with the windows in force when None)."""
-    cache = await _cache_for(pool, client, cache)
+    cache = cache or await ResearchCache.for_client(pool, client, RESEARCH_STAGE)
     llm_stats = await _propose(places, pool, guard, llm_budget)
     volume_stats = await _buy_volumes(places, markets, client, pool, guard, queue, cache)
     serp_stats = await _buy_serps(places, client, pool, guard, queue, cache)
@@ -1026,5 +943,6 @@ async def research_batch(
 
 
 __all__ = ["research_batch", "estimate_plan", "estimate_cost", "select_within_usd", "clean_keyword", "load_maps",
-           "keywords_from_map", "reusable_keywords", "PROMPT_VERSION", "SERP_MARKET", "best_keyword", "estimate_deduped",
+           "keywords_from_map", "reusable_keywords", "PROMPT_VERSION", "SERP_MARKET", "best_keyword",
+           "estimate_deduped",
            "PlacePurchaseFailed"]
