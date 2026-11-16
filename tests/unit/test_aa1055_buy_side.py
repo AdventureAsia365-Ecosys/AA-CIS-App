@@ -547,6 +547,7 @@ async def test_job_runs_with_its_budget_narrowed_and_refuses_the_loop_strategy()
          patch.object(srj, "enqueue_paa_derive", AsyncMock(return_value=None)), \
          patch.object(srj, "dfs_balance", AsyncMock(return_value=40.0)), \
          patch.object(srj, "maybe_alert", AsyncMock()), \
+         patch.object(srj, "wait_for_lane", AsyncMock()), \
          patch("services.acp_contract.segment_research.run_segment_research", fake_run):
         await srj.run(ctx)
     # AA-1122: the job runs a copy of the DFS budget that also carries the research month cap (with_caps)
@@ -575,6 +576,7 @@ async def test_route_refuses_when_the_balance_is_below_the_capped_estimate():
          patch("services.acp_contract.segment_research.run_segment_research", AsyncMock(return_value=preview)), \
          patch.object(r, "load_budgets", AsyncMock(return_value=(budget, budget))), \
          patch.object(r, "dfs_balance", AsyncMock(return_value=2.0)), \
+         patch.object(r, "_refuse_busy_research_lane", AsyncMock()), \
          patch.object(r, "enqueue", AsyncMock()) as m_enqueue:
         with pytest.raises(HTTPException) as exc:
             await r.run_research(r.ResearchScope(markets=["US"]), request, "s", "a")

@@ -109,6 +109,7 @@ async def test_a_spent_month_stops_the_job_before_anything_is_read():
                           job=SimpleNamespace(created_by="system:auto", attempt=1))
     month = cg.SharedCap("month", 5.0, spent_at_start=5.0)
     with patch.object(srj, "shared_caps", AsyncMock(return_value=(month, None, 0.0))), \
+            patch.object(srj, "wait_for_lane", AsyncMock()), \
             patch.object(srj, "load_budgets", AsyncMock()) as budgets:
         with pytest.raises(cost_guard.BudgetExceeded) as e:
             await srj.run(ctx)

@@ -147,6 +147,16 @@ def _refuse_spent_month(month) -> None:
                                    "(setting cis.spend.research_max_usd_per_month)")
 
 
+async def _refuse_busy_research_lane(pool) -> None:
+    """409 while another paying research job (segment_research or a paid tour PAA backfill) is queued or running:
+    the month cap is exact only while paying research runs one job at a time across the research kinds."""
+    from shared.research_budget import active_paying_research_job, lane_busy_detail
+
+    other = await active_paying_research_job(pool)
+    if other is not None:
+        raise HTTPException(status_code=409, detail=lane_busy_detail(other))
+
+
 @router.post("/preview", summary="Scope + stale count + spend ceiling (no LLM/DFS spend)")
 async def preview_research(scope: ResearchScope, request: Request):
     from services.acp_contract.segment_research import run_segment_research
@@ -180,6 +190,7 @@ async def run_research(scope: ResearchScope, request: Request, x_admin_secret: s
     if active is not None:
         raise HTTPException(status_code=409,
                             detail=f"A segment research run is already {active['status']} (job {active['id']})")
+    await _refuse_busy_research_lane(pool)          # S282 review: a paid tour PAA backfill pays the same month
 
     dfs_budget, llm_budget = await load_budgets(pool)
     month = await _month_cap(pool)
@@ -330,6 +341,8 @@ async def tour_paa_run(scope: TourPaaScope, request: Request, x_admin_secret: st
     if active is not None:
         raise HTTPException(status_code=409, detail=f"a tour PAA backfill is already {active['status']} "
                                                     f"(job {active['id']})")
+    if scope.paid:
+        await _refuse_busy_research_lane(pool)      # S282 review: a segment research run pays the same month
     payload = {"paid": scope.paid, **({"tour_ids": scope.tour_ids} if scope.tour_ids else {})}
     job_id, _ = await enqueue(pool, PAA_KIND, payload, created_by=f"admin:{x_admin_user_id or 'unknown'}")
     logger.info("admin_tour_paa_enqueued", admin_user=x_admin_user_id, paid=scope.paid, job_id=job_id)

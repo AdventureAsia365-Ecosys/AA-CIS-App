@@ -11,10 +11,15 @@ charge after one adds to it; the Jev questions reserve their estimate through it
 The month figure is read ONCE at the start of a job attempt from the ledger, BY JOB (critic C1 of the S282 design:
 research rows carry the stages a3_search_demand / segment_research_batch / a3_research, never 'segment_research'):
 every shared.dfs_call_log and shared.llm_call_log row (Jev rows included) whose job_id is a job of a research kind
-(:data:`RESEARCH_JOB_KINDS`), created this UTC month. Research jobs run one at a time (concurrency 1), so "ledger at
-start + this attempt's own charges" holds for the run and does not depend on the fire-and-forget ledger writes landing
-in time (critic C3). An unreadable ledger raises: the caller refuses the run (fail closed), it never reads 0. A cap of
-0 means no spend at all, never "unlimited" (critic C9).
+(:data:`RESEARCH_JOB_KINDS`), created this UTC month. "Ledger at start + this attempt's own charges" holds only while
+ONE paying research job runs at a time, and the job runner's concurrency 1 is per kind, not across the research kinds
+(S282 review). So paying research is one lane over every research kind (:func:`active_paying_research_job`,
+:func:`other_paying_research_job`): the run endpoints refuse with 409 while another paying research job is queued or
+running, and a paying job that starts while another one runs goes back to the queue (Reschedule) before it reads the
+month. A job is marked running when it is claimed, before its handler starts, so two attempts can never both see the
+other as absent. It does not depend on the fire-and-forget ledger writes landing in time (critic C3). An unreadable
+ledger raises: the caller refuses the run (fail closed), it never reads 0. A cap of 0 means no spend at all, never
+"unlimited" (critic C9).
 """
 from __future__ import annotations
 
@@ -28,6 +33,23 @@ from shared.cost_guard import BudgetExceeded, RunBudget
 # The job kinds whose spend counts against the research month cap.
 RESEARCH_JOB_KINDS: tuple[str, ...] = ("segment_research", "tour_paa_backfill")
 MONTH_CAP_SETTING = "cis.spend.research_max_usd_per_month"
+
+# A research job that may pay: every segment_research job and a tour_paa_backfill whose payload asks for SERPs (a
+# store-only backfill reads the store, $0, and runs beside a research run: the research run enqueues it). Any `paid`
+# value other than false / null / 0 / "" counts as paying (the job reads it with bool()): over-counting only waits.
+_PAYING_SQL = """(kind = 'segment_research' OR (kind = 'tour_paa_backfill'
+                  AND coalesce(payload->'paid', 'false'::jsonb) NOT IN ('false'::jsonb, 'null'::jsonb, '0'::jsonb,
+                                                                        '""'::jsonb)))"""
+ACTIVE_PAYING_SQL = f"""
+    SELECT id::text AS id, kind, status FROM shared.job
+     WHERE status IN ('queued', 'running') AND {_PAYING_SQL}
+     ORDER BY created_at LIMIT 1
+"""
+OTHER_PAYING_RUNNING_SQL = f"""
+    SELECT id::text AS id, kind, status FROM shared.job
+     WHERE status = 'running' AND id <> $1::uuid AND {_PAYING_SQL}
+     ORDER BY created_at LIMIT 1
+"""
 
 _RESEARCH_MONTH_SPEND_SQL = """
     WITH jobs AS (SELECT id FROM shared.job WHERE kind = ANY($1::text[]))
@@ -119,6 +141,39 @@ async def research_month_spend(pool, now: Optional[datetime] = None) -> dict:
     return {"dfs_usd": round(dfs, 6), "llm_usd": round(llm, 6), "total_usd": round(dfs + llm, 6)}
 
 
+async def active_paying_research_job(pool) -> Optional[dict]:
+    """The oldest paying research job queued or running ({id, kind, status}), or None. Raises on a database error
+    (the endpoint then refuses: fail closed)."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(ACTIVE_PAYING_SQL)
+    return dict(row) if row else None
+
+
+async def other_paying_research_job(pool, job_id: str) -> Optional[dict]:
+    """Another paying research job that is running now ({id, kind, status}), or None. Asked by a paying job at the
+    start of its attempt, before it reads the month: when there is one, it waits (Reschedule). Raises on a database
+    error (the attempt fails and retries: fail closed)."""
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(OTHER_PAYING_RUNNING_SQL, str(job_id))
+    return dict(row) if row else None
+
+
+def lane_busy_detail(other: dict) -> str:
+    return f"another paying research job is {other['status']} ({other['kind']} job {other['id']})"
+
+
+async def wait_for_lane(pool, job_id: str) -> None:
+    """Called by a paying research job at the start of each attempt, before it reads the month: while another paying
+    research job runs, this job goes back to the queue (Reschedule: the attempt is not counted) and looks again after
+    the runner's longest reschedule delay. A database error propagates (the attempt fails: fail closed)."""
+    from shared.jobs.registry import RESCHEDULE_MAX_DELAY_SECONDS, Reschedule
+
+    other = await other_paying_research_job(pool, job_id)
+    if other is not None:
+        raise Reschedule(RESCHEDULE_MAX_DELAY_SECONDS, {"phase": "waiting_research_lane", "waiting_for": other},
+                         lane_busy_detail(other))
+
+
 async def job_spend(pool, job_id: str) -> float:
     """What the ledger holds for one job (every attempt so far): DFS + LLM + Jev. Raises on a database error."""
     async with pool.acquire() as conn:
@@ -137,5 +192,6 @@ async def load_research_month_cap(pool, now: Optional[datetime] = None) -> Share
     return SharedCap("month", research_month_cap_usd(), spent_at_start=spent["total_usd"], limit="per_month")
 
 
-__all__ = ["RESEARCH_JOB_KINDS", "SharedCap", "CappedRunBudget", "with_caps", "month_start", "research_month_spend",
+__all__ = ["RESEARCH_JOB_KINDS", "active_paying_research_job", "other_paying_research_job", "lane_busy_detail",
+           "wait_for_lane",            "SharedCap", "CappedRunBudget", "with_caps", "month_start", "research_month_spend",
            "job_spend", "research_month_cap_usd", "load_research_month_cap"]

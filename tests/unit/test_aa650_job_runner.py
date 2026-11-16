@@ -70,6 +70,7 @@ async def _run(ctx, *, result=None, balance=100.0, budgets=None, spend=(0.3, 0.0
     with patch.object(srj, "load_budgets", AsyncMock(return_value=(dfs, llm))), \
          patch.object(srj, "dfs_balance", AsyncMock(return_value=balance)), \
          patch.object(srj, "maybe_alert", AsyncMock()), \
+         patch.object(srj, "wait_for_lane", AsyncMock()), \
          patch("services.acp_contract.segment_research.run_segment_research", fake_research):
         return await srj.run(ctx)
 
@@ -146,6 +147,7 @@ async def test_run_enqueues_a_job_and_returns_its_id():
          patch("services.acp_contract.segment_research.run_segment_research", AsyncMock(return_value=preview)), \
          patch.object(r, "load_budgets", AsyncMock(return_value=(_budget("dfs"), _budget("bedrock")))), \
          patch.object(r, "dfs_balance", AsyncMock(return_value=50.0)), \
+         patch.object(r, "_refuse_busy_research_lane", AsyncMock()), \
          patch.object(r, "enqueue", AsyncMock(return_value=("job-1", True))) as m_enqueue:
         out = await r.run_research(scope, _request(), "secret", "admin-1")
     assert out["started"] is True and out["job_id"] == "job-1"

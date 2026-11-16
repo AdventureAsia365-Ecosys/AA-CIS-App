@@ -23,7 +23,9 @@ auto_refresh, created_by system:auto), the automatic run cap (cis.spend.research
 ledger holds for this job already, so a retry or a deploy release never starts a fresh per-run budget (critic C3). A
 manual run's DFS cap is narrowed by that job spend too. A month already spent is refused before anything is read
 (stopped_budget). An automatic payload with no or an unknown `scope` is refused (critic C8). A run that bought SERPs
-enqueues the free tour PAA derive from the store (tour_paa_backfill, paid=false), once per UTC day.
+enqueues the free tour PAA derive from the store (tour_paa_backfill, paid=false), once per UTC day. Paying research is
+one lane over the research kinds (S282 review): an attempt that starts while a paid tour PAA backfill runs goes back to
+the queue before it reads the month (shared.research_budget.wait_for_lane).
 """
 from __future__ import annotations
 
@@ -33,7 +35,7 @@ import structlog
 
 from shared.cost_guard import BudgetExceeded, load_run_budget, maybe_alert
 from shared.jobs.registry import JobContext, NonRetryable, enqueue, job_kind
-from shared.research_budget import with_caps
+from shared.research_budget import wait_for_lane, with_caps
 
 from shared import settings
 
@@ -185,6 +187,9 @@ async def run(ctx: JobContext) -> dict:
         raise NonRetryable(f"strategy {ctx.payload.get('strategy')!r} is not supported (only 'batch', AA-1055)")
 
     scope = check_scope(ctx.payload, getattr(ctx.job, "created_by", None))
+    # S282 review: one paying research job at a time across the research kinds (a paid tour PAA backfill is another
+    # kind with its own concurrency 1); the month read below is only exact while no other one runs.
+    await wait_for_lane(ctx.pool, ctx.job_id)
     month, run_cap, prior = await open_caps(ctx.pool, ctx.job_id, scope)
 
     # Budgets and balance are re-checked here, not only at enqueue: a retry can start much later.

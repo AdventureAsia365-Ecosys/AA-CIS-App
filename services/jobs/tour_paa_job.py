@@ -9,7 +9,9 @@ Caps of a paid run, one counter over its DataForSEO calls (shared.research_budge
 by the client before every post): the per-run cap ``cis.spend.tour_paa_backfill_max_usd_per_run`` minus what this job
 already spent (retries never start a fresh budget) and the research month cap ``cis.spend.research_max_usd_per_month``
 (this kind is a research kind: its spend counts there, RESEARCH_JOB_KINDS). A month already spent, an unreadable ledger
-or a per-run cap of 0 refuses the paid part before anything is bought; the store part still runs.
+or a per-run cap of 0 refuses the paid part before anything is bought; the store part still runs. A paid run that
+starts while another paying research job runs (segment_research, or another paid backfill) goes back to the queue
+before it reads the month (shared.research_budget.wait_for_lane): paying research is one lane over the research kinds.
 
 Payload: {"paid": bool, "tour_ids"?: [uuid, ...]}
 """
@@ -56,6 +58,11 @@ async def run(ctx: JobContext) -> dict:
         raise NonRetryable("tour_ids must be a list")
     client, budget, refused = None, None, None
     if paid:
+        # S282 review: one paying research job at a time across the research kinds (segment_research is another kind
+        # with its own concurrency 1); the month read in paid_budget is only exact while no other one runs.
+        from shared.research_budget import wait_for_lane
+
+        await wait_for_lane(ctx.pool, ctx.job_id)
         budget, refused = await paid_budget(ctx.pool, ctx.job_id)
         if budget is not None:
             client = DataForSEOClient(budget=budget, stage=tour_paa.STAGE)
