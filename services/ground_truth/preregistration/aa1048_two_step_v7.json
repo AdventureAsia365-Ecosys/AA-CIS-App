@@ -1,0 +1,55 @@
+{
+ "id": "aa1048-two-step-v7",
+ "issue": "AA-1048",
+ "registered_on": "2026-11-16",
+ "doc": "docs/calibration/aa1048-two-step-v7-preregistration.md",
+ "question": "Does the two-step claim instrument v7 (step 1 v7c looks each trip specific up as a fact, not as words, and writes the closest source wording with same fact or not before it sorts restatement / new claim; step 2 v7j writes a finding per listed specific and clears the sentence when the source gives every specific) drop the false positives of the R1 fired claims and keep the stored violations, on a fresh pool no instrument run has read?",
+ "follows": "aa1048-two-step-v6 (gated run c5983e03, no_go: false positives dropped 56 %, stored violations kept 100 %, step 2 cleared 0 % of the false positives it judged)",
+ "candidate": "gpt-6-luna-openai@openai-direct",
+ "votes": 3,
+ "stage": "adhoc_aa1048",
+ "role": "judge",
+ "prompt_versions": {
+  "classify": "aa1048-r1-v7c@0fb75e310375",
+  "judge": "aa1048-r1-v7j@5a91a98e9136"
+ },
+ "shaped_on": [
+  "3018008d",
+  "33835b87",
+  "2977dd78",
+  "9b0d46f8",
+  "c5983e03"
+ ],
+ "shaped_on_pools": [
+  "487bf4847b6136fe",
+  "716df551d458fee1"
+ ],
+ "shaped_on_pools_note": "the S279 pool (286 held-out R1-fired claims) and the S281 fresh pool (104 claims; runs 9b0d46f8 and c5983e03 read it, v7 was written from c5983e03), sha256 first 16 hex as fresh_pool writes excluded_pools; a live run needs a fresh manifest that excludes both",
+ "pool": "given at run time (--fresh): a NEW fresh pool built by fresh_pool.py from R1-fired claims on pieces no instrument run has read; its manifest must match the pool file, list every shaping run above in excluded_runs and both shaping pools in excluded_pools, and share no piece with them (two_step fresh_check; the live gate refuses otherwise). Built in S282 from never-read claims on 20 pieces; the registration names no digest, the run report records it",
+ "held_out": null,
+ "held_out_note": "no claim-level hold-out: the whole S281 fresh pool is a shaping pool and the new pool excludes it at piece level, so neither side of the run was read by anyone shaping v7",
+ "subset": "instrument_eval.select: half false positives (paraphrase, verbatim, background in proportion), half stored violations in proportion per writer, claim-hash order",
+ "verdict_rule": "a claim is cleared when the step-1 majority is restatement; otherwise its verdict is the step-2 majority (unsupported = flagged, none = unverified); go needs every bar below",
+ "bars": {
+  "fp_dropped_min_pct": 60.0,
+  "tp_kept_min_pct": 90.0,
+  "route_tp_min_pct": 95.0,
+  "judge_tp_kept_min_pct": 95.0,
+  "judge_fp_dropped_min_pct": 40.0
+ },
+ "bars_settings": {
+  "fp_dropped_min_pct": "cis.quality.instrument_eval_fp_drop_min_pct",
+  "tp_kept_min_pct": "cis.quality.instrument_eval_tp_keep_min_pct",
+  "route_tp_min_pct": "cis.quality.claim_two_step_route_tp_min_pct",
+  "judge_tp_kept_min_pct": "cis.quality.claim_two_step_judge_tp_keep_min_pct",
+  "judge_fp_dropped_min_pct": "cis.quality.claim_two_step_judge_fp_drop_min_pct"
+ },
+ "hypotheses": {
+  "H1": "step 1 v7c still sends >= 95 % of the stored violations on: a source place, stop or time with a new quality, mood, light, measure, group or suitability added is not the same fact",
+  "H2": "step 1 clears most paraphrase false positives that only restate a source fact in other words (synonym, other name, units, a quality in other words, a place-background feature), because it writes the closest source wording before it decides",
+  "H3": "step 2 v7j clears >= 40 % of the false positives it receives, because a listed specific the source gives in other words is same_fact, not not_given",
+  "H4": "step 2 v7j still flags >= 95 % of the stored violations it judges: the promise list defines not_given"
+ },
+ "stop_rule": "one gated run; a no_go is read at $0 with the stored reasons and is never re-run on the same pool with a changed prompt",
+ "stop_rule_enforced": "two_step run --limit refuses when shared.llm_call_log (stage adhoc_aa1048) holds a gated run of this id, or of the same step-1 prompt on the same pool, or cannot be read; every ledger row of a run carries prereg, run_kind and pool; v5 and v6 are closed step sets (two_step STEP_SETS) and refuse every live run"
+}

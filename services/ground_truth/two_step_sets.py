@@ -42,9 +42,13 @@ STEP_SETS: dict[str, StepSet] = {
                   closed="no_go in its one gated run 9b0d46f8 (S282); the stop rule allows one gated run per "
                          "pre-registration, so the next run is the v6 step set"),
     "v6": StepSet("v6", {"classify": "v6c", "judge": "v6j"}, _PREREG_DIR / "aa1048_two_step_v6.json",
-                  "7fc51de0ba7acd5d9d2b52e23420fa79d17a9b372f9746d2a2b2f7950ab348be"),
+                  "7fc51de0ba7acd5d9d2b52e23420fa79d17a9b372f9746d2a2b2f7950ab348be",
+                  closed="no_go in its one gated run c5983e03 (S282: false positives dropped 56 %, bar 60 %); the stop "
+                         "rule allows one gated run per pre-registration, so the next run is the v7 step set"),
+    "v7": StepSet("v7", {"classify": "v7c", "judge": "v7j"}, _PREREG_DIR / "aa1048_two_step_v7.json",
+                  "9806120bf6f396df9d41c2d604866965fc3b9252080fa61deb44dfd2dc7da953"),
 }
-DEFAULT_STEP_SET = "v6"
+DEFAULT_STEP_SET = "v7"
 
 
 def step_set(steps: str) -> StepSet:

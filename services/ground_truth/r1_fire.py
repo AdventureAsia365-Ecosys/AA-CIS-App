@@ -18,8 +18,9 @@ database first.
 
 Out of sample (refused in every mode). The eligible manifest (fresh_pool eligible) must be the manifest of this file
 (sha256), name every run the two-step prompts were shaped on as excluded, keep every pool they were shaped on out
-(listed in excluded_pools, or a train-split manifest whose every claim is train), and no claim may sit on an excluded
-piece or off the manifest's split.
+(listed in excluded_pools, or a train-split manifest whose every claim is train; a shaping pool of the train split,
+prompts.TRAIN_SPLIT_POOLS, must be listed by name), and no claim may sit on an excluded piece or off the manifest's
+split.
 
 Sample. At most N claims (default and ceiling: the setting cis.quality.claim_fire_sample_max, CIS 426), spread over the
 writers in proportion and ordered by sha256(salt + claim hash) (fresh_pool.pick), with the salt "aa1048-fire:" + the
@@ -75,6 +76,7 @@ from typing import Any, Callable, Optional
 from services.ground_truth import fresh_pool as fp
 from services.ground_truth import instrument_eval as ev
 from services.ground_truth import panel as pn
+from services.ground_truth import prompts as pr
 from services.ground_truth import r1
 from services.ground_truth import two_step as ts
 from shared import settings
@@ -163,7 +165,8 @@ def out_of_sample(manifest: dict, lines: list[dict]) -> dict:
     split = manifest.get("split")
     splits = Counter(r1.split_of_line(e) for e in lines)
     pools_missing = [p for p in shaped_pools if p.lower() not in pools]
-    train_only = split == "train" and set(splits) == {"train"}
+    train_only = (split == "train" and set(splits) == {"train"}
+                  and not any(p.lower() in pr.TRAIN_SPLIT_POOLS for p in pools_missing))
     return {"shaped_on": shaped, "excluded_runs": sorted(runs), "missing": [r for r in shaped if r not in runs],
             "excluded_pieces": len(pieces),
             "pieces_on_excluded": len({fp.piece(e)[:16] for e in lines if fp.piece(e)[:16] in pieces}),
