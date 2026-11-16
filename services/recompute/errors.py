@@ -7,6 +7,9 @@ row of one cause:
 - ``recompute_bad_payload``  — the payload cannot run (raised as the runner's NonRetryable: no retry).
 - ``recompute_lock_timeout`` — another recompute held the platform recompute lock for longer than the kind's expected
   time (1,800 s): a stuck run. Retryable.
+- ``recompute_lock_busy``    — S282: the platform lock is taken right now. Not a failure either: the job is rescheduled
+  (registry.Reschedule, the attempt not counted) and looks again after the release delay; only a holder that keeps
+  the lock past the kind's expected time across those looks ends the attempt with ``recompute_lock_timeout``.
 - ``recompute_stopped``      — the job was cancelled (deploy release, admin cancel, lost lease) and its thread stopped
   at the next stage boundary. The handler is released, not failed, so this code shows in the logs only.
 - ``recompute_stage_failed`` — a stage raised; the message names the stage and the exception class. Retryable.
@@ -22,6 +25,7 @@ LOCK_TIMEOUT = "recompute_lock_timeout"
 STOPPED = "recompute_stopped"
 STAGE_FAILED = "recompute_stage_failed"
 ERROR_CODES = (BAD_PAYLOAD, LOCK_TIMEOUT, STOPPED, STAGE_FAILED)
+LOCK_BUSY = "recompute_lock_busy"    # S282: a reschedule reason, not a failure (not in ERROR_CODES)
 JEV_CAP_HELD = "recompute_jev_cap"   # AA-1083: a held run (stopped_budget), not a failure
 
 
@@ -45,6 +49,12 @@ class RecomputeStopped(RecomputeError):
 
 class RecomputeLockTimeout(RecomputeError):
     code = LOCK_TIMEOUT
+
+
+class RecomputeLockBusy(RecomputeError):
+    """S282: the lock was taken at the first try. The job turns it into a Reschedule outside the run's thread."""
+
+    code = LOCK_BUSY
 
 
 class RecomputeStageFailed(RecomputeError):

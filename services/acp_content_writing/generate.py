@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import re
 
+import structlog
 from json_repair import repair_json
 
 from services.acp_angle_gate.brand_audience import BrandAudience
@@ -63,6 +64,27 @@ def _generate_full(request: LLMRequest, channel: str, *, attempt: int, tenant_id
     return reply.resp, reply.cost_usd
 
 
+logger = structlog.get_logger()
+
+
+def _salvage_list(data, want, *, parser: str, raw: str):
+    """json-repair turns a reply holding more than one top-level JSON value ("object + a second object / a stray
+    marker with braces") into a LIST. Take the first dict in it that `want` accepts, with a warning; anything else is
+    returned unchanged, so the caller's own shape check still decides (S282, Sentry AA-CIS-API-18)."""
+    if not isinstance(data, list):
+        return data
+    for item in data:
+        if isinstance(item, dict) and want(item):
+            logger.warning("t9_reply_json_salvaged", parser=parser, repaired_type="list", items=len(data),
+                           raw_len=len(raw or ""))
+            return item
+    return data
+
+
+def _has_body(d: dict) -> bool:
+    return isinstance(d.get("body"), str) and bool(d["body"].strip())
+
+
 class SeoEnvelopeError(Exception):
     """AA-514 — the blog channel's JSON envelope ({"seo_title","meta_description","slug","body"})
     couldn't be parsed even after json-repair salvage. Raised rather than silently falling back
@@ -84,9 +106,11 @@ def _parse_blog_envelope(raw: str) -> tuple[str, dict, str | None]:
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
-        data = repair_json(text, return_objects=True)
-    if not isinstance(data, dict) or not isinstance(data.get("body"), str) or not data["body"].strip():
-        raise SeoEnvelopeError(f"Could not parse blog JSON envelope (missing/empty 'body'): {raw[:300]!r}")
+        data = _salvage_list(repair_json(text, return_objects=True), _has_body, parser="blog_envelope", raw=raw)
+    if not isinstance(data, dict) or not _has_body(data):
+        reason = f"repaired_type={type(data).__name__}" if not isinstance(data, dict) else "no_body"
+        raise SeoEnvelopeError(f"Could not parse blog JSON envelope ({reason}, {len(raw or '')} chars): "
+                               f"{raw[:300]!r} ... {raw[-300:]!r}")
     seo_meta = {
         key: data.get(key) if isinstance(data.get(key), str) else None
         for key in ("seo_title", "meta_description", "slug")
@@ -366,7 +390,8 @@ def repair_sentences_detailed(
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
-        data = repair_json(text, return_objects=True)
+        data = _salvage_list(repair_json(text, return_objects=True), lambda d: "replacements" in d,
+                             parser="sentence_repair", raw=text)
     reps = data.get("replacements") if isinstance(data, dict) else None
     if not isinstance(reps, list) or len(reps) != len(sentences) or not all(isinstance(r, str) for r in reps):
         raise SentenceRepairError(f"bad sentence-repair reply: {resp.content[:200]!r}")
@@ -487,7 +512,8 @@ def extend_sections(
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
-        data = repair_json(text, return_objects=True)
+        data = _salvage_list(repair_json(text, return_objects=True), lambda d: "additions" in d,
+                             parser="extend_repair", raw=text)
     adds = data.get("additions") if isinstance(data, dict) else None
     if not isinstance(adds, list) or len(adds) != len(sections) or not all(isinstance(a, str) for a in adds):
         raise ExtendRepairError(f"bad extend reply: {str(resp.content)[:200]!r}")
@@ -587,7 +613,8 @@ def fit_seo_fields(
         try:
             data = json.loads(text)
         except json.JSONDecodeError:
-            data = repair_json(text, return_objects=True)
+            data = _salvage_list(repair_json(text, return_objects=True),
+                                 lambda d: "seo_title" in d or "meta_description" in d, parser="seo_fit", raw=text)
     if not isinstance(data, dict):
         data = {}
     out = {}
@@ -682,7 +709,7 @@ def write_faq(
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
-        data = repair_json(text, return_objects=True)
+        data = _salvage_list(repair_json(text, return_objects=True), lambda d: "faq" in d, parser="faq", raw=text)
     rows = data.get("faq") if isinstance(data, dict) else None
     out: list[tuple[str, str]] = []
     for row in rows if isinstance(rows, list) else []:

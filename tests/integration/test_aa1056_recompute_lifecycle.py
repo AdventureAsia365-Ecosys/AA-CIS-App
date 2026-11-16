@@ -37,7 +37,7 @@ from services.export import handler  # noqa: E402
 from services.jobs import recompute_job as rc  # noqa: E402
 from services.recompute import lifecycle  # noqa: E402
 from shared.jobs import queue  # noqa: E402
-from shared.jobs.registry import JobContext  # noqa: E402
+from shared.jobs.registry import JobContext, Reschedule  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 MASTER = "00000000-0000-0000-0000-000000000001"
@@ -260,7 +260,11 @@ async def test_two_recompute_jobs_never_run_at_the_same_time(monkeypatch):
 
     with patch("services.export.handler.recompute_rankings_and_routes", AsyncMock(side_effect=body)), \
             patch("services.export.handler.open_job_pool", AsyncMock(side_effect=lambda: _pool())):
-        await asyncio.wait_for(asyncio.gather(rc.run(_ctx("job-a")), rc.run(_ctx("job-b"))), 20)
+        out = await asyncio.wait_for(asyncio.gather(rc.run(_ctx("job-a")), rc.run(_ctx("job-b")),
+                                                    return_exceptions=True), 20)
+        # S282: the run that finds the lock taken is rescheduled (registry.Reschedule), not left waiting in process
+        assert sum(isinstance(o, Reschedule) for o in out) == 1, out
+        await asyncio.wait_for(rc.run(_ctx("job-b")), 20)     # its next claim runs once the lock is free
     assert overlap == [False, False]
     probe = await asyncpg.connect(DSN)
     try:

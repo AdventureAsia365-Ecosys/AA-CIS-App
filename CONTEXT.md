@@ -1604,7 +1604,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     (`shared/jobs/registry.WORKER_STOP_TIMEOUT_SECONDS`, also a3_atomize's), stops at the next stage boundary once
     its handler is cancelled (`run_stages(..., should_stop=, on_stage=)`), and fails with fixed codes
     (`services/recompute/errors.py`: `recompute_bad_payload`, `recompute_lock_timeout`, `recompute_stopped`,
-    `recompute_stage_failed` with the stage). `services/recompute/lifecycle.py` measures each tour on/off event
+    `recompute_stage_failed` with the stage). A job that finds the lock taken does not wait in process (S282): it
+    is rescheduled (`registry.Reschedule`, reason `recompute_lock_busy`, the attempt not counted) after the release
+    delay, and only an attempt that keeps finding it busy for the kind's expected time ends `recompute_lock_timeout`. `services/recompute/lifecycle.py` measures each tour on/off event
     (`retired` / `paused` / `restored`) to the first recompute that STARTED after it and finished: the api ops sampler
     reads it every tick (ops check `recompute_lifecycle_lag`: an event waiting over 30 min), sweeps every 2 h (one
     platform recompute through `enqueue_recompute` for the events nothing covered, `created_by`
@@ -3313,8 +3315,10 @@ Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`
   `publish_log_listed` with `used_tenant_pool=true`, then drop `publish_log_listed` from
   `tenant_pool_known_rollback_events` in AA-CIS-Infra `accounts/aa365/tenant_pool_alarms.tf` and this note.
   **Flags fail closed (S241 D-12):** only an explicit OFF value puts a route back on the main pool;
-  `true`, a missing key, any other value, a Redis error or a read slower than 0.5 s all mean the tenant
-  pool (`aa817_tenant_flag_read_failed` at ERROR on a failed read, `aa817_tenant_flag_unrecognized` at
+  `true`, a missing key, any other value, a Redis error or a read slower than `FLAG_READ_TIMEOUT_S` (above the
+  Redis client's own worst case, S282) all mean the tenant pool (`aa817_tenant_flag_read_failed` at ERROR on a
+  failed read, at WARNING on a timeout since S282; the api warms its Redis client with one PING at start-up;
+  `aa817_tenant_flag_unrecognized` at
   ERROR on a value that is neither ON nor OFF). The decision is read once per request (memoised on
   `request.state`), so a multi-block route (unpublish, disconnect) never switches pools mid-request.
   Rollback = `SET <key> false`, no deploy. Accepted OFF values (after trim + lower-case): `false` (what
@@ -3709,7 +3713,14 @@ Masters (`v_active_tour_atoms`) minus the ranking exclusions; a place's keyword 
 and kept in `acp_contract.place_keyword` (with Jev's verdict and the prompt version); volume is bought
 per market and logged per place in `segment_research_log` tier `volume`; each place gets ONE SERP
 (US / English, tier `serp`), whose PAA, related searches and domains sit on the keyword's US row
-(`paa_retrieved_on`, `serp_location`). Both tiers are fresh for 365 days. A run is bounded by a USD
+(`paa_retrieved_on`, `serp_location`). Both tiers are fresh for 365 days (AA-1120: the settings
+`cis.seo.research_volume_fresh_days` / `cis.seo.research_serp_fresh_days`). AA-1120: every read and write of the store
+goes through ONE research cache (`services/seo_intelligence/research_cache.py`), the Standard queue included (it takes
+the cache at construction, deduplicates its asks, answers from the store first, collects free a task paid for and never
+collected within `cis.seo.dfs_queue_recover_days` — the post row's meta `posted` lists each task id with its keywords —
+and writes every answer back); one SERP per distinct keyword; hits are 0 USD `cache_hit` rows under the endpoint label
+the run buys through; a guard test fails on any paid call site not listed in `research_cache.DFS_CALL_SITES`; the
+preview shows `estimate.deduped` (`research_estimate.py`) beside the upper bound. A run is bounded by a USD
 cap (not a place count, at most 50 USD) that is also its hard DFS spend limit, checked against the
 DFS balance; the per-place ReAct loop strategy is retired. A run enqueues one debounced platform
 recompute for the places it changed (more than 300 Segments outside the night window wait for the

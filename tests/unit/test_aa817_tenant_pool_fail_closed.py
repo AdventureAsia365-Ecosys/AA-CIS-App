@@ -164,6 +164,7 @@ async def test_redis_timeout_uses_tenant_pool(monkeypatch):
     request.app.state.pool.acquire.assert_not_called()
     failed = [e for e in logs if e["event"] == "aa817_tenant_flag_read_failed"]
     assert len(failed) == 1 and failed[0]["reason"] == "timeout"
+    assert failed[0]["log_level"] == "warning"     # S282: the fail-closed outcome is right; same event name
 
 
 @pytest.mark.asyncio

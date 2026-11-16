@@ -81,6 +81,8 @@ from uuid import UUID
 
 import asyncpg
 import structlog
+
+from api.core.redis_client import REDIS_RETRIES, REDIS_SOCKET_CONNECT_TIMEOUT_S, REDIS_SOCKET_TIMEOUT_S
 from fastapi import HTTPException, Request
 
 logger = structlog.get_logger()
@@ -157,7 +159,12 @@ FLAG_ON_VALUE = "true"
 # Bound on the flag read. On timeout the route stays on the tenant pool (fail closed), like any other
 # read failure. The Redis client itself is also bounded (api/core/redis_client.py socket timeouts), which
 # is what keeps the rate-limit middleware from hanging on a blackholed Redis before the route runs.
-FLAG_READ_TIMEOUT_S = 0.5
+# S282 (Sentry AA-CIS-API-1B): the outer bound used to equal one socket timeout (0.5 s), so it cancelled a slow first
+# read on a fresh task at the moment the client's own designed retry started. It is now above the client's worst case
+# (a connect plus a read, once more on its one retry), so the client's bounds decide and this is only a safety net.
+_FLAG_READ_MARGIN_S = 0.2  # technical-constant: scheduling slack above the client's own worst case
+FLAG_READ_TIMEOUT_S = ((REDIS_RETRIES + 1) * (REDIS_SOCKET_CONNECT_TIMEOUT_S + REDIS_SOCKET_TIMEOUT_S)
+                       + _FLAG_READ_MARGIN_S)
 
 # Durable per-route rollback (survives a Redis restart, which drops every key = every route back ON).
 # Comma-separated flag keys; read once at import (process start). A listed key is OFF without a Redis read.
@@ -274,7 +281,8 @@ async def _flag_enabled(request: Request, flag_key: str) -> bool:
     rollback ("false") read in block 1 followed by a Redis blip in block 3, after the irreversible remote
     delete -- and pays at most one Redis round-trip and one ERROR line.
 
-    A failed read logs `aa817_tenant_flag_read_failed` at ERROR (`fallback="tenant_pool"`, `reason=`), and
+    A failed read logs `aa817_tenant_flag_read_failed` at ERROR (`fallback="tenant_pool"`, `reason=`; a timeout at
+    WARNING since S282), and
     an unrecognised value logs `aa817_tenant_flag_unrecognized` at ERROR. The evidence that a route runs on
     the tenant pool is still the per-request `used_tenant_pool=True` line, never the flag value."""
     if flag_key in _FORCE_ADMIN_FLAGS:
@@ -308,8 +316,11 @@ async def _read_flag(request: Request, flag_key: str) -> bool:
     try:
         val = await asyncio.wait_for(redis.get(flag_key), timeout=FLAG_READ_TIMEOUT_S)
     except asyncio.TimeoutError as e:
-        logger.error("aa817_tenant_flag_read_failed", flag_key=flag_key, fallback="tenant_pool",
-                     reason="timeout", error=repr(e))
+        # S282: a slow read already ends on the fail-closed decision (tenant pool), the same one a read of an ON flag
+        # gives: a warning, not an error event. The event name is unchanged, so the ops check and the CloudWatch alarm
+        # on `aa817_tenant_flag_read_failed` still count it; a Redis error or a missing client stays at ERROR.
+        logger.warning("aa817_tenant_flag_read_failed", flag_key=flag_key, fallback="tenant_pool",
+                       reason="timeout", error=repr(e))
         return True
     except Exception as e:
         logger.error("aa817_tenant_flag_read_failed", flag_key=flag_key, fallback="tenant_pool",

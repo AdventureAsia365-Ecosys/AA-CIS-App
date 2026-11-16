@@ -37,7 +37,7 @@ DOC = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
 # appended to the TripPlanner catalog view; 1.7 AA-1093: the event account.erasure_requested; 1.6 added is_synthetic
 # to the catalog view only).
 # Update the root file first, copy it here byte for byte, then set this to `sha256sum` of the root file.
-ROOT_CONTRACT_SHA256 = "af34eeb0040797918c76f81870ff646ec8972fd386a881a6bd5a3f470a4a2a2b"
+ROOT_CONTRACT_SHA256 = "f953d64851e1c0ed4767a995f5d9d854edf89801525900aa35e3daa561a341dd"
 
 # Fixed UUIDs (AA-993: parametrize IDs must not change between pytest-xdist workers).
 TENANT = "1028a000-0000-4000-8000-000000000001"

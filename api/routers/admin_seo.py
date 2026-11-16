@@ -14,7 +14,8 @@ Data sources, merged (the main reason the old tab looked poor):
   - acp_contract.search_demand       — researched keywords + PAA + volume per market (US/UK/AU/DE/FR/NL).
   - silver_aa_internal.seo_context   — S1 per-tour keyword ideas (`:ideas_v3`).
   - gold_aa_internal.published_tours — seo_keywords_used + master coverage (join raw_tours for country).
-  - acp_contract.segment_research_log — research freshness of the volume tier (FRESH_FOR = 365 days, AA-1055; the
+  - acp_contract.segment_research_log — research freshness of the volume tier (setting
+                                        cis.seo.research_volume_fresh_days, 365 days, AA-1055 / AA-1120; the
                                         'serp' tier rows are left out of these counts).
 
 NOTE: search_demand carries only `search_volume` — there is no CPC / competition data anywhere in
@@ -37,8 +38,14 @@ router = APIRouter(prefix="/admin/seo-intelligence", tags=["admin-seo"],
                    dependencies=[Depends(staff_policy)])
 
 _AA_INTERNAL = "00000000-0000-0000-0000-000000000001"
-# The research cache's own freshness horizon (services/acp_contract/segment_research.py FRESH_FOR).
-_FRESH_DAYS = 365  # AA-1055 (was 182)
+
+
+def _fresh_days() -> int:
+    """The research cache's own freshness horizon in force (AA-1120: setting cis.seo.research_volume_fresh_days,
+    services/seo_intelligence/research_cache.py; was the literal 365)."""
+    from services.seo_intelligence.research_cache import volume_fresh_for
+    return volume_fresh_for().days
+
 
 # ── market codes (seed_builder.DFS_LOCATION_MAP — the 6 targeted buyer markets) ─────────────
 _MARKETS = ["US", "UK", "AU", "DE", "FR", "NL"]
@@ -191,7 +198,7 @@ async def get_seo_intelligence(
         with_vol = await conn.fetchval(_WITH_VOLUME_SQL, _AA_INTERNAL)
         demand = await conn.fetch(_DEMAND_BY_MARKET_SQL)
         paa_total = await conn.fetchval(_PAA_COUNT_SQL)
-        fresh = await conn.fetchrow(_FRESHNESS_SQL, _FRESH_DAYS)
+        fresh = await conn.fetchrow(_FRESHNESS_SQL, _fresh_days())
         keywords = await conn.fetch(_KEYWORDS_SQL, _AA_INTERNAL)
         paa_rows = await conn.fetch(_PAA_SQL)
         gaps = await conn.fetch(_GAPS_SQL, _AA_INTERNAL)
@@ -222,7 +229,7 @@ async def get_seo_intelligence(
                 "places_expired": fresh["places_expired"] or 0,
                 "median_age_days": (round(float(fresh["median_age_days"]), 1)
                                     if fresh["median_age_days"] is not None else None),
-                "fresh_days": _FRESH_DAYS,
+                "fresh_days": _fresh_days(),
                 "last_researched": fresh["last_researched"].isoformat() if fresh["last_researched"] else None,
             },
         },

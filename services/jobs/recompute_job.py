@@ -54,11 +54,14 @@ import structlog
 
 from services.recompute import jev_scope
 from services.recompute.errors import (
-    BAD_PAYLOAD, RecomputeError, RecomputeLockTimeout, RecomputeStageFailed, RecomputeStopped,
+    BAD_PAYLOAD, LOCK_BUSY, RecomputeError, RecomputeLockBusy, RecomputeLockTimeout, RecomputeStageFailed,
+    RecomputeStopped,
 )
 from shared.cost_guard import BudgetExceeded
 from shared.jobs import queue
-from shared.jobs.registry import WORKER_STOP_TIMEOUT_SECONDS, JobContext, NonRetryable, enqueue, job_kind
+from shared.jobs.registry import (
+    WORKER_STOP_TIMEOUT_SECONDS, JobContext, NonRetryable, Reschedule, enqueue, job_kind,
+)
 
 logger = structlog.get_logger()
 
@@ -71,14 +74,20 @@ LOCK_POLL_SECONDS = 2.0
 EXPECTED_SECONDS = 1800
 LOCK_MAX_WAIT_SECONDS = EXPECTED_SECONDS   # an older run holding it longer than its expected time is stuck
 RELEASE_DELAY_SECONDS = WORKER_STOP_TIMEOUT_SECONDS
+# S282 (Sentry AA-CIS-API-19): the job does not wait in process for a busy lock (that held a worker slot and the one
+# running recompute for up to LOCK_MAX_WAIT_SECONDS, then failed a holder that was still working). It takes the lock at
+# the first try or is rescheduled RELEASE_DELAY_SECONDS later (the attempt not counted); LOCK_MAX_WAIT_SECONDS now
+# bounds the time one attempt keeps finding the lock busy across those reschedules.
 
 
 @asynccontextmanager
 async def recompute_lock(should_stop: Optional[Callable[[], bool]] = None, *,
-                         poll_seconds: Optional[float] = None, max_wait_seconds: Optional[float] = None):
+                         poll_seconds: Optional[float] = None, max_wait_seconds: Optional[float] = None,
+                         timeout_error: type[RecomputeError] = RecomputeLockTimeout):
     """Hold the platform recompute lock for the body (services/export/handler.job_session_lock). A waiting run that is
     cancelled itself stops waiting (RecomputeStopped); one that waits longer than LOCK_MAX_WAIT_SECONDS gives up
-    (RecomputeLockTimeout, retryable)."""
+    (`timeout_error`, default RecomputeLockTimeout, retryable). The job passes max_wait_seconds=0 and
+    RecomputeLockBusy: one try, no wait (S282)."""
     from services.export.handler import job_session_lock
 
     def _check_stop() -> None:
@@ -90,7 +99,7 @@ async def recompute_lock(should_stop: Optional[Callable[[], bool]] = None, *,
             LOCK_CLASS, LOCK_KEY, check_stop=_check_stop,
             poll_seconds=LOCK_POLL_SECONDS if poll_seconds is None else poll_seconds,
             max_wait_seconds=LOCK_MAX_WAIT_SECONDS if max_wait_seconds is None else max_wait_seconds,
-            timeout_error=RecomputeLockTimeout):
+            timeout_error=timeout_error):
         yield
 
 
@@ -172,7 +181,38 @@ async def enqueue_recompute(pool, *, scope: str, reason: str, tour_id: Optional[
     return job_id, created
 
 
-# Platform-wide recompute ~1-5 min (6 markets + route detection + embedding pre-pass).
+def lock_busy_outcome(ctx: JobContext, *, now: Optional[datetime] = None) -> Exception:
+    """S282 — what a busy platform lock ends this attempt with: a Reschedule (RELEASE_DELAY_SECONDS later, the attempt
+    not counted, `progress.lock_busy` = {attempt, since}) while this attempt has found the lock busy for less than
+    LOCK_MAX_WAIT_SECONDS, else a RecomputeLockTimeout (the holder looks stuck; retryable, so the next attempt gets
+    its own window, like the in-process wait before)."""
+    now = now or datetime.now(timezone.utc)
+    seen = (ctx.job.progress or {}).get("lock_busy") or {}
+    since = now
+    if isinstance(seen, dict) and seen.get("attempt") == ctx.job.attempt and seen.get("since"):
+        try:
+            since = datetime.fromisoformat(str(seen["since"]))
+        except ValueError:
+            since = now
+    waited = max(0.0, (now - since).total_seconds())
+    if waited >= LOCK_MAX_WAIT_SECONDS:
+        logger.warning("recompute_lock_stuck", job_id=ctx.job_id, attempt=ctx.job.attempt, busy_seconds=int(waited))
+        return RecomputeLockTimeout(f"another run held the platform recompute lock for at least {int(waited)} s "
+                                    "(this attempt was rescheduled meanwhile)")
+    logger.info("recompute_lock_busy", job_id=ctx.job_id, attempt=ctx.job.attempt, busy_seconds=int(waited),
+                delay_seconds=RELEASE_DELAY_SECONDS)
+    return Reschedule(RELEASE_DELAY_SECONDS, reason=LOCK_BUSY,
+                      progress={"phase": "lock_busy",
+                                "lock_busy": {"attempt": ctx.job.attempt, "since": since.isoformat()}})
+
+
+def settle_recompute_error(ctx: JobContext, exc: RecomputeError) -> Exception:
+    """The exception `run` ends with for a RecomputeError out of the thread: lock_busy_outcome for a busy lock, else
+    the error itself (S282)."""
+    return lock_busy_outcome(ctx) if isinstance(exc, RecomputeLockBusy) else exc
+
+
+# A platform-wide recompute takes about 16-52 min on Dev (S281: 6 markets + route detection + embedding pre-pass).
 @job_kind(KIND, concurrency=1, max_attempts=2, expected_seconds=EXPECTED_SECONDS,
           release_delay_seconds=RELEASE_DELAY_SECONDS)
 async def run(ctx: JobContext) -> dict:
@@ -218,7 +258,7 @@ async def run(ctx: JobContext) -> dict:
 
         async def _body():
             # AA-1056: the lock first (a waiting run holds no pool), for the whole run.
-            async with recompute_lock(stop.is_set):
+            async with recompute_lock(stop.is_set, max_wait_seconds=0, timeout_error=RecomputeLockBusy):
                 # S219: a real pool, not one shared connection — concurrent decide() calls collided.
                 own_pool = await open_job_pool()
                 try:
@@ -249,8 +289,10 @@ async def run(ctx: JobContext) -> dict:
         stop.set()
         logger.warning("recompute_thread_stop_requested", job_id=ctx.job_id, scope=scope, stage=stage["name"])
         raise
-    except RecomputeError:
-        raise
+    except RecomputeError as e:
+        # S282: a busy lock becomes its Reschedule / timeout here, outside the thread (a Reschedule raised inside it
+        # would be wrapped as a stage failure); every other recompute error goes up unchanged.
+        raise settle_recompute_error(ctx, e)
     except Exception as e:
         logger.warning("recompute_stage_failed", job_id=ctx.job_id, scope=scope, stage=stage["name"],
                        error=f"{type(e).__name__}: {str(e)[:300]}")

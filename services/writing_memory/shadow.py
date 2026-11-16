@@ -61,6 +61,9 @@ from services.writing_memory import config as cfg
 from services.writing_memory import eval_checks as ec
 from services.writing_memory import insertion
 from shared import settings
+from shared.repository.jsonb_sql import json_array  # S282: unnest gate_ledger only as an array
+
+_LEDGER = json_array("cp.gate_ledger")
 
 logger = structlog.get_logger()
 
@@ -146,7 +149,7 @@ _GOLDEN_IDS_SQL = """
       JOIN shared.eval_golden_set s ON s.set_id = i.set_id AND s.status = 'active'
 """
 
-_T9_SQL = """
+_T9_SQL = f"""
     SELECT cp.piece_id::text AS input_id, cp.tenant_id::text AS tenant_id, r.atom_id, cp.writer_input,
            cp.writer_input->>'channel' AS channel
       FROM acp_shared.content_piece cp
@@ -160,7 +163,7 @@ _T9_SQL = """
        AND ($5::uuid IS NULL OR cp.tenant_id <> $5::uuid)
        AND NOT (cp.piece_id::text = ANY($6::text[]))
        AND (cardinality($7::text[]) = 0 OR EXISTS (
-             SELECT 1 FROM jsonb_array_elements(cp.gate_ledger) g
+             SELECT 1 FROM jsonb_array_elements({_LEDGER}) g
               WHERE g->>'gate' = ANY($7::text[]) AND coalesce((g->>'passed')::boolean, true) = false))
      ORDER BY cp.created_at DESC
      LIMIT $8

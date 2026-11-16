@@ -187,8 +187,11 @@ async def test_job_refusals_are_permanent(monkeypatch):
     with pytest.raises(registry.NonRetryable, match="invalid_request_key"):
         await job.run(registry.JobContext(MagicMock(), _job({"request_key": "x"})))
     monkeypatch.setattr(pv, "provision", AsyncMock(side_effect=pv.ProvisionError("slug_taken", "exists")))
-    with pytest.raises(registry.NonRetryable, match="slug_taken"):
+    with pytest.raises(registry.NonRetryable, match="slug_taken") as ei:
         await job.run(registry.JobContext(MagicMock(), _job(pv.parse(_create()).to_payload())))
+    # S282: a typed refusal (a NonRetryable the runner logs as a warning), its code on the job error
+    assert isinstance(ei.value, registry.Refused) and ei.value.code == "slug_taken"
+    assert str(ei.value) == "slug_taken: exists"
 
 
 @pytest.mark.asyncio

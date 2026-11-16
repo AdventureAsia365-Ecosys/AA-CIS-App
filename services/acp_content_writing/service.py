@@ -63,9 +63,9 @@ from services.acp_content_writing import (ai_tells, authenticity, faq_answer_fit
                                           sentence_repair, text_integrity, trip_facts)
 from services.acp_content_writing import length_contract, length_extend, length_recheck  # AA-1077 (blog length)
 from services.acp_shared.signature_vocabulary import signature_words
-from services.acp_content_writing.generate import (SEO_FIT_STAGE, SentenceRepairError, extend_sections,
-                                                   fit_seo_fields, repair_sentences, rewrite_with_feedback,
-                                                   write_content, write_faq)
+from services.acp_content_writing.generate import (SEO_FIT_STAGE, SentenceRepairError, SeoEnvelopeError,
+                                                   extend_sections, fit_seo_fields, repair_sentences,
+                                                   rewrite_with_feedback, write_content, write_faq)
 from services.acp_content_writing.quality_gates import (CHEAP_REPAIR_GATES, F13_REPEAT_GATE, F14_GATE, F19_GATE,
                                                           FAQ_MAX_PAIRS, FAQ_MIN_PAIRS, F9PassMemory,
                                                           deep_strip_citation_tags, drop_restated_faq, expand_ledger,
@@ -3043,7 +3043,10 @@ async def run_write_background(request_id: UUID, piece_id: UUID, context: dict, 
             logger.warning("t9_write_waits_for_budget_counter", request_id=str(request_id),
                            piece_id=str(piece_id), attempt=attempt, error=str(unavailable)[:300])
             raise unavailable
-        logger.error(
+        # S282 (Sentry AA-CIS-API-18): a blog reply with no readable envelope is a model output miss, handled here
+        # (the piece fails and the tenant's Retry writes it again): a warning, not an error event.
+        log_fail = logger.warning if isinstance(exc, SeoEnvelopeError) else logger.error
+        log_fail(
             "t9_write_background_failed", request_id=str(request_id), piece_id=str(piece_id),
             attempt=attempt, error_type=type(exc).__name__, error=str(exc),
         )

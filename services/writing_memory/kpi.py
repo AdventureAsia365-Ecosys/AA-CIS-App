@@ -45,6 +45,9 @@ import asyncpg
 import structlog
 
 from services.writing_memory import config as cfg
+from shared.repository.jsonb_sql import json_array  # S282: unnest gate_ledger only as an array
+
+_LEDGER = json_array("cp.gate_ledger")
 
 logger = structlog.get_logger()
 
@@ -178,10 +181,10 @@ def last_full_week(now: datetime) -> date:
 
 # ── collectors (SQL, grouped by tenant id; NULL = platform / A1) ───────────────────────────────────────────────────
 
-_T9_SQL = """
+_T9_SQL = f"""
     WITH p AS (
         SELECT cp.piece_id, cp.tenant_id, cp.job_id,
-               ARRAY(SELECT DISTINCT g->>'gate' FROM jsonb_array_elements(cp.gate_ledger) g
+               ARRAY(SELECT DISTINCT g->>'gate' FROM jsonb_array_elements({_LEDGER}) g
                       WHERE (g->>'passed')::boolean = false AND coalesce((g->>'blocking')::boolean, true)) AS failed
           FROM acp_shared.content_piece cp
          WHERE cp.created_at >= $1 AND cp.created_at < $2 AND cp.status IN ('approved', 'held')
@@ -190,7 +193,7 @@ _T9_SQL = """
            AND ($4::uuid IS NULL OR cp.tenant_id = $4::uuid)
     ), prior AS (
         SELECT DISTINCT cp.tenant_id, g->>'gate' AS gate
-          FROM acp_shared.content_piece cp, jsonb_array_elements(cp.gate_ledger) g
+          FROM acp_shared.content_piece cp, jsonb_array_elements({_LEDGER}) g
          WHERE cp.created_at >= $1 - make_interval(days => $5) AND cp.created_at < $1
            AND (g->>'passed')::boolean = false AND coalesce((g->>'blocking')::boolean, true)
            AND (CASE WHEN $3 THEN cp.writer_input->>'channel' = 'blog'

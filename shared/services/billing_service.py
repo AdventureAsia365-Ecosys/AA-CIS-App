@@ -3,6 +3,11 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
+# Column widths of shared.tenant_api_usage (endpoint varchar(100), method varchar(10)) -- schema limits, not policy.
+# A longer value made the INSERT fail and the usage row was lost (S282, Sentry AA-CIS-API-M).
+_ENDPOINT_WIDTH = 100
+_METHOD_WIDTH = 10
+
 async def track_api_call(
     pool,
     tenant_id: str = None,
@@ -21,6 +26,8 @@ async def track_api_call(
     stays actor_type='tenant' so every existing caller (rate_limit_middleware's /v1/* path)
     keeps writing rows exactly as before, unchanged.
     """
+    endpoint = (endpoint or "")[:_ENDPOINT_WIDTH]
+    method = (method or "")[:_METHOD_WIDTH]
     try:
         async with pool.acquire() as conn:
             await conn.execute("""
@@ -30,6 +37,7 @@ async def track_api_call(
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             """, tenant_id, endpoint, method, status_code, response_ms,
                 datetime.now(timezone.utc), actor_type, admin_user_id)
-    except Exception as e:
-        logger.error(f"Billing track error: {e}")
-        # Non-blocking — never fail request due to billing error
+    except Exception:
+        # Non-blocking — never fail request due to billing error. A lost usage row is a metering gap, not a
+        # request failure: warning with the traceback, not an error event (S282, Sentry AA-CIS-API-M).
+        logger.warning("Billing track error", exc_info=True)

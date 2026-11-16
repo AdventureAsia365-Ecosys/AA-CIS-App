@@ -11,7 +11,7 @@ import os
 import sys
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import asyncpg
 import pytest
@@ -23,6 +23,14 @@ from services.acp_contract import landing_sweep  # noqa: E402
 from services.acp_contract import segment_research as sr  # noqa: E402
 from services.acp_contract import segment_research_batch as rb  # noqa: E402
 from services.acp_contract import seo_context_copy as copy  # noqa: E402
+from services.seo_intelligence import research_cache as rc  # noqa: E402
+
+# AA-1120: the windows are settings; these tests pin them (365 days, the seeded default) instead of reading them.
+WINDOWS = rc.Windows(timedelta(days=365), timedelta(days=365), timedelta(days=7))
+
+
+def _cache(pool) -> rc.ResearchCache:
+    return rc.ResearchCache(pool, stage="a3_search_demand", windows=WINDOWS)
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
@@ -96,7 +104,7 @@ async def test_log_tiers_and_their_freshness(tx):
     await rb._write_logs(pool, [("Zarvok Lake", "US", "serp")])          # re-written, same key
     await tx.execute("""INSERT INTO acp_contract.segment_research_log (canonical_place, market, tier, researched_at)
                         VALUES ('Quellan Gorge', 'US', 'volume', now() - interval '400 days')""")
-    fresh = await sr._fresh_tiers(pool, ["Zarvok Lake", "Quellan Gorge"])
+    fresh = await sr._fresh_tiers(pool, ["Zarvok Lake", "Quellan Gorge"], WINDOWS)
     assert fresh == {"Zarvok Lake": {("US", "volume"), ("US", "serp"), ("UK", "volume")}}
 
 
@@ -106,9 +114,9 @@ async def test_serp_upsert_keeps_earlier_paa_and_reads_fresh_only_with_related(t
     await tx.execute("""INSERT INTO acp_contract.search_demand (keyword, market, search_volume, people_also_ask,
                         retrieved_on) VALUES ('zarvok lake', 'US', 1200, '["is zarvok lake cold?"]', now())""")
     # a SERP with no PAA box keeps the stored PAA; related searches are stored
-    await rb._store_serp(pool, "zarvok lake", "US", [], ["zarvok lake map"], ["example.test"])
+    await _cache(pool).put_serp("zarvok lake", "US", [], ["zarvok lake map"], ["example.test"])
     # a SERP on a keyword with no row yet: no volume, epoch date (the volume pass still buys it)
-    await rb._store_serp(pool, "zarvok lake hike", "US", ["how long is the zarvok hike?"], [], [])
+    await _cache(pool).put_serp("zarvok lake hike", "US", ["how long is the zarvok hike?"], [], [])
     rows = {r["keyword"]: r for r in await tx.fetch(
         "SELECT keyword, search_volume, people_also_ask, related_searches, serp_location, "
         "retrieved_on < now() - interval '1 year' AS volume_stale, paa_retrieved_on IS NOT NULL AS has_serp "
@@ -119,18 +127,18 @@ async def test_serp_upsert_keeps_earlier_paa_and_reads_fresh_only_with_related(t
     assert rows["zarvok lake hike"]["search_volume"] is None and rows["zarvok lake hike"]["volume_stale"]
     assert rows["zarvok lake hike"]["has_serp"]
     state = {(r["keyword"], r["market"]): (r["serp_fresh"], r["volume_fresh"]) for r in await tx.fetch(
-        rb._SERP_STATE_SQL, ["zarvok lake", "zarvok lake hike"], rb.SERP_FRESH_FOR, sr.FRESH_FOR)}
+        rb._SERP_STATE_SQL, ["zarvok lake", "zarvok lake hike"], WINDOWS.serp, WINDOWS.volume)}
     # the SERP-only row holds a fresh SERP but no measured volume (epoch date): not a known zero
     assert state == {("zarvok lake", "US"): (True, True), ("zarvok lake hike", "US"): (True, False)}
     await tx.execute("UPDATE acp_contract.search_demand SET related_searches = NULL WHERE keyword = 'zarvok lake'")
     state = {r["keyword"]: r["serp_fresh"] for r in await tx.fetch(rb._SERP_STATE_SQL, ["zarvok lake"],
-                                                                    rb.SERP_FRESH_FOR, sr.FRESH_FOR)}
+                                                                    WINDOWS.serp, WINDOWS.volume)}
     assert state == {"zarvok lake": False}
 
 
 @pytest.mark.asyncio
 async def test_question_landing_reads_a_serp_row_without_volume(tx):
-    await rb._store_serp(_Pool(tx), "zarvok lake hike", "US", ["how long is the zarvok hike?"], [], [])
+    await _cache(_Pool(tx)).put_serp("zarvok lake hike", "US", ["how long is the zarvok hike?"], [], [])
     rows = await tx.fetch("SELECT keyword FROM acp_contract.search_demand "
                           "WHERE search_volume IS NOT NULL OR paa_retrieved_on IS NOT NULL")
     assert "zarvok lake hike" in {r["keyword"] for r in rows}
@@ -250,7 +258,7 @@ async def test_rule_rows_round_trip_and_plan_requalifies_only_affected_fresh_pla
                         SELECT p, 'US', t, now() FROM unnest(ARRAY['Holy Trinity Chapel', 'Zarvok Temple']) p,
                                                        unnest(ARRAY['volume', 'serp']) t""")
     stale = await sr._plan(pool, {"Holy Trinity Chapel": ["visit"], "Zarvok Temple": ["visit"]}, ["US"],
-                           ("volume", "serp"))
+                           ("volume", "serp"), WINDOWS)
     assert [(p.name, p.requalify, p.markets, p.serp) for p in stale] == [("Holy Trinity Chapel", True, ["US"], True)]
 
     p = stale[0]
@@ -261,4 +269,4 @@ async def test_rule_rows_round_trip_and_plan_requalifies_only_affected_fresh_pla
         ("holy trinity chapel zarvoka", "not_asked", None), ("holy trinity chapel", "skipped", "rule:unqualified")]
     assert rb.keywords_from_map(rows) == ["holy trinity chapel zarvoka"]
     # rebuilt under the current prompt: the next plan leaves it alone
-    assert await sr._plan(pool, {"Holy Trinity Chapel": ["visit"]}, ["US"], ("volume", "serp")) == []
+    assert await sr._plan(pool, {"Holy Trinity Chapel": ["visit"]}, ["US"], ("volume", "serp"), WINDOWS) == []

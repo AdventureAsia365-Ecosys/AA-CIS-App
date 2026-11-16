@@ -73,12 +73,15 @@ function MetricLine({ app, metric, t }: { app: DeliveryApp; metric: MetricKey; t
   return (
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto auto", gap: 8, alignItems: "center" }}
       data-testid={`delivery-${app.id}-${metric}`}>
-      <span style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 12.5, color: K.ink2, minWidth: 0 }}>
+      {/* S282: the label wraps and the n note sits under the value, so a long note never pushes the value over the
+          label (the Recovery p50 line overlapped on the CIS and Booking cards). */}
+      <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 6, alignItems: "center", fontSize: 12.5,
+        color: K.ink2, minWidth: 0, overflowWrap: "anywhere" }}>
         <StatusDot status={status} /> {t(metric)} <InfoTip text={t(`tip${metric}` as Parameters<DT>[0])} />
       </span>
-      <span style={{ fontSize: 13, fontWeight: 600, color: K.ink, textAlign: "right", whiteSpace: "nowrap" }}>
-        {doraValue(app, metric)}{unit}{" "}
-        <span style={{ ...small, fontWeight: 400 }}>
+      <span style={{ fontSize: 13, fontWeight: 600, color: K.ink, textAlign: "right", minWidth: 0 }}>
+        <span style={{ whiteSpace: "nowrap" }}>{doraValue(app, metric)}{unit}</span>
+        <span style={{ ...small, fontWeight: 400, display: "block" }}>
           ({t("n", doraN(app, metric))}{status === "few" ? ` · ${t("few")}` : ""})
         </span>
       </span>

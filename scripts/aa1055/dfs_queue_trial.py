@@ -73,7 +73,8 @@ async def main() -> dict:
 
     client = DataForSEOClient(stage="adhoc_aa1055")
     client.meta = {"job": "adhoc_aa1055_queue_trial"}
-    queue = q.StandardQueue(client, poll_s=15.0, timeout_s=TIMEOUT_S, direct_after_s=120.0)
+    # AA-1120: cache=None on purpose: the trial measures one fresh task of each kind and stores no research data.
+    queue = q.StandardQueue(client, cache=None, poll_s=15.0, timeout_s=TIMEOUT_S, direct_after_s=120.0)
     loc = DFS_LOCATION_MAP["US"][0]
     out: dict = {"keywords": len(picked), "live_unit_cost_30d": live}
 

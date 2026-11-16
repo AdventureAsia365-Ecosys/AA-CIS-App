@@ -74,7 +74,8 @@ async def test_prefetch_reuses_buys_batched_and_skips_search_volume():
     client._serp_advanced = AsyncMock(return_value={})
     summary = await P.prefetch(conn, rows, tenant_id="t", location_code=2840, language_code="en",
                                client=client, jev=False)
-    assert summary == {"tours": 3, "reused": 1, "from_research_cache": 0, "ideas_tasks": 1, "serp_calls": 2}
+    assert summary == {"tours": 3, "reused": 1, "from_research_cache": 0, "ideas_tasks": 1, "serp_calls": 2,
+                       "serp_reused": 0}
     client.fetch_keyword_ideas_multi.assert_awaited_once()
     # two rows written (the reused one is untouched), each keyed with the v3 marker
     assert len(conn.inserted) == 2

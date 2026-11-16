@@ -79,7 +79,7 @@ async def test_queue_volume_task_posts_once_waits_and_parses():
     async def fake_sleep(s):
         sleeps.append(s)
 
-    queue = q.StandardQueue(client, poll_s=7, sleep=fake_sleep)
+    queue = q.StandardQueue(client, cache=None, poll_s=7, sleep=fake_sleep)
     out = await queue.volumes(["zarvok lake", "melnith gorge"], 2840, "en")
     assert out == {"zarvok lake": 10, "melnith gorge": 10}
     assert len(client.posted) == 1 and client.posted[0]["location_code"] == 2840
@@ -90,7 +90,7 @@ async def test_queue_volume_task_posts_once_waits_and_parses():
 @pytest.mark.asyncio
 async def test_queue_serps_post_100_per_request_and_return_by_index():
     client = _FakeClient()
-    queue = q.StandardQueue(client, sleep=AsyncMock())
+    queue = q.StandardQueue(client, cache=None, sleep=AsyncMock())
     asks = [(f"kw{i}", 2840, "en") for i in range(150)]
     out = await queue.serps(asks)
     assert sorted(out) == list(range(150)) and all(isinstance(v, dict) for v in out.values())
@@ -132,7 +132,7 @@ class _OrderedClient(_FakeClient):
 @pytest.mark.asyncio
 async def test_queue_serps_post_every_request_before_the_first_poll():
     client = _OrderedClient()
-    queue = q.StandardQueue(client, sleep=AsyncMock())
+    queue = q.StandardQueue(client, cache=None, sleep=AsyncMock())
     out = await queue.serps([(f"kw{i}", 2840, "en") for i in range(250)])
     assert len(out) == 250 and all(isinstance(v, dict) for v in out.values())
     assert client.events[:3] == ["post", "post", "post"] and client.events[3] == "ready"
@@ -142,19 +142,19 @@ async def test_queue_serps_post_every_request_before_the_first_poll():
 async def test_queue_serps_budget_stop_keeps_the_paid_tasks_and_fails_the_rest():
     from shared.cost_guard import BudgetExceeded
     client = _OrderedClient(budget_left_posts=1)
-    queue = q.StandardQueue(client, sleep=AsyncMock())
+    queue = q.StandardQueue(client, cache=None, sleep=AsyncMock())
     out = await queue.serps([(f"kw{i}", 2840, "en") for i in range(150)])
     assert all(isinstance(out[i], dict) for i in range(100))
     assert all(isinstance(out[i], BudgetExceeded) for i in range(100, 150))
     with pytest.raises(BudgetExceeded):                     # nothing paid yet: the stop is raised as before
-        await q.StandardQueue(_OrderedClient(budget_left_posts=0), sleep=AsyncMock()).serps([("kw", 2840, "en")])
+        await q.StandardQueue(_OrderedClient(budget_left_posts=0), cache=None, sleep=AsyncMock()).serps([("kw", 2840, "en")])
 
 
 @pytest.mark.asyncio
 async def test_queue_posts_are_serialised_while_waits_run_together():
     import asyncio
     client = _OrderedClient()
-    queue = q.StandardQueue(client, sleep=AsyncMock())
+    queue = q.StandardQueue(client, cache=None, sleep=AsyncMock())
     a, b = await asyncio.gather(queue.volumes(["zarvok lake"], 2840, "en"),
                                 queue.volumes(["melnith gorge"], 2826, "en"))
     assert a == {"zarvok lake": 10} and b == {"melnith gorge": 10}
@@ -165,7 +165,7 @@ async def test_queue_posts_are_serialised_while_waits_run_together():
 async def test_queue_task_that_never_finishes_is_an_error_for_that_task_only():
     client = _FakeClient(ready_after=10**6)
     clock = iter(range(0, 10**6, 100))
-    queue = q.StandardQueue(client, poll_s=1, timeout_s=250, direct_after_s=10**9,
+    queue = q.StandardQueue(client, cache=None, poll_s=1, timeout_s=250, direct_after_s=10**9,
                             sleep=AsyncMock(), clock=lambda: next(clock))
     out = await queue.serps([("zarvok lake", 2840, "en")])
     assert isinstance(out[0], q.QueuedTaskFailed) and "not finished" in str(out[0])
@@ -175,7 +175,7 @@ async def test_queue_task_that_never_finishes_is_an_error_for_that_task_only():
 @pytest.mark.asyncio
 async def test_queue_error_answer_after_accept_is_a_queued_task_failure():
     client = _FakeClient(get_code=50000)
-    queue = q.StandardQueue(client, sleep=AsyncMock())
+    queue = q.StandardQueue(client, cache=None, sleep=AsyncMock())
     with pytest.raises(q.QueuedTaskFailed) as exc:
         await queue.volumes(["zarvok lake"], 2840, "en")
     assert exc.value.task_id and not exc.value.fatal
@@ -199,7 +199,7 @@ class _FlakyGetClient(_FakeClient):
 @pytest.mark.asyncio
 async def test_queue_failed_free_poll_is_asked_again_not_counted_as_the_task_failing():
     client = _FlakyGetClient()
-    queue = q.StandardQueue(client, sleep=AsyncMock())
+    queue = q.StandardQueue(client, cache=None, sleep=AsyncMock())
     assert await queue.volumes(["zarvok lake"], 2840, "en") == {"zarvok lake": 10}
     assert client.gets == 2 and len(client.posted) == 1      # paid once
 
@@ -218,7 +218,7 @@ class _StaggeredClient(_FakeClient):
 @pytest.mark.asyncio
 async def test_queue_serps_report_each_task_as_it_is_collected():
     client = _StaggeredClient()
-    queue = q.StandardQueue(client, sleep=AsyncMock())
+    queue = q.StandardQueue(client, cache=None, sleep=AsyncMock())
     reported: list[tuple[int, int]] = []          # (index, polls so far)
 
     async def on_result(i, value):
@@ -234,7 +234,7 @@ async def test_queue_serps_report_each_task_as_it_is_collected():
 @pytest.mark.asyncio
 async def test_queue_serps_report_refused_posts_and_budget_stops_too():
     client = _OrderedClient(budget_left_posts=1)
-    queue = q.StandardQueue(client, sleep=AsyncMock())
+    queue = q.StandardQueue(client, cache=None, sleep=AsyncMock())
     reported: dict = {}
 
     async def on_result(i, value):
@@ -250,7 +250,7 @@ async def test_queue_serps_report_refused_posts_and_budget_stops_too():
 @pytest.mark.asyncio
 async def test_queue_error_answer_raises_for_volume():
     client = _FakeClient(get_code=50000)
-    queue = q.StandardQueue(client, sleep=AsyncMock())
+    queue = q.StandardQueue(client, cache=None, sleep=AsyncMock())
     with pytest.raises(DFSCallError):
         await queue.volumes(["zarvok lake"], 2840, "en")
 
@@ -258,7 +258,7 @@ async def test_queue_error_answer_raises_for_volume():
 @pytest.mark.asyncio
 async def test_queue_post_refused_by_payment_is_fatal():
     client = _FakeClient(post_code=40200)
-    queue = q.StandardQueue(client, sleep=AsyncMock())
+    queue = q.StandardQueue(client, cache=None, sleep=AsyncMock())
     with pytest.raises(DFSCallError) as exc:
         await queue.volumes(["zarvok lake"], 2840, "en")
     assert exc.value.fatal
