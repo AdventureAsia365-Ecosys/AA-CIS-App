@@ -1175,7 +1175,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     BEFORE UPDATE trigger `job_set_updated_at` sets `updated_at` on every UPDATE (writers need not); queue
     autovacuum `scale_factor 0.02`, `threshold 50` (C5.1b as amended by AA-751). Changing the template =
     copy it to AA-Booking in the same session + one migration per owner.
-  - Job kinds live in `services/jobs/` (`segment_research`, `t2_rewrite`, `t9_write`, `a3_atomize`,
+  - Job kinds live in `services/jobs/` (`segment_research`, `tour_paa_backfill` — AA-1122, `t2_rewrite`, `t9_write`, `a3_atomize`,
     `s1_seo_prefetch`, `photo_sync`, `photo_medium_backfill` — AA-995, `photo_destination_match` — AA-671, `s1_rewrite`, `s1_batch_ingest`, `llm_batch` — AA-1076, `revalidate`, `recompute`,
     `place_cards_build`, `t7_slate`, `t8_angles`, and the place pipeline `place_extract`,
     `place_geocode`, `tour_graph_build` — AA-712, `place_shape`, `place_dedupe` — AA-847, `place_relocate` — AA-997, the five `retention_*` kinds — AA-825,
@@ -3739,6 +3739,24 @@ their last research that are stale ("waiting after an atomize"). The api ops sam
 `research_stale_share` above 20 % in any market: bell + one e-mail a day, the issue equivalent) and the data coverage
 page shows the same numbers (`research.stale_share.<mk>`, `research.waiting_after_reatomize`). A re-atomize queues its
 new places as research scope `reatomized` (preview priced, bought only when an admin runs it); there is no queue table.
+AA-1122 (CIS 450-452, "always ready"): every Google Ads volume answer (live, Standard queue, keyword ideas, the S1
+fetch) also keeps its 12 monthly volumes in `acp_contract.search_volume_monthly` (one row per keyword, market, month,
+written once, never overwritten; `search_history.py` reads a place's season: peak month, year-over-year). Keywords of a
+place with identical volume in every market are one demand group (Google's close variants): the one SERP goes to the
+strongest group, and inside it to a variant whose SERP is already stored, else the most natural phrasing, never by
+volume (`research_select.py`). The windows default to 180 days, maker-checker. Selection order (`research_plan.py`):
+never researched (most tours first), stale (oldest first), refresh-ahead on a refresh run (its share capped, bought
+through narrowed windows), requalify last (capped). The worker's hourly research tick (`research_auto.py`, after the
+landing sweep) enqueues at most one `auto_new` / `auto_refresh` run per kind per UTC day inside its settings window,
+for the markets of active agencies only (plus the platform default; demo and internal tenants never count; a market
+mostly unresearched waits for an admin run). Every research job (`segment_research`, `tour_paa_backfill`) runs under
+one hard monthly cap over DataForSEO + LLM + Jev, measured from the ledger by job (`shared/research_budget.py`, fail
+closed), and an automatic run under its own run cap across retries; alerts `research_auto_failed`, `_capped`,
+`research_new_waiting`, `research_month_spend`. A same-plain-keyword rename or merge in segment matching carries the
+place's log and map (`research_carry.py`). Tour PAA backfill (`tour_paa.py`, job `tour_paa_backfill`): store first, then
+one capped SERP per tour keyword; provenance in `seo_context.paa_source` / `paa_filled_at`. Admin: SEO Intelligence ›
+Research tab (GET `/admin/segment-research/status`). Every threshold, schedule and cap is a `cis.seo.*` / `cis.spend.*`
+setting.
 _Avoid_: DFS, keyword research (both used loosely elsewhere for the same underlying calls).
 
 **Score** (Atom Ranking):
