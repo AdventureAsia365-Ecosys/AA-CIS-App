@@ -28,7 +28,7 @@ import {
 import { marketRows, monthWarn, runScope, usd } from "@/lib/researchPanel";
 import { RESEARCH } from "./research.messages";
 
-const SETTINGS_HREF = "/admin/platform/settings?q=research";
+const SETTINGS_HREF = "/admin/platform/settings?app=cis&key=research";   // S282: the page reads app / area / key only
 
 interface Run {
   id: string;
