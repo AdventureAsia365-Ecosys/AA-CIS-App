@@ -45,7 +45,7 @@ import { useAdminIdentity } from "../../../_kit/useAdminIdentity";
 import { BOOKING_ADMIN_URL } from "@/lib/apps";
 import {
   APPS, badgesOf, boundsText, formatValue, lastChangeState, loadProblem, openProposal, registryPath, scheduledOf,
-  tenantScoped, valuesInForce, type BadgeKey, type RegistryResp, type SettingApp, type SettingItem, type ValueOf,
+  hasScopeChoice, valuesInForce, type BadgeKey, type RegistryResp, type SettingApp, type SettingItem, type ValueOf,
 } from "@/lib/settingsRegistry";
 import { SETTINGS } from "./messages";
 import { ActorName, SettingCell } from "./SettingGuide";
@@ -128,8 +128,9 @@ function ActionsCell({ item, canWrite, onChange, onHistory }: {
   item: SettingItem; canWrite: boolean; onChange: () => void; onHistory: () => void;
 }) {
   const t = useSettingsT();
-  // a platform-only key with an open proposal cannot take a second one: review it first
-  const pending = !tenantScoped(item) && !!openProposal(item, null);
+  // a platform-only key with an open proposal cannot take a second one: review it first (a key with a tenant or agency
+  // scope still takes a change for another scope)
+  const pending = !hasScopeChoice(item) && !!openProposal(item, null);
   return (
     <span style={{ display: "inline-flex", gap: 6 }}>
       {canWrite && <Button size="sm" variant="secondary" onClick={onChange} disabled={pending}

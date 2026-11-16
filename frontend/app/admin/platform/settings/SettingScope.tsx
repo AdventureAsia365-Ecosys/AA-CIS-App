@@ -3,7 +3,7 @@
 // tenant scope of a setting on Platform › Settings.
 //
 // A setting whose definition allows a tenant value (scope_kind "platform+tenant", lib/settingsRegistry scopeOptions;
-// never a CRM key: its agencies live in the CRM) gets:
+// a CIS / TripPlanner key, lib tenantScoped; a CRM key gets the agency branch below) gets:
 // - ScopeFields: "Applies to" Platform (default) or One tenant, the tenant picked with the admin's one tenant picker
 //   (TenantSelect: name and slug, search over both). The value the form starts from and the version it names follow
 //   the scope (lib scopeTarget).
@@ -15,18 +15,23 @@
 //   the platform has one too (the row's "pending" badge counts every scope).
 // - S280 fix round, CRM tab: a CRM key an agency may keep its own value of (lib agencyScoped) gets the same count,
 //   values and open changes, named by the CRM (agency_name: its agencies are not CIS tenants, so no TenantSelect), and
-//   a plain Select of those agencies for the history; Approve / Reject send the agency id (lib decisionBody). A change
-//   made here stays a platform change (scopeOptions).
+//   a plain Select of those agencies for the history; Approve / Reject send the agency id (lib decisionBody).
+// - AA-963 / AA-970 (S282): the change form of a CRM agency key offers "Applies to" Platform or One agency, the agency
+//   picked from the CRM's agency list (useCrmAgencies: the relay of crm.ops.v1 the Agencies console reads); the value
+//   it starts from and "In force now" follow the agency, and the change names it (tenant_id). An agency feature switch
+//   off by default (lib agencyFeatureSwitch) opens on One agency and warns on Platform (ScopeWarning.tsx).
 // Every other key renders nothing here and keeps the form as before. Kit + TenantSelect only.
 
 import type { ReactNode } from "react";
 import { K, Badge, Field, LinkButton, Select, mono, useT } from "../../../_kit";
 import { TenantSelect, useTenants } from "../../_components/TenantSelect";
 import {
-  agencyNames, agencyScoped, boundsText, formatValue, scopeOptions, scopeTarget, scopeTenant, tenantProposals,
-  tenantScoped, type ScopeChoice, type SettingItem, type SettingScope,
+  agencyNames, agencyOptions, agencyScoped, boundsText, formatValue, scopeOptions, scopeTarget, scopeTenant,
+  tenantProposals, tenantScoped, type ScopeChoice, type SettingItem, type SettingScope,
 } from "@/lib/settingsRegistry";
 import { SETTINGS } from "./messages";
+import { PlatformSwitchWarning } from "./ScopeWarning";
+import { useCrmAgencies } from "./useCrmAgencies";
 import { useSettingWords } from "./useSettingWords";
 
 const small = { fontSize: 12, color: K.muted, lineHeight: 1.45 } as const;
@@ -35,6 +40,7 @@ export function ScopeFields({ item, value, onChange }: {
   item: SettingItem; value: ScopeChoice; onChange: (c: ScopeChoice) => void;
 }) {
   const t = useT(SETTINGS);
+  if (agencyScoped(item)) return <AgencyScopeFields item={item} value={value} onChange={onChange} />;
   if (!tenantScoped(item)) return null;
   const label = (s: SettingScope) => (s === "tenant" ? t("scopeTenant") : t("scopePlatform"));
   return (
@@ -51,22 +57,70 @@ export function ScopeFields({ item, value, onChange }: {
   );
 }
 
+/** CRM tab (AA-963 / AA-970, S282): Platform or One agency, the agency picked from the CRM's agency list. */
+function AgencyScopeFields({ item, value, onChange }: {
+  item: SettingItem; value: ScopeChoice; onChange: (c: ScopeChoice) => void;
+}) {
+  const t = useT(SETTINGS);
+  const { agencies, isLoading, error } = useCrmAgencies();
+  const label = (s: SettingScope) => (s === "tenant" ? t("scopeAgency") : t("scopePlatformAgency"));
+  const stateText = (state: string) =>
+    state === "locked" ? t("agencyStateLocked") : state === "offboarding" ? t("agencyStateOffboarding") : state;
+  const options = agencyOptions(agencies, stateText);
+  return (
+    <div style={{ display: "grid", gap: 8 }} data-testid="settings-scope">
+      <Field label={t("appliesTo")} hint={t("scopeAgencyHint")}>
+        <Select value={value.kind} onChange={(e) => onChange({ kind: e.target.value as SettingScope, tenantId: "" })}
+          options={scopeOptions(item).map((s) => ({ value: s, label: label(s) }))} data-testid="settings-scope-kind" />
+      </Field>
+      {value.kind === "tenant" && (
+        <Field label={t("agencyPick")} required>
+          <Select value={value.tenantId} onChange={(e) => onChange({ kind: "tenant", tenantId: e.target.value })}
+            disabled={isLoading || !!error} data-testid="settings-scope-agency"
+            placeholder={isLoading ? t("agenciesLoading") : t("pickAgency")} options={options} />
+        </Field>
+      )}
+      {value.kind === "tenant" && error && <div role="alert" style={{ ...small, color: K.danger }}>
+        {t("agenciesError", error)}</div>}
+      {value.kind === "tenant" && !isLoading && !error && options.length === 0 && <div style={small}>
+        {t("agenciesNone")}</div>}
+      <PlatformSwitchWarning item={item} scope={value} />
+    </div>
+  );
+}
+
 /** "In force now: <value> · Allowed: <bounds>" of the scope being changed. */
 export function ScopeCurrent({ item, scope }: { item: SettingItem; scope: ScopeChoice }) {
+  return agencyScoped(item) ? <AgencyCurrent item={item} scope={scope} /> : <TenantCurrent item={item} scope={scope} />;
+}
+
+function CurrentLine({ item, scope, who }: { item: SettingItem; scope: ScopeChoice; who: string | null }) {
   const t = useT(SETTINGS);
   const { words } = useSettingWords();
-  const { label } = useTenants();
-  const tenant = scopeTenant(scope);
-  const target = scopeTarget(item, tenant);
+  const target = scopeTarget(item, scopeTenant(scope));
   const bounds = boundsText(item, words);
   return (
-    <div style={small}>
-      {tenant ? t("currentFor", label(tenant)) : t("current")}:{" "}
+    <div style={small} data-testid="settings-scope-current">
+      {who ? t("currentFor", who) : t("current")}:{" "}
       <strong style={{ fontFamily: mono }}>{formatValue(target.value, item, words)}</strong>
       {target.inherited && <> ({t("inheritsPlatform")})</>}
       {bounds && <> · {t("colBounds")}: {bounds}</>}
     </div>
   );
+}
+
+function TenantCurrent({ item, scope }: { item: SettingItem; scope: ScopeChoice }) {
+  const { label } = useTenants();
+  const tenant = scopeTenant(scope);
+  return <CurrentLine item={item} scope={scope} who={tenant ? label(tenant) : null} />;
+}
+
+/** CRM tab: the agency by the CRM's name (its agency list, else the names the CRM gave with its values). */
+function AgencyCurrent({ item, scope }: { item: SettingItem; scope: ScopeChoice }) {
+  const { byId } = useCrmAgencies();
+  const tenant = scopeTenant(scope);
+  const who = tenant ? (byId.get(tenant)?.agency_name || agencyNames(item).get(tenant) || tenant) : null;
+  return <CurrentLine item={item} scope={scope} who={who} />;
 }
 
 /** The row's count of tenant values in force (a tenant-scoped key), or of agency values (a CRM agency key). */
