@@ -83,6 +83,11 @@ def _day(v: Any) -> Optional[str]:
     return t.date().isoformat() if t else None
 
 
+def _n(v: Any) -> str:
+    """A setting value in text: 80.0 -> "80", None -> "—"."""
+    return "—" if v is None else f"{v:g}"
+
+
 def _f(v: Any) -> Optional[float]:
     try:
         return None if v is None else float(v)
@@ -342,7 +347,7 @@ def _risk_reasons(tid: str, mine: list[dict], acct: Optional[str], c: Optional[d
     paying_content = any(s["product"] == "content" and s["status"] in PAYING for s in mine)
     low = th.get("low_use_pct")
     if c and paying_content and low is not None and c["series"] and all(v is not None and v < low for v in c["series"]):
-        risk.append(f"rewrites under {low} % of quota for {len(c['series'])} month(s)")
+        risk.append(f"rewrites under {_n(low)} % of quota for {len(c['series'])} month(s)")
     if agency and agency.get("state") in ("locked", "offboarding"):
         risk.append(f"CRM agency {agency['state']}")
     has_crm = any(s["product"] == "crm" and s["status"] in ("trialing",) + PAYING for s in mine)
@@ -413,14 +418,14 @@ def ex03_kpis(gr: dict, act: dict, qu: dict, hl: list[dict], th: dict) -> list[d
                 if th.get("activation_days") is None else
                 _kpi_line("K-PART-ACT", act["rate"], "info",
                           f"{act['activated']} of {act['cohort']} new partner(s) published within "
-                          f"{th['activation_days']} days ({act['complete']} with the window closed, "
+                          f"{_n(th['activation_days'])} days ({act['complete']} with the window closed, "
                           f"{act['pending']} still inside it)"))
     upsell = [r for r in hl if r["upsell"]]
     risk = [r for r in hl if r["risk"]]
     miss = _missing_note(th, "upsell_pct", "low_use_pct", "low_use_months")
     quota_note = (f"{len(upsell)} upsell candidate(s), {len(risk)} churn risk(s); "
-                  f"upsell at {th.get('upsell_pct')} %, low use under {th.get('low_use_pct')} % for "
-                  f"{th.get('low_use_months')} month(s) (Platform › Settings)") + (f"; {miss}" if miss else "")
+                  f"upsell at {_n(th.get('upsell_pct'))} %, low use under {_n(th.get('low_use_pct'))} % for "
+                  f"{_n(th.get('low_use_months'))} month(s) (Platform › Settings)") + (f"; {miss}" if miss else "")
     if qu["unreadable"]:
         quota_note += f"; quota or usage not readable: {qu['unreadable']}"
     return [
@@ -474,7 +479,7 @@ def render_ex03(reg: Registry, report: Report, first: date, last: date, facts: d
     body += ["", "## Activation (new Content studio partners)", "",
              f"- {act['cohort']} partner(s) created in the period; "
              + ("activation days setting not available." if th.get("activation_days") is None else
-                f"{act['activated']} published a first piece within {th['activation_days']} days; rate "
+                f"{act['activated']} published a first piece within {_n(th['activation_days'])} days; rate "
                 f"{pct(act['rate'])} over the {act['complete']} whose window has closed. Detail: EX-07."), ""]
     body += ["## Usage and quota", "",
              f"Content studio: rewrites per month against the rewrite quota the API enforces now (months "
@@ -487,8 +492,8 @@ def render_ex03(reg: Registry, report: Report, first: date, last: date, facts: d
         if content_rows else [f"- No quota read{': ' + qu['unreadable'] if qu['unreadable'] else ''}."]
     body += ["", "## Health list", "",
              "Upsell candidates and churn risks, with the reason (levels from Platform › Settings: "
-             f"upsell at {th.get('upsell_pct')} %, low use under {th.get('low_use_pct')} % for "
-             f"{th.get('low_use_months')} month(s); each partner's own quota, seats and status otherwise).", ""]
+             f"upsell at {_n(th.get('upsell_pct'))} %, low use under {_n(th.get('low_use_pct'))} % for "
+             f"{_n(th.get('low_use_months'))} month(s); each partner's own quota, seats and status otherwise).", ""]
     body += table(["Tenant", "Account", "Products", "Upsell", "Churn risk"],
                   [[r["tenant"], r["account_status"], ", ".join(r["products"]) or "—", "; ".join(r["upsell"]) or "—",
                     "; ".join(r["risk"]) or "—"] for r in hl]) if hl else ["- No partner flagged."]
@@ -620,7 +625,7 @@ def ex07_kpis(fn: dict, crm: dict, act: dict, th: dict) -> list[dict]:
                 if th.get("activation_days") is None else
                 _kpi_line("K-PART-ACT", act["rate"], "info",
                           f"every partner so far: {act['activated']} of {act['cohort']} published within "
-                          f"{th['activation_days']} days ({act['complete']} with the window closed)"))
+                          f"{_n(th['activation_days'])} days ({act['complete']} with the window closed)"))
         ttv = _kpi_line("K-ONB-TTV", fn["ttv_median_days"], "info",
                         f"median days from creation to first publish over {fn['ttv_n']} partner(s); CRM first "
                         f"proposal {NOT_PUBLISHED}")
@@ -630,7 +635,7 @@ def ex07_kpis(fn: dict, crm: dict, act: dict, th: dict) -> list[dict]:
             crm_stuck = crm.get("stuck", []) if "error" not in crm else []
             n = len(fn["stuck"]) + len(crm_stuck)
             stuck = _kpi_line("K-ONB-STUCK", float(n), "amber" if n else "ok",
-                              f"more than {th['stuck_days']} days on one step (Platform › Settings): content "
+                              f"more than {_n(th['stuck_days'])} days on one step (Platform › Settings): content "
                               f"{len(fn['stuck'])}, CRM "
                               + (str(len(crm_stuck)) if "error" not in crm else "not read"))
     return [acts,
@@ -684,7 +689,7 @@ def render_ex07(reg: Registry, report: Report, first: date, last: date, facts: d
                      "trip or pipeline field).", ""]
     body += ["## Stuck list", "",
              ("- Stuck days setting not available." if th.get("stuck_days") is None else
-              f"Partners not activated yet, more than {th['stuck_days']} days on one step (Platform › Settings). "
+              f"Partners not activated yet, more than {_n(th['stuck_days'])} days on one step (Platform › Settings). "
               "Owner role: AA staff managing partners."), ""]
     body += table(["Partner", "Product", "Last step", "Waiting for", "Days"],
                   [[r["partner"] + (" (synthetic)" if r.get("synthetic") else ""), r["product"], r["at"],
