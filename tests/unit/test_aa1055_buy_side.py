@@ -538,13 +538,22 @@ async def test_job_runs_with_its_budget_narrowed_and_refuses_the_loop_strategy()
         seen.update(kw)
         return {"aborted": False}
 
+    from shared.research_budget import SharedCap
+
+    # AA-1122: the month cap and this job's earlier spend are read from the ledger (here: an empty month)
+    ctx.payload["scope"] = None
     with patch.object(srj, "load_budgets", AsyncMock(return_value=(dfs, llm))), \
+         patch.object(srj, "shared_caps", AsyncMock(return_value=(SharedCap("month", 50.0), None, 0.0))), \
+         patch.object(srj, "enqueue_paa_derive", AsyncMock(return_value=None)), \
          patch.object(srj, "dfs_balance", AsyncMock(return_value=40.0)), \
          patch.object(srj, "maybe_alert", AsyncMock()), \
+         patch.object(srj, "wait_for_lane", AsyncMock()), \
          patch("services.acp_contract.segment_research.run_segment_research", fake_run):
         await srj.run(ctx)
-    assert seen["max_usd"] == 3.0 and seen["dfs_budget"] is dfs
-    assert dfs.per_run_usd == 3.0 and dfs.hard_stop
+    # AA-1122: the job runs a copy of the DFS budget that also carries the research month cap (with_caps)
+    run_budget = seen["dfs_budget"]
+    assert seen["max_usd"] == 3.0 and run_budget.provider == dfs.provider and run_budget.shared_caps
+    assert run_budget.per_run_usd == 3.0 and run_budget.hard_stop
 
 
 @pytest.mark.asyncio
@@ -558,11 +567,16 @@ async def test_route_refuses_when_the_balance_is_below_the_capped_estimate():
     request = MagicMock()
     request.app.state.pool = MagicMock()
     preview = {"places_selected": 10, "estimate": {"dfs_usd_cap": 2.5}}
+    from shared.research_budget import SharedCap
+
     with patch.object(r, "verify_admin_secret"), \
+         patch.object(r, "_month_cap", AsyncMock(return_value=SharedCap("month", 50.0))), \
+         patch.object(r, "with_caps", lambda b, *caps: b), \
          patch.object(r.job_queue, "latest", AsyncMock(return_value=None)), \
          patch("services.acp_contract.segment_research.run_segment_research", AsyncMock(return_value=preview)), \
          patch.object(r, "load_budgets", AsyncMock(return_value=(budget, budget))), \
          patch.object(r, "dfs_balance", AsyncMock(return_value=2.0)), \
+         patch.object(r, "_refuse_busy_research_lane", AsyncMock()), \
          patch.object(r, "enqueue", AsyncMock()) as m_enqueue:
         with pytest.raises(HTTPException) as exc:
             await r.run_research(r.ResearchScope(markets=["US"]), request, "s", "a")

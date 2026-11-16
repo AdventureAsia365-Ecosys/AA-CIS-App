@@ -405,6 +405,8 @@
     "POST /admin/s1/seo-prefetch",
     "POST /admin/segment-research/preview",
     "POST /admin/segment-research/run",
+    "POST /admin/segment-research/tour-paa/preview",
+    "POST /admin/segment-research/tour-paa/run",
     "POST /admin/settings/registry/proposals/{value_id}/approve",
     "POST /admin/settings/registry/proposals/{value_id}/reject",
     "POST /admin/settings/registry/{key}/proposals",

@@ -1647,6 +1647,14 @@
     "capability": "ops.write",
     "module": "api.routers.admin_segment_research"
   },
+  "POST /admin/segment-research/tour-paa/preview": {
+    "capability": "ops.read",
+    "module": "api.routers.admin_segment_research"
+  },
+  "POST /admin/segment-research/tour-paa/run": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_segment_research"
+  },
   "POST /admin/settings/registry/proposals/{value_id}/approve": {
     "capability": "settings.approve",
     "module": "api.routers.admin_settings_registry"

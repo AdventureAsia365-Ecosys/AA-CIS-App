@@ -41,6 +41,7 @@ import structlog
 
 from services.seo_intelligence.research_cache import CachedSerp, ResearchCache, dedupe
 from services.seo_intelligence.seed_builder import LOCATION_CODE_TO_MARKET
+from services.seo_intelligence.search_history import monthly_from_answer, with_history
 from services.seo_intelligence.dataforseo_client import (
     DATAFORSEO_BASE,
     DFS_OK,
@@ -169,6 +170,12 @@ def parse_volumes(data: dict, keywords: list[str]) -> dict[str, int | None]:
         if isinstance(row, dict) and row.get("keyword") in out:
             out[row["keyword"]] = row.get("search_volume")
     return out
+
+
+def queue_history(data: dict, keywords: list[str]) -> dict:
+    """AA-1122 — keyword -> (endpoint label, its 12 monthly volumes) of a queued volume answer (search_history), for
+    the history the research cache writes with the volumes."""
+    return {kw: (VOLUME_ENDPOINT, series) for kw, series in monthly_from_answer(data, keywords).items()}
 
 
 class StandardQueue:
@@ -332,7 +339,7 @@ class StandardQueue:
         recovered: dict[str, int | None] = {}
         for task_keywords, data in await self._recover(_VOLUME, VOLUME_ENDPOINT, location_code, missing):
             answers = parse_volumes(data, task_keywords)
-            await self.cache.put_volumes(market, answers)
+            await self.cache.put_volumes(market, answers, **with_history(queue_history(data, task_keywords)))
             recovered.update({kw: answers[kw] for kw in missing if kw in answers})
         await self.cache.log_hits(VOLUME_ENDPOINT, count=len(recovered), location_code=location_code,
                                   meta={"queue": "standard", "source": "recovered_task"})
@@ -365,7 +372,7 @@ class StandardQueue:
         bought = parse_volumes(got, missing)
         market = LOCATION_CODE_TO_MARKET.get(location_code)
         if self.cache is not None and market is not None:
-            await self.cache.put_volumes(market, bought)
+            await self.cache.put_volumes(market, bought, **with_history(queue_history(got, missing)))
         out.update(bought)
         return {kw: out.get(kw) for kw in chunk}
 

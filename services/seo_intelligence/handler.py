@@ -9,6 +9,7 @@ from .dataforseo_client import (
 )
 from .seed_builder import resolve_buyer_market
 from shared import cost_guard
+from .search_history import write_client_history
 from shared.secrets import get_database_url
 from shared.dfs_client.call_log import record_dfs_call
 from shared.services.tenant_config_service import TenantConfigService
@@ -155,6 +156,7 @@ async def process_seo(
     # of the same country/market) — deliberately named apart from the seo_context.
     # cache_key DB column (persist layer, per-tour, trace-only since migration 075).
     # Cache per (seed, buyer market) — same tour for a different market is a distinct entry.
+    history_client = None   # AA-1122: the client whose monthly volumes are written to the history below
     redis_seed_key = RedisCache.make_key(effective_seed, str(location_code))
     if extra_seeds is not None:
         # AA-702: multi-seed ideas are a different (richer) result for the same seed — own key, so
@@ -227,6 +229,7 @@ async def process_seo(
         if budget is None:
             budget = await _load_budget(budget_kind or DEFAULT_BUDGET_KIND)
         client = DataForSEOClient(tenant_id=tenant_id, tour_id=tour_id, budget=budget, stage=DFS_STAGE)  # AA-1058
+        history_client = client
         seo_data = await client.fetch_all(
             effective_seed, location_code, location_name, language_code, activity,
             extra_seeds=extra_seeds, place_terms=place_terms, activity_words=activity_words,
@@ -278,6 +281,8 @@ async def process_seo(
             "expires_at":     datetime.utcnow() + timedelta(seconds=_SEO_CACHE_TTL_SECONDS),
         })
         logger.info("seo_inserted", id=seo_id)
+        # AA-1122: the 12 monthly volumes of the keyword answers just bought (never overwritten; never raises)
+        await write_client_history(conn, history_client, location_code)
     finally:
         await conn.close()
 

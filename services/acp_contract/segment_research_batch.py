@@ -53,6 +53,9 @@ from services.seo_intelligence.dataforseo_client import DataForSEOClient, as_dfs
 from services.seo_intelligence.dfs_queue import QueuedTaskFailed
 from services.acp_contract.research_estimate import estimate_deduped
 from services.seo_intelligence.research_cache import CachedSerp, PaidNotStored, ResearchCache
+from services.acp_contract.research_select import (best_keyword, charge_jev, demand_groups, reserve_jev,  # noqa: F401
+                                                     serp_state)
+from services.seo_intelligence.search_history import client_history, with_history
 from services.seo_intelligence.seed_builder import DFS_LOCATION_MAP, LOCATION_CODE_TO_MARKET
 from shared.cost_guard import (DFS_RESEARCH_ENDPOINTS, BudgetExceeded, RunBudget, dfs_call_estimate_usd,
                                dfs_research_prices)
@@ -201,6 +204,7 @@ class _Place:
     plain: str | None = None           # the place's own keyword this run (qualified with its locality when namesake)
     dropped: dict = field(default_factory=dict)   # keyword -> keyword_qualify reason (stored as a rule row)
     requalify: bool = False            # fresh, planned only to rebuild a map the qualification rules would change
+    bucket: str = ""                   # AA-1122: new | stale | ahead | requalify (segment_research.plan_selection)
 
     def has_volume(self) -> bool:
         return any(v for per in self.volumes.values() for v in per.values())
@@ -282,15 +286,22 @@ def estimate_cost(n_places: int, n_markets: int, use_suggestions: bool = False, 
 
 
 def select_within_usd(places: list[_Place], max_usd: float | None, use_suggestions: bool = False,
-                      queue: str = "live") -> list[_Place]:
+                      queue: str = "live", *, with_llm: bool = False) -> list[_Place]:
     """AA-1055 — the longest prefix of `places` whose capped DFS estimate stays within `max_usd` (replaces the old
-    200-place cap). None = no cap. The estimate grows with the prefix, so a binary search finds it."""
+    200-place cap). None = no cap. The estimate grows with the prefix, so a binary search finds it. AA-1122: the
+    places come in priority order (segment_research.plan_selection), so the prefix is who waited longest;
+    `with_llm=True` (automatic runs: one cap over DFS + LLM) adds the keyword LLM estimate to the DFS one."""
     if max_usd is None:
         return list(places)
+
+    def _cost(prefix: list[_Place]) -> float:
+        est = estimate_plan(prefix, use_suggestions, queue)
+        return est["dfs_usd_cap"] + (est["llm_usd"] if with_llm else 0.0)
+
     lo, hi = 0, len(places)
     while lo < hi:
         mid = (lo + hi + 1) // 2
-        if estimate_plan(places[:mid], use_suggestions, queue)["dfs_usd_cap"] <= max_usd:
+        if _cost(places[:mid]) <= max_usd:
             lo = mid
         else:
             hi = mid - 1
@@ -400,13 +411,17 @@ async def load_locations(pool, names: list[str]) -> dict[str, kq.PlaceLocation]:
     return out
 
 
-async def _gate_keywords(places: list[_Place], pool) -> dict:
+async def _gate_keywords(places: list[_Place], pool, llm_budget: RunBudget | None = None,
+                         guard: _RunGuard | None = None) -> dict:
     """AA-693 (A3-3): before any DFS purchase, ask Jev whether each proposed keyword is about this particular place
     rather than the kind of thing it is (Ms. Thư's ticket 03: "Nyuto Hot Spring" → "hot springs" 368k/mo). The plain
     place name is never asked — it is the place by definition. A keyword is dropped only on an enforced, confident
     reject; grey/error/shadow keep it. AA-1055: every verdict is kept on the place (`verdicts`) for the map."""
     pairs = [(p, kw) for p in places if not p.failed for kw in p.keywords if kw != (p.plain or _tidy(p.name))]
     if not pairs:
+        return {"jev_keywords_checked": 0, "jev_keywords_rejected": 0}
+    caps, allowed = reserve_jev(llm_budget, len(pairs), places, guard)    # AA-1122: under the research caps
+    if not allowed:
         return {"jev_keywords_checked": 0, "jev_keywords_rejected": 0}
     sem = asyncio.Semaphore(JEV_CONCURRENCY)
 
@@ -416,7 +431,9 @@ async def _gate_keywords(places: list[_Place], pool) -> dict:
                                        [JEV_KEYWORD_Q], pool=pool)
 
     rejected = 0
-    for p, kw, dec in await asyncio.gather(*[_one(p, kw) for p, kw in pairs]):
+    answers = await asyncio.gather(*[_one(p, kw) for p, kw in pairs])
+    charge_jev(caps, [dec for _p, _kw, dec in answers])
+    for p, kw, dec in answers:
         p.verdicts[kw] = dec.verdicts.get(JEV_KEYWORD_Q)
         if dec.rejected(JEV_KEYWORD_Q):
             p.keywords = [k for k in p.keywords if k != kw]
@@ -512,7 +529,7 @@ async def _propose(places: list[_Place], pool, guard: _RunGuard, llm_budget: Run
                 rules["places_namesake"] += 1
             elif q.flag == "not_a_place":
                 rules["places_not_a_place"] += 1
-        stats = await _gate_keywords(chunk, pool)
+        stats = await _gate_keywords(chunk, pool, llm_budget, guard)
         for k in jev:
             jev[k] += stats[k]
         try:
@@ -551,7 +568,7 @@ async def _purchase_volumes(chunk: list[str], loc: int, lang: str, client: DataF
     if missing:
         volumes = await client.fetch_volumes_bulk(missing, loc, lang, raise_on_error=True)
         bought = {kw: volumes.get(kw) for kw in missing}
-        await cache.put_volumes(market, bought)
+        await cache.put_volumes(market, bought, **with_history(client_history(client, loc, missing)))
         out.update(bought)
     return out
 
@@ -655,24 +672,15 @@ def _serp_targets(wanted: list[_Place], rows, stats: dict) -> tuple[dict[str, li
     """Phase C's choice (module docstring): best keyword -> the places whose one SERP it is (not fresh yet), and the
     log rows of the places with nothing to buy (no volume anywhere it was measured, or a fresh SERP). A place whose
     SERP-market volumes are not all known waits. `rows` = _SERP_STATE_SQL rows; `stats` is counted in place."""
-    best_volume: dict[str, int] = {}
-    fresh: set[str] = set()
-    known: set[str] = set()     # keywords whose SERP_MARKET volume is measured (None = DataForSEO has no row = 0)
-    for r in rows:
-        best_volume[r["keyword"]] = max(best_volume.get(r["keyword"], 0), r["search_volume"] or 0)
-        if r["market"] == SERP_MARKET and r["serp_fresh"]:
-            fresh.add(r["keyword"])
-        if r["market"] == SERP_MARKET and r["volume_fresh"]:
-            known.add(r["keyword"])
-    for p in wanted:   # this run's answers too (a mock or a store write that has not landed)
-        for kw, per in p.volumes.items():
-            best_volume[kw] = max(best_volume.get(kw, 0), *[(v or 0) for v in per.values()], 0)
-            if SERP_MARKET in per:
-                known.add(kw)
+    # known = keywords whose SERP_MARKET volume is measured (None = DataForSEO has no row = 0); AA-1122 per_market =
+    # keyword -> market -> volume, the demand-group key (research_select)
+    best_volume, per_market, fresh, known = serp_state(rows, wanted, SERP_MARKET)
     by_kw: dict[str, list[_Place]] = {}
     logs: list[tuple[str, str, str]] = []
     for p in wanted:
-        top = best_keyword(p, best_volume)
+        groups = demand_groups(p.keywords, per_market)
+        stats["serp_variant_groups"] = stats.get("serp_variant_groups", 0) + sum(1 for g in groups if len(g) > 1)
+        top = best_keyword(p, best_volume, serp_fresh=fresh, per_market=per_market)
         if top is None and not all(kw in known for kw in p.keywords):
             # A keyword's SERP-market volume is not known yet (a new map, a failed or skipped volume task, a run
             # without the volume tier): the place stays stale and the next run decides.
@@ -693,7 +701,7 @@ async def _buy_serps(places: list[_Place], client: DataForSEOClient, pool, guard
                      cache: ResearchCache | None = None) -> dict:
     """Phase C: one SERP per place (module docstring); AA-1120: one purchase per distinct keyword."""
     stats = {"serp_calls": 0, "serp_fresh_skips": 0, "serp_no_volume": 0, "serp_waiting_volume": 0,
-             "serp_shared_keyword": 0}
+             "serp_shared_keyword": 0, "serp_variant_groups": 0}
     cache = cache or await ResearchCache.for_client(pool, client, RESEARCH_STAGE)
     serp_label = DFS_RESEARCH_ENDPOINTS["standard" if queue is not None else "live"][1]
     empty = [p for p in places if p.serp and not p.failed and not p.keywords]   # nothing to buy (see _buy_volumes)
@@ -793,15 +801,6 @@ async def _buy_serps(places: list[_Place], client: DataForSEOClient, pool, guard
     return stats
 
 
-def best_keyword(place: _Place, best_volume: dict[str, int]) -> str | None:
-    """The place's keyword with the highest known volume in any market (ties: the earlier keyword of its map), or None
-    when none is above 0. The one SERP of the place is bought for it. Pure."""
-    ranked = sorted(((best_volume.get(kw, 0), -i, kw) for i, kw in enumerate(place.keywords)), reverse=True)
-    if not ranked or ranked[0][0] <= 0:
-        return None
-    return ranked[0][2]
-
-
 async def _place_countries(pool, names: list[str]) -> dict[str, str]:
     """Most common tour country per canonical place (platform tours), e.g. {"Mongar": "bhutan"}."""
     if not names:
@@ -886,7 +885,8 @@ async def _buy_suggestions(places: list[_Place], markets: list[tuple[int, str, s
                     ideas_with_volume=len(rows), seed_sample=seeds[:5], sample=[r[0] for r in rows[:5]])
         if rows:
             await (cache or await ResearchCache.for_client(pool, client, RESEARCH_STAGE)).put_volumes(
-                market, {kw: v for kw, _m, v in rows})
+                market, {kw: v for kw, _m, v in rows},
+                **with_history(client_history(client, loc, [kw for kw, _m, _v in rows])))
             stats["ideas_stored"] += len(rows)
     return stats
 
@@ -944,5 +944,5 @@ async def research_batch(
 
 __all__ = ["research_batch", "estimate_plan", "estimate_cost", "select_within_usd", "clean_keyword", "load_maps",
            "keywords_from_map", "reusable_keywords", "PROMPT_VERSION", "SERP_MARKET", "best_keyword",
-           "estimate_deduped",
+           "demand_groups", "client_history", "estimate_deduped",
            "PlacePurchaseFailed"]

@@ -7,11 +7,14 @@
 // roles that may open Spend (`?tab=spend` answers 307 there, lib/adminIa.ts).
 // Data: GET /api/admin/seo-intelligence (BFF -> /admin/seo-intelligence).
 // AA-994: text in the UI language (messages.ts); keywords, questions and markets from the API stay as sent.
+// AA-1122: the Research tab (ResearchTab.tsx): automatic research, the month cap, what waits, the last runs, Preview /
+// Run; `?tab=research` opens it (the research alerts link there).
 
 import type { ColumnDef } from "@tanstack/react-table";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useMemo, useState } from "react";
 import { Wallet } from "lucide-react";
 import {
   apiGet,
@@ -30,6 +33,8 @@ import {
 } from "../../_kit";
 import { canSeePage } from "@/lib/rbac";
 import { SEO } from "./messages";
+import { RESEARCH } from "./research.messages";
+import { ResearchTab } from "./ResearchTab";
 
 type T = Translator<typeof SEO.en>;
 
@@ -83,6 +88,7 @@ const TABS = [
   { key: "questions", label: "tabQuestions" },
   { key: "gaps", label: "tabGaps" },
 ] as const;
+const RESEARCH_TAB = "research";
 
 function Stat({ label, value, sub, color = K.ink }: {
   label: string; value: React.ReactNode; sub?: string; color?: string;
@@ -202,13 +208,34 @@ function GapsTab({ gaps }: { gaps: GapRow[] }) {
   );
 }
 
-export default function SeoIntelligencePage() {
+export default function SeoIntelligenceRoute() {
+  // AA-1122: useSearchParams() (the research alerts link to ?tab=research) needs a Suspense boundary.
+  return (
+    <Suspense fallback={null}>
+      <SeoIntelligencePage />
+    </Suspense>
+  );
+}
+
+/** AA-1039 R6 rest: DataForSEO spend lives on Spend (AI & spend roles); content_lead, who also reads this page, has no
+ *  spend.read (root audit S265 §4.1), so the link shows only to a role that may open Spend. */
+function DfsSpendLink() {
   const t = useT(SEO);
+  if (!canSeePage(useAdminIdentity().role, "/admin/spend")) return null;
+  return (
+    <Link href={DFS_SPEND_HREF} data-testid="seo-dfs-spend-link"
+      style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, color: K.accentDeep }}>
+      <Wallet size={14} /> {t("dfsSpendLink")}
+    </Link>
+  );
+}
+
+function SeoIntelligencePage() {
+  const t = useT(SEO);
+  const tr = useT(RESEARCH);
   const kwCols = useMemo(() => kwColumns(t), [t]);
-  const [tab, setTab] = useState("overview");
-  // AA-1039 R6 rest: DataForSEO spend lives on Spend (AI & spend roles); content_lead, who also reads this page, has no
-  // spend.read (root audit S265 §4.1), so the link shows only to a role that may open Spend.
-  const seesSpend = canSeePage(useAdminIdentity().role, "/admin/spend");
+  const wanted = useSearchParams().get("tab");
+  const [tab, setTab] = useState(() => (wanted === RESEARCH_TAB ? RESEARCH_TAB : "overview"));
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["admin-seo-intelligence"],
     queryFn: () => apiGet<SeoData>("/api/admin/seo-intelligence", { admin: true }),
@@ -221,18 +248,16 @@ export default function SeoIntelligencePage() {
           <PageHeader
             title={t("title")}
             description={t("description")}
-            actions={seesSpend ? (
-              <Link href={DFS_SPEND_HREF} data-testid="seo-dfs-spend-link"
-                style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, color: K.accentDeep }}>
-                <Wallet size={14} /> {t("dfsSpendLink")}
-              </Link>
-            ) : undefined}
+            actions={<DfsSpendLink />}
           />
           <div style={{ marginBottom: 20 }}>
-            <Tabs tabs={TABS.map((x) => ({ key: x.key, label: t(x.label) }))} active={tab} onChange={setTab} />
+            <Tabs tabs={[...TABS.map((x) => ({ key: x.key, label: t(x.label) })),
+              { key: RESEARCH_TAB, label: tr("tabResearch") }]} active={tab} onChange={setTab} />
           </div>
 
-          {isLoading ? (
+          {tab === RESEARCH_TAB ? (
+            <ResearchTab />
+          ) : isLoading ? (
             <LoadingScreen message={t("loading")} />
           ) : isError ? (
             <ErrorState message={(error as Error)?.message || t("loadFailed")} onRetry={() => refetch()} />

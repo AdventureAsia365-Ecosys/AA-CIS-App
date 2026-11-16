@@ -113,6 +113,7 @@ KIND_LINES: dict[str, Optional[str]] = {
     "tour_retirement_fanout": None, "retired_page_draft": None,
     "tour_notice_email": None,
     "tour_graph_build": None, "tripplanner_purge": None, "writing_memory_kpi_weekly": None,
+    "tour_paa_backfill": None,   # AA-1122: tour PAA from the research store + capped DataForSEO SERPs (no LLM call)
     "tripplanner_custom_domain": None,  # AA-1090: a TripPlanner custom host (ACM + CloudFront API calls, no LLM)
     "writing_memory_post_activation": None,
 }

@@ -231,6 +231,7 @@ async def test_dry_run_makes_no_dfs_or_llm_call_and_applies_cap():
     conn.fetch = AsyncMock(side_effect=[
         _scope_rows("Zarvok Lake", "Melnith Gorge", "Quorra Temple"),   # scope (v_active_tour_atoms)
         [],                           # fresh research log rows
+        [],                           # AA-1122: oldest / newest research row per place (selection order)
         [],                           # stored keyword maps
     ])
     with patch.object(sr, "DataForSEOClient") as m_client, patch.object(sr, "LLMClient") as m_llm:

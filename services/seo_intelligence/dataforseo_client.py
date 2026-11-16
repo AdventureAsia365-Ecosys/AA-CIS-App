@@ -8,6 +8,7 @@ from shared.llm_client import connections as conn_registry
 import httpx
 import structlog
 
+from .search_history import MonthlyBuffer, monthly_from_answer, monthly_from_results
 from .seed_builder import rank_keyword_ideas
 
 logger = structlog.get_logger()
@@ -125,6 +126,10 @@ class DataForSEOClient:
         # AA-1055: why the caller buys (e.g. {"job": "segment_research", "tier": "serp"}), written to the meta of
         # every shared.dfs_call_log row this client writes. None = no meta (the old rows).
         self.meta: dict | None = None
+        # AA-1122: the 12 monthly volumes (monthly_searches) of every Google Ads answer this client parsed, per
+        # (location, keyword), until the caller that stores the volumes writes them to the history
+        # (search_history.write; acp_contract.search_volume_monthly, never overwritten).
+        self.monthly = MonthlyBuffer()
 
     def _log_live(self, endpoint: str, response: dict, keyword: str = None,
                   location_code: int = None, keyword_count: int = None, latency_ms: int = None,
@@ -276,6 +281,7 @@ class DataForSEOClient:
         self._log_live("search_volume", data, keyword=seed, location_code=location_code, keyword_count=1,
                        latency_ms=ms)
         logger.info("dfs_keywords_fetched", seed=seed, location=location_name)
+        self.monthly.keep(location_code, "search_volume", monthly_from_answer(data))
         return self._parse_keywords(data)
 
     async def fetch_volumes_bulk(
@@ -345,6 +351,7 @@ class DataForSEOClient:
         for row in results:
             if isinstance(row, dict) and row.get("keyword") in out:
                 out[row["keyword"]] = row.get("search_volume")
+        self.monthly.keep(location_code, "search_volume_bulk", monthly_from_results(results, out))
         logger.info("dfs_volumes_bulk_fetched", count=len(keywords), location=location_code)
         return out
 
@@ -488,6 +495,7 @@ class DataForSEOClient:
             if raise_on_error:
                 raise status_err
             return []
+        self.monthly.keep(location_code, "keywords_for_keywords", monthly_from_answer(data))
         return self._parse_keyword_ideas(data)
 
     async def fetch_all(
@@ -658,6 +666,7 @@ class DataForSEOClient:
         status_err = _dfs_status_error(data)
         if status_err is not None:
             raise status_err
+        self.monthly.keep(location_code, "keywords_for_keywords", monthly_from_answer(data))
         return self._parse_keyword_ideas(data, cap=limit)
 
     def _parse_keyword_ideas(self, data: dict, cap: int = 25) -> list[dict]:

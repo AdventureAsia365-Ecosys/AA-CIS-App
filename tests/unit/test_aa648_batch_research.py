@@ -261,7 +261,7 @@ async def test_volume_fresh_place_with_a_new_keyword_never_logs_its_serp_as_noth
     places = [rb._Place("Quorra Valley", [], [], keywords=["quorra valley", "quorra valley lookout"], serp=True)]
     stats = await rb._buy_serps(places, _client(), pool, sr._RunGuard())
     assert stats == {"serp_calls": 0, "serp_fresh_skips": 0, "serp_no_volume": 0, "serp_waiting_volume": 1,
-                     "serp_shared_keyword": 0}
+                     "serp_shared_keyword": 0, "serp_variant_groups": 0}   # AA-1122: the variant-group count
     assert _logs(conn) == [] and (rb.SERP_MARKET, "serp") not in places[0].logged
 
 

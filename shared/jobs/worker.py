@@ -261,6 +261,7 @@ class Worker:
                 last_reverify = loop.time()
             if not self.yielding and loop.time() - last_landing_sweep >= self.landing_sweep_every_seconds:
                 await self._landing_sweep()
+                await self._research_tick()     # AA-1122: the automatic research tick, on the same hourly cadence
                 last_landing_sweep = loop.time()
             if not claimed:
                 try:
@@ -302,6 +303,20 @@ class Worker:
                 logger.info("job_worker_landing_sweep", worker_id=self.worker_id, **result)
         except Exception as e:  # noqa: BLE001 — the next tick sweeps again
             logger.warning("job_worker_landing_sweep_failed", error=f"{type(e).__name__}: {str(e)[:200]}")
+
+    async def _research_tick(self, timeout_s: Optional[float] = None) -> None:
+        """AA-1122: the automatic research tick (enqueue a capped segment_research run when one is due). Bounded and
+        never fails the loop."""
+        from services.acp_contract.research_auto import TICK_TIMEOUT_S, tick_safe
+
+        try:
+            result = await asyncio.wait_for(tick_safe(self.pool),
+                                            timeout=TICK_TIMEOUT_S if timeout_s is None else timeout_s)
+            if result.get("action") not in ("disabled", "outside_window"):
+                logger.info("job_worker_research_tick", worker_id=self.worker_id, **{
+                    k: v for k, v in result.items() if k in ("action", "kind", "job_id", "max_usd", "new")})
+        except Exception as e:  # noqa: BLE001 — the next tick asks again
+            logger.warning("job_worker_research_tick_failed", error=f"{type(e).__name__}: {str(e)[:200]}")
 
     async def _liveness(self, fn, *args) -> None:
         """AA-687: shared.job_worker writes are for the Jobs page only — never fail the loop."""

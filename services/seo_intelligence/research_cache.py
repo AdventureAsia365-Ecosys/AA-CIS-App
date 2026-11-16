@@ -66,6 +66,7 @@ DFS_CALL_SITES: dict[str, str] = {
         "S1 prefetch ideas: seo_context reuse per tour (S1_SEO_REUSE_DAYS) and the research store read first (AA-653)",
     "services/seo_intelligence/s1_prefetch.py::_tour_serp":
         "S1 SERP: one per (seed, location): another tour's reusable seo_context row, then this run's answers (AA-1120)",
+    "services/seo_intelligence/tour_paa.py::run._buy": "research_cache",
     "services/acp_shared/question_topup.py::run_topup":
         "admin top-up: its own search_demand market, a rerun skips stored places, $3 cap in all (AA-779)",
     "scripts/aa1055/dfs_queue_trial.py::main": "adhoc trial of one task per kind (AA-1055), no research data",
@@ -266,9 +267,13 @@ class ResearchCache:
             rows = await conn.fetch(_VOLUMES_SQL, market, kws, self.windows.volume)
         return {r["keyword"]: r["search_volume"] for r in rows}
 
-    async def put_volumes(self, market: str, answers: dict[str, int | None]) -> None:
+    async def put_volumes(self, market: str, answers: dict[str, int | None], history=None) -> None:
         """Write bought volumes back (an answered keyword with no DataForSEO row is stored as NULL = measured). Raises
-        PaidNotStored when the store refuses them: the purchase is paid, so the caller must not buy them again."""
+        PaidNotStored when the store refuses them: the purchase is paid, so the caller must not buy them again.
+
+        AA-1122: ``history`` (keyword -> (source, months), search_history) is the 12 monthly volumes of the same answer,
+        written to acp_contract.search_volume_monthly after the volumes (never overwritten; a refused history write is
+        logged, never raised: the volumes are stored)."""
         if not answers:
             return
         try:
@@ -279,6 +284,9 @@ class ResearchCache:
                            error=str(exc)[:200])
             raise PaidNotStored(f"research store refused {len(answers)} bought volumes in {market}: "
                                 f"{str(exc)[:200]}") from exc
+        if history:
+            from services.seo_intelligence import search_history
+            await search_history.write(self.pool, market, history)
 
     async def serps(self, keywords: Sequence[str], market: str) -> dict[str, CachedSerp]:
         """keyword -> its stored SERP for every keyword of ``keywords`` whose SERP is fresh in ``market``."""

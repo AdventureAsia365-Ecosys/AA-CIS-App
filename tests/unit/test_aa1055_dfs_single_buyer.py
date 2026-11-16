@@ -23,6 +23,9 @@ BUYERS = {
     "services/acp_contract/segment_research.py": "the segment research job: the one DataForSEO buyer",
     "services/acp_shared/question_topup.py": "the admin SERP top-up (scripts/aa779_serp_topup.py), kept by the design",
     "scripts/aa1055/dfs_queue_trial.py": "the one-off Standard queue trial (1 volume + 1 SERP task, approved S273)",
+    # AA-1122 item 5 (tech lead, 16/11/2026): the tour PAA backfill buys ONE SERP per tour keyword the research store
+    # cannot answer, through the research cache, under its per-run cap and the research month cap.
+    "services/jobs/tour_paa_job.py": "the tour PAA backfill (store first; capped SERPs for the rest)",
 }
 # S1 still buys until PR 3 of the design (S1 reads the store only); remove each entry in that PR.
 S1_PENDING = {

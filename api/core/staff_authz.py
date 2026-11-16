@@ -623,10 +623,10 @@ POLICY: dict[tuple[str, str], Any] = {
     # admin_places — AA-997 re-locate model-placed destinations (Geoapify credits; dry run first)
     ("POST", "/admin/places/relocate"): OPS_WRITE,
     # ── admin_segment_research — DFS demand research (paid run; preview is a free dry run)
-    ("POST", "/admin/segment-research/preview"): OPS_READ,
-    ("POST", "/admin/segment-research/run"): OPS_WRITE,
-    # ── admin_waves — rerun waves (check is the ops-probe Lambda, a MACHINE_ROUTE)
-    # AA-1035: content_lead runs waves (wave.run); the scheduled check stays ops (the Lambda, a MACHINE_ROUTE)
+    ("POST", "/admin/segment-research/preview"): OPS_READ, ("POST", "/admin/segment-research/run"): OPS_WRITE,
+    ("POST", "/admin/segment-research/tour-paa/preview"): OPS_READ,   # AA-1122 tour PAA backfill (preview free)
+    ("POST", "/admin/segment-research/tour-paa/run"): OPS_WRITE,
+    # ── admin_waves — AA-1035: content_lead runs waves (wave.run); check stays ops (ops-probe Lambda: MACHINE_ROUTE)
     ("POST", "/admin/waves"): any_of(OPS_WRITE, WAVE_RUN),
     ("POST", "/admin/waves/{wave_id}/close"): any_of(OPS_WRITE, WAVE_RUN),
     ("POST", "/admin/waves/{wave_id}/pause"): any_of(OPS_WRITE, WAVE_RUN),    # AA-1025 H2: bulk jobs wait in the queue

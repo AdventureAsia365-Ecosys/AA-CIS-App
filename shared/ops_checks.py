@@ -114,6 +114,26 @@ CHECKS: dict[str, Check] = {
                                   "shown before anything is bought) and run it once approved. The Data coverage page "
                                   "shows the same share per market.", DATA_COVERAGE_PAGE,
                                   bell_every=timedelta(hours=20)),
+    # AA-1122: services/acp_contract/research_auto.py (the nightly research tick) raises these four itself.
+    "research_auto_failed": Check("Automatic search demand research failed", "Automatic research runs failed or "
+                                  "stopped, or its spend ledger could not be read; after the set number of failures "
+                                  "in a row it pauses until a run succeeds. Open the run on the SEO Intelligence "
+                                  "Research tab (its error and stop reason), fix the cause, then Preview and Run once "
+                                  "by hand.",
+                                  "/admin/seo-intelligence?tab=research", bell_every=timedelta(hours=20)),
+    "research_auto_capped": Check("Automatic search demand research capped", "An automatic research run was skipped "
+                                  "or stopped at its per-run or monthly cap while places still wait. The Research tab "
+                                  "shows what waits and its preview price; raise the cap on Platform › Settings only "
+                                  "after checking the month's spend.", "/admin/seo-intelligence?tab=research",
+                                  bell_every=timedelta(hours=20)),
+    "research_new_waiting": Check("New places waiting for search demand", "The oldest never-researched place has "
+                                  "waited longer than the alert window: automatic research is off, capped or failing. "
+                                  "Check the Research tab.", "/admin/seo-intelligence?tab=research",
+                                  bell_every=timedelta(hours=20)),
+    "research_month_spend": Check("Search demand research near its monthly cap", "Research (DataForSEO, the keyword "
+                                  "LLM and Jev, manual and automatic runs) reached the warning share of its monthly "
+                                  "cap. At the cap every research run stops until the next UTC month.",
+                                  "/admin/seo-intelligence?tab=research", bell_every=timedelta(hours=20)),
     "cis_app_too_many_connections": Check("cis_app connection refused", "The api or worker could not get a database "
                                           "connection (too many connections for role cis_app). Check pool sizes "
                                           "before raising the limit."),

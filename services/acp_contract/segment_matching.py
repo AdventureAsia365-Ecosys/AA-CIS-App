@@ -77,6 +77,7 @@ from typing import NamedTuple
 # this module — so this is not an import cycle (checked S223; `recompute/stages.py` is the one
 # importer of segment_matching and atom_ranking does not touch it).
 from services.acp_contract.atom_ranking import atoms_say_transit, classify_exclusion
+from services.acp_contract.research_carry import after_matching
 # AA-988 — the segment-write lock shared with the orphan GC (recompute stage `segment_gc`).
 from services.acp_contract.segment_gc import holds_segment_lock_shared
 
@@ -1140,12 +1141,10 @@ async def run_segment_matching(tour_id: str, pool) -> dict:
                     (sid, place, action, sid in claimed or sid not in guard.with_members)
                     for sid, place, action in sorted(segment_rows.values(), key=lambda row: row[0])])
             await _repoint_members(conn, alias_rows)
-            # AA-695 (GO item 1) — a previously-formed membership of an atom now excluded from
-            # Segments (a re-atomize that used to type it an experience, now transit/unnamed, or
-            # the first run after this rule shipped) is removed so the re-run is idempotent. Only
-            # THIS tour's own excluded atoms, only the member rows — the atom_segment row stays
-            # (never deleted here; the platform-wide empty/transit Segment cleanup is a separate
-            # approved DRY RUN, GO item 2). Other tours are untouched.
+            carried = await after_matching(conn, existing_rows, segment_rows, alias_rows, claimed, guard.with_members)
+            # AA-695 (GO item 1) — a membership of an atom now excluded from Segments (re-typed transit/unnamed) is
+            # removed so the re-run is idempotent: THIS tour's excluded atoms, member rows only (the atom_segment row
+            # stays; the platform-wide cleanup is a separate approved DRY RUN, GO item 2). Other tours are untouched.
             if excluded_atom_ids:
                 await conn.execute("""
                     DELETE FROM acp_contract.atom_segment_member
@@ -1195,6 +1194,7 @@ async def run_segment_matching(tour_id: str, pool) -> dict:
         "remints": {old: r["to"] for old, r in remints.items()},
         "unclaimed_existing": guard.unclaimed_existing,
         "already_mixed": sorted(mixed_before),
+        "research_carried": carried,
     }
 
 
