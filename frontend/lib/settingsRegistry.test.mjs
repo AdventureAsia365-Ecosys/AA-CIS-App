@@ -14,7 +14,8 @@ import {
   scopeTenant, searchSettings, tenantScoped, matchesInArea, searchAreaCounts, searchAreaPicked, approvedVersion,
   scheduledOf, openProposal, tenantProposals,
   canApplyAtOnce, lastChangeState, isScheduled, loadProblem, effectiveInPast, localMinute, PROBLEM_IDS, agencyScoped,
-  agencyNames, effectiveShown,
+  agencyNames, effectiveShown, agencyFeatureSwitch, hasScopeChoice, initialScope, platformSwitchWarning, agencyOptions,
+  agenciesPath, allAgencies, AGENCIES_API,
 } from "./settingsRegistry.ts";
 import { canReadAdminPath, canWriteAdminPath } from "./rbac.ts";
 import { ADMIN_IA } from "./adminIa.ts";
@@ -129,14 +130,17 @@ test("a CRM row is decided in the CRM; an agency's own row names its agency", ()
 
 // S280 fix round: the CRM tab lists each agency's own value and open change (the relay maps agency_overrides /
 // agency_pending), named by the CRM; Review opens the agency's rows, where Approve / Reject send its id.
-test("a CRM platform+tenant key lists its agencies by the CRM's names, and a change stays a platform change", () => {
+test("a CRM platform+tenant key lists its agencies by the CRM's names and offers Platform or One agency", () => {
   const crm = { ...INT, key: "crm.rate.intake_form_per_hour", app: "crm", scope_kind: "platform+tenant" };
   const a = "00000000-0000-4000-8000-0000000000a1";
   const b = "00000000-0000-4000-8000-0000000000b2";
   assert.equal(agencyScoped(crm), true);
   assert.equal(agencyScoped({ ...crm, scope_kind: "platform" }), false);
   assert.equal(agencyScoped({ ...crm, app: "cis" }), false);
-  assert.deepEqual(scopeOptions(crm), ["platform"]);
+  // AA-963 / AA-970 (S282): an agency's value is changed from this page too (never with the CIS tenant picker)
+  assert.deepEqual(scopeOptions(crm), ["platform", "tenant"]);
+  assert.equal(tenantScoped(crm), false);
+  assert.equal(hasScopeChoice(crm), true);
   const item = { ...crm, proposals: [{ tenant_id: b, agency_name: "Beta Travel", status: "proposed" }],
     tenant_overrides: [{ tenant_id: a, agency_name: "Alpha Tours", value: 900, version: 2, effective_from: null },
       { tenant_id: b, agency_name: null, value: 300, version: 1, effective_from: null }] };
@@ -234,10 +238,13 @@ const EXTEND = { ...MODE, key: "cis.t9.blog_length_extend", area: "content", lab
 const T1 = "11111111-1111-4111-8111-111111111111";
 const T2 = "22222222-2222-4222-8222-222222222222";
 
-test("scope options: Platform only, unless the definition allows a tenant value (never a CRM key)", () => {
+test("scope options: Platform only, unless the definition allows a tenant (or agency) value", () => {
   assert.deepEqual(scopeOptions(INT), ["platform"]);
   assert.deepEqual(scopeOptions(EXTEND), ["platform", "tenant"]);
-  assert.deepEqual(scopeOptions({ ...EXTEND, app: "crm" }), ["platform"]);
+  assert.deepEqual(scopeOptions({ ...EXTEND, app: "crm" }), ["platform", "tenant"]);
+  assert.equal(tenantScoped({ ...EXTEND, app: "crm" }), false);
+  assert.equal(hasScopeChoice(INT), false);
+  assert.equal(hasScopeChoice(EXTEND), true);
   assert.deepEqual(scopeOptions({ ...EXTEND, app: "tripplanner" }), ["platform", "tenant"]);
   assert.equal(tenantScoped(INT), false);
   assert.equal(tenantScoped(EXTEND), true);
@@ -425,4 +432,97 @@ test("search area chips: count per area with matches, the picked chip falls back
   assert.deepEqual(matchesInArea(found, "publish").map((s) => s.area), ["publish", "publish"]);
   assert.deepEqual(matchesInArea(found, "billing"), found);
   assert.deepEqual(matchesInArea([], "publish"), []);
+});
+
+// ── AA-963 / AA-970 (S282): a CRM agency key changed for one agency ─────────────────────────────────────────────
+const SEARCH = { ...INT, key: "crm.search.enabled", app: "crm", area: "search", label: "Global search",
+  value_type: "bool", unit: null, min_value: null, max_value: null, default_value: false, scope_kind: "platform+tenant" };
+const AG1 = "00000000-0000-4000-8000-0000000000c1";
+const AG2 = "00000000-0000-4000-8000-0000000000c2";
+
+test("an agency feature switch off by default opens on One agency; any other key on Platform", () => {
+  assert.equal(agencyFeatureSwitch(SEARCH), true);
+  assert.equal(agencyFeatureSwitch({ ...SEARCH, key: "crm.release.preview", area: "release" }), true);
+  assert.equal(agencyFeatureSwitch({ ...SEARCH, default_value: true }), false); // on by default: not a rollout switch
+  assert.equal(agencyFeatureSwitch({ ...SEARCH, scope_kind: "platform" }), false); // no agency value
+  assert.equal(agencyFeatureSwitch({ ...SEARCH, app: "cis" }), false); // a CIS tenant key
+  assert.equal(agencyFeatureSwitch({ ...SEARCH, value_type: "int", default_value: 0 }), false);
+  assert.deepEqual(initialScope(SEARCH), { kind: "tenant", tenantId: "" });
+  assert.equal(scopeReady(initialScope(SEARCH)), false); // nothing is sent before an agency is picked
+  assert.deepEqual(initialScope({ ...SEARCH, default_value: true }), PLATFORM_SCOPE);
+  assert.deepEqual(initialScope(INT), PLATFORM_SCOPE);
+  assert.deepEqual(initialScope(EXTEND), PLATFORM_SCOPE);
+});
+
+test("the platform warning: an agency feature switch with Platform picked, nothing else", () => {
+  assert.equal(platformSwitchWarning(SEARCH, PLATFORM_SCOPE), true);
+  assert.equal(platformSwitchWarning(SEARCH, { kind: "tenant", tenantId: "" }), false);
+  assert.equal(platformSwitchWarning(SEARCH, { kind: "tenant", tenantId: AG1 }), false);
+  assert.equal(platformSwitchWarning({ ...SEARCH, default_value: true }, PLATFORM_SCOPE), false);
+  assert.equal(platformSwitchWarning(INT, PLATFORM_SCOPE), false);
+  assert.equal(platformSwitchWarning(EXTEND, PLATFORM_SCOPE), false);
+});
+
+test("an agency's scope target: its own value and version, else the platform value it inherits (version 0)", () => {
+  const it = item(SEARCH, { value: false, version: 1, source: "platform",
+    tenant_overrides: [{ tenant_id: AG1, agency_name: "Gamma Trails", value: true, version: 3, effective_from: null }] });
+  assert.deepEqual(scopeTarget(it, AG1), { value: true, version: 3, inherited: false });
+  assert.deepEqual(scopeTarget(it, AG2), { value: false, version: 0, inherited: true });
+  assert.equal(draftText(SEARCH, scopeTarget(it, AG1).value), "on");
+  assert.equal(draftText(SEARCH, scopeTarget(it, AG2).value), "off");
+});
+
+test("an agency change names the agency and its own version; Platform sends no tenant_id", () => {
+  const it = item(SEARCH, { value: false, version: 1, source: "platform",
+    tenant_overrides: [{ tenant_id: AG1, agency_name: "Gamma Trails", value: false, version: 2, effective_from: null }] });
+  const draft = { text: "on", reason: "switch search on for the pilot agency after the review", evidence: "",
+    effectiveFrom: "", apply: false };
+  const scope = { kind: "tenant", tenantId: AG1 };
+  const body = proposalBody(SEARCH, scopeTarget(it, scopeTenant(scope)), draft, scopeTenant(scope));
+  assert.deepEqual(body, { value: true, reason: draft.reason, evidence_ref: null, effective_from: null,
+    base_version: 2, apply: false, tenant_id: AG1 });
+  // an agency without a value of its own: base version 0 (the CRM's current version of that agency's scope)
+  assert.equal(proposalBody(SEARCH, scopeTarget(it, AG2), draft, AG2).base_version, 0);
+  const platform = proposalBody(SEARCH, scopeTarget(it, null), draft, scopeTenant(PLATFORM_SCOPE));
+  assert.equal("tenant_id" in platform, false);
+  assert.equal(platform.base_version, 1);
+  // approve / reject of that agency's change are relayed to the CRM with the agency's id
+  assert.deepEqual(decisionBody(SEARCH, { tenant_id: AG1 }, ""), { note: null, app: "crm", tenant_id: AG1 });
+});
+
+test("the agencies offered: by name, an offboarded one left out, a locked one named with its state", () => {
+  const list = [
+    { tenant_id: AG2, agency_name: "Zeta Journeys", state: "active" },
+    { tenant_id: AG1, agency_name: "Delta Voyages", state: "locked" },
+    { tenant_id: "00000000-0000-4000-8000-0000000000c3", agency_name: "Epsilon Roads", state: "offboarded" },
+    { tenant_id: "00000000-0000-4000-8000-0000000000c4", agency_name: "", state: "active" },
+  ];
+  assert.deepEqual(agencyOptions(list, (s) => `state ${s}`), [
+    { value: "00000000-0000-4000-8000-0000000000c4", label: "00000000-0000-4000-8000-0000000000c4" },
+    { value: AG1, label: "Delta Voyages (state locked)" },
+    { value: AG2, label: "Zeta Journeys" },
+  ]);
+  assert.deepEqual(agencyOptions([]), []);
+});
+
+test("every agency page is read, and a repeated cursor never loops", async () => {
+  assert.equal(AGENCIES_API, "/api/admin/platform/crm/agencies");
+  assert.equal(agenciesPath(null), "/api/admin/platform/crm/agencies?limit=200");
+  assert.equal(agenciesPath("a b"), "/api/admin/platform/crm/agencies?limit=200&cursor=a%20b");
+  const pages = {
+    [agenciesPath(null)]: { items: [{ tenant_id: AG1, agency_name: "A", state: "active" }], next_cursor: "p2" },
+    [agenciesPath("p2")]: { items: [{ tenant_id: AG2, agency_name: "B", state: "active" }], next_cursor: null },
+  };
+  const asked = [];
+  const got = await allAgencies(async (path) => { asked.push(path); return pages[path]; });
+  assert.deepEqual(got.map((a) => a.tenant_id), [AG1, AG2]);
+  assert.deepEqual(asked, [agenciesPath(null), agenciesPath("p2")]);
+  let calls = 0;
+  const loop = await allAgencies(async () => { calls += 1; return { items: [], next_cursor: "same" }; });
+  assert.deepEqual(loop, []);
+  assert.equal(calls, 2);
+});
+
+test("the BFF lets the settings page read the CRM agency list (the Agencies console's relay)", () => {
+  assert.equal(canReadAdminPath("admin", "platform/crm/agencies"), true);
 });

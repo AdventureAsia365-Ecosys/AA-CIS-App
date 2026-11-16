@@ -8,13 +8,14 @@
 // off, and for a single-approval key also while it is on (the server checks the second person for maker_checker keys
 // only). The form says before sending when the scope already has an open proposal (one per key and scope) and when an
 // approved change is scheduled for the scope (approving this one cancels it: the newest decision wins). The form's
-// problems are worded in the page's language (useSettingWords).
+// problems are worded in the page's language (useSettingWords). AA-963 / AA-970 (S282): a CRM agency key is changed
+// for the platform or for one agency (SettingScope AgencyScopeFields; the body names the agency: proposalBody).
 
 import { useState } from "react";
 import { Button, Checkbox, Field, Input, K, Modal, Select, Textarea, mono, useT, useToast } from "../../../_kit";
 import {
-  PLATFORM_SCOPE, boundsText, canApplyAtOnce, draftProblem, draftText, effectiveInPast, localMinute, openProposal,
-  proposalBody, proposalPath, scheduledOf, scopeReady, scopeTarget, scopeTenant, type ProposalDraft, type ScopeChoice,
+  boundsText, canApplyAtOnce, draftProblem, draftText, effectiveInPast, localMinute, openProposal,
+  initialScope, proposalBody, proposalPath, scheduledOf, scopeReady, scopeTarget, scopeTenant, type ProposalDraft, type ScopeChoice,
   type SettingItem, type ValueOf,
 } from "@/lib/settingsRegistry";
 import { SETTINGS } from "./messages";
@@ -93,11 +94,12 @@ function ApplyChoice({ item, twoPerson, apply, onApply }: {
 
 /** The change form's state and what follows from it: the problem, the scope's target, whether it can be sent. */
 function useProposeForm(item: SettingItem, twoPerson: boolean, canWrite: boolean) {
+  // AA-963 / AA-970 (S282): an agency feature switch off by default opens on One agency (lib initialScope).
+  const [scope, setScope] = useState<ScopeChoice>(() => initialScope(item));
   const [draft, setDraft] = useState<ProposalDraft>({
     text: draftText(item, item.value), reason: "", evidence: "", effectiveFrom: "",
     apply: canApplyAtOnce(item, twoPerson),
   });
-  const [scope, setScope] = useState<ScopeChoice>(PLATFORM_SCOPE);
   const [busy, setBusy] = useState(false);
   const problem = draftProblem(item, draft);
   const tenant = scopeTenant(scope);

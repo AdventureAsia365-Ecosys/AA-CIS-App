@@ -44,3 +44,4 @@ next-env.d.ts
 
 # AA-994: lib/kitButtons.test.mjs transpiles the kit core here and removes it after the run
 /.kit-render-*/
+/.settings-render-*/
