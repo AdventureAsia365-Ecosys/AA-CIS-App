@@ -7,6 +7,12 @@ it when its sha256 differs from the pin, and refuses while the settings, prompt 
 candidate or vote count in force differ from it. Root ADR 0020 W2. It follows the v5 registration
 (`aa1048-two-step-preregistration.md`), whose one gated run was no_go.
 
+**Outcome (S282).** The one gated run (`c5983e03`) was no_go, but close: false positives dropped 14 of 25 = 56 % (bar
+60 %), stored violations kept 21 of 21 = 100 %; step 1 sent every violation on (100 %), step 2 flagged every violation
+it judged (100 %) and cleared none of the 11 false positives it judged (0 %, bar 40 %). H1 held, H2 held for background
+(8 of 10 cleared), H3 failed. v6 is now a closed step set (every live run refused in code). The next iteration is v7:
+`aa1048-two-step-v7-preregistration.md`.
+
 ## Question
 
 Does the two-step claim instrument v6 drop the false positives of the R1 fired claims and keep the stored violations,
