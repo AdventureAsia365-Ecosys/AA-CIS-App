@@ -37,7 +37,8 @@ import { ExternalLink, History, Pencil, SlidersHorizontal } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import {
-  Badge, Button, DateText, ErrorState, K, PageFrame, PageHeader, Section, Tabs, mono, useT, type ColumnDef, type Tone,
+  Badge, Button, DateText, ErrorState, K, LoadingScreen, PageFrame, PageHeader, Section, Tabs, mono, useT, type ColumnDef,
+  type Tone,
 } from "../../../_kit";
 import { TenantCount } from "./SettingScope";
 import { SettingsTable } from "./SettingsTable";
@@ -229,6 +230,8 @@ function AppSettings({ app, initialArea, initialQuery }: { app: SettingApp; init
   return (
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 12 }}>
       {q.isError && <LoadError error={q.error} onRetry={() => void q.refetch()} />}
+      {/* S282: while the registry loads the table renders nothing, so a slow first load looked like a blank page */}
+      {q.isPending && !q.isError && <LoadingScreen />}
       {q.data && <RegistryNotes data={q.data} crmReadOnly={isAdmin && crmReadOnly} />}
       {q.data && items.length === 0 && <Section><div style={small}>{t("noneYet")}</div></Section>}
       <SettingsTable app={app} settings={items} initialArea={initialArea} initialQuery={initialQuery} columns={columns} />
