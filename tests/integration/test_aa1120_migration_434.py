@@ -1,7 +1,8 @@
 """AA-1120 (S282) — CIS 434: the research cache windows in shared.setting_definition (conftest replays every
 migration). Registered; each row equals the compiled default the reader serves; integers within their bounds only;
-platform scope, single approval, no evidence, enforced; each key carries its label and a complete guide; a re-run
-changes nothing. Runs in a transaction that is rolled back; invented values only."""
+platform scope, no evidence, enforced; each key carries its label and a complete guide; a re-run changes nothing.
+AA-1122 (CIS 442) moved the two freshness windows to maker-checker and a 180-day default (the replay applies 442
+after 434, so the rows hold the edited values). Runs in a transaction that is rolled back; invented values only."""
 import json
 import os
 import sys
@@ -22,9 +23,9 @@ M434 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
 INS = ("INSERT INTO shared.setting_value (key, value, version, proposed_by, reason, evidence_ref) "
        "VALUES ($1, $2::jsonb, 1, 'admin:zz-a', 'zz test: a reason of at least twenty characters', NULL) RETURNING id")
 EXPECTED = {
-    rs.VOLUME_FRESH_DAYS: (365, 30, 730),
-    rs.SERP_FRESH_DAYS: (365, 30, 730),
-    rs.QUEUE_RECOVER_DAYS: (7, 0, 30),
+    rs.VOLUME_FRESH_DAYS: (180, 30, 730, "maker_checker"),   # CIS 442 edit (was 365, single)
+    rs.SERP_FRESH_DAYS: (180, 30, 730, "maker_checker"),     # CIS 442 edit (was 365, single)
+    rs.QUEUE_RECOVER_DAYS: (7, 0, 30, "single"),
 }
 
 
@@ -50,7 +51,7 @@ async def _refused(c, *args):
 async def test_434_registered_and_each_row_is_the_compiled_default(conn):
     assert await conn.fetchval("SELECT version AS ok FROM shared.schema_versions WHERE version = '434'") == "434"
     assert set(EXPECTED) == set(rs.ALL)
-    for key, (default, lo, hi) in EXPECTED.items():
+    for key, (default, lo, hi, approval) in EXPECTED.items():
         row = await conn.fetchrow(
             "SELECT default_value::text AS d, min_value::float AS lo, max_value::float AS hi, unit, area, scope_kind, "
             "impact, approval, evidence_required, env_override, enforced, label, "
@@ -60,7 +61,7 @@ async def test_434_registered_and_each_row_is_the_compiled_default(conn):
         assert json.loads(row["d"]) == default == d.default_value
         assert (row["lo"], row["hi"], row["unit"]) == (lo, hi, "days")
         assert (row["area"], row["scope_kind"], row["impact"], row["approval"]) == ("seo", "platform", "medium",
-                                                                                     "single")
+                                                                                     approval)
         assert row["evidence_required"] is False and row["env_override"] is None and row["enforced"] is True
         assert row["guided"] is True and row["label"] == d.label
 
@@ -78,5 +79,10 @@ async def test_a_value_must_stay_within_its_bounds(conn):
 async def test_rerun_changes_nothing(conn):
     body = open(M434, encoding="utf-8").read().replace("BEGIN;", "", 1).rsplit("COMMIT;", 1)[0]
     before = await conn.fetchval("SELECT count(*) AS n FROM shared.setting_definition")
+    edited = await conn.fetchval("SELECT default_value::text AS d FROM shared.setting_definition WHERE key = $1",
+                                 rs.VOLUME_FRESH_DAYS)
     await conn.execute(body)
     assert await conn.fetchval("SELECT count(*) AS n FROM shared.setting_definition") == before
+    # ON CONFLICT DO NOTHING: replaying 434 never undoes the CIS 442 edit
+    assert await conn.fetchval("SELECT default_value::text AS d FROM shared.setting_definition WHERE key = $1",
+                               rs.VOLUME_FRESH_DAYS) == edited
