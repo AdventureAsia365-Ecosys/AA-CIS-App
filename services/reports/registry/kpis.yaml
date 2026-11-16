@@ -1827,8 +1827,8 @@ kpis:
   version: 2
   name: Stuck partners
   definition: 'Partners not activated with more than cis.reports.partner_stuck_days (default 7) days since their last onboarding
-    step (Content studio: created, first membership.activated, brand brief, first approved piece; CRM via crm.ops.v1: agency
-    created without an active owner)'
+    step (Content studio: created, first membership.activated, brand brief (the first brand rules row with content, not the
+    empty row made at provisioning), first approved piece; CRM via crm.ops.v1: agency created without an active owner)'
   unit: count
   threshold: 0 without an owner note
   sources:
@@ -1927,9 +1927,9 @@ kpis:
 - id: K-PART-PAYING
   version: 2
   name: Active paying partners
-  definition: Partners (shared.tenants kind agency, is_canary not true) with a shared.tenant_subscription in status active
-    or past_due on a plan with a shared.plan list price > 0, any product (content, crm, tripplanner); Booking B2B partners
-    are not published to CIS
+  definition: Partners (shared.tenants kind agency, is_canary not true) with a shared.tenant_subscription live at the period's
+    end (started before it, not cancelled by it) in status active or past_due on a plan with a shared.plan list price > 0,
+    any product (content, crm, tripplanner); Booking B2B partners are not published to CIS
   unit: count
   threshold: Trend; business owner sets the yearly goal
   sources:
