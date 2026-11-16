@@ -1,4 +1,4 @@
-"""AA-1122 — the new reads and writes on the real schema (CIS 450-452 applied by conftest): the research month ledger by
+"""AA-1122 — the new reads and writes on the real schema (CIS 440-452 applied by conftest): the research month ledger by
 job, the monthly volume history (never overwritten) and the season read, the tour PAA backfill (candidates, the write
 that never overwrites a bought list, coverage), the rename carry, the agency markets of automatic research and the
 Research tab's run rows.
@@ -42,7 +42,7 @@ class _Pool:
 
 
 async def _needs_cis_450_451(conn) -> None:
-    """The history table (CIS 450) and the PAA provenance columns (CIS 451) ship in this wave's migration-only PR, which
+    """The history table (CIS 440) and the PAA provenance columns (CIS 441) ship in this wave's migration-only PR, which
     merges before this code PR (MIG-4): on a branch without them the two tests that write them are skipped; on main (and
     in the merge queue, after the migration PR) they run."""
     ok = await conn.fetchval(
@@ -50,7 +50,7 @@ async def _needs_cis_450_451(conn) -> None:
         "information_schema.columns WHERE table_schema = 'silver_aa_internal' AND table_name = 'seo_context' "
         "AND column_name = 'paa_source') AS ok")
     if not ok:
-        pytest.skip("CIS 450-451 not in this tree yet (the wave's migration PR merges first)")
+        pytest.skip("CIS 440-451 not in this tree yet (the wave's migration PR merges first)")
 
 
 @pytest_asyncio.fixture

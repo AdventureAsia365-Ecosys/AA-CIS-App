@@ -296,7 +296,7 @@ async def _panel(pool) -> dict:
     for name, call in (("history", search_history.counts(pool)), ("tour_paa", tour_paa.coverage(pool))):
         try:
             out[name] = await call
-        except Exception as exc:  # noqa: BLE001 — before CIS 450 / 451 are applied
+        except Exception as exc:  # noqa: BLE001 — before CIS 440 / 441 are applied
             out[name] = None
             out["errors"][name] = str(exc)[:200]
     return out

@@ -167,7 +167,7 @@ def decide(now: datetime, cfg: dict, pending: Pending, jobs: list[dict], month: 
 
 
 def config() -> dict:
-    """The settings in force for one tick (named in research_settings, CIS 452)."""
+    """The settings in force for one tick (named in research_settings, CIS 442)."""
     from services.jobs.segment_research_job import max_usd_per_run
 
     return {

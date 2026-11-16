@@ -20,7 +20,7 @@ seed had no PAA box. This module fills them, cheapest first:
 Rules: a list S1 or T2 wrote (not empty) is never overwritten; ``fetched_at`` is never touched (it drives the S1 reuse
 window); a row the backfill owns is refreshed when its ``paa_filled_at`` is older than the SERP freshness window
 (``cis.seo.research_serp_fresh_days``), the same window as the research store. Writes provenance in ``paa_source`` /
-``paa_filled_at`` (CIS 451).
+``paa_filled_at`` (CIS 441).
 
 Who owns a row (:data:`OWNED_SQL`): the backfill, when it set ``paa_source`` AND no S1 / T2 write came after it
 (``fetched_at <= paa_filled_at``). The S1 upsert (shared/repository/seo_context_repository.py) sets ``fetched_at`` to

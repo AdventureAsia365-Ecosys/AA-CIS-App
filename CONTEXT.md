@@ -3739,7 +3739,7 @@ their last research that are stale ("waiting after an atomize"). The api ops sam
 `research_stale_share` above 20 % in any market: bell + one e-mail a day, the issue equivalent) and the data coverage
 page shows the same numbers (`research.stale_share.<mk>`, `research.waiting_after_reatomize`). A re-atomize queues its
 new places as research scope `reatomized` (preview priced, bought only when an admin runs it); there is no queue table.
-AA-1122 (CIS 450-452, "always ready"): every Google Ads volume answer (live, Standard queue, keyword ideas, the S1
+AA-1122 (CIS 440-452, "always ready"): every Google Ads volume answer (live, Standard queue, keyword ideas, the S1
 fetch) also keeps its 12 monthly volumes in `acp_contract.search_volume_monthly` (one row per keyword, market, month,
 written once, never overwritten; `search_history.py` reads a place's season: peak month, year-over-year). Keywords of a
 place with identical volume in every market are one demand group (Google's close variants): the one SERP goes to the

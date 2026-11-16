@@ -1,4 +1,4 @@
-"""services/seo_intelligence/search_history.py — AA-1122 item 1: the monthly search volume history (CIS 450).
+"""services/seo_intelligence/search_history.py — AA-1122 item 1: the monthly search volume history (CIS 440).
 
 Every Google Ads volume answer DataForSEO sends carries ``monthly_searches``: the last 12 months of the keyword in the
 asked location (``[{"year": 2026, "month": 10, "search_volume": 1300}, ...]``). Research used to keep only the 12-month
@@ -29,8 +29,8 @@ logger = structlog.get_logger()
 
 Series = list[tuple[date, int | None]]
 
-# The longest keyword the history table accepts (CIS 450 search_volume_monthly_keyword_check).
-MAX_KEYWORD_CHARS = 200  # technical-constant: the column CHECK of CIS 450, not a policy value
+# The longest keyword the history table accepts (CIS 440 search_volume_monthly_keyword_check).
+MAX_KEYWORD_CHARS = 200  # technical-constant: the column CHECK of CIS 440, not a policy value
 
 _INSERT_SQL = """
     INSERT INTO acp_contract.search_volume_monthly (keyword, market, month, search_volume, source)
