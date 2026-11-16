@@ -52,7 +52,7 @@ from services.acp_contract.segment_research import (
 from services.seo_intelligence.dataforseo_client import DataForSEOClient, as_dfs_error
 from services.seo_intelligence.dfs_queue import QueuedTaskFailed
 from services.acp_contract.research_estimate import estimate_deduped
-from services.seo_intelligence.research_cache import CachedSerp, ResearchCache
+from services.seo_intelligence.research_cache import CachedSerp, PaidNotStored, ResearchCache
 from services.seo_intelligence.seed_builder import DFS_LOCATION_MAP, LOCATION_CODE_TO_MARKET
 from shared.cost_guard import (DFS_RESEARCH_ENDPOINTS, BudgetExceeded, RunBudget, dfs_call_estimate_usd,
                                dfs_research_prices)
@@ -542,7 +542,8 @@ async def _purchase_volumes(chunk: list[str], loc: int, lang: str, client: DataF
                             cache: ResearchCache) -> dict[str, int | None]:
     """AA-1120 — one volume purchase of `chunk` in one market. The queue reads the store and paid, uncollected tasks
     first and writes back itself; the live path does the same here: a keyword fresh in the store (a concurrent run
-    stored it since phase B read) is not bought, the bought answers are written back."""
+    stored it since phase B read) is not bought, the bought answers are written back. A store error on that write is
+    PaidNotStored (research_cache): the caller does not split the chunk, so nothing is bought twice."""
     if queue is not None:
         return await queue.volumes(chunk, loc, lang)
     market = LOCATION_CODE_TO_MARKET[loc]
@@ -616,9 +617,11 @@ async def _buy_volumes(places: list[_Place], markets: list[tuple[int, str, str]]
                 guard.record(exc)
                 err = as_dfs_error(exc)
                 # A queued task DataForSEO accepted was charged at post: it failed or timed out after that, so
-                # posting its halves would pay for the same keywords again. Its keywords fail (no log row) and the
-                # next run collects the paid task (AA-1120 recovery) or buys them.
-                if err.fatal or guard.aborted or isinstance(err, QueuedTaskFailed) or len(chunk) < 2 * SPLIT_MIN:
+                # posting its halves would pay for the same keywords again. Same for a purchase whose answers the
+                # store refused (PaidNotStored). Its keywords fail (no log row) and the next run collects the paid
+                # task (AA-1120 recovery) or buys them.
+                if (err.fatal or guard.aborted or isinstance(err, (QueuedTaskFailed, PaidNotStored))
+                        or len(chunk) < 2 * SPLIT_MIN):
                     failed_kw.update(chunk)
                     return
                 # AA-1055 — a task DataForSEO refused is split in two before its keywords count as failed.

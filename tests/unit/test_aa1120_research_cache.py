@@ -374,3 +374,64 @@ async def test_s1_prefetch_buys_one_serp_per_seed_and_reuses_another_tours_row()
     assert client._serp_advanced.await_count == 1                                  # one SERP for the shared seed
     assert summary["serp_calls"] == 1 and summary["serp_reused"] == 2             # the twin tour + the stored row
     assert len(conn.inserted) == 3
+
+
+# ── a paid purchase the store refuses is never bought again in halves (PaidNotStored) ─────────────────────────────
+
+class _RefusingCache(FakeCache):
+    """A FakeCache whose next `fail` volume writes raise PaidNotStored, as ResearchCache.put_volumes does on a DB
+    error (statement timeout, dropped connection)."""
+
+    def __init__(self, fail=1, **kw):
+        super().__init__(**kw)
+        self.fail = fail
+
+    async def put_volumes(self, market, answers):
+        if self.fail > 0:
+            self.fail -= 1
+            raise rc.PaidNotStored("research store refused the bought volumes: statement timeout")
+        await super().put_volumes(market, answers)
+
+
+def _many_keywords(n=300):
+    return [f"zarvok trail {i:03d}" for i in range(n)]       # one chunk >= 2 * SPLIT_MIN (would split on an error)
+
+
+@pytest.mark.asyncio
+async def test_real_put_volumes_wraps_a_store_error_as_paid_not_stored():
+    pool, conn = _pool([])
+    conn.executemany = AsyncMock(side_effect=TimeoutError("canceling statement due to statement timeout"))
+    cache = rc.ResearchCache(pool, stage=rb.RESEARCH_STAGE, windows=WINDOWS)
+    with pytest.raises(rc.PaidNotStored) as got:
+        await cache.put_volumes("US", {"zarvok lake": 10})
+    assert got.value.fatal is False and isinstance(got.value.__cause__, TimeoutError)
+
+
+@pytest.mark.asyncio
+async def test_live_phase_b_store_error_after_a_paid_volume_task_does_not_buy_again():
+    kws = _many_keywords()
+    assert len(kws) >= 2 * rb.SPLIT_MIN
+    pool, _conn = _pool([])
+    client = _serp_client()
+    client.fetch_volumes_bulk = AsyncMock(side_effect=lambda chunk, *a, **k: {kw: 10 for kw in chunk})
+    cache = _RefusingCache(fail=1)
+    place = rb._Place("Zarvok Trail", [], ["US"], keywords=kws)
+    stats = await rb._buy_volumes([place], [(2840, "United States", "en")], client, pool, sr._RunGuard(), None, cache)
+    assert client.fetch_volumes_bulk.await_count == 1                     # one paid task, never its halves
+    assert stats["volume_splits"] == 0 and stats["keywords_bought"] == 0
+    assert place.failed and ("US", "volume") not in place.logged          # stale: the next run buys them once
+
+
+@pytest.mark.asyncio
+async def test_queue_phase_b_store_error_after_a_paid_post_does_not_post_again():
+    kws = _many_keywords()
+    pool, _conn = _pool([])
+    client = QueueClient()
+    cache = _RefusingCache(fail=1)
+    queue = q.StandardQueue(client, cache=cache, sleep=AsyncMock())
+    place = rb._Place("Zarvok Trail", [], ["US"], keywords=kws)
+    stats = await rb._buy_volumes([place], [(2840, "United States", "en")], _serp_client(), pool, sr._RunGuard(),
+                                  queue, cache)
+    assert len(client.posted) == 1                                        # one paid post, never its halves
+    assert stats["volume_splits"] == 0 and place.failed
+    assert cache.volume_writes == []                                      # the next run recovers the paid task

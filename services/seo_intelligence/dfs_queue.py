@@ -343,7 +343,8 @@ class StandardQueue:
         """Search volume of up to 1,000 keywords in one market. AA-1120: duplicates are asked once, the fresh store
         and paid-but-uncollected tasks answer first, only the rest is posted as ONE queued task, and its answer is
         written back to the store. Raises DFSCallError on failure (the caller splits the chunk, as for a failed live
-        task)."""
+        task), QueuedTaskFailed for a posted task that failed or timed out and research_cache.PaidNotStored when the
+        store refused a paid answer (neither is split: the next run collects the paid task)."""
         chunk, _where = dedupe(kw for kw in keywords if kw)
         chunk = chunk[:1000]
         if not chunk:

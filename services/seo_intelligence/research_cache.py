@@ -35,6 +35,7 @@ from typing import Iterable, Sequence
 import structlog
 
 from services.seo_intelligence import research_settings as rs
+from services.seo_intelligence.dataforseo_client import DFSCallError
 from shared.dfs_client.call_log import record_dfs_call_with_pool
 
 logger = structlog.get_logger()
@@ -74,6 +75,16 @@ DFS_CALL_SITES: dict[str, str] = {
 CACHE_READS = frozenset({"volumes", "serps", "windows"})
 CACHE_WRITES = frozenset({"put_volumes", "put_serp", "put_serp_answer"})
 CACHE_METHODS = CACHE_READS | CACHE_WRITES | {"log_hits", "pending_tasks"}
+
+
+class PaidNotStored(DFSCallError):
+    """DataForSEO answered (and charged) a purchase, but the store refused its answers (a statement timeout, a dropped
+    connection, a full pool). Never fatal, never split: buying the keywords again, in halves, would pay twice for
+    them. The caller marks them failed (no log row, the places stay stale); the next run collects the paid queued task
+    (:meth:`ResearchCache.pending_tasks`) or, on the live endpoint, buys them once."""
+
+    def __init__(self, message: str):
+        super().__init__(message, False, None)
 
 
 # ── settings ─────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -258,11 +269,18 @@ class ResearchCache:
         return {r["keyword"]: r["search_volume"] for r in rows}
 
     async def put_volumes(self, market: str, answers: dict[str, int | None]) -> None:
-        """Write bought volumes back (an answered keyword with no DataForSEO row is stored as NULL = measured)."""
+        """Write bought volumes back (an answered keyword with no DataForSEO row is stored as NULL = measured). Raises
+        PaidNotStored when the store refuses them: the purchase is paid, so the caller must not buy them again."""
         if not answers:
             return
-        async with self.pool.acquire() as conn:
-            await conn.executemany(_UPSERT_VOLUME_SQL, [(kw, market, v) for kw, v in answers.items()])
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.executemany(_UPSERT_VOLUME_SQL, [(kw, market, v) for kw, v in answers.items()])
+        except Exception as exc:  # noqa: BLE001 — any store error: the answers are paid, never a reason to buy again
+            logger.warning("research_cache_volume_store_failed", market=market, keywords=len(answers),
+                           error=str(exc)[:200])
+            raise PaidNotStored(f"research store refused {len(answers)} bought volumes in {market}: "
+                                f"{str(exc)[:200]}") from exc
 
     async def serps(self, keywords: Sequence[str], market: str) -> dict[str, CachedSerp]:
         """keyword -> its stored SERP for every keyword of ``keywords`` whose SERP is fresh in ``market``."""
@@ -324,6 +342,6 @@ class ResearchCache:
         return pending_from_rows([dict(r) for r in rows], set(keywords), location_code, set(exclude))
 
 
-__all__ = ["ResearchCache", "Windows", "CachedSerp", "PendingTask", "fresh_windows", "volume_fresh_for",
+__all__ = ["ResearchCache", "PaidNotStored", "Windows", "CachedSerp", "PendingTask", "fresh_windows", "volume_fresh_for",
            "serp_fresh_for", "dedupe", "parse_serp", "pending_from_rows", "DFS_CALL_SITES", "PAID_CLIENT_METHODS",
            "PAID_QUEUE_METHODS", "CACHE_METHODS", "CACHE_READS", "CACHE_WRITES"]
