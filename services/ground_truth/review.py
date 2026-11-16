@@ -435,6 +435,28 @@ async def read_relabels_soft(conn, set_id: str, set_version: str) -> list[dict]:
         return []
 
 
+async def read_relabels_many_soft(conn, keys: Iterable[tuple[str, str]]) -> dict[tuple[str, str], list[dict]]:
+    """read_relabels_soft of several (set_id, set_version) in one query; each version's corrections keep their order
+    (created_at, relabel_id). Before CIS 394 every version maps to []."""
+    import asyncpg
+
+    keys = sorted(set(keys))
+    out: dict[tuple[str, str], list[dict]] = {k: [] for k in keys}
+    if not keys:
+        return out
+    a, b = (list(x) for x in zip(*keys))
+    try:
+        async with conn.transaction():
+            rows = await conn.fetch(
+                f"{_RELABELS_SQL} WHERE (set_id, set_version) IN (SELECT * FROM unnest($1::text[], $2::text[])) "
+                "ORDER BY created_at, relabel_id", a, b)
+    except asyncpg.UndefinedTableError:
+        return out
+    for r in rows:
+        out[(r["set_id"], r["set_version"])].append(dict(r))
+    return out
+
+
 async def claim_rows(conn, keys: Iterable[tuple[str, str, str]]) -> list[dict]:
     keys = sorted(set(keys))
     if not keys:
@@ -1075,10 +1097,13 @@ async def list_sets(conn) -> list[dict]:
         "SELECT l.set_id, l.set_version, d.status, count(*) AS n FROM shared.writing_memory_disagreement d "
         "JOIN shared.eval_claim_label l ON l.label_id = d.source_ref WHERE d.source = 'golden_claim' "
         "GROUP BY 1, 2, 3")}
+    # S282 (Sentry AA-CIS-API-1A): every listed version's rows and corrections in one query each, not 2 per version.
+    rows_by = await store.read_rows_many(conn, sets)
+    relabels_by = await read_relabels_many_soft(conn, sets)
     out = []
     for set_id, version in sets:
-        rows = await store.read_rows(conn, set_id, version)
-        relabels = await read_relabels_soft(conn, set_id, version)
+        rows = rows_by.get((set_id, version), [])
+        relabels = relabels_by.get((set_id, version), [])
         out.append({"set_id": set_id, "set_version": version, **set_summary(rows, relabels),
                     "queue": {s: queue.get((set_id, version, s), 0) for s in ("open", "resolved")}})
     return out
