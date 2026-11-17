@@ -1,9 +1,10 @@
 """AA-1113 (root ADR 0009 decision 10, accepted S283): the free-text PII scrub of the gateway, fail closed.
 
-A stage that carries tenant free text (:data:`FREE_TEXT_STAGES`) never sends a prompt to a model before this scrub has
-run on it. ``LLMClient._generate_with`` (and the admin ``probe``) call :func:`scrub_for_stage` after the switch and
-budget gates and before the first provider attempt, so every path that follows (the stage route, a legacy key, the
-truncation retry, the A/B shadow, the cassette) only ever sees the scrubbed request. Any other stage gets the very same
+A stage that carries tenant free text (:func:`is_free_text_stage`: every ``t<n>_`` stage) never sends a prompt to a
+model before this scrub has run on it. ``LLMClient._generate_with`` (and the admin ``probe``) call
+:func:`scrub_for_stage` after the switch and budget gates and before the first provider attempt, so every path that
+follows (the stage route, a legacy key, the truncation retry, the A/B shadow, the cassette) only ever sees the scrubbed
+request. Any other stage gets the very same
 request object back (no copy, no change: the catalogue stages ``s1_*``, ``a3_*`` and ``tp_compose`` carry no tenant
 text, S283 measure-first).
 
@@ -23,10 +24,14 @@ CRM's known-value and detector passes (its own gateway, root ADR 0008a section 5
 **Receipt.** Counts per label only (``{"version": ..., "redacted": {"[email]": 1}}``), set on the request's attempt
 scope (``quality_signal.pii_scrub`` of the gateway's own rows) and logged as ``llm_free_text_scrubbed``; never a value.
 
-**Which stages.** A code allow-list for this slice: ``shared.llm_role_config.pii_class`` (CIS 373) has ``content`` and
-``pii`` only, and a ``pii`` stage is a different rule (US AWS deployments only, no scrub: it needs the data). Moving the
-flag into the stage row is a migration (ADR 0009 decision 10: "a scope change happens only by migration"); see
-docs/implementation-notes/AA-1113.md.
+**Which stages.** Fail safe by name: every tenant stage (``t<n>_``, the rule ``batch_lane.TENANT_STAGE_RE`` uses) is
+scrubbed, not only the writers. The repair, FAQ and judge stages (``t9_repair``, ``t9_faq_*``, ``t10_*``, ``t2_judge``,
+``t2_flag_fix``, ``t2_brand_audit``, ``t7_debate_judge``, ...) re-read the same content seed, agency facts and brand
+rules, so a writer-only list let that text reach a model raw. :data:`NOT_FREE_TEXT_STAGES` takes a ``t`` stage out
+only once it is proven free of tenant text (empty today). ``shared.llm_role_config.pii_class`` (CIS 373) has ``content``
+and ``pii`` only, and a ``pii`` stage is a different rule (US AWS deployments only, no scrub: it needs the data).
+Moving the flag into the stage row is a migration (ADR 0009 decision 10: "a scope change happens only by migration");
+see docs/implementation-notes/AA-1113.md.
 """
 from __future__ import annotations
 
@@ -43,9 +48,14 @@ logger = structlog.get_logger()
 
 # The rules of the scrub: bumped whenever the same prompt can scrub to a different text.
 VERSION = "aa1113-1"
-# The stages whose prompts carry tenant free text (S283 measure-first, root
-# docs/audits/2026-11-17-S283-session/aa1113-provider-stage-30d.psv; tech lead decision s283-d10).
-FREE_TEXT_STAGES = frozenset({"t9_write", "t2_generate", "t8_angle_gen"})
+# The stages whose prompts carry tenant free text: every tenant stage, by name (fail safe). A tenant stage is
+# "t<n>_..." (batch_lane.TENANT_STAGE_RE, the same rule); the S283 measure (root
+# docs/audits/2026-11-17-S283-session/aa1113-provider-stage-30d.psv, tech lead decision s283-d10) found tenant rows on
+# the writers and on every repair / FAQ / judge stage that re-reads their seed, facts and brand rules.
+TENANT_STAGE_RE = re.compile(r"^t\d+_")
+# A tenant stage taken out of the scrub: only one proven free of tenant text (its prompt holds no seed, fact, brand
+# rule, brief or tenant-written text). Empty: no tenant stage is proven free today.
+NOT_FREE_TEXT_STAGES: frozenset[str] = frozenset()
 SCRUB_STATUS_FAILED = "failed"
 SCRUB_STATUS_OK = "scrubbed"
 
@@ -94,7 +104,10 @@ class FreeTextScrubFailed(RuntimeError):
 
 
 def is_free_text_stage(stage: Optional[str]) -> bool:
-    return isinstance(stage, str) and stage in FREE_TEXT_STAGES
+    """True for every tenant stage (``t<n>_...``) not proven free of tenant text; a new tenant stage is scrubbed
+    without a code change (fail safe)."""
+    return (isinstance(stage, str) and TENANT_STAGE_RE.match(stage) is not None
+            and stage not in NOT_FREE_TEXT_STAGES)
 
 
 def _sub(rx: re.Pattern[str], repl, text: str, label: str, counts: Counter) -> str:

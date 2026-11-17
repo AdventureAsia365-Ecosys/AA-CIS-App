@@ -534,8 +534,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   model with no US deployment for a pii stage.
 - **Free-text PII scrub** (AA-1113, root ADR 0009 d10, accepted S283; `shared/llm_client/free_text_scrub.py` +
   `pii_patterns.py`, a copy of the CRM log scrub and its F3 detectors, never imported across repos): the stages that
-  carry tenant free text (`FREE_TEXT_STAGES` = `t9_write`, `t2_generate`, `t8_angle_gen`, a code allow-list until a
-  migration moves the flag into the stage row) send only a scrubbed copy of their request (system, user, few-shots):
+  carry tenant free text (every tenant stage `t<n>_*` by name, fail safe: the writers and the repair / FAQ / judge
+  stages that re-read their seed, agency facts and brand rules; `NOT_FREE_TEXT_STAGES` takes one out only once proven
+  free of tenant text, empty today; a migration may later move the flag into the stage row) send only a scrubbed copy of their request (system, user, few-shots):
   e-mails, phones, cards, CCCD numbers, passports, OTPs after a cue, JWTs, credentials and signed links become bracket
   labels (`[email]`, `[phone]` ...); dates, UUIDs and plain links stay; nothing is restored in the reply.
   `LLMClient._generate_with` runs it after the switch and budget gates and before the first attempt (so the route,

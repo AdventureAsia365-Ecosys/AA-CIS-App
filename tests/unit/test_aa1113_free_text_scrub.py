@@ -2,12 +2,13 @@
 
 - The port of the CRM log scrub (AA-Partner ``app/observability/scrub.py`` ``scrub_text`` + ``app/privacy/patterns.py``)
   keeps its behaviour: what is redacted, what survives (dates, UUIDs, plain links, catalogue numbers).
-- A ``t9_write`` / ``t2_generate`` / ``t8_angle_gen`` prompt with a planted e-mail and phone reaches the fake model
-  scrubbed; a catalogue stage is untouched (the same request object).
+- Every tenant stage (``t<n>_``, fail safe) is scrubbed: a ``t9_write`` / ``t2_generate`` / ``t8_angle_gen`` prompt and
+  a ``t9_repair`` call of ``repair_sentences_detailed`` (agency facts in ``facts_text``) with a planted e-mail and phone
+  reach the fake model scrubbed; a catalogue stage is untouched (the same request object).
 - A scrub that cannot run refuses the call: no provider attempt, one 0 USD ledger row (refused / other, the
   ``pii_scrub`` receipt), no planted value in the row.
 - The reply of a scrubbed call keeps its ``billed_fields`` (connection, latency, attempt, trace, prompt hash).
-- The platform's own static prompts of those stages scrub to themselves (a prompt edit never trips the scrub).
+- The platform's own static prompts of the tenant stages scrub to themselves (a prompt edit never trips the scrub).
 No database, no AWS, no vendor. Every value below is invented; the 12-digit id and the token are built at run time
 (the resource-id scanner and the secret scan read literals).
 """
@@ -21,8 +22,8 @@ from shared.llm_client import call_log, free_text_scrub, pii_patterns
 from shared.llm_client.call_log import billed_fields
 from shared.llm_client.client import attempt_outcome
 from shared.llm_client.errors import OTHER, classify
-from shared.llm_client.free_text_scrub import (FREE_TEXT_STAGES, FreeTextScrubFailed, is_free_text_stage,
-                                               scrub_for_stage, scrub_text)
+from shared.llm_client.free_text_scrub import (NOT_FREE_TEXT_STAGES, TENANT_STAGE_RE, FreeTextScrubFailed,
+                                               is_free_text_stage, scrub_for_stage, scrub_text)
 from shared.llm_client.models import LLMRequest
 from shared.llm_client.role_config import StageConfig
 from tests.unit.test_aa1002_s3_deployment_routing import World, _anthropic
@@ -83,18 +84,34 @@ def test_the_detectors_are_the_crm_detectors():
 
 # ── which stages ────────────────────────────────────────────────────────────────────────────────────────────────────
 
-def test_the_free_text_stages_are_the_three_tenant_writers():
-    assert FREE_TEXT_STAGES == {"t9_write", "t2_generate", "t8_angle_gen"}
+# The tenant stages the S283 measure saw carrying tenant rows (writers, and the repair / FAQ / judge stages that re-read
+# the same seed, agency facts and brand rules), plus a few more tenant stages of the code.
+TENANT_STAGES = ["t9_write", "t2_generate", "t8_angle_gen", "t9_repair", "t9_faq_filter", "t9_faq_answer_fit",
+                 "t10_judge", "t10_claims", "t10_adjudicate", "t2_flag_fix", "t2_judge", "t2_brand_audit",
+                 "t7_debate_judge", "t2_judge_tiebreak", "t8_angle_rank", "t3_grounding"]
 
 
-@pytest.mark.parametrize("stage", ["s1_generate", "a3_place_card", "tp_compose", "t10_judge", None, ""])
+@pytest.mark.parametrize("stage", TENANT_STAGES)
+def test_every_tenant_stage_is_a_free_text_stage(stage):
+    assert is_free_text_stage(stage)
+
+
+def test_the_tenant_rule_is_the_batch_lane_rule_and_no_tenant_stage_is_exempt():
+    from shared.llm_client import batch_lane
+    assert TENANT_STAGE_RE.pattern == batch_lane.TENANT_STAGE_RE.pattern
+    # A stage leaves the scrub only once proven free of tenant text (seed, facts, brand rules, brief, tenant text).
+    assert NOT_FREE_TEXT_STAGES == frozenset()
+
+
+@pytest.mark.parametrize("stage", ["s1_generate", "a3_place_card", "tp_compose", "tp_plan_chat", "adhoc_t9",
+                                   "writing_memory_eval", "t9", "T9_write", None, ""])
 def test_another_stage_gets_the_same_request_object(stage):
     req = LLMRequest(system_prompt="s", user_prompt=f"mail {PLANTED_EMAIL}", stage=stage)
     assert not is_free_text_stage(stage)
     assert scrub_for_stage(req) is req
 
 
-@pytest.mark.parametrize("stage", ["t9_write", "t2_generate", "t8_angle_gen"])
+@pytest.mark.parametrize("stage", ["t9_write", "t2_generate", "t8_angle_gen", "t9_repair", "t10_judge"])
 def test_a_free_text_request_is_scrubbed_everywhere_with_a_receipt(stage):
     class Scope:
         extra: dict = {}
@@ -193,7 +210,8 @@ def _stage(monkeypatch, stage):
 PROMPT = f"Agency note: the guest wrote from {PLANTED_EMAIL}, phone {PLANTED_PHONE}, mobile {PLANTED_MOBILE}."
 
 
-@pytest.mark.parametrize("stage", ["t9_write", "t2_generate", "t8_angle_gen"])
+@pytest.mark.parametrize("stage", ["t9_write", "t2_generate", "t8_angle_gen", "t9_repair", "t9_faq_filter",
+                                   "t10_judge", "t2_judge"])
 def test_a_planted_email_and_phone_reach_the_model_scrubbed(world, monkeypatch, ledger, stage):
     _stage(monkeypatch, stage)
     resp = world.generate(stage=stage, system_prompt="Write for the brand.", user_prompt=PROMPT)
@@ -202,6 +220,26 @@ def test_a_planted_email_and_phone_reach_the_model_scrubbed(world, monkeypatch, 
     for value in (PLANTED_EMAIL, PLANTED_PHONE, PLANTED_MOBILE, "912 345 678", "654 321"):
         assert value not in sent
     assert "[email]" in sent and sent.count("[phone]") == 2
+
+
+def test_agency_facts_sent_by_the_sentence_repair_reach_the_model_scrubbed(world, monkeypatch, ledger):
+    # Review S283: the admin Rewrite suggestion runs repair_sentences_detailed on t9_repair with the content seed and
+    # the agency facts (the tenant's own title and body); a writer-only list sent them raw.
+    from services.acp_content_writing import generate as t9
+    _stage(monkeypatch, "t9_repair")
+    monkeypatch.setattr(t9, "LLMClient", lambda: world.client)
+    monkeypatch.setattr(t9, "record_call_sync", lambda **kw: None)
+    facts = f"- Agency fact: Riverbend Trails. Book with our desk at {PLANTED_EMAIL} or {PLANTED_PHONE}."
+    seed = f"Day 1: walk the Lantern Valley rice terraces; host mobile {PLANTED_MOBILE}."
+    with pytest.raises(t9.SentenceRepairError):     # the fake model's reply is not a JSON patch
+        t9.repair_sentences_detailed(sentences=[{"sentence": "The valley is green.", "problem": "too vague"}],
+                                     content_seed=seed, facts_text=facts, channel="blog", stage="t9_repair",
+                                     mode="admin_suggest")
+    assert len(world.sent) == 1
+    sent = world.sent[0]
+    for value in (PLANTED_EMAIL, PLANTED_PHONE, PLANTED_MOBILE, "912 345 678", "654 321"):
+        assert value not in sent
+    assert "[email]" in sent and sent.count("[phone]") == 2 and "Riverbend Trails" in sent
 
 
 def test_a_legacy_key_of_a_free_text_stage_is_scrubbed_too(world, monkeypatch, ledger):
@@ -271,6 +309,14 @@ def test_a_scrubbed_reply_keeps_its_billed_fields(world, monkeypatch, ledger):
 
 @pytest.mark.parametrize("module", [
     "services.acp_content_writing.prompts",       # t9_write
+    "services.acp_content_writing.generate",      # t9_repair (sentence repair, SEO fit, extend)
+    "services.acp_content_writing.quality_gates",  # t10_judge
+    "services.acp_content_writing.faq_filter",    # t9_faq_filter
+    "services.acp_content_writing.faq_answer_fit",  # t9_faq_answer_fit
+    "services.acp_content_writing.seed_align.adjudicate",  # t10_adjudicate
+    "services.acp_produce.tenant_pipeline",       # t2_flag_fix (T3 repair)
+    "services.acp_shared.debate",                 # t7_debate_judge
+    "services.content_generation.judge_node",     # t2_judge
     "services.acp_angle_gate.prompts",            # t8_angle_gen
     "services.content_generation.prompts",        # t2_generate (shared with s1)
     "services.content_generation.s1_writer_v2",   # the v2 writer prompt blocks
