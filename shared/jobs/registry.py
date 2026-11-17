@@ -193,9 +193,12 @@ class JobContext:
 
 
 async def enqueue(pool, kind: str, payload: dict, **kw) -> tuple[str, bool]:
-    """Enqueue with the kind's registered defaults (max_attempts) unless overridden."""
+    """Enqueue with the kind's registered defaults (max_attempts) unless overridden. AA-1126 G4: a run-capped kind
+    (``run_cap.STAMPED_KINDS``: s1_rewrite) gets ``cap_usd`` = its Platform › Settings run cap when the payload has
+    none, so the job keeps the cap it was queued with."""
     k = _KINDS.get(kind)
     if k is None:
         raise ValueError(f"unknown job kind {kind!r}")
     kw.setdefault("max_attempts", k.max_attempts)
-    return await queue.enqueue(pool, kind, payload, **kw)
+    from shared.llm_client import run_cap   # lazy: the registry stays import-light
+    return await queue.enqueue(pool, kind, run_cap.stamp(kind, payload), **kw)

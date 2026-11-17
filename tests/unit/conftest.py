@@ -148,7 +148,16 @@ def _llm_breaker_off(request, monkeypatch):
     from shared.llm_client import route_watch
     route_watch.reset()
     monkeypatch.setattr(route_watch, "loader", lambda: {})
+    # AA-1126: the anomaly breaker and the run caps read the ledger on the call path; in unit tests no app has spent
+    # anything and no run has spent anything (tests that need spend set the loaders).
+    from shared.llm_client import anomaly_breaker, run_cap
+    anomaly_breaker.invalidate()
+    run_cap.invalidate()
+    monkeypatch.setattr(anomaly_breaker, "loader", lambda app, since, today, days, need_median: (0.0, 0.0))
+    monkeypatch.setattr(run_cap, "loader", lambda run: 0.0)
     yield
+    anomaly_breaker.invalidate()
+    run_cap.invalidate()
     breaker.reset()
     capacity.reset()
     route_watch.reset()

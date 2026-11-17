@@ -7,9 +7,12 @@
 // and change counts, bot pull requests; every run, commit and pull request links to GitHub. "Dev numbers" label on the
 // header: few events, never compared with prod benchmarks.
 //
+// AA-1125: two more tabs, Merge queue and Git map (ActivityTabs.tsx), each loading its own section of the summary.
+//
 // API (backend api/routers/admin_platform_delivery.py; BFF /api/admin/platform/delivery, admin only — lib/rbac.ts):
-//   GET /api/admin/platform/delivery[?refresh=1]
-// Pure helpers: lib/deliveryMetrics.ts. Kit only. The tab lives in the URL (?app=<id>).
+//   GET /api/admin/platform/delivery[?refresh=1][&section=queue|git]
+// Pure helpers: lib/deliveryMetrics.ts, lib/deliveryActivity.ts. Kit only. The tab lives in the URL (?app=<id>, or
+// ?app=merge-queue / ?app=git-map).
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BookOpen, ExternalLink, GitBranch, RefreshCw, SlidersHorizontal } from "lucide-react";
@@ -27,6 +30,8 @@ import {
   type ChangeRow, type DeliveryApp, type DeliveryResp, type DeployRow, type FlakyRow, type MetricKey, type MetricStatus,
   type WorkflowRow,
 } from "@/lib/deliveryMetrics";
+import { GitMapTab, MergeQueueTab } from "./ActivityTabs";
+import { ACTIVITY } from "./activity.messages";
 import { DELIVERY } from "./messages";
 
 const KEY = ["platform-delivery"];
@@ -365,7 +370,15 @@ function AppTab({ app, t }: { app: DeliveryApp; t: DT }) {
 function useDelivery() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: KEY, queryFn: () => apiGetDelivery(false), staleTime: 60_000 });
-  const refresh = useMutation({ mutationFn: () => apiGetDelivery(true), onSuccess: (d) => qc.setQueryData(KEY, d) });
+  const refresh = useMutation({
+    mutationFn: () => apiGetDelivery(true),
+    onSuccess: (d) => {
+      qc.setQueryData(KEY, d);
+      // AA-1125: the Merge queue and Git map tabs read the same (now re-read) summary
+      void qc.invalidateQueries({ queryKey: [...KEY, "queue"] });
+      void qc.invalidateQueries({ queryKey: [...KEY, "git"] });
+    },
+  });
   const error = (refresh.error as Error | null) ?? (q.error as Error | null);
   return { q, refresh, error, busy: q.isFetching || refresh.isPending };
 }
@@ -408,19 +421,28 @@ function LoadError({ error, t, onRetry }: { error: Error; t: DT; onRetry: () => 
     : <ErrorState message={`${t("loadError")}: ${error.message}`} onRetry={onRetry} />;
 }
 
+// AA-1125: the two activity tabs sit after Overview; their keys are never an app id.
+const QUEUE_TAB = "merge-queue";
+const GIT_TAB = "git-map";
+
 function Content({ data, t }: { data: DeliveryResp; t: DT }) {
-  const { get, set } = useUrlFilters();
+  const ta = useT(ACTIVITY);
+  const { get, setMany } = useUrlFilters();
   const asked = get("app");
-  const active = data.apps.some((a) => a.id === asked) ? asked : "overview";
+  const active = asked === QUEUE_TAB || asked === GIT_TAB || data.apps.some((a) => a.id === asked) ? asked : "overview";
   const app = data.apps.find((a) => a.id === active);
-  const open = (id: string) => set("app", id === "overview" ? null : id);
+  // a tab change drops the inner choices of the activity tabs (repo, period, directory)
+  const open = (id: string) => setMany({ app: id === "overview" ? null : id, repo: null, period: null, dir: null });
   return (
     <div style={grid}>
       <Tabs ariaLabel={t("title")} active={active} onChange={open} testId="delivery-tabs" tabs={[
         { key: "overview", label: t("tabOverview") },
+        { key: QUEUE_TAB, label: ta("tabQueue") },
+        { key: GIT_TAB, label: ta("tabGit") },
         ...data.apps.map((a) => ({ key: a.id, label: a.name })),
       ]} />
-      {app ? <AppTab app={app} t={t} /> : <Overview data={data} t={t} open={open} />}
+      {active === QUEUE_TAB ? <MergeQueueTab /> : active === GIT_TAB ? <GitMapTab />
+        : app ? <AppTab app={app} t={t} /> : <Overview data={data} t={t} open={open} />}
     </div>
   );
 }

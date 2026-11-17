@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from typing import Awaitable, Callable, Optional
 from api.routers.v1_pipeline import _rewrite_tour
 from shared.llm_client import call_log as _call_log  # AA-1058: the tour every S1 ledger row names
+from shared.llm_client import run_cap
 from shared.llm_client.errors import is_llm_access_denied
 from services.content_generation import s1_checkpoint as _ckpt  # AA-993 G2
 from shared.secrets import get_database_url  # AA-838 D9: default application_name
@@ -599,6 +600,8 @@ async def _run_tour_safe(tour_req: TourRunRequest, job_id: str | None = None,
                                attempt=attempt + 1, error=str(exc))
                 if is_llm_access_denied(exc):
                     break  # AA-900: refused at account level; the next attempt would be refused the same way
+                if _spend_stop(exc, job_id) is not None:
+                    break  # AA-1126: the run reached its cap / the app's breaker is tripped; a retry is refused too
         logger.error("background_run_tour_failed", tour_id=tour_req.tour_id,
                      batch_id=tour_req.batch_id, error=str(last_exc))
         if not _is_uuid(tour_req.batch_id):
@@ -608,6 +611,7 @@ async def _run_tour_safe(tour_req: TourRunRequest, job_id: str | None = None,
                         batch_id=tour_req.batch_id, reason="batch_id is not a valid uuid")
             if is_llm_access_denied(last_exc):
                 raise last_exc  # AA-900: see the end of this function
+            _raise_spend_stop(last_exc, job_id)
             return
         try:
             conn = await asyncpg.connect(get_database_url())
@@ -623,6 +627,21 @@ async def _run_tour_safe(tour_req: TourRunRequest, job_id: str | None = None,
             # AA-900: the one failure the job must see typed (fails at once, reason llm_access_denied) — every other
             # final failure is still swallowed (return None), as before.
             raise last_exc
+        _raise_spend_stop(last_exc, job_id)
+
+
+def _spend_stop(exc: BaseException | None, job_id: str | None):
+    """AA-1126 (review S283): the run cap / anomaly breaker refusal behind a failed attempt (in the exception's chain,
+    or one the gateway remembered for the job while the graph turned it into a failed draft), else None."""
+    return run_cap.spend_stop_in(exc) or run_cap.job_stop(job_id)
+
+
+def _raise_spend_stop(exc: BaseException | None, job_id: str | None) -> None:
+    """Raise the spend stop of a failed run typed (a BudgetExceeded: the s1_rewrite job ends stopped_budget, the wave
+    report counts it as a budget stop, not a writer failure); nothing when there is none."""
+    stop = _spend_stop(exc, job_id)
+    if stop is not None:
+        raise stop from (exc if exc is not stop else None)
 
 
 def _build_s1_progress_sink(redis, job_id: str):

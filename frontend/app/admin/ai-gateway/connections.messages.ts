@@ -163,7 +163,9 @@ export const CONNECTIONS = defineMessages(
     hardStop: "At 100 % of the budget",
     hardStopYes: "Stop using this connection",
     hardStopNo: "Alert only",
-    hardStopHint: "Stopping leaves the connection out of every route until the budget is raised or the month ends.",
+    hardStopHint: "Stopping leaves the connection out of every route until the budget is raised or the month ends. "
+      + "When every connection of a route is at its budget, the environment setting \"AI connections: what a monthly "
+      + "cap does\" (Platform › Settings › Spend) decides: stop the call, or fail over and go on with an alert.",
     usageSecret: "Usage key secret (read-only)",
     usageSecretHint:
       "Name of a read-only usage or admin key in Secrets Manager (aa-llm/<env>/<name>) for the nightly cost check. Empty: not checked.",
@@ -324,7 +326,9 @@ export const CONNECTIONS = defineMessages(
     hardStop: "Khi đạt 100% ngân sách",
     hardStopYes: "Ngừng dùng kết nối này",
     hardStopNo: "Chỉ cảnh báo",
-    hardStopHint: "Ngừng dùng nghĩa là kết nối bị bỏ khỏi mọi route cho tới khi tăng ngân sách hoặc sang tháng mới.",
+    hardStopHint: "Ngừng dùng nghĩa là kết nối bị bỏ khỏi mọi route cho tới khi tăng ngân sách hoặc sang tháng mới. "
+      + "Khi mọi kết nối của một route đều chạm ngân sách, cài đặt môi trường \"AI connections: what a monthly cap "
+      + "does\" (Nền tảng › Cài đặt › Chi phí) quyết định: dừng lệnh gọi, hay chuyển kết nối và chạy tiếp kèm cảnh báo.",
     usageSecret: "Secret khoá usage (chỉ đọc)",
     usageSecretHint:
       "Tên một khoá usage hoặc admin chỉ đọc trong Secrets Manager (aa-llm/<env>/<name>) cho lần đối soát hằng đêm. Để trống: không đối soát.",

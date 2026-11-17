@@ -22,6 +22,14 @@ Defence in depth: only the known top-level keys pass, apps need a string id, and
 text string is masked again (the root repos are public; a bundle carrying one was written by something else). Hex
 commit SHAs under `sha` keys and github.com links under `url` keys are identifiers, not text, and pass unchanged.
 
+AA-1125 (S283): two more sections per app in the same summary, served by the same route with `section`:
+  section=dora (default)  the AA-1108 view; the apps leave out `queue` and `git` (the page's first load stays small)
+  section=queue           the merge-queue section of the apps with a GitHub merge queue (wait, outcomes, ejection
+                          reasons, merge_group CI, flaky signals), coloured with the CIS 445 settings (queue wait p95,
+                          ejection rate, flaky rate; cis.delivery.min_sample as for the DORA keys)
+  section=git             the git activity of every app (commits a day over 90 days, author kinds, churn by directory
+                          and file over 30 / 90 days, merges by branch prefix, the last commits for a graph); no colour
+
 DeliveryMissing -> 404 (nothing published yet), DeliveryUnavailable -> 503 (storage or format).
 """
 from __future__ import annotations
@@ -47,6 +55,10 @@ _TOP_KEYS = ("generated_at", "environment", "definitions", "collection")
 METRICS = ("deployment_frequency", "lead_time", "change_failure_rate", "recovery_time", "rework_rate", "ci_p95",
            "main")
 GREEN, AMBER, RED, FEW, NONE = "green", "amber", "red", "few", "none"
+SECTIONS = ("dora", "queue", "git")
+# AA-1125: the keys every section keeps from an app summary (the rest of the app belongs to its own section)
+_APP_HEAD = ("id", "name", "repo", "environment", "window", "complete_since")
+_HEAVY = ("queue", "git")
 
 
 class DeliveryMissing(Exception):
@@ -217,9 +229,62 @@ def grade(app: dict, th: dict) -> dict[str, str]:
     return out
 
 
-async def view(refresh: bool = False) -> dict:
-    """The summary with each app's colours and the thresholds in force (what GET /admin/platform/delivery serves)."""
+# ── AA-1125: merge queue and git activity ──────────────────────────────────────────────────────────────────────
+
+
+async def queue_thresholds() -> dict:
+    """The values in force of the merge-queue settings (CIS 445) and the shared min_sample (CIS 433)."""
+    out: dict[str, Any] = {}
+    for metric, (green, amber, higher) in ds.QUEUE_BANDS.items():
+        out[metric] = {"green": await settings.aget(green), "amber": await settings.aget(amber),
+                       "higher_is_better": higher, "keys": [green, amber]}
+    out["min_sample"] = await settings.aget(ds.MIN_SAMPLE)
+    return out
+
+
+def queue_values(queue: dict) -> dict[str, tuple[Optional[float], Optional[int]]]:
+    """(value in the unit of its settings, n) per graded merge-queue metric of one app's `queue` section."""
+
+    def part(name: str) -> dict:
+        p = queue.get(name)
+        return p if isinstance(p, dict) else {}
+
+    ej, fl = _num(part("ejection_rate").get("value")), _num(part("flaky").get("value"))
+    return {
+        "queue_wait": (_num(part("wait").get("p95_h")), part("wait").get("n")),
+        "ejection_rate": (None if ej is None else round(ej * 100, 2), part("ejection_rate").get("n")),
+        "flaky_rate": (None if fl is None else round(fl * 100, 2), part("flaky").get("n")),
+    }
+
+
+def grade_queue(queue: dict, th: dict) -> dict[str, str]:
+    """Colour of each merge-queue metric of one app."""
+    return {m: band(v, n, th[m], float(th["min_sample"])) for m, (v, n) in queue_values(queue).items()}
+
+
+def _head(app: dict) -> dict:
+    return {k: app.get(k) for k in _APP_HEAD}
+
+
+async def view(refresh: bool = False, section: str = "dora") -> dict:
+    """The summary with each app's colours and the thresholds in force (what GET /admin/platform/delivery serves).
+
+    `section` (AA-1125): dora (the AA-1108 view, without the queue and git sections), queue or git."""
+    if section not in SECTIONS:
+        raise ValueError(f"unknown section {section!r}")
     bundle = await load(refresh=refresh)
+    base = {**bundle, "section": section, "cache_ttl_s": docs_reader.CACHE_TTL_S}
+    if section == "queue":
+        th = await queue_thresholds()
+        apps = []
+        for a in bundle["apps"]:
+            q = a.get("queue")
+            if isinstance(q, dict):
+                apps.append({**_head(a), "queue": q, "queue_status": grade_queue(q, th)})
+        return {**base, "apps": apps, "thresholds": th}
+    if section == "git":
+        apps = [{**_head(a), "git": a["git"]} for a in bundle["apps"] if isinstance(a.get("git"), dict)]
+        return {**base, "apps": apps, "thresholds": {}}
     th = await thresholds()
-    apps = [{**a, "status": grade(a, th)} for a in bundle["apps"]]
-    return {**bundle, "apps": apps, "thresholds": th, "cache_ttl_s": docs_reader.CACHE_TTL_S}
+    apps = [{**{k: v for k, v in a.items() if k not in _HEAVY}, "status": grade(a, th)} for a in bundle["apps"]]
+    return {**base, "apps": apps, "thresholds": th}

@@ -28,6 +28,7 @@ import structlog
 
 from shared.llm_client.call_log import billed_fields, record_call_sync, record_unusable_sync
 from shared.llm_client.client import LLMClient, _billed_usage_of
+from shared.llm_client import run_cap
 from shared.llm_client.errors import is_llm_access_denied
 from shared.llm_client.models import LLMRequest
 
@@ -109,6 +110,8 @@ def _call(client: LLMClient, state: dict, *, call: str, system: str, user: str, 
             if raise_access_denied:
                 raise  # AA-900: refused at account level; the job fails at once (worker.failure_outcome)
             out["access_denied"] = True
+        if resp is None and raise_access_denied and run_cap.spend_stop_in(e) is not None:
+            raise  # AA-1126: the run reached its cap / the app's breaker is tripped; the job ends stopped_budget
         if resp is not None and not logged:
             record_unusable_sync(resp, stage=stage, role="writer", error=e, tenant_id=state.get("tenant_id"))
             out["cost_usd"] = resp.cost_usd or 0.0

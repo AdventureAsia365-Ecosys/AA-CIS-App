@@ -14580,6 +14580,99 @@
         ]
       }
     },
+    "/admin/ai-gateway/anomaly-breaker/{app}/reset": {
+      "post": {
+        "operationId": "reset_anomaly_breaker_admin_ai_gateway_anomaly_breaker__app__reset_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z][a-z0-9_]{0,30}$",
+              "title": "App",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Reset Anomaly Breaker Admin Ai Gateway Anomaly Breaker  App  Reset Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reset one app's AI anomaly breaker: its spend is counted from now for the rest of the UTC day (audited)",
+        "tags": [
+          "admin-ai-gateway"
+        ]
+      }
+    },
     "/admin/ai-gateway/app-profiles": {
       "get": {
         "operationId": "get_app_profiles_admin_ai_gateway_app_profiles_get",
@@ -17908,6 +18001,73 @@
           }
         },
         "summary": "Enqueue the route watch (alerts) or the route digest now ($0)",
+        "tags": [
+          "admin-ai-gateway"
+        ]
+      }
+    },
+    "/admin/ai-gateway/spend-controls": {
+      "get": {
+        "operationId": "get_spend_controls_admin_ai_gateway_spend_controls_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Spend Controls Admin Ai Gateway Spend Controls Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "The gateway's spend controls of this environment (connection cap mode, anomaly breaker, run caps: settings in force) and each app's breaker ($0)",
         "tags": [
           "admin-ai-gateway"
         ]
@@ -37466,6 +37626,23 @@
               "description": "re-read the published summary (at most every 30 s)",
               "title": "Refresh",
               "type": "boolean"
+            }
+          },
+          {
+            "description": "dora: DORA and CI per app; queue: merge-queue entries; git: commit activity and churn",
+            "in": "query",
+            "name": "section",
+            "required": false,
+            "schema": {
+              "default": "dora",
+              "description": "dora: DORA and CI per app; queue: merge-queue entries; git: commit activity and churn",
+              "enum": [
+                "dora",
+                "queue",
+                "git"
+              ],
+              "title": "Section",
+              "type": "string"
             }
           },
           {

@@ -1320,7 +1320,7 @@ export const ACCESS_API = "/api/admin/ai-gateway/access";
 
 export const PAGE_ACTIONS = [
   "provider_switch", "connections", "connection_test", "requeue", "routing", "catalog", "budgets", "jev_credit",
-  "credit", "app_profiles", "route_control", "route_policy", "route_test", "batches",
+  "credit", "app_profiles", "route_control", "route_policy", "route_test", "batches", "anomaly_reset",
 ] as const;
 export type PageAction = (typeof PAGE_ACTIONS)[number];
 
@@ -1332,8 +1332,7 @@ export interface PageAccess {
 /** The staff capability each control needs (lib/rbac.ts ROLE_PERMS; backend staff_authz POLICY of its route). Used
  *  only when the access read failed: the role cookie then decides, and the API still refuses what it must. */
 export const ACTION_CAPABILITY: Record<PageAction, "ai.admin" | "ops.write" | "spend.write"> = {
-  provider_switch: "ai.admin",
-  connections: "ai.admin",
+  provider_switch: "ai.admin", connections: "ai.admin",
   connection_test: "ai.admin",
   requeue: "ops.write",
   routing: "ai.admin",
@@ -1346,6 +1345,7 @@ export const ACTION_CAPABILITY: Record<PageAction, "ai.admin" | "ops.write" | "s
   route_policy: "ai.admin",   // AA-1042 Trace tab: the route alert settings and the fallback hold switch
   route_test: "ai.admin",     // AA-1042 Trace tab: the route test (a few tiny paid calls) and Run check now
   batches: "ai.admin",        // AA-1076 Batches tab: send a wave through the batch lane (paid), cancel a batch
+  anomaly_reset: "ai.admin",  // AA-1126 Budgets › Spend controls: reset an app's AI anomaly breaker
 };
 
 /**

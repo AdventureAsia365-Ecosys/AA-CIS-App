@@ -193,7 +193,8 @@ def stage_refusal(stage: str) -> Optional[str]:
     cfg = get_stage_config_sync(stage)
     if cfg is not None and getattr(cfg, "enabled", True) is False:
         return f"stage {stage!r} is switched off ({getattr(cfg, 'disabled_reason', None) or 'no reason given'})"
-    off = app_profile.refusal(stage)
+    from . import anomaly_breaker                       # AA-1126 G2: a tripped breaker in mode enforce
+    off = app_profile.refusal(stage) or anomaly_breaker.refusal(stage)
     if off is not None:
         return str(off)
     return None
