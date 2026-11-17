@@ -44,7 +44,7 @@ def _targets(own=frozenset({OWN})):
 @pytest.mark.parametrize("url,allowed", [
     (f"https://{OWN}/plan", True),
     (f"https://{OWN.upper()}/", True),
-    (f"https://www.{OWN}/plan", True),                  # _host() drops www. from the link like from the stored host
+    (f"https://www.{OWN}/plan", False),                 # the www. twin was not verified: exact host as stored
     (f"https://{OWN}./plan", True),                     # a trailing root dot is the same host
     (f"https://evil.{OWN}/book", False),                # a sub-domain of the agency host is not the planner
     (f"https://{OTHER}/plan", False),                   # another tenant's host
@@ -52,6 +52,19 @@ def _targets(own=frozenset({OWN})):
 ])
 def test_own_verified_host_is_an_exact_sales_target(url, allowed):
     assert sg.allowed_sales_target(url, _targets()) is allowed
+
+
+WWW_OWN = "www.marrowgate.example.invalid"
+
+
+@pytest.mark.parametrize("url,allowed", [
+    (f"https://{WWW_OWN}/book", True),                   # the stored www. host itself
+    (f"https://{WWW_OWN.upper()}./book", True),          # case and the trailing root dot do not matter
+    ("https://marrowgate.example.invalid/book", False),  # the apex (the agency's own shop) was never verified
+    ("https://shop.marrowgate.example.invalid/book", False),
+])
+def test_a_stored_www_host_never_allows_the_apex(url, allowed):
+    assert sg.allowed_sales_target(url, _targets(frozenset({WWW_OWN}))) is allowed
 
 
 def test_a_booking_link_to_the_own_host_passes_and_the_others_are_held():
@@ -97,7 +110,9 @@ def test_load_targets_reads_the_tenants_active_hosts(no_served):
     links = sg.extract_links(f"Book: https://{OWN}/plan")
     targets = asyncio.run(sg.load_targets(conn, TID, links))
     assert conn.host_reads == [(TID,)]
-    assert targets.tenant_tripplanner_hosts == {OWN, "plan.quillmere.example.invalid", "go.quillmere.example.invalid"}
+    # stored as verified: lower-case, no trailing dot, a leading www. kept
+    assert targets.tenant_tripplanner_hosts == {OWN, "www.plan.quillmere.example.invalid",
+                                                "go.quillmere.example.invalid"}
     assert "tripplanner.lumiguides.it.com" in targets.tripplanner_hosts
 
 

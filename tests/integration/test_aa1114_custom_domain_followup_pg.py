@@ -88,6 +88,25 @@ async def test_gate_allows_the_tenants_own_active_host_only(conn):
         assert len(await _open_gate_flags(conn, piece)) == 1
 
 
+@pytest.mark.asyncio
+async def test_a_verified_www_host_never_allows_the_apex(conn):
+    """Review fix: the stored www. host is kept as verified, so the agency's apex (its own shop) stays held."""
+    t = await l2._tour(conn, "aa1114-www")
+    tenant = await l2._tenant(conn, "aa1114-www")
+    await _domain(conn, tenant, "www.saltmere.example.invalid", "active")
+    assert await sg.tenant_tripplanner_hosts(conn, tenant) == {"www.saltmere.example.invalid"}
+
+    req = await _request(conn, tenant, trip=t.tour, goal="conversion")
+    good = "Two quiet days on the coast. [Book your trip](https://www.saltmere.example.invalid/plan) today."
+    piece = await _piece(conn, tenant, req, good)
+    res = await sg.run(conn, piece=_gate_piece(tenant, req, piece, good), stage="write", actor="test")
+    assert res.ok, res.detail
+
+    bad = "Two quiet days on the coast. [Book your trip](https://saltmere.example.invalid/book) today."
+    res = await sg.run(conn, piece=_gate_piece(tenant, req, piece, bad), stage="publish", actor="test")
+    assert not res.ok and res.codes == [sg.OFF_CATALOG_LINK]
+
+
 async def _tp_tenant(conn, plan_key):
     tid = str(uuid.uuid4())
     await conn.execute("INSERT INTO shared.tenants (tenant_id, name, slug, plan_tier, posts_per_week, rate_limit_rpm, "

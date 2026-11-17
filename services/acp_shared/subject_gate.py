@@ -105,8 +105,13 @@ DEFAULT_TRIPPLANNER_HOSTS = ("tripplanner.lumiguides.it.com",)
 _MAX_LINKS = 200
 
 
+def _raw_host(url: str) -> str:
+    """The link's host as written: lower-case, trailing root dot removed, a leading www. KEPT."""
+    return (urlparse(url).hostname or "").lower().rstrip(".")
+
+
 def _host(url: str) -> str:
-    host = (urlparse(url).hostname or "").lower().rstrip(".")
+    host = _raw_host(url)
     return host[4:] if host.startswith("www.") else host
 
 
@@ -307,8 +312,9 @@ class AllowedTargets:
     tripplanner_hosts: frozenset = frozenset()
     tenant_pages: frozenset = frozenset()    # normalised host+path of the tenant's pages of served AA tours
     served_trip_ids: frozenset = frozenset()  # tour ids the linked trip pages name that are served
-    # AA-1114: the tenant's own verified (active) TripPlanner hosts. Exact host only: a sub-domain of an agency host
-    # is not on the TripPlanner edge, so it is not the planner (unlike the platform hosts, which match sub-domains).
+    # AA-1114: the tenant's own verified (active) TripPlanner hosts, as stored (www. kept). Exact host only: a
+    # sub-domain, the apex or the www. twin of an agency host is not on the TripPlanner edge, so it is not the planner
+    # (unlike the platform hosts, which match sub-domains).
     tenant_tripplanner_hosts: frozenset = frozenset()
 
 
@@ -330,7 +336,9 @@ def allowed_sales_target(url: str, targets: AllowedTargets) -> bool:
         return False
     if _host_in(host, targets.aa_hosts) or _host_in(host, targets.tripplanner_hosts):
         return True
-    if host in targets.tenant_tripplanner_hosts:
+    # The tenant's own host is compared as written (www. kept on both sides): a stored www.agency.example never
+    # allows the apex agency.example, which is the agency's own site and not on the TripPlanner edge.
+    if _raw_host(url) in targets.tenant_tripplanner_hosts:
         return True
     tid = trip_page_tour_id(url, targets)
     if tid is not None:
@@ -403,8 +411,9 @@ TENANT_PAGES_SQL = """
 
 # AA-1114: the tenant's verified TripPlanner custom hosts (CIS 428). Only `active` rows (the certificate is issued and
 # the host is attached to the agency edge, so TripPlanner serves it as this tenant) and only this tenant's: another
-# tenant's host is never an allowed target. The stored host is lower-case without a trailing dot (CIS 428 CHECK);
-# a leading www. is dropped like _host() drops it from a link.
+# tenant's host is never an allowed target. The stored host is lower-case without a trailing dot (CIS 428 CHECK) and
+# is kept exactly as verified: a leading www. is NOT dropped (dropping it would allow the apex, which the tenant never
+# verified), so allowed_sales_target compares it with the link's host as written (_raw_host).
 TENANT_TRIPPLANNER_HOSTS_SQL = """
     SELECT d.domain
       FROM shared.tenant_tripplanner_domain d
@@ -459,7 +468,7 @@ async def tenant_tripplanner_hosts(conn, tenant_id: str) -> frozenset[str]:
     except ValueError:
         return frozenset()
     rows = await conn.fetch(TENANT_TRIPPLANNER_HOSTS_SQL, tid)
-    return frozenset(h for h in (str(r["domain"]).lower().rstrip(".").removeprefix("www.") for r in rows) if h)
+    return frozenset(h for h in (str(r["domain"]).lower().rstrip(".") for r in rows) if h)
 
 
 async def check(conn, *, tenant_id: str, request_id: str, text: str) -> GateResult:
