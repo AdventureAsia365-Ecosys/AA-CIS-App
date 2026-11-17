@@ -590,6 +590,76 @@ export function provisionedTenantId(job: ProvisionJob): string | null {
   return job.tenant_id ?? fromResult;
 }
 
+/** AA-1116: one line of the New tenant result: what the saga (and the CRM onboarding of a crm add-on) set up. */
+export type OutcomeItem = "tenant" | "content" | "crm" | "tripplanner" | "crmAgency" | "crmOwner";
+export type OutcomeState = "done" | "pending" | "skipped" | "attention";
+export interface OutcomeRow { item: OutcomeItem; state: OutcomeState; detail: string }
+
+const SUBSCRIBED = ["subscribed", "already_on", "unchanged"];
+const OWNER_DONE: Record<string, string> = {
+  crm_owner_invited: "invited", crm_owner_invite_pending: "invite_pending", crm_owner_present: "owner_present",
+};
+
+/** The saga steps of a job: the POST's / polled job's own, else the finished result's. Pure. */
+function sagaSteps(job: ProvisionJob): Set<string> {
+  if (job.steps.length) return new Set(job.steps);
+  const fromResult = job.result && Array.isArray(job.result.steps) ? (job.result.steps as string[]) : [];
+  return new Set(fromResult);
+}
+
+function contentRow(steps: Set<string>): OutcomeRow {
+  if (steps.has("content_trialing")) return { item: "content", state: "done", detail: "trialing" };
+  if (steps.has("content_active")) return { item: "content", state: "done", detail: "active" };
+  return { item: "content", state: "pending", detail: "" };
+}
+
+function addOnRow(steps: Set<string>, product: "crm" | "tripplanner"): OutcomeRow {
+  const prefix = `${product}_seats_raised_to_`;
+  const seats = [...steps].find((s) => s.startsWith(prefix));
+  return { item: product, state: SUBSCRIBED.some((v) => steps.has(`${product}_${v}`)) ? "done" : "pending",
+           detail: seats ? seats.slice(prefix.length) : "" };
+}
+
+/** Why the CRM onboarding did not finish: the CRM's / saga's code, else its status ("" before any answer). Pure. */
+function crmFailure(crm: CrmOnboarding | null): string {
+  if (!crm) return "";
+  return crm.error?.code ?? crm.status;
+}
+
+function ownerRow(steps: Set<string>, agency: boolean, broken: OutcomeState, failure: string): OutcomeRow {
+  const owner = Object.keys(OWNER_DONE).find((s) => steps.has(s));
+  if (owner) return { item: "crmOwner", state: "done", detail: OWNER_DONE[owner] };
+  if (steps.has("crm_owner_not_invited")) return { item: "crmOwner", state: "skipped", detail: "" };
+  if (agency) return { item: "crmOwner", state: "pending", detail: "" };
+  return { item: "crmOwner", state: broken, detail: failure };
+}
+
+/** The CRM agency and owner invitation lines of a crm add-on, from the POST's crm_onboarding. Pure. */
+function crmRows(crm: CrmOnboarding | null): OutcomeRow[] {
+  const steps = new Set(crm?.steps ?? []);
+  const agency = steps.has("crm_agency_created") || steps.has("crm_agency_exists");
+  const failure = crmFailure(crm);
+  const broken: OutcomeState = crm ? "attention" : "pending";
+  const agencyRow: OutcomeRow = agency ? { item: "crmAgency", state: "done", detail: "" }
+    : { item: "crmAgency", state: broken, detail: failure };
+  return [agencyRow, ownerRow(steps, agency, broken, failure)];
+}
+
+/** AA-1116: the New tenant saga's outcome, one row per thing it sets up, from the job's steps and the POST's CRM
+ *  onboarding: the tenant, its content subscription (detail trialing / active), each requested add-on, and for a crm
+ *  add-on the CRM agency and the owner invitation. ``products``: the add-ons the request named. Empty while the job
+ *  has no steps yet (the worker has not run it). Pure. */
+export function provisionOutcome(job: ProvisionJob, products: ("crm" | "tripplanner")[]): OutcomeRow[] {
+  const steps = sagaSteps(job);
+  if (!steps.size) return [];
+  const rows: OutcomeRow[] = [
+    { item: "tenant", state: steps.has("tenant_created") ? "done" : "pending", detail: "" },
+    contentRow(steps),
+    ...products.map((p) => addOnRow(steps, p)),
+  ];
+  return products.includes("crm") ? [...rows, ...crmRows(job.crm_onboarding ?? null)] : rows;
+}
+
 export function newRequestKey(prefix = "admin-ui"): string {
   const rnd = typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;

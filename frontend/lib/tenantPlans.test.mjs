@@ -11,6 +11,7 @@ import {
   INT4_MAX, RATE_LIMIT_RPM_MAX, defaultOverrideMode, featuresFor, limitText, lockedLimitKeys, overrideBody,
   overrideDraftOf, overrideFeatures, overrideModes, planBody, planDraftOf, refusalOf, runSaga, tierChoices, money,
   crmOnboardingNote, crmOwnerField, addOnBody, seatsInvalid, addOnChoices, newTenantBody, provisionedTenantId,
+  provisionOutcome,
   termText, PRODUCTS, PRICE_UNITS,
   addOnDecisionPath, addOnRequestPath, approveBody, requestShown, requestTone, sortAddOnRequests,
   END_PILOT_REASON_MAX, endPilotPath,
@@ -421,4 +422,34 @@ test("AA-1116 New tenant: add-on choices, the saga body and the set-up tenant", 
   assert.equal(provisionedTenantId(job), null);
   assert.equal(provisionedTenantId({ ...job, tenant_id: "t1" }), "t1");
   assert.equal(provisionedTenantId({ ...job, status: "succeeded", result: { tenant_id: "t2" } }), "t2");
+});
+
+test("AA-1116: the New tenant result lists what the saga set up, line by line", () => {
+  const job = (over) => ({ job_id: "j", status: "succeeded", steps: [], error: null, result: null, ...over });
+  // nothing run yet: no list (the dialog says "being set up")
+  assert.deepEqual(provisionOutcome(job({ status: "queued" }), ["crm"]), []);
+  // content only, from the finished job's result
+  assert.deepEqual(provisionOutcome(job({ result: { steps: ["tenant_created", "content_active"] } }), []), [
+    { item: "tenant", state: "done", detail: "" }, { item: "content", state: "done", detail: "active" }]);
+  // crm + tripplanner, the seat minimum, the agency created and the owner invited (the POST's crm_onboarding)
+  const crm = { tenant_id: "t", status: "done", steps: ["crm_agency_created", "crm_owner_invited"], error: null };
+  const full = provisionOutcome(job({
+    steps: ["tenant_created", "content_trialing", "crm_seats_raised_to_3", "crm_subscribed", "tripplanner_subscribed"],
+    crm_onboarding: crm }), ["crm", "tripplanner"]);
+  assert.deepEqual(full.map((r) => [r.item, r.state, r.detail]), [
+    ["tenant", "done", ""], ["content", "done", "trialing"], ["crm", "done", "3"], ["tripplanner", "done", ""],
+    ["crmAgency", "done", ""], ["crmOwner", "done", "invited"]]);
+  // no owner address: the agency is there, the invitation is not sent
+  const noInvite = provisionOutcome(job({ steps: ["tenant_created", "content_active", "crm_subscribed"],
+    crm_onboarding: { ...crm, steps: ["crm_agency_exists", "crm_owner_not_invited"] } }), ["crm"]);
+  assert.deepEqual(noInvite.slice(-2).map((r) => [r.item, r.state]), [["crmAgency", "done"], ["crmOwner", "skipped"]]);
+  // the CRM refused (no crm-platform-admin): both CRM lines need a look, with the CRM's code
+  const refused = provisionOutcome(job({ steps: ["tenant_created", "content_active", "crm_subscribed"],
+    crm_onboarding: { tenant_id: "t", status: "failed", steps: [],
+                      error: { step: "agency", http_status: 403, code: "forbidden" } } }), ["crm"]);
+  assert.deepEqual(refused.slice(-2).map((r) => [r.item, r.state, r.detail]), [
+    ["crmAgency", "attention", "forbidden"], ["crmOwner", "attention", "forbidden"]]);
+  // a job still running with the POST's steps: the add-on not subscribed yet reads pending
+  const running = provisionOutcome(job({ status: "running", steps: ["tenant_created"] }), ["tripplanner"]);
+  assert.deepEqual(running.map((r) => r.state), ["done", "pending", "pending"]);
 });
