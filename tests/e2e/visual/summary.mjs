@@ -33,6 +33,8 @@ const reasons = (r) => {
   if (r.hasFrame === false && r.frameExpected !== false) out.push("no kit frame");
   if (r.consoleErrors.length) out.push(`${r.consoleErrors.length} console error(s)`);
   if (r.failedRequests.length) out.push(`${r.failedRequests.length} failed request(s)`);
+  // AA-1131: the role-name gate (older reports have no field).
+  if (r.unnamedGate?.length) out.push(`${r.unnamedGate.length} unnamed control(s)`);
   return out.length ? `❌ ${out.join(", ")}` : "ok";
 };
 const cols = [["1440", "light"], ["1440", "dark"], ["390", "light"], ["390", "dark"]];
