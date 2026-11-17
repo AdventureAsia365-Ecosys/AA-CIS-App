@@ -3330,7 +3330,7 @@
                 "type": "null"
               }
             ],
-            "description": "AA-1116: the agency owner's e-mail for the CRM first-owner invitation (needs a crm add-on in the request; sent to the CRM only, never stored or logged by CIS)",
+            "description": "The agency owner's e-mail for the CRM first-owner invitation (needs a crm add-on in the request; sent to the CRM only, never stored or logged by CIS)",
             "title": "Owner Email"
           },
           "ticket_ref": {
@@ -7958,7 +7958,7 @@
                 "type": "null"
               }
             ],
-            "description": "AA-1116: the agency owner's e-mail for the CRM first-owner invitation (needs a crm add-on in the request; sent to the CRM only, never stored or logged by CIS)",
+            "description": "The agency owner's e-mail for the CRM first-owner invitation (needs a crm add-on in the request; sent to the CRM only, never stored or logged by CIS)",
             "title": "Crm Owner Email"
           },
           "crm_ticket_ref": {
@@ -8035,7 +8035,7 @@
                 "type": "null"
               }
             ],
-            "description": "AA-1116: the agency owner's e-mail for the CRM first-owner invitation (needs a crm add-on in the request; sent to the CRM only, never stored or logged by CIS)",
+            "description": "The agency owner's e-mail for the CRM first-owner invitation (needs a crm add-on in the request; sent to the CRM only, never stored or logged by CIS)",
             "title": "Crm Owner Email"
           },
           "crm_ticket_ref": {

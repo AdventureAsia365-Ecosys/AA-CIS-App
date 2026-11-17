@@ -60,7 +60,7 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(staff_policy)])
 
 REQUEST_KEY_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,63}$"
-CRM_OWNER_DOC = ("AA-1116: the agency owner's e-mail for the CRM first-owner invitation (needs a crm add-on in the "
+CRM_OWNER_DOC = ("The agency owner's e-mail for the CRM first-owner invitation (needs a crm add-on in the "
                  "request; sent to the CRM only, never stored or logged by CIS)")
 CRM_TICKET_DOC = "The CRM ticket reference of the agency create / owner invite (default CISONB-<unix time>)"
 
