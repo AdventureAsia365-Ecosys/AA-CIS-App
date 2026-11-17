@@ -144,6 +144,43 @@ def test_a_retired_report_is_never_due_flagged_or_counted():
     assert entry["status"] == "retired" and entry["due"] == "retired"
 
 
+def test_register_lists_the_catalogue_status_of_every_report():
+    """R7: EX-06 counts every report by catalogue status and lists each one not generated here (retired included)
+    with what starts its build."""
+    reg = _reg()
+    rows = generate.register_rows(reg, {}, NOW)
+    out = generate.render_register(reg, reg.report("EX-06"), DAY, rows, NOW)
+    assert sum(out.output["catalog_status"].values()) == len(reg.reports)
+    assert out.output["catalog_status"]["retired"] == sum(1 for r in reg.reports if r.retired)
+    not_generated = {r.id for r in reg.reports if not r.runnable}
+    assert set(out.output["not_generated"]) == not_generated and "TP-03" in not_generated
+    assert len(not_generated) + out.output["registry"]["automated"] == len(reg.reports)
+    md = out.markdown
+    assert "## Catalogue status" in md and "### Not generated here" in md
+    for rid in not_generated:
+        assert f"| {rid} " in md, rid
+    assert "retired on 2026-11-03" in md
+    # every planned report names its trigger (the root lint requires one), and the register shows it
+    for r in reg.reports:
+        if r.status == "planned":
+            assert r.trigger, r.id
+            row = next(line for line in md.splitlines() if line.startswith(f"| {r.id} "))
+            assert row.rstrip(" |").endswith(generate._cell(r.trigger)), r.id
+    entry = next(e for e in out.output["reports"] if e["id"] == "MKT-01")
+    assert entry["status"] == "planned" and entry["trigger"]
+
+
+def test_register_cell_keeps_the_markdown_table_whole():
+    assert generate._cell("a | b\nc") == "a / b c"
+    assert generate._cell(None) == "—" and generate._cell("") == "—"
+
+
+def test_parse_reads_the_trigger():
+    reg = _reg()
+    assert reg.report("EX-05").trigger and reg.report("EX-04").trigger is None
+    assert reg.report("OPS-16").summary()["trigger"] == reg.report("OPS-16").trigger
+
+
 def test_register_names_its_own_run_instead_of_running():
     reg = _reg()
     rows = generate.register_rows(reg, {"EX-06": _last(DAY, status="running")}, NOW)

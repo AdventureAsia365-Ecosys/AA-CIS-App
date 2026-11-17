@@ -81,6 +81,9 @@ class Report:
     # catalog.yaml `retired_on` (AA-1003 R0 hotfix): the day a report with status `retired` stopped. A retired report
     # has no generator, is never scheduled or due, and keeps its ID and its past runs (root ADR 0019, TP-03).
     retired_on: Optional[date] = None
+    # catalog.yaml `trigger` (AA-1003 R7): the business milestone or event that starts building a report no engine
+    # renders yet (required for status `planned` by the root lint); EX-06 lists it next to the catalogue status.
+    trigger: Optional[str] = None
 
     @property
     def runnable(self) -> bool:
@@ -98,7 +101,8 @@ class Report:
                 "status": self.status, "priority": self.priority, "template": self.template,
                 "generator": self.generator, "runnable": self.runnable, "kpis": list(self.kpis),
                 "automated_from": self.automated_from.isoformat() if self.automated_from else None,
-                "retired_on": self.retired_on.isoformat() if self.retired_on else None}
+                "retired_on": self.retired_on.isoformat() if self.retired_on else None,
+                "trigger": self.trigger}
 
     def detail(self) -> dict:
         return {**self.summary(), "decision": self.decision, "sections": list(self.sections)}
@@ -169,7 +173,8 @@ def parse(catalog: dict, kpis: dict) -> Registry:
             channel=r["channel"], automation=r["automation"], status=r["status"], priority=r["priority"],
             template=r.get("template"), generator=r.get("generator"), kpis=_tuple(r.get("kpis")),
             sections=_tuple(r.get("sections")), automated_from=_date(r["id"], r.get("automated_from")),
-            retired_on=_date(r["id"], r.get("retired_on"), "retired_on")))
+            retired_on=_date(r["id"], r.get("retired_on"), "retired_on"),
+            trigger=(str(r["trigger"]).strip() or None) if r.get("trigger") is not None else None))
     if not reports:
         raise ValueError("report registry: no reports")
     return Registry(version=int(catalog.get("version") or 0), imported_from=str(catalog.get("imported_from") or ""),

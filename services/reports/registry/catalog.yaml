@@ -12,8 +12,10 @@
 # product page), generator (cis = the CIS engine renders it with job kind report_generate; null = not automated yet,
 # or retired), automated_from (optional, generator cis only: the first snapshot day YYYY-MM-DD whose daily chain can
 # create the report's scheduled period, the deploy day of its generator, so the register does not call earlier
-# periods overdue), retired_on (status retired only, required: the day it stopped, YYYY-MM-DD), kpis (IDs in
-# kpis.yaml), sections (what it contains).
+# periods overdue), retired_on (status retired only, required: the day it stopped, YYYY-MM-DD), trigger (required for
+# status planned, optional for any other report the CIS engine does not render, never on a retired one: the business
+# milestone or event that starts building it, in words; EX-06 lists it), kpis (IDs in kpis.yaml), sections (what it
+# contains).
 
 version: 1
 imported_from: docs/audits/2026-10-29-S258-report-catalog/catalog.json
@@ -170,33 +172,45 @@ reports:
   name_vi: Báo cáo kinh doanh hằng quý và kế hoạch năm
   audience: business owner (approves budget), tech lead (author)
   owner_role: tech lead (author); business owner (approver)
-  decision: 'Strategy and budget for the next quarter or year: which apps to invest in, go-live timing, pricing, vendor
-    changes.'
+  decision: 'Strategy and budget for the next quarter or year in the B2B model (ADR 0019): is the agency base and its
+    contracted MRR growing, are the entitlements agencies pay for used, which apps to invest in, pricing, go-live timing,
+    vendor changes. Re-pointed on 2026-11-17 (slice R7): agencies are the only customers, so demand and revenue are read
+    from agency subscriptions, not from traveller funnels.'
   cadence: 'quarterly: auto-draft with the monthly pack on business day 2 of January, April, July, October; approved by
     business day 10; annual plan in December or before prod go-live'
   schedule: quarterly
   channel: S3 + /admin/reports; summary as a Jira comment under the weekly report epic; optional Slides-type artifact for
     presentation
   automation: semi
-  status: missing
+  status: planned
   priority: P2
   template: docs/audits/2026-10-29-S258-report-catalog/templates/business-review.md
   generator: null
+  trigger: 'First draft on business day 2 of January 2027 (the first full quarter with agency subscriptions), built in
+    the slice that adds the quarterly schedule to the CIS engine; MRR waits for no contract change (named v1 columns),
+    only its discount line does (pending contract 1.10)'
   kpis:
   - K-FIN-QVAR
   - K-UNIT-TREND
   - K-PART-NET
+  - K-MRR-TREND
+  - K-ENT-TREND
   - K-DEL-ROADMAP
   sections:
   - '1. Quarter in one page (Vietnamese): goals vs results'
-  - '2. Trend of the three monthly reviews: cost, unit costs, demand, partners, revenue'
-  - 3. Budget vs actual for the quarter and year to date (FI-06)
-  - 4. Vendor and contract review (FI-04 quarterly part)
-  - '5. Security and compliance: SEC-05 access review status, SEC-09 privacy counts, SEC-10 legal readiness'
-  - '6. Delivery: DORA trend (DEV-01), roadmap next quarter from docs/backlog/tracker/plan.json'
-  - 7. Partner cohorts (EX-03, EX-07)
-  - 8. Capacity and growth forecast (OPS-16)
-  - '9. Q4 only: next-year budget per app and prod cost model'
+  - '2. Agency base: new, paying and lost agencies, net growth (K-PART-NET), trial-to-paid rate (MKT-01)'
+  - '3. Contracted MRR trend per product and billing currency at each month end, from the named v1 columns of
+    catalog.v_tenant_billing_v1 (agreed price while in force, else the list price; before discount: discount pending
+    1.10)'
+  - '4. Entitlement trend: agencies per feature key and usage against the entitled limit (AI budget, rewrites, CRM seats)'
+  - '5. Trend of the three monthly reviews: cost and unit costs'
+  - 6. Budget vs actual for the quarter and year to date (FI-06)
+  - 7. Vendor and contract review (FI-04 quarterly part)
+  - '8. Security and compliance: SEC-05 access review status, SEC-09 privacy counts, SEC-10 legal readiness'
+  - '9. Delivery: DORA trend (DEV-01), roadmap next quarter from docs/backlog/tracker/plan.json'
+  - 10. Partner cohorts (EX-03, EX-07)
+  - 11. Capacity, growth and tenant pipeline forecast (OPS-16)
+  - '12. Q4 only: next-year budget per app and prod cost model'
 - id: EX-06
   family: executive
   name_en: Report register and calendar (reports hub)
@@ -563,6 +577,8 @@ reports:
   priority: P2
   template: docs/audits/2026-10-29-S258-report-catalog/templates/data-quality-report.md
   generator: null
+  trigger: CIS generator when the geocode chain runs its next batch; until then the /admin/places card and the audit
+    Markdown are the report
   kpis:
   - K-GEO-ACC
   - K-GEO-OUTLIERS
@@ -644,6 +660,8 @@ reports:
   priority: P1
   template: docs/audits/2026-10-29-S258-report-catalog/templates/ai-content-quality.md
   generator: null
+  trigger: Built with the writing-memory weekly KPI work (its own issue, not a report engine slice), once the judge eval
+    runs on a weekly schedule
   kpis:
   - K-AIQ-KAPPA
   - K-AIQ-REGRESSION
@@ -771,11 +789,14 @@ reports:
   - Top pinned components
 - id: TP-02
   family: reliability
-  name_en: Monthly TripPlanner performance and reliability
-  name_vi: Hiệu năng web và độ ổn định Lambda TripPlanner hằng tháng
+  name_en: Monthly TripPlanner site performance and reliability
+  name_vi: Hiệu năng và độ ổn định site TripPlanner của đại lý hằng tháng
   audience: tech lead, engineer
   owner_role: tech lead
-  decision: Do the map pages meet Core Web Vitals and are Browse/Assembly Lambdas healthy; what to optimise next?
+  decision: 'Do the agencies'' TripPlanner sites (/{slug} pages and custom domains, served from ECS behind CloudFront)
+    meet Core Web Vitals, and are the Browse and Assembly Lambdas healthy; what to optimise next? Re-pointed on
+    2026-11-17 (slice R7): every measured page is a tenant site (the bare path is the demo tenant), no AA-branded
+    traveller planner.'
   cadence: monthly business day 2 + Lighthouse on every frontend release
   schedule: monthly
   channel: GitHub Actions summary JSON to S3; section of OPS-08; /admin/platform/apps card
@@ -784,13 +805,15 @@ reports:
   priority: P2
   template: null
   generator: null
+  trigger: CIS generator once a paying agency's TripPlanner site is served (tp.hosted live on a paid plan); Lighthouse
+    and Lambda numbers stay in the CI summaries until then
   kpis:
   - K-TP-LCP
   - K-TP-LAMBDAERR
   - K-TP-LAMBDAP95
   - K-TP-FALLBACK
   sections:
-  - Lighthouse mobile/desktop LCP, CLS, INP on key pages
+  - Lighthouse mobile/desktop LCP, CLS, INP on tenant site pages (/{slug}, /{slug}/plan, a tour page)
   - Lambda Browse and Assembly errors, throttles, p95 duration
   - Embedding fallback chain usage
   - Narration failures and cost
@@ -870,6 +893,8 @@ reports:
   priority: P2
   template: docs/audits/2026-10-29-S258-report-catalog/templates/app-ops-report.md
   generator: null
+  trigger: CIS generator once the first CRM trade booking reaches Booking through the B2B API and Booking publishes B2B
+    case counts per agency in a contract view (counts only); the Booking Reports tab is the report until then
   kpis:
   - K-BK-CONV
   - K-BK-TTP
@@ -934,6 +959,8 @@ reports:
   priority: P3
   template: docs/audits/2026-10-29-S258-report-catalog/templates/app-ops-report.md
   generator: null
+  trigger: Stays a Booking page; a CIS summary only after the first confirmed trade booking with a contracted supplier
+    and a Booking contract view of supplier counts
   kpis:
   - K-SUP-LEAD
   - K-SUP-DECLINE
@@ -960,6 +987,8 @@ reports:
   priority: P3
   template: docs/audits/2026-10-29-S258-report-catalog/templates/app-ops-report.md
   generator: null
+  trigger: Stays a Booking page; a CIS summary only after the first agency hold through the B2B desk and a Booking
+    contract view of hold counts
   kpis:
   - K-B2B-H2C
   - K-B2B-EXPIRED
@@ -980,10 +1009,12 @@ reports:
   schedule: weekly
   channel: Booking departures page Report tab + CSV
   automation: auto
-  status: missing
+  status: planned
   priority: P3
   template: docs/audits/2026-10-29-S258-report-catalog/templates/app-ops-report.md
   generator: null
+  trigger: The first fixed departure offered to agencies (the Booking departures page Report tab first, a CIS summary
+    after it)
   kpis:
   - K-DEP-FILL
   - K-DEP-INC
@@ -1006,10 +1037,12 @@ reports:
   schedule: monthly
   channel: CIS admin Tenants group (Tenant 360) and /admin/reports; aggregates per agency only, no traveller data
   automation: auto
-  status: missing
+  status: planned
   priority: P2
   template: docs/audits/2026-10-29-S258-report-catalog/templates/customer-growth-report.md
   generator: null
+  trigger: The first quarterly agency survey, after the first paying agency completes a quarter; survey answers and
+    support requests need a store first (a migration in that slice)
   kpis:
   - K-CX-RESP
   - K-CX-CSAT
@@ -1023,55 +1056,63 @@ reports:
   - 5. Agencies at risk (detractors, falling usage, overdue invoices) for the account manager
 - id: MKT-01
   family: growth
-  name_en: Acquisition and marketing funnel
-  name_vi: Nguồn khách và phễu marketing
+  name_en: Agency growth and acquisition
+  name_vi: Tăng trưởng và nguồn đại lý mới
   audience: business owner, sales lead
   owner_role: business owner
-  decision: Which channels bring travellers and partners that convert, and where to spend marketing effort?
+  decision: 'Is the agency base growing, which sign-up routes bring agencies that start paying, and do trials convert?
+    Re-pointed on 2026-11-17 (slice R7) from the traveller acquisition funnel: the B2C side of Booking is gone (B2C drop,
+    November 2026) and AA keeps no traveller data (ADR 0019 invariant 1); the traffic of an agency''s own TripPlanner
+    site belongs to that agency.'
   cadence: monthly business day 2 (section of EX-02) + weekly line in EX-01
   schedule: monthly
-  channel: /admin/overview Acquisition card + EX-02 section
+  channel: /admin/reports and the EX-02 section; weekly line in EX-01
   automation: auto
-  status: missing
+  status: planned
   priority: P2
   template: docs/audits/2026-10-29-S258-report-catalog/templates/customer-growth-report.md
   generator: null
+  trigger: Built with EX-02 (the monthly business review it is a section of); every source is in CIS today except the
+    sign-up source, which needs a field on the agency record
   kpis:
   - K-MKT-SOURCE
   - K-MKT-CONV
   - K-MKT-CUSTSRC
   sections:
-  - 1. Sessions and sign-ups by source (direct, search, social, partner, campaign)
-  - 2. Source -> trip -> inquiry -> confirmed, per source
-  - 3. Trip cases by channel (B2B agency; B2C cases are history only since the B2C retirement of November 2026)
-  - 4. Partner leads (B2B, Content studio, CRM) by source
-  - 5. Campaign list with results (when CRM campaigns exist, AA-968)
+  - 1. New agencies per month by kind (agency, demo, internal; canary left out) and country
+  - 2. Trials started, converted to paid, expired or cancelled, and the trial-to-paid rate (K-MKT-CONV)
+  - 3. New agencies by sign-up source once one is recorded (shown as "source not recorded" until then)
+  - '4. CRM agencies by lifecycle state and with an active owner (crm.ops.v1 GET /tenants and /data-coverage, read with
+    the staff session of the administrator who presses Generate now; a scheduled run says it was not read)'
+  - 5. Trade bookings per agency stay in BK-02; traveller sessions and inquiries are not counted (B2C retired)
 - id: MKT-02
   family: growth
-  name_en: SEO and content performance
-  name_vi: Hiệu quả SEO và nội dung
-  audience: business owner, content ops, tenant owner (own sites, later)
+  name_en: Platform keyword research coverage
+  name_vi: Độ phủ nghiên cứu từ khoá của nền tảng
+  audience: content ops, tech lead
   owner_role: content ops
-  decision: Is published content reaching search demand; which tours or tenant posts to refresh; is DataForSEO spend paying
-    off?
+  decision: 'Does the platform-wide keyword research cover the live catalogue and stay fresh inside its monthly cap, and
+    which places or tours to research next? Re-scoped on 2026-11-17 (slice R7) after the tech lead''s decision of
+    2026-11-16: research stays one platform layer that serves every agency; no per-agency SEO report, Search Console or
+    rank tracking.'
   cadence: monthly business day 2
   schedule: monthly
-  channel: /admin/tenant-qa/quality SEO tab; tenant view later in the portal
+  channel: /admin/reports; no tenant view
   automation: semi
-  status: missing
+  status: planned
   priority: P3
   template: docs/audits/2026-10-29-S258-report-catalog/templates/customer-growth-report.md
   generator: null
+  trigger: Ships with the scheduled keyword research sweep and its monthly cap (approved 2026-11-16)
   kpis:
   - K-SEO-COVER
   - K-SEO-DFSCACHE
   - K-SEO-CTR
   sections:
-  - '1. Keyword coverage: tours with seo_context and top keywords'
-  - 2. DataForSEO spend per tour and per tenant, cache hit rate
-  - 3. Published pages per channel (acp_shared.publish_log external_url)
-  - 4. Search impressions, clicks and average position per page (Google Search Console, once verified)
-  - '5. Refresh list: pages with falling clicks or expired seo_context'
+  - '1. Keyword coverage: live tours with a fresh seo_context and top keywords'
+  - 2. DataForSEO spend per month against the monthly cap, cache hit rate
+  - '3. Refresh list: places and tours whose research is past the refresh window setting'
+  - 4. Search clicks (K-SEO-CTR) are not measured (retired with the 2026-11-16 decision)
 - id: CRM-01
   family: agency
   name_en: Agency pipeline and conversion
@@ -1087,6 +1128,8 @@ reports:
   priority: P1
   template: null
   generator: null
+  trigger: Built inside the CRM (an agency report in AA-Partner); business data never crosses into crm.ops.v1, so the
+    CIS engine never renders it
   kpis:
   - K-CRM01-WIN-RATE
   - K-CRM01-STALLED-TRIPS
@@ -1410,22 +1453,28 @@ reports:
   name_vi: Dự báo năng lực và tăng trưởng (6-12 tháng)
   audience: tech lead, business owner (budget)
   owner_role: tech lead
-  decision: When will storage, connections, CPU, LLM spend or free-plan limits run out under the planned waves and go-live,
-    and what to provision or change ahead of time?
+  decision: 'How many agencies will be paying in 3 and 6 months, and when will storage, connections, CPU, LLM spend or
+    free-plan limits run out under that tenant pipeline, the planned waves and go-live; what to provision or change ahead
+    of time? The tenant pipeline forecast was added on 2026-11-17 (slice R7, B2B model).'
   cadence: quarterly with EX-05; again when a go-live date is set
   schedule: quarterly
   channel: docs/audits/<date>-S<nnn>-capacity-forecast/README.md via root PR; summary in EX-05
   automation: semi
-  status: missing
+  status: planned
   priority: P2
   template: null
   generator: null
+  trigger: First run with EX-05 on business day 2 of January 2027, or earlier when a prod go-live date is set
   kpis:
+  - K-FC-TENANTS
   - K-FC-RUNWAY
   - K-FC-ACCURACY
   - K-FC-COST12
   sections:
   - '1. Growth model: rows/day per ledger (DATA-04), DB size trend (1.5 GB at the 2026-10-29 dump), job volume'
+  - '1b. Tenant pipeline forecast (K-FC-TENANTS): agencies in trial by trial end, agencies without a live subscription,
+    CRM agencies by lifecycle state and owner (crm.ops.v1 GET /tenants and /data-coverage), projected paying agencies
+    at 3 and 6 months; load per agency from the growth model'
   - '2. Planned load: master plan slots, wave schedule, go-live scenario (traffic assumptions stated)'
   - '3. Runway per limit: RDS storage, max_connections 181 and role limits, CPU baseline, Lambda concurrency, Vercel and
     GitHub free plans, Linear 250 issues'
@@ -1850,6 +1899,7 @@ reports:
   priority: P2
   template: docs/audits/2026-10-29-S258-report-catalog/templates/readiness-signoff.md
   generator: null
+  trigger: The UAT round after all technical work, or earlier when the business owner calls it
   kpis:
   - K-UAT-PASS
   - K-UAT-DEFECTS
