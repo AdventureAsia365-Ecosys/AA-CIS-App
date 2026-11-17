@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.20.0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/compare/v0.19.0...v0.20.0) (2026-11-17)
+
+
+### Features
+
+* a crm add-on creates the tenant's CRM agency and invites its owner in the same staff request ([#1556](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1556)) ([b99822e](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/b99822eaa3abca103b23d7a8767ab039162ede5f))
+* automatic search demand research under a hard monthly cap, volume history and tour PAA backfill ([#1547](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1547)) ([9e22d1d](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/9e22d1d6578f96fed0e3f716ef4442c6001fa555))
+* change a CRM setting for one agency from Platform &gt; Settings ([#1537](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1537)) ([6881d16](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/6881d16504e151402b983676c5b5ff281226f4a6))
+* EX-06 lists the catalogue status of every report (R7 registry copy) ([#1553](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1553)) ([0a4527a](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/0a4527a4a2e157a615dd1334b55469568d247134))
+* fill the quote discount share of each subscription line for Booking (contract 1.10) ([#1557](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1557)) ([40c0b78](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/40c0b788b7007028aa2d981635f8f1f3f29d970c))
+* gateway spend control settings and anomaly breaker reset columns (CIS 446) ([#1565](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1565)) ([91bff2d](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/91bff2d49453d0a6d58dac8fa51d67c1c8c5a3f2))
+* gateway spend controls per environment (connection cap failover, anomaly breaker, run caps) ([#1566](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1566)) ([c0f8a2e](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/c0f8a2ee3e3eee72172df9993638dbebb18b753e))
+* Merge queue and Git map tabs on Platform › Delivery ([#1564](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1564)) ([a5e757f](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/a5e757ff5349ca1101dfe98c8480a764b24ca122))
+* monthly search volume history, tour PAA provenance and automatic research settings (CIS 440-442) ([#1546](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1546)) ([4e67ced](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/4e67cedcb8bba4a1da2f541405a07719ee018ddb))
+* option B price list in Plans, Tenant 360 billing terms and quote, one price source ([#1544](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1544)) ([c0c6f54](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/c0c6f544a0c341d756766f5a24d8c1216267ef76))
+* option B pricing storage, policy settings, resolver and billing views (CIS 435-439) ([#1543](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1543)) ([81a9043](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/81a9043dce3ac6fd36f3f7cd95aaa4dd62404b7c))
+* Platform › Delivery merge-queue thresholds in the settings registry (CIS 445) ([#1563](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1563)) ([a6b19c4](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/a6b19c4edced0103940e9ef504a993947c8881da))
+* research cache freshness and queued-task recovery windows in the settings registry (CIS 434) ([#1539](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1539)) ([aa44f73](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/aa44f738d18cfa7072acc08015c79154cfb1b7d2))
+* store the quote discount per subscription line and append it to the Booking billing view (contract 1.10) ([#1554](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1554)) ([f31b204](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/f31b204ffeee5d5ce12c16adc4504dced07726b7))
+* the LLM gateway scrubs tenant free text before any model call, fail closed ([#1559](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1559)) ([a627afd](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/a627afd1ccb1b644ee02feeb26967d0af2690462))
+* the New tenant dialog lists what the provisioning saga set up ([#1562](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1562)) ([1e0f762](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/1e0f76245f9d4dd6f71d019ea6171fd64dbac5fb))
+* the tripplanner add-on answers its planner addresses for the launcher ([#1558](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1558)) ([ab78363](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/ab7836361af9bfeba0405e8772184514677d5666))
+* W5 judge on the pinned v7 claim instrument (advisory), registered null run powered with the writer spread ([#1560](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1560)) ([dd6e49e](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/dd6e49e971f8547db32bc83d4f5f999f3455e285))
+
+
+### Bug Fixes
+
+* delivery metric line wraps its label and puts the n note under the value ([#1542](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1542)) ([3f7807b](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/3f7807bfa4c1eb4e69280aaa35b6029104607791))
+* every DataForSEO research purchase goes through one research cache, queue path included ([#1540](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1540)) ([53e0164](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/53e0164647a18bae2e914a83591b27f2976bc233))
+* guard every content_piece array-column read against an object-shaped row ([#1552](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1552)) ([6501c3e](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/6501c3e92188b0b7348a88e6948cf89e22388120))
+* load Sentry in the admin app on Next 16 (instrumentation hooks) ([#1545](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1545)) ([c5a8e15](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/c5a8e155a6e9e40594142d8f6b839a56c92891e5))
+* Platform Settings shows a loading state instead of a blank page ([#1550](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1550)) ([ef5edc9](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/ef5edc99d971723fd790de50b88075cc8f4a18c0))
+* reset the LLM gateway caches per integration module (nightly order leak) ([#1551](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1551)) ([307c6d8](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/307c6d8dae560796820e3d320af744e7dd5aa78f))
+* Sentry triage fixes (usage endpoint length, gate_ledger arrays, N+1, blog envelope, lock reschedule) ([#1541](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1541)) ([bc5c0bd](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/bc5c0bd49621a33e29db9489f2688bba7af26c22))
+* subject gate allows the tenant's verified TripPlanner hosts; linear host checks for the two ReDoS alerts ([#1555](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1555)) ([ff0f926](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/ff0f92636c5042d5486e5826f53c8b4e50822393))
+* the Research tab opens the research settings filtered ([#1549](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1549)) ([1359b61](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/1359b612b4517256a788cb98db9dc84a54f384ff))
+* tour PAA preview plans in under a second instead of timing out ([#1548](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/issues/1548)) ([45790f6](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/commit/45790f6bee01f0c4260ffc9c413daeb576a1baee))
+
 ## [0.19.0](https://github.com/AdventureAsia365-Ecosys/AA-CIS-App/compare/v0.18.0...v0.19.0) (2026-11-16)
 
 
