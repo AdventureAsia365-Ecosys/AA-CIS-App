@@ -81,7 +81,8 @@ async def test_evaluate_trips_on_the_floor_or_the_multiple(conn):
     await _row(conn, day=TODAY, hour=9, cost=30.0, app="crm")
     policy = ab.caps_settings.AnomalyPolicy(multiple=4.0, floor_usd=25.0, baseline_days=14)
     v = await ab.evaluate(conn, "crm", mode="enforce", policy=policy, now=_ts(TODAY, 15))
-    assert v.tripped and v.refuses and v.threshold_usd == 25.0 and v.spent_usd == pytest.approx(30.0)
+    assert v.tripped and v.threshold_usd == 25.0 and v.spent_usd == pytest.approx(30.0)
+    assert not v.refuses and v.as_dict()["enforced"] is False          # the CRM gateway does not read it yet
     reset = ab.app_profile.AppProfile(app="crm", anomaly_reset_at=_ts(TODAY, 10).isoformat())
     v2 = await ab.evaluate(conn, "crm", mode="enforce", policy=policy, profile=reset, now=_ts(TODAY, 15))
     assert not v2.tripped and v2.spent_usd == 0.0
