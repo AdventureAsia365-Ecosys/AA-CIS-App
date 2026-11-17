@@ -162,10 +162,13 @@ async def test_run_sets_the_result(monkeypatch):
     from services.jobs import tenant_billing_tick_job as job
 
     monkeypatch.setattr(billing, "tick", AsyncMock(return_value={"outcome": "ok", "warned": 1}))
+    # AA-1116 contract 1.10: the same run refreshes the quote discount shares (test_aa1116_quote_discount)
+    monkeypatch.setattr(job.quote_discount, "refresh_all", AsyncMock(return_value={"outcome": "ok"}))
     ctx = MagicMock()
     ctx.job_id, ctx.payload, ctx.pool = "j", {"trigger": "schedule"}, object()
     out = await job.run(ctx)
-    assert out == {"kind": "tenant_billing_tick", "trigger": "schedule", "outcome": "ok", "warned": 1}
+    assert out == {"kind": "tenant_billing_tick", "trigger": "schedule", "outcome": "ok", "warned": 1,
+                   "discounts": {"outcome": "ok"}}
     ctx.set_result.assert_called_once_with(out)
 
 

@@ -47,6 +47,7 @@ from api.core.tenant_scope import TENANT_SCOPED
 from api.routers.admin import _admin_actor, _require_tenant_admin, verify_admin_secret
 from services.tenant_account import billing_terms
 from services.tenant_account import pilot as tenant_pilot
+from services.tenant_account import quote_discount
 from services.tenant_account import subscription as sub
 from services.tenant_account import tripplanner_domain as tp_domain
 from services.tenant_account import tripplanner_site as tp_site
@@ -373,7 +374,9 @@ async def put_billing_details(tenant_id: uuid.UUID, body: BillingDetailsIn, requ
     payload = {k: getattr(body, k) for k in body.model_fields_set}
     try:
         async with request.app.state.pool.acquire() as conn:
-            return await billing_terms.set_details(conn, str(tenant_id), payload, actor=_admin_actor(x_admin_user_id))
+            out = await billing_terms.set_details(conn, str(tenant_id), payload, actor=_admin_actor(x_admin_user_id))
+            await quote_discount.refresh_quietly(conn, str(tenant_id))   # AA-1116 contract 1.10: Booking's share
+            return out
     except billing_terms.TermsError as e:
         raise _refuse_terms(e) from None
 
@@ -389,8 +392,10 @@ async def put_subscription_terms(tenant_id: uuid.UUID, product: Literal["content
     payload = {k: getattr(body, k) for k in body.model_fields_set}
     try:
         async with request.app.state.pool.acquire() as conn:
-            return await billing_terms.set_terms(conn, str(tenant_id), product, payload,
-                                                 actor=_admin_actor(x_admin_user_id))
+            out = await billing_terms.set_terms(conn, str(tenant_id), product, payload,
+                                                actor=_admin_actor(x_admin_user_id))
+            await quote_discount.refresh_quietly(conn, str(tenant_id))   # AA-1116 contract 1.10: Booking's share
+            return out
     except billing_terms.TermsError as e:
         raise _refuse_terms(e) from None
 

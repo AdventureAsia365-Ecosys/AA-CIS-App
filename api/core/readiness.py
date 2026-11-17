@@ -101,7 +101,10 @@ REQUIRED_CIS_SCHEMA = 322
 # tenant list and Tenant 360 read v_tenant_monthly_usage.plan_key (439)). 436 (settings: the readers fall back to the
 # compiled defaults), 437 (the resolver body) and 438 (the Booking / TripPlanner contract views) are not needed by
 # this code; they ship in the same batch, applied in order.
-REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 395, 397, 398, 402, 408, 409, 411, 420, 428, 435, 439)
+# 443 (AA-1116 contract 1.10 — the tenant_billing_tick and the Tenant 360 billing writes write
+# shared.tenant_subscription.quote_discount_pct / _kind; each write is fail-soft without it). 444 (the Booking contract
+# view) is not needed by this code.
+REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 395, 397, 398, 402, 408, 409, 411, 420, 428, 435, 439, 443)  # noqa: E501
 # Versions this code needs that were registered after a higher one (reserved numbers): 297 (AA-920 WM-25) was reserved
 # in S255 and applied after 299. max() is already 299 without it, so the version reported is capped below the lowest
 # listed version that is not registered (297 missing -> 296 -> "schema_behind").
