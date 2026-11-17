@@ -12,7 +12,7 @@
     "kit:check": "node app/_kit/core/check-kit-copy.mjs --self"
   },
   "dependencies": {
-    "@sentry/nextjs": "^10.75.2",
+    "@sentry/nextjs": "^10.78.0",
     "@tanstack/react-query": "^5.99.0",
     "@tanstack/react-table": "^8.21.3",
     "axios": "^1.20.0",
