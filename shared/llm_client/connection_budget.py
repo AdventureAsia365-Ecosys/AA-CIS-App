@@ -19,19 +19,28 @@ module only caches them for the sync gateway:
   closed would take every budgeted connection out of service on a database blip. A missing 317 table alone is not a
   failure (the policy defaults apply: alert 80 %, hard stop).
 - ``LLM_CONNECTION_BUDGETS=off`` (ECS env, read per call) switches enforcement and alerts off.
+
+AA-1126 G1 (S283): what a reached cap does is the environment's setting ``cis.llm.connection_cap_mode``
+(``caps_settings``). ``hard_stop`` (the default, Dev) is the rule above. ``failover_continue`` (prod) keeps leaving an
+over-cap connection out while another rung can answer; when the request still fails and a connection cap took part
+(``budget_keys``), ``run_with_cap_mode`` raises one alert (bell + ops e-mail + log, once per 24 h) and runs the request
+again with the caps lifted for it (``caps_lifted``: ``stops`` answers None), so the call goes to the first healthy rung
+and a customer is never refused because of a connection cap.
 """
 from __future__ import annotations
 
 import os
 import threading
 import time
-from typing import Optional
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Callable, Iterator, Optional, TypeVar
 
 import structlog
 
 from shared import cost_guard
 
-from . import connections
+from . import caps_settings, connections
 
 logger = structlog.get_logger()
 
@@ -103,8 +112,9 @@ def budget_of(connection_key: str) -> Optional[cost_guard.ConnectionBudget]:
 
 
 def stops(connection: connections.ProviderConnection) -> Optional[cost_guard.ConnectionBudget]:
-    """The budget state when ``connection`` must be left out of routes now (hard stop reached), else None."""
-    if connection.monthly_budget_usd is None:
+    """The budget state when ``connection`` must be left out of routes now (hard stop reached), else None. None as well
+    while the caps are lifted for this request (AA-1126 G1, ``failover_continue``)."""
+    if connection.monthly_budget_usd is None or _LIFTED.get():
         return None
     b = budget_of(connection.connection_key)
     return b if b is not None and b.stops else None
@@ -154,3 +164,79 @@ def budget_error(model_key: str, skips: list) -> ConnectionBudgetExceeded:
     keys = tuple(k for k, _ in skips)
     detail = "; ".join(f"{k}: ${b.month_spent_usd:.2f} of ${b.monthly_budget_usd:.2f}" for k, b in skips)
     return exceeded(f"{model_key!r} not called: every usable connection reached its monthly budget ({detail})", keys)
+
+
+# ── AA-1126 G1: failover_continue (the connection cap never refuses the call) ────────────────────────────────────────
+
+_LIFTED: ContextVar[bool] = ContextVar("llm_connection_caps_lifted", default=False)
+CONTINUE_SCOPE = "connection_continue"
+T = TypeVar("T")
+
+
+@contextmanager
+def caps_lifted() -> Iterator[None]:
+    """While bound, no connection is left out for its budget (``stops`` answers None, ``check`` passes)."""
+    token = _LIFTED.set(True)
+    try:
+        yield
+    finally:
+        _LIFTED.reset(token)
+
+
+def budget_keys(exc: BaseException) -> tuple:
+    """The connections a failed request left out for their monthly budget: the keys of a ConnectionBudgetExceeded in
+    ``exc``'s cause chain or among its route failures (``route_failures``, a mixed failure). () when none. Pure."""
+    keys: list = []
+    cur, seen = exc, 0
+    while cur is not None and seen < 16:
+        found = [cur] + list(getattr(cur, "route_failures", None) or ())
+        keys += [k for f in found if isinstance(f, ConnectionBudgetExceeded) for k in f.connection_keys]
+        cur, seen = cur.__cause__ or cur.__context__, seen + 1
+    return tuple(dict.fromkeys(keys))
+
+
+def run_with_cap_mode(call: Callable[[], T], stage: Optional[str]) -> T:
+    """Run ``call`` (one gateway request: its whole route). In ``failover_continue`` mode a failure in which a
+    connection cap took part is alerted and ``call`` runs once more with the caps lifted; otherwise the failure is
+    raised as it is (``hard_stop``: today's budget stop)."""
+    try:
+        return call()
+    except Exception as e:
+        keys = budget_keys(e)
+        if not keys or _LIFTED.get() or caps_settings.connection_cap_mode() != caps_settings.FAILOVER_CONTINUE:
+            raise
+    logger.warning("llm_connection_caps_lifted", stage=stage, connections=list(keys),
+                   hint="every rung was over its connection cap or failed: the call goes on (failover_continue)")
+    alert_continue(keys, stage)
+    with caps_lifted():
+        return call()
+
+
+def continue_message(keys: tuple, stage: Optional[str]) -> str:
+    return (f"LLM connection caps reached ({', '.join(keys)}) and no other way in answered for stage "
+            f"{stage or 'unstaged'}: the call went on with the caps lifted (connection cap mode failover_continue). "
+            "Raise the connection budgets or check the spend.")
+
+
+async def _alert_continue(keys: tuple, stage: Optional[str]) -> None:
+    conn = await connections._connect()
+    try:
+        summary = {"provider": "llm", "scope": CONTINUE_SCOPE, "connection_keys": list(keys), "stage": stage,
+                   "hard_stop": False, "hard_stop_day": False}
+        await cost_guard.maybe_alert_central(conn, summary, alert_pct=100, stopped=False,
+                                             message=continue_message(keys, stage))
+    finally:
+        await conn.close()
+
+
+def send_continue(keys: tuple, stage: Optional[str]) -> None:
+    """Write the bell (tests replace it; no database in unit tests)."""
+    connections.run_sync(lambda: _alert_continue(keys, stage))
+
+
+def alert_continue(keys: tuple, stage: Optional[str]) -> None:
+    """One admin bell + ops e-mail per 24 h (scope llm:connection_continue). Best effort: never raises."""
+    try:
+        send_continue(keys, stage)
+    except Exception as e:  # noqa: BLE001 — the call goes on whatever the bell does
+        logger.warning("llm_connection_continue_alert_failed", error=str(e)[:200])

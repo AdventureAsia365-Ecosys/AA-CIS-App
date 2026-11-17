@@ -28,7 +28,7 @@ from .errors import (ACCESS_DENIED, BUDGET, DEADLINE, DISABLED, MAX_CHAIN_ATTEMP
                      RouteRoleNotServed, account_level_class, classify)
 from . import (breaker, capacity, central_budget, connection_budget, connections, data_scope, effort_rule, family_rule,
                prompt_registry, stage_params, stream_sink, tenant_budget, token_floor)
-from . import app_profile, free_text_scrub
+from . import anomaly_breaker, app_profile, free_text_scrub, run_cap
 from . import cassette
 from .vendor_route import (VendorDeployment, deployment_plan, pinned_deployment, role_refusal, route_reach,
                            split_pin, sunk_skips, vendor_deployment_for)
@@ -1359,7 +1359,8 @@ class LLMClient:
         stream_sink.emit_call_start(request.stage)
         ok = False
         try:
-            resp = self._generate(request)
+            # AA-1126 G1: hard_stop = as before; failover_continue = a route left empty by connection caps goes on.
+            resp = connection_budget.run_with_cap_mode(lambda: self._generate(request), request.stage)
             ok = True
             return resp
         finally:
@@ -1486,10 +1487,14 @@ class LLMClient:
             self._app_profile_gate(request, chain[0])
             # AA-642 A1: the stage kill switch first (a switched-off stage reads no budget and makes no attempt).
             self._stage_switch_gate(request, stage_cfg, chain[0])
+            # AA-1126 G2: the app's anomaly breaker (a bell; in mode enforce a refusal), before any budget read.
+            self._refuse(request, chain[0], anomaly_breaker.refusal(request.stage))
             # AA-1016: the tenant's monthly AI budget, before any attempt (no budget row = nothing read, no change).
             self._tenant_budget_gate(request, chain[0])
             # AA-1025 A7: the central LLM budgets (app / stage / job kind / eval / ad-hoc caps), before any attempt.
             self._central_budget_gate(request, chain[0])
+            # AA-1126 G4: the hard cap of the call's batch run (S1 rewrite job, eval run, ad-hoc run).
+            self._refuse(request, chain[0], run_cap.refusal_of(request.stage))
             # AA-1113 (ADR 0009 d10): a free-text stage sends only its scrubbed request (fail closed, no attempt).
             request = self._free_text_gate(request, chain[0])
             if len(chain) == 1:
@@ -1528,12 +1533,14 @@ class LLMClient:
         """AA-1025 H1a: the app's AI switched off in its app profile (``app_profile``) is refused before any provider
         attempt, like the stage kill switch: one 0 USD ledger row (status refused, error_class disabled) and
         ``LLMAppDisabled`` (an LLMStageDisabled: the declared degrade mode ``queue_retry``)."""
-        exc = app_profile.refusal(request.stage)
-        if exc is None:
-            return
-        pin = split_pin(first_key)
-        log_gateway_failed_attempt(request, exc, model=pin[0] if pin else first_key, latency_ms=0)
-        raise exc
+        self._refuse(request, first_key, app_profile.refusal(request.stage))
+
+    def _refuse(self, request: LLMRequest, first_key: str, exc: Optional[BaseException]) -> None:
+        """A gate's refusal before any attempt (None = none): its 0 USD 'refused' ledger row, then raised as is."""
+        if exc is not None:
+            pin = split_pin(first_key)
+            log_gateway_failed_attempt(request, exc, model=pin[0] if pin else first_key, latency_ms=0)
+            raise exc
 
     def _stage_switch_gate(self, request: LLMRequest, stage_cfg, first_key: str) -> None:
         """AA-642 A1: a stage switched off (``llm_role_config.is_active = false``, migration 326) is refused before
@@ -1545,10 +1552,8 @@ class LLMClient:
             return
         reason = getattr(stage_cfg, "disabled_reason", None)
         exc = LLMStageDisabled(request.stage or stage_cfg.stage, reason if isinstance(reason, str) else None)
-        pin = split_pin(first_key)
-        log_gateway_failed_attempt(request, exc, model=pin[0] if pin else first_key, latency_ms=0)
         logger.warning("llm_stage_switched_off_refused", stage=request.stage)
-        raise exc
+        self._refuse(request, first_key, exc)
 
     def _tenant_budget_gate(self, request: LLMRequest, first_key: str) -> None:
         """AA-1016: ``tenant_budget.check`` for the tenant bound to this call (the job's tenant). A refusal (a T-stage
@@ -1558,9 +1563,7 @@ class LLMClient:
         try:
             tenant_budget.check(request.stage)
         except (tenant_budget.TenantBudgetApprovalRequired, tenant_budget.TenantBudgetUnavailable) as e:
-            pin = split_pin(first_key)
-            log_gateway_failed_attempt(request, e, model=pin[0] if pin else first_key, latency_ms=0)
-            raise
+            self._refuse(request, first_key, e)
 
     def _central_budget_gate(self, request: LLMRequest, first_key: str) -> None:
         """AA-1025 A7: ``central_budget.check`` for the call's scopes (app, stage, the bound job's kind, eval, ad-hoc),
@@ -1572,9 +1575,7 @@ class LLMClient:
         try:
             central_budget.check(request.stage, estimate_call_usd(request, first_key))
         except central_budget.CentralBudgetExceeded as e:
-            pin = split_pin(first_key)
-            log_gateway_failed_attempt(request, e, model=pin[0] if pin else first_key, latency_ms=0)
-            raise
+            self._refuse(request, first_key, e)
 
     def _free_text_gate(self, request: LLMRequest, first_key: str) -> LLMRequest:
         """AA-1113 (root ADR 0009 d10): the scrubbed copy for a free-text stage, else the same request. A scrub that
@@ -1582,9 +1583,7 @@ class LLMClient:
         try:
             return free_text_scrub.scrub_for_stage(request, _ATTEMPT_SCOPE.get())
         except free_text_scrub.FreeTextScrubFailed as e:
-            pin = split_pin(first_key)
-            log_gateway_failed_attempt(request, e, model=pin[0] if pin else first_key, latency_ms=0)
-            raise
+            self._refuse(request, first_key, e)
 
     def _call_key(self, request: LLMRequest, key: str, primary_acct: str) -> LLMResponse:
         # AA-658 / ADR 0005 — non-legacy Model Keys resolve through the catalog, with no hidden

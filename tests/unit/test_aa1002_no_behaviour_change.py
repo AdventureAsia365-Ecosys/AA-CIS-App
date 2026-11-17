@@ -44,6 +44,8 @@ REGISTRY_READERS = {
     "tenant_budget.py": "AA-1016: the tenant budget and month-spend reads through connections.run_sync / _connect",
     "central_budget.py": "AA-1025 A7: the central LLM caps and their spend reads through connections.run_sync / "
                          "_connect",
+    "anomaly_breaker.py": "AA-1126 G2: the app's ledger spend reads through connections.run_sync / _connect",
+    "run_cap.py": "AA-1126 G4: the run's ledger spend read through connections.run_sync / _connect",
     "prompt_registry.py": "AA-900: the shared.prompt_version read through connections.run_sync / _connect",
     "embedding_space.py": "AA-1026: the embedding space registry read through connections.run_sync / _connect",
     "app_profile.py": "AA-1025 H1a: the app profile read through connections.run_sync / _connect",
@@ -62,6 +64,8 @@ CALL_PATH = ("client.py", "embed.py", "decide.py", "judge.py", "shadow.py", "bed
              "stage_params.py",   # AA-1017: stage x model parameters (its own table; empty = the same request object)
              "tenant_budget.py",  # AA-1016: tenant AI budget check (no budget row = nothing read beyond the tenant set)
              "central_budget.py",  # AA-1025 A7: central LLM caps (no llm row = nothing read beyond the cached rows)
+             "anomaly_breaker.py",  # AA-1126 G2: anomaly breaker (mode off / unreadable = nothing refused)
+             "run_cap.py",  # AA-1126 G4: run caps (not a capped run = nothing read; unreadable spend = no refusal)
              "prompt_registry.py",  # AA-900: prompt version lookup (no registered row = None on the ledger)
              "embedding_space.py",  # AA-1026: embedding space registry (unreadable = the built-in 328 mirror)
              "json_reply.py",  # AA-1026: reads the JSON value out of a reply text (pure, no I/O)
@@ -80,7 +84,8 @@ CALL_PATH = ("client.py", "embed.py", "decide.py", "judge.py", "shadow.py", "bed
              "cassette.py",  # AA-900 S271 W0: record-only raw-reply store (best-effort background write, never raises)
              "attribution.py",  # AA-1058: the cost attribution rules (pure data + a lookup, no I/O)
              "free_text_scrub.py",  # AA-1113: the free-text PII scrub (pure; other stages get the same request object)
-             "pii_patterns.py")  # AA-1113: the scrub's regex detectors, ported from the CRM (pure, no I/O)
+             "pii_patterns.py",  # AA-1113: the scrub's regex detectors, ported from the CRM (pure, no I/O)
+             "caps_settings.py")  # AA-1126: the spend-control settings (shared.settings snapshot; unseeded = today)
 
 
 def _imported_modules(path: Path) -> set[str]:

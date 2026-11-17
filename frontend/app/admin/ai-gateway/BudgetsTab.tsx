@@ -37,6 +37,7 @@ import { NEW_BUDGET_DRAFT, newCentralDraft } from "@/lib/capTighten";
 import { connectionName } from "@/lib/llmConnections";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import { BUDGETS, BUDGET_STATE, CENTRAL } from "./budgets.messages";
+import SpendControlsSection, { useAtCapText } from "./SpendControlsSection";
 import { usePageAccess } from "./usePageAccess";
 import { LevelsCell, UsedOfCap } from "./tenantBudgetParts";
 import { tenantBudgetInForce } from "@/lib/tenantBudgetInForce";
@@ -240,6 +241,7 @@ function SpendBudgetTable({ id, rows, loading, onEdit }: {
 
 function ConnectionBudgetTable({ rows, loading }: { rows: ConnectionBudgetRow[]; loading: boolean }) {
   const t = useT(BUDGETS);
+  const atCapText = useAtCapText();    // AA-1126 G1: follows the environment's connection cap mode
   const dir = useAwsAccounts();
   const accountText = useAccountText();
   const columns = useMemo<ColumnDef<ConnectionBudgetRow, unknown>[]>(() => [
@@ -277,9 +279,9 @@ function ConnectionBudgetTable({ rows, loading }: { rows: ConnectionBudgetRow[];
       // F6: a connection without a budget has nothing to stop at or alert on.
       cell: (c) => c.row.original.monthly_budget_usd == null
         ? <span style={small}>{t("noCapSet")}</span>
-        : <span style={small}>{c.row.original.hard_stop ? t("stopsAtCap") : t("alertOnly")} · {c.row.original.alert_pct} %</span> },
+        : <span style={small}>{atCapText(c.row.original.hard_stop)} · {c.row.original.alert_pct} %</span> },
     { id: "state", header: t("colState"), accessorKey: "state", cell: (c) => <StateBadge state={c.row.original.state} /> },
-  ], [t, dir, accountText]);
+  ], [t, dir, accountText, atCapText]);
   return (
     <DataTable<ConnectionBudgetRow>
       tableId="ai-gateway-budgets-connections" data={rows} columns={columns} getRowId={(r) => r.connection_key}
@@ -734,6 +736,7 @@ export default function BudgetsTab({ onOpenConnections }: { onOpenConnections: (
       {data && data.errors.length > 0 && (
         <div role="status" style={{ ...small, color: K.danger }}>{t("sourceErrors")}</div>
       )}
+      <SpendControlsSection />
       <Section title={t("groupProvider")} description={t("groupProviderHelp")} padded={false}
         actions={canEdit ? (
           <Button size="sm" variant="secondary" disabled={!data} onClick={() => setEditing({ row: null })}

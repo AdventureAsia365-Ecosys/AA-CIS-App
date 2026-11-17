@@ -30,7 +30,7 @@ import sentry_sdk
 import structlog
 
 from shared.cost_guard import BudgetExceeded
-from shared.llm_client import call_log, capacity
+from shared.llm_client import call_log, capacity, run_cap
 from shared.llm_client.errors import LLM_ACCESS_DENIED_REASON, LLMAccessDenied, is_llm_access_denied, stage_disabled_in
 from shared.llm_client.tenant_budget import approval_stop_in
 from shared.sentry_init import release  # AA-884: APP_GIT_SHA of this image, written to shared.job_worker
@@ -407,9 +407,10 @@ class Worker:
         # (services/quality/degraded.py), written to shared.job.result.degraded below.
         # AA-1025 H2: and the job's kind, so each LLM call reserves its tokens on its line (capacity.KIND_LINES).
         # AA-1058: and the tour / content piece the payload names, so every ledger row of the job carries them.
+        # AA-1126 G4: and the payload's cap_usd, the hard cap of a capped run (run_cap: S1 rewrite, eval, ad-hoc).
         with call_log.bind_job(job.id), call_log.bind_tenant(job_tenant_id(job.payload)), \
                 call_log.bind_attribution(**job_attribution(job.payload)), \
-                capacity.bind_kind(job.kind), _degraded_collect() as degraded_box:
+                capacity.bind_kind(job.kind), run_cap.bind_payload(job.payload), _degraded_collect() as degraded_box:
             handler_task = asyncio.create_task(kind.handler(ctx))
         cancelled_by_admin = False
         try:
