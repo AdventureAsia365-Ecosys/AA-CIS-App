@@ -175,7 +175,7 @@ def test_a_pinned_judge_is_in_the_run_version_and_every_rows_judge_version():
     assert all(r["details"]["judge"] == {"model_key": "zz-judge", "connection": "zz-direct",
                                          "provider_model": "zz-judge-2026"} for r in store.results)
     d = row["details"]
-    assert d["judge"] == {"model_key": "zz-judge", "connection": "zz-direct", "pinned": True}
+    assert d["judge"] == {"model_key": "zz-judge", "connection": "zz-direct", "pinned": True, "instrument": None}
     assert d["judge_identities"] == [{"model": "zz-judge", "connection": "zz-direct", "rows": len(store.results)}]
     assert out.verdict == "pass"
 

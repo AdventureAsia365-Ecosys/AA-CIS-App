@@ -123,6 +123,14 @@ async def resolved(pool, pre: pr.Prereg, *, set_id: Optional[str] = None) -> pr.
     return pr.resolve(pre, await store.items(set_id, pre.writer, None))
 
 
+def _sample_short(pre: pr.Prereg) -> list[str]:
+    """A blocking line when a sample rule drew fewer GATE items than it asks for (too few on the side). Pure."""
+    res = pre.doc.get("sample_resolved") or {}
+    if res and res.get("picked", 0) < res.get("asked", 0):
+        return [f"the sample rule drew {res['picked']} of {res['asked']} GATE items (too few on the side)"]
+    return []
+
+
 def sample_outputs(pre: pr.Prereg, items: list[dict], shared_inputs: Optional[dict]) -> list[str]:
     """The labelled OUTPUT texts the judge reads of the fixed sample's frozen control outputs (eval_judge.evidence_view,
     as the run builds them; an item over the evidence cap is left out, the run refuses it at $0 too). Pure."""
@@ -192,9 +200,7 @@ async def plan(pool, pre: pr.Prereg, *, r1_report: Optional[str] = None, instrum
                            "d12_cap_usd": pr.workflow_cap(pre.workflow), "prereg_cap_usd": pre.doc["cap_usd"],
                            "judge": pre.doc["judge"], "sample_resolved": pre.doc.get("sample_resolved"),
                            "sample_ids": list(pre.doc.get("sample_ids") or [])}
-    res = pre.doc.get("sample_resolved") or {}
-    if res and res.get("picked", 0) < res.get("asked", 0):
-        blocking.append(f"the sample rule drew {res['picked']} of {res['asked']} GATE items (too few on the side)")
+    blocking.extend(_sample_short(pre))
     if not pre.registered:
         blocking.append("status is draft (fill the sample with `draft`, register it in a reviewed PR)")
     store = r2.PgStore(pool, stages=(spend.W5_STAGE,))
