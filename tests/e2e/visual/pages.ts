@@ -60,6 +60,8 @@ export const PAGES: VisualPage[] = [
   { slug: "platform-infra", route: "/admin/platform/infra", path: "/admin/platform/infra", auth: "staff" },
   { slug: "platform-catalogue", route: "/admin/platform/catalogue", path: "/admin/platform/catalogue", auth: "staff" },
   { slug: "platform-delivery", route: "/admin/platform/delivery", path: "/admin/platform/delivery", auth: "staff" },
+  { slug: "platform-delivery-queue", route: "/admin/platform/delivery", path: "/admin/platform/delivery?app=merge-queue", auth: "staff" },
+  { slug: "platform-delivery-git", route: "/admin/platform/delivery", path: "/admin/platform/delivery?app=git-map", auth: "staff" },
   { slug: "platform-settings", route: "/admin/platform/settings", path: "/admin/platform/settings", auth: "staff" },
   { slug: "platform-staff", route: "/admin/platform/staff", path: "/admin/platform/staff", auth: "staff" },
   { slug: "platform-ui-kit", route: "/admin/platform/ui-kit", path: "/admin/platform/ui-kit", auth: "staff" },

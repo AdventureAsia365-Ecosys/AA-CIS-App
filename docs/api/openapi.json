@@ -37629,6 +37629,23 @@
             }
           },
           {
+            "description": "dora: DORA and CI per app; queue: merge-queue entries; git: commit activity and churn",
+            "in": "query",
+            "name": "section",
+            "required": false,
+            "schema": {
+              "default": "dora",
+              "description": "dora: DORA and CI per app; queue: merge-queue entries; git: commit activity and churn",
+              "enum": [
+                "dora",
+                "queue",
+                "git"
+              ],
+              "title": "Section",
+              "type": "string"
+            }
+          },
+          {
             "in": "header",
             "name": "x-admin-secret",
             "required": false,
