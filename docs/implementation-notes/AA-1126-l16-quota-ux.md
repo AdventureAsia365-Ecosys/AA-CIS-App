@@ -40,7 +40,21 @@ read error (L4), plus the CIS data the TripPlanner (L2) and CRM (L3) lanes read.
   messages and `upgrade` / `resets_at` fields, `cost_guard` notice + unreadable bell, `tenant_budget` L4 + quota code,
   `lifecycle` tick step 4.
 
+- Review fix pass (S283, the tech lead's "keep the admin threshold pages in sync"): the TripPlanner stage caps and the
+  near-cap share are settings (CIS 447 `tripplanner.spend.stage_cap_compose_usd` / `stage_cap_search_usd`,
+  `near_cap_pct`); the Apps board reads them (`api/services/spend_rules_view.py`) instead of the mirrored constants
+  `app_registry.TP_STAGE_CAPS_USD` / `TP_NEAR_CAP_RATIO` (removed, one lint-baseline entry dropped). The Apps board,
+  the Spend page's TripPlanner caps block and the AI gateway App profiles card now show, beside each app-wide cap,
+  whether a reached cap stops the AI (dev spend rules) or only alerts (prod), from `cis.spend.environment` /
+  `tripplanner.spend.environment` and the CRM's `crm.spend.environment` (relayed from crm.ops.v1 `/settings`, area
+  spend, with the staff member's own token). A TripPlanner card whose spend cannot be read says "AI paused" only under
+  dev. The staff bell titles TripPlanner's new `platform.tripplanner.spend_degraded` rows (CIS 447 lets TripPlanner
+  write them).
+
 ## Tradeoffs
+
+- The App profiles page now makes one CRM settings read per load (the CRM spend environment). It never fails the page:
+  no answer = the rule is not shown for the CRM row.
 
 - The 402 pre-check is one extra budget read per AI-starting request. Cheap (one indexed sum) and it saves a queued job
   plus a quota charge that would only stop.

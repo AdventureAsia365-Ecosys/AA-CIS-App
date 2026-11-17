@@ -19,6 +19,7 @@ import {
   ApiError, Badge, Button, ConfirmModal, DataTable, DateText, Drawer, ErrorState, Field, Input, K, Section, Select,
   Textarea, apiGet, apiSend, mono, useT, useToast, type ColumnDef,
 } from "../../_kit";
+import { capRuleOf, capRuleTone } from "@/lib/spendRules";
 import {
   APP_PROFILES_API, APP_PROFILES_KEY, DEGRADE_MODES, PROFILE_REASON_MAX, appProfileBody, appProfileDraft,
   appProfilePath, isReadOnlyRefusal, usd, type AppProfile, type AppProfileDraft, type AppProfilesResp,
@@ -171,11 +172,19 @@ export default function AppProfilesCard() {
         cell: (x) => {
           const p = x.row.original;
           const cap = p.central_cap?.per_day_usd;
+          // What the budget does when reached under the app's spend rules (AA-1126).
+          const rule = capRuleOf(p.budget_rule);
           return (
             <div style={{ display: "grid", gap: 2, minWidth: 0 }}>
               <span style={{ fontFamily: mono, color: K.ink }}>
                 {p.default_daily_budget_usd == null ? t("noBudget") : usd(p.default_daily_budget_usd, 2)}</span>
               {cap != null && <span style={small}>{t("centralCap", usd(cap, 2))}</span>}
+              {rule && p.default_daily_budget_usd != null && (
+                <span data-testid={`app-profile-rule-${p.app}`} style={{ display: "inline-flex" }}>
+                  <Badge tone={capRuleTone(rule)} dot={false}>
+                    {t(rule === "alert_only" ? "ruleAlertOnly" : "ruleStops")}</Badge>
+                </span>
+              )}
             </div>
           );
         } },
