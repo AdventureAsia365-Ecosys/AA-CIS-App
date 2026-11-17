@@ -1290,6 +1290,25 @@ kpis:
   defined_in: OPS-03
   used_by:
   - OPS-03
+- id: K-ENT-TREND
+  version: 1
+  name: Entitlement trend
+  definition: 'Agencies per feature key live at each month end in shared.v_tenant_entitlement_v1 (by product and
+    source: plan, trial, override): rows of kind agency (a named view column), canary agencies left out through
+    shared.tenants.is_canary not true on tenant_id (is_canary is not a view column), so demo and internal tenants never
+    count; and usage against the entitled limit for the metered keys (AI spend vs
+    ai.budget_usd_monthly as in K-TEN-AICAP, rewrites vs content.rewrite as in K-PART-QUOTA, CRM seats from the
+    crm.ops.v1 usage meters), quarter over quarter from the daily values in shared.kpi_daily once the snapshot job
+    computes them (the view holds today only)'
+  unit: count
+  threshold: Trend; the business owner reads it with the pricing review
+  sources:
+  - shared.v_tenant_entitlement_v1
+  - shared.tenants
+  - shared.kpi_daily
+  defined_in: EX-05
+  used_by:
+  - EX-05
 - id: K-EVAL-COST
   version: 1
   name: Eval cost
@@ -1337,6 +1356,24 @@ kpis:
   unit: usd
   threshold: <= budget or a decision recorded
   sources: []
+  defined_in: OPS-16
+  used_by:
+  - OPS-16
+- id: K-FC-TENANTS
+  version: 1
+  name: Tenant pipeline forecast
+  definition: 'Projected agencies with a paid subscription at 3 and 6 months: paying now (K-PART-PAYING) + agencies in
+    trial (shared.tenant_subscription status trialing, by trial_ends_at) x the trailing trial-to-paid rate (K-MKT-CONV,
+    over a window that is an admin setting registered with the generator; trials of kind agency, is_canary not true, as
+    in K-MKT-CONV) + the pipeline before a trial (shared.tenants
+    kind agency without a live subscription; CRM agencies by state and owner from crm.ops.v1 GET /tenants and
+    /data-coverage, read with an administrator''s staff session). Each projection is kept so K-FC-ACCURACY can score it
+    a quarter later'
+  unit: count
+  threshold: Trend; the business owner sets the goal
+  sources:
+  - shared.tenant_subscription
+  - shared.tenants
   defined_in: OPS-16
   used_by:
   - OPS-16
@@ -1772,39 +1809,71 @@ kpis:
   - FI-03
   - FI-08
 - id: K-MKT-CONV
-  version: 1
-  name: Source conversion
-  definition: Inquiries sent / sessions, per source; confirmed cases per source via booking.trip_cases.source_system + inquiry_snapshot
+  version: 2
+  name: Trial to paid conversion
+  definition: 'Subscriptions of agencies (shared.tenants kind agency, is_canary not true; demo and internal tenants
+    never count) whose trial_ends_at falls in the period and that are active or past_due after it / all such agency
+    subscriptions whose trial ended in the period (cancelled or lapsed trials stay in the denominator), per product, read
+    from shared.tenant_subscription. Re-pointed on 2026-11-17 (slice R7) from the traveller source-to-inquiry conversion
+    (B2C retired)'
   unit: ratio
-  threshold: Business owner sets after first prod quarter
+  threshold: Trend; amber and red levels become admin settings before a report colours them
   sources:
-  - booking.trip_cases
+  - shared.tenant_subscription
+  - shared.tenants
   defined_in: MKT-01
   used_by:
   - MKT-01
 - id: K-MKT-CUSTSRC
-  version: 2
-  name: New customers by source
-  definition: 'Retired with the B2C half of AA-Booking (root ADR 0019): agencies are the only customers, so there is no
-    traveller customer source to count. New agencies by signup source replace it once the CRM exposes the source'
+  version: 3
+  name: New agencies by sign-up source
+  definition: 'New agencies (K-MKT-SOURCE) grouped by how they signed up (sales lead, referral, partner, campaign). No
+    sign-up source is recorded on shared.tenants today, so the report shows "source not recorded" until the agency
+    record gets one (a CIS migration in the generator slice). Version 2 retired the traveller customer source (B2C)'
   unit: count
   threshold: Trend
-  sources: []
+  sources:
+  - shared.tenants
   defined_in: MKT-01
   used_by:
   - MKT-01
 - id: K-MKT-SOURCE
-  version: 1
-  name: Sessions by source
-  definition: TripPlanner sessions grouped by first-touch source (proposed tp-NNN columns referrer_host, utm_source, utm_medium,
-    utm_campaign on tripplanner.sessions)
+  version: 2
+  name: New agencies
+  definition: 'shared.tenants rows created in the period, by kind (agency, demo, internal) and country, is_canary not
+    true; an agency offboarded later still counts in the month it joined. Re-pointed on 2026-11-17 (slice R7) from
+    TripPlanner sessions by source (B2C retired; tenant site traffic belongs to the agency)'
   unit: count
-  threshold: Trend
+  threshold: Trend; the business owner sets the yearly goal
   sources:
-  - tripplanner.sessions
+  - shared.tenants
   defined_in: MKT-01
   used_by:
   - MKT-01
+- id: K-MRR-TREND
+  version: 1
+  name: Contracted MRR trend
+  definition: 'Month-end contracted MRR per product and billing currency, read only from named v1 columns of
+    catalog.v_tenant_billing_v1 (tenant.entitlements.v1 1.9): rows of kind agency (so the demo tenant and internal
+    tenants never count, whatever their subscription), canary agencies left out through shared.tenants.is_canary not
+    true on tenant_id (is_canary is not a view column; CIS owns shared.tenants), with subscription_status active or
+    past_due, trial_ends_at not in the future and bill_free not true; the fee is agreed_price_monthly in agreed_currency while
+    agreed_until is empty or not past, else the list price (price_usd_monthly, or price_vnd_monthly when
+    billing_currency is VND); per seat on a per-seat price_unit (times the greater of seats and seats_min), else the
+    plan fee plus seats above seats_included at price_extra_seat_usd or price_extra_seat_vnd; a yearly billing_interval
+    counts at its monthly price; one line per currency, no FX conversion. Before discount: discount pending 1.10 (the
+    contract minor that appends a discount column). The view holds today only, so the trend reads the daily value from
+    shared.kpi_daily once the snapshot job computes it; the view is granted to Booking only today, so the generator
+    slice adds the CIS read'
+  unit: usd
+  threshold: Trend; the business owner sets the goal
+  sources:
+  - catalog.v_tenant_billing_v1
+  - shared.tenants
+  - shared.kpi_daily
+  defined_in: EX-05
+  used_by:
+  - EX-05
 - id: K-OD-REPEAT
   version: 1
   name: Repeat requests
@@ -2253,11 +2322,13 @@ kpis:
   used_by:
   - MKT-02
 - id: K-SEO-CTR
-  version: 1
+  version: 2
   name: Search CTR
-  definition: Clicks / impressions per published page from Search Console
-  unit: count
-  threshold: Trend; flag a page falling > 30 % month over month
+  definition: 'Retired on 2026-11-16 with the tech lead''s keyword research scope decision (research stays platform-wide;
+    no Search Console, rank tracking or per-agency SEO report), so it is never measured. Was: clicks / impressions per
+    published page from Search Console'
+  unit: ratio
+  threshold: None (retired)
   sources: []
   defined_in: MKT-02
   used_by:
