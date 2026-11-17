@@ -1,7 +1,7 @@
 // UI kit core (root ADR 0016). Canonical: AA-CIS-App frontend/app/_kit/core. Edit only there; copies are checked byte for byte (kit.lock.json).
 // app/_kit/core/kitGallery.messages.ts
 // AA-994 S4a — the demo text of the kit gallery (core/KitGallery.tsx), English and Vietnamese; S6a adds the form demo; the
-// button variants (core Buttons.tsx) add the buttons demo; AA-1008 the shell frame demo.
+// button variants (core Buttons.tsx) add the buttons demo; AA-1008 the shell frame demo; AA-1131 the table and drawer demo.
 
 import { defineMessages } from "./i18n";
 
@@ -140,6 +140,15 @@ export const GALLERY_MESSAGES = defineMessages(
     shellCloseMenu: "Close the menu",
     shellTopbar: "Topbar slot: search, language, theme, account",
     shellBody: "The page goes here. Below the breakpoint the sidebar is a drawer: open it from the menu button.",
+    tableTitle: "Table and drawer",
+    tableHint: "Tab to a row and press Enter (or click it) to open it. The drawer is named by its title, holds the focus until it closes, then gives it back to the row.",
+    colTrip: "Trip",
+    colDays: "Days",
+    colStatus: "Status",
+    drawerDays: (n: number) => `${n} days`,
+    drawerBody: "Detail of the row. Tab and Shift+Tab stay inside the drawer; Escape closes it.",
+    drawerNote: "Note for the operator",
+    drawerSave: "Save",
   },
   {
     sectionTitle: "Section",
@@ -275,5 +284,14 @@ export const GALLERY_MESSAGES = defineMessages(
     shellCloseMenu: "Đóng menu",
     shellTopbar: "Ô thanh trên: tìm kiếm, ngôn ngữ, giao diện, tài khoản",
     shellBody: "Nội dung trang nằm ở đây. Dưới điểm ngắt, thanh bên là ngăn kéo: mở bằng nút menu.",
+    tableTitle: "Bảng và ngăn kéo",
+    tableHint: "Nhấn Tab tới một dòng rồi Enter (hoặc bấm vào dòng) để mở. Ngăn kéo mang tên theo tiêu đề, giữ tiêu điểm tới khi đóng rồi trả lại cho dòng.",
+    colTrip: "Chuyến đi",
+    colDays: "Số ngày",
+    colStatus: "Trạng thái",
+    drawerDays: (n: number) => `${n} ngày`,
+    drawerBody: "Chi tiết của dòng. Tab và Shift+Tab ở trong ngăn kéo; Escape để đóng.",
+    drawerNote: "Ghi chú cho người điều hành",
+    drawerSave: "Lưu",
   },
 );

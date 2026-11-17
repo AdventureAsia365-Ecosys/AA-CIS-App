@@ -281,12 +281,15 @@ function TenantStatusToggle({ tenant, onChanged, canToggle }: {
   }
 
   if (!canToggle) return <Badge tone={chip.tone} dot={false}>{t(chip.label)}</Badge>;
-  const toggleTitle = offboarded ? t("offboardedHint")
-    : status === "active" ? t("suspendHint") : t("resumeHint");
+  // AA-1131 (S283 UI audit): offboarded is read-only, so it is plain text with its hint, not a disabled button (a
+  // disabled kit button is drawn at half opacity, which left the danger chip unreadable in dark mode).
+  if (offboarded) {
+    return <span title={t("offboardedHint")}><Badge tone={chip.tone} dot={false}>{t(chip.label)}</Badge></span>;
+  }
+  const toggleTitle = status === "active" ? t("suspendHint") : t("resumeHint");
   return (
     <div onClick={e => e.stopPropagation()}>
-      <Pressable display="inline" onClick={toggle} disabled={toggling || offboarded} title={toggleTitle}
-        style={{ cursor: offboarded ? "default" : "pointer" }}>
+      <Pressable display="inline" onClick={toggle} disabled={toggling} title={toggleTitle}>
         <Badge tone={chip.tone} dot={false}>{toggling ? "…" : t(chip.label)}</Badge>
       </Pressable>
       {rowError && (

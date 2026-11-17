@@ -9,17 +9,20 @@
 // Checkbox, Radio, DateField in a Field); the button variants (core Buttons.tsx: Button incl. dashed, LinkButton,
 // IconButton, ButtonGroup, SegmentedControl, ChipButton, Switch, underline Tabs, ListButton, Pressable) have their
 // own entry; S6b adds the Eyebrow (the section entry); AA-1033 the AI notice (its three variants); AA-1008 the
-// ShellFrame (embedded in a box: a sidebar and topbar slot, the drawer below 768px); the older core components join it
-// with S1d.
+// ShellFrame (embedded in a box: a sidebar and topbar slot, the drawer below 768px); AA-1131 a DataTable whose rows
+// open a Drawer (keyboard rows, the named and focus-trapped drawer, the named page-size select: the visual job's
+// keyboard check drives it); the older core components join it with S1d.
 //
 // Demo dates are fixed values and the relative examples use a fixed "now" (no clock read during render), so the
 // gallery renders the same text on the server and the client and in every screenshot.
 
-import { Suspense, useState, type ReactNode } from "react";
+import { Suspense, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Archive, CalendarCheck, ChevronRight, Copy, Download, Eye, Lock, Menu, Pencil, Pin, Plus, Send, Trash2, X, XCircle,
 } from "lucide-react";
-import { Eyebrow, Tabs } from "./primitives";
+import { Eyebrow, StatusBadge, Tabs } from "./primitives";
+import { DataTable, type ColumnDef } from "./DataTable";
+import { Drawer } from "./Drawer";
 import {
   Button, ButtonGroup, ChipButton, IconButton, LinkButton, ListButton, Pressable, SegmentedControl, Switch,
 } from "./Buttons";
@@ -58,6 +61,53 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
     <div style={{ display: "flex", gap: 12, alignItems: "baseline", flexWrap: "wrap", fontSize: 13, color: K.body }}>
       <span style={{ width: 120, flexShrink: 0, color: K.muted }}>{label}</span>
       <span style={{ display: "inline-flex", gap: 16, flexWrap: "wrap", minWidth: 0 }}>{children}</span>
+    </div>
+  );
+}
+
+type DemoTrip = { id: string; name: string; days: number; status: string };
+
+// Invented demo rows (no real tour): five, so the three-row page shows the pager and its page-size select.
+const DEMO_TRIPS: DemoTrip[] = [
+  { id: "t1", name: "Lantern Valley Walk", days: 4, status: "approved" },
+  { id: "t2", name: "Misty Ridge Cycle", days: 6, status: "pending" },
+  { id: "t3", name: "Coral Bay Kayak", days: 3, status: "approved" },
+  { id: "t4", name: "Pine Hollow Trek", days: 8, status: "held" },
+  { id: "t5", name: "Salt Flat Sunrise", days: 2, status: "rejected" },
+];
+
+/** AA-1131 — a DataTable whose rows open a Drawer: keyboard rows (Tab, Enter), the drawer's name, initial focus, trap and
+ *  focus return, and the named page-size select. The visual job's keyboard check drives this entry. */
+function TableDemo() {
+  const t = useT(GALLERY_MESSAGES);
+  const [open, setOpen] = useState<DemoTrip | null>(null);
+  const noteRef = useRef<HTMLInputElement>(null);
+  const columns = useMemo<ColumnDef<DemoTrip, unknown>[]>(() => [
+    { id: "name", header: t("colTrip"), accessorKey: "name" },
+    { id: "days", header: t("colDays"), accessorKey: "days", meta: { align: "right" } },
+    { id: "status", header: t("colStatus"), accessorKey: "status", cell: (c) => <StatusBadge status={c.row.original.status} /> },
+  ], [t]);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
+      <div style={{ fontSize: 12, color: K.muted }}>{t("tableHint")}</div>
+      <DataTable<DemoTrip> data={DEMO_TRIPS} columns={columns} tableId="kit-gallery-trips" getRowId={(r) => r.id}
+        pageSize={3} pageSizeOptions={[3, 10]} searchable={false} onRowClick={setOpen} />
+      <Drawer open={open !== null} onClose={() => setOpen(null)} title={open?.name} initialFocusRef={noteRef}
+        testId="kit-gallery-drawer"
+        footer={<Button size="sm" onClick={() => setOpen(null)}>{t("drawerSave")}</Button>}>
+        {open && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              <StatusBadge status={open.status} />
+              <span>{t("drawerDays", open.days)}</span>
+            </div>
+            <div>{t("drawerBody")}</div>
+            <Field label={t("drawerNote")}>
+              <Input ref={noteRef} defaultValue="" />
+            </Field>
+          </div>
+        )}
+      </Drawer>
     </div>
   );
 }
@@ -395,6 +445,10 @@ export function KitGallery() {
             <AiNotice variant="staff" form="badge" testId="kit-gallery-ai-badge-staff" />
           </div>
         </div>
+      </Entry>
+
+      <Entry id="table" title={t("tableTitle")}>
+        <TableDemo />
       </Entry>
 
       <Entry id="shell" title={t("shellTitle")}>

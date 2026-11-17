@@ -408,6 +408,25 @@ export function ErrorState({
 }
 
 // ── PageHeader ────────────────────────────────────────────────────────────────
+// AA-1131 (S283 UI audit, batch K1): the header's layout rules are the kit's own hoisted stylesheet (they used to be
+// copied into each app's CSS: CIS globals.css, Booking ui/local/shell.css, the studio css). A header with a description
+// AND actions gives its text a 420 px basis (it was 240 px): with a long action row that just fitted beside a 240 px
+// text, the description was squeezed into a 7-line column (CIS Writing memory at 1440 px); now the actions wrap under
+// the text instead. Below 768 px such a header stacks (text, then the actions on their own row, left aligned). The
+// selectors match the app copies' specificity and come in the same order, so an app copy left in place changes nothing.
+export const PAGE_HEADER_CSS =
+  `.aa-page-header-text{flex:1 1 240px}` +
+  `.aa-page-header-actions{justify-content:flex-end;max-width:100%}` +
+  `.aa-page-header--stack>.aa-page-header-text{flex:1 1 420px}` +
+  `@media (max-width: 767px){` +
+  `.aa-page-header--stack>.aa-page-header-text{flex-basis:100%}` +
+  `.aa-page-header--stack>.aa-page-header-actions{justify-content:flex-start;flex-basis:100%;min-width:0}` +
+  `}`;
+
+export function PageHeaderStyles() {
+  return <style href="aa-kit-page-header" precedence="default">{PAGE_HEADER_CSS}</style>;
+}
+
 export function PageHeader({
   title,
   breadcrumbs,
@@ -422,76 +441,79 @@ export function PageHeader({
   // On a phone a header with a description puts its actions on their own row under the text, left
   // aligned (S241 UI verify: on /admin/platform/staff the description was squeezed into ~250px
   // beside Refresh). Without a description the actions still sit beside a short title. The switch
-  // is the `aa-page-header--stack` rule in globals.css (< 768px), not a JS media query, so the
+  // is the `aa-page-header--stack` rule of PAGE_HEADER_CSS (< 768px), not a JS media query, so the
   // server HTML already has the phone layout (no shift on hydration). The text block's `flex` and
   // the actions' `justify-content` live in those classes because an inline style would win over them.
   const stack = !!description && !!actions;
   return (
-    <div
-      className={stack ? "aa-page-header aa-page-header--stack" : "aa-page-header"}
-      style={{
-        display: "flex",
-        alignItems: "flex-start",
-        justifyContent: "space-between",
-        gap: 16,
-        marginBottom: 20,
-        fontFamily: sans,
-        // Wrap on narrow screens so the actions drop below the title instead of overlapping it
-        // (AA-752: at 390px the title and the action buttons were colliding).
-        flexWrap: "wrap",
-      }}
-    >
-      <div className="aa-page-header-text" style={{ minWidth: 0 }}>
-        {breadcrumbs && breadcrumbs.length > 0 && (
-          <div
+    <>
+      <PageHeaderStyles />
+      <div
+        className={stack ? "aa-page-header aa-page-header--stack" : "aa-page-header"}
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: 16,
+          marginBottom: 20,
+          fontFamily: sans,
+          // Wrap on narrow screens so the actions drop below the title instead of overlapping it
+          // (AA-752: at 390px the title and the action buttons were colliding).
+          flexWrap: "wrap",
+        }}
+      >
+        <div className="aa-page-header-text" style={{ minWidth: 0 }}>
+          {breadcrumbs && breadcrumbs.length > 0 && (
+            <div
+              style={{
+                display: "flex",
+                gap: 6,
+                fontSize: 12,
+                color: K.muted2,
+                marginBottom: 6,
+                // S252 — a long last crumb (a tour title) wraps instead of widening the page.
+                flexWrap: "wrap",
+                minWidth: 0,
+                overflowWrap: "anywhere",
+              }}
+            >
+              {breadcrumbs.map((b, i) => (
+                <span key={i} style={{ display: "inline-flex", gap: 6, minWidth: 0 }}>
+                  {b.href ? (
+                    <a href={b.href} style={{ color: K.muted, textDecoration: "none" }}>
+                      {b.label}
+                    </a>
+                  ) : (
+                    <span>{b.label}</span>
+                  )}
+                  {i < breadcrumbs.length - 1 && <span>/</span>}
+                </span>
+              ))}
+            </div>
+          )}
+          <h1
             style={{
-              display: "flex",
-              gap: 6,
-              fontSize: 12,
-              color: K.muted2,
-              marginBottom: 6,
-              // S252 — a long last crumb (a tour title) wraps instead of widening the page.
-              flexWrap: "wrap",
-              minWidth: 0,
-              overflowWrap: "anywhere",
+              margin: 0,
+              fontFamily: "'Fahkwang', 'Poppins', Georgia, serif",
+              fontSize: 24,
+              fontWeight: 600,
+              color: K.ink,
+              letterSpacing: "-0.01em",
             }}
           >
-            {breadcrumbs.map((b, i) => (
-              <span key={i} style={{ display: "inline-flex", gap: 6, minWidth: 0 }}>
-                {b.href ? (
-                  <a href={b.href} style={{ color: K.muted, textDecoration: "none" }}>
-                    {b.label}
-                  </a>
-                ) : (
-                  <span>{b.label}</span>
-                )}
-                {i < breadcrumbs.length - 1 && <span>/</span>}
-              </span>
-            ))}
+            {title}
+          </h1>
+          {description && (
+            <div style={{ fontSize: 13, color: K.muted, marginTop: 6 }}>{description}</div>
+          )}
+        </div>
+        {actions && (
+          <div className="aa-page-header-actions" style={{ display: "flex", gap: 8, flexShrink: 0, alignItems: "center", flexWrap: "wrap" }}>
+            {actions}
           </div>
         )}
-        <h1
-          style={{
-            margin: 0,
-            fontFamily: "'Fahkwang', 'Poppins', Georgia, serif",
-            fontSize: 24,
-            fontWeight: 600,
-            color: K.ink,
-            letterSpacing: "-0.01em",
-          }}
-        >
-          {title}
-        </h1>
-        {description && (
-          <div style={{ fontSize: 13, color: K.muted, marginTop: 6 }}>{description}</div>
-        )}
       </div>
-      {actions && (
-        <div className="aa-page-header-actions" style={{ display: "flex", gap: 8, flexShrink: 0, alignItems: "center", flexWrap: "wrap" }}>
-          {actions}
-        </div>
-      )}
-    </div>
+    </>
   );
 }
 
