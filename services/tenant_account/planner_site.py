@@ -44,7 +44,8 @@ SQL = """
 
 
 def planner_origin() -> str:
-    """The public TripPlanner origin (scheme and host of ``TRIPPLANNER_REVALIDATE_URL``), https only, else the Dev host."""
+    """The public TripPlanner origin (scheme and host of ``TRIPPLANNER_REVALIDATE_URL``), https only; else the Dev
+    host."""
     raw = (os.environ.get(ORIGIN_ENV) or "").strip()
     try:
         parts = urlsplit(raw)
