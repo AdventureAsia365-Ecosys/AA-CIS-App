@@ -61,8 +61,8 @@ MAX_PER_TENANT_KEY = "cis.tripplanner.custom_domain_max_per_tenant"
 EDGE_MAX_KEY = "cis.tripplanner.custom_domain_edge_max"
 
 DOMAIN_MAX = 253  # technical-constant: the DNS limit of a host name (RFC 1035), not a policy
-# CIS 428 tenant_tripplanner_domain_domain_chk, matched in full.
-_DOMAIN_SHAPE = re.compile(r"([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?")
+LABEL_MAX = 63  # technical-constant: the DNS limit of one label (RFC 1035), not a policy
+_LABEL_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789-")
 # Names that belong to the platform or to AWS: a tenant can never claim them (our own zone serves /{slug} already).
 RESERVED_SUFFIXES = ("lumiguides.it.com", "adventure.asia", "cloudfront.net", "amazonaws.com", "amazon.com", "aws")
 
@@ -80,6 +80,8 @@ MESSAGES = {
                  "AWS raised the names-per-certificate quota.",
     "custom_domains_unavailable": "Own domains are not switched on in this environment yet.",
     "no_tripplanner": "This agency has no TripPlanner subscription.",
+    "custom_domain_not_included": "This agency's TripPlanner plan does not include its own domain (a TripPlanner Pro "
+                                  "feature). Change the plan first.",
     "tenant_not_found": "No tenant with this id.",
     "tenant_offboarded": "Restore the tenant first.",
     "domain_not_found": "No such domain for this tenant.",
@@ -120,9 +122,26 @@ def normalise(value: Any) -> str:
     return host
 
 
+def domain_shape_ok(host: str) -> bool:
+    """The CIS 428 CHECK ``tenant_tripplanner_domain_domain_chk`` shape, read label by label in one linear pass
+    (AA-1114: the former regex was a polynomial ReDoS, CodeQL py/polynomial-redos #62): at least two dot-separated
+    labels of 1-63 characters ``[a-z0-9-]`` that neither start nor end with a hyphen, the last one starting with a
+    letter. The CHECK's 4-253 length is :func:`domain_problem`'s first test."""
+    labels = host.split(".")
+    if len(labels) < 2:
+        return False
+    for label in labels:
+        if not 1 <= len(label) <= LABEL_MAX or label[0] == "-" or label[-1] == "-":
+            return False
+        if not _LABEL_CHARS.issuperset(label):
+            return False
+    return "a" <= labels[-1][0] <= "z"
+
+
 def domain_problem(host: str) -> Optional[str]:
-    """None when ``host`` (already normalised) may be added, else the error code."""
-    if not host or len(host) > DOMAIN_MAX or not _DOMAIN_SHAPE.fullmatch(host):
+    """None when ``host`` (already normalised) may be added, else the error code. The length cap comes first, so
+    the shape check never reads more than :data:`DOMAIN_MAX` characters."""
+    if not host or len(host) > DOMAIN_MAX or not domain_shape_ok(host):
         return DOMAIN_INVALID
     try:
         ipaddress.ip_address(host)

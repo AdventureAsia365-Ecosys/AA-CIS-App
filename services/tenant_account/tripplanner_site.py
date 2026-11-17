@@ -44,8 +44,8 @@ _EMAIL_SHAPE = re.compile(r"[^@\s]{1,64}@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-
 # Host names that only ever mean "inside some network": RFC 6761 / 6762 / 8375, the ICANN private-use .internal and
 # the names corporate resolvers answer for. Matched as the whole name or its last labels.
 INTERNAL_SUFFIXES = ("localhost", "local", "internal", "localdomain", "home.arpa", "lan", "intranet", "corp", "home")
-# Every label numeric (decimal, octal or hex): a host the resolver library reads as an IPv4 address (inet_aton).
-_LEGACY_IPV4 = re.compile(r"(0x[0-9a-f]*|[0-9]+)(\.(0x[0-9a-f]*|[0-9]+)){0,3}")
+_DIGITS = frozenset("0123456789")
+_HEX_DIGITS = frozenset("0123456789abcdef")
 _NAT64 = ipaddress.IPv6Network("64:ff9b::/96")
 
 # Error codes (the ``detail`` of a 422) and the field each is about.
@@ -98,6 +98,23 @@ def ip_is_public(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     return bool(ip.is_global) and not ip.is_multicast
 
 
+def is_legacy_ipv4_spelling(host: str) -> bool:
+    """1 to 4 dot-separated labels, each decimal / octal digits (``[0-9]+``) or hex (``0x[0-9a-f]*``): a host the
+    resolver library reads as an IPv4 address (inet_aton). One linear pass with no regex (AA-1114: the former pattern
+    was a polynomial ReDoS, CodeQL py/polynomial-redos #60); case-sensitive like it (``urlsplit`` lower-cases the
+    host)."""
+    labels = host.split(".")
+    if len(labels) > 4:
+        return False
+    for label in labels:
+        if label.startswith("0x"):
+            if not _HEX_DIGITS.issuperset(label[2:]):
+                return False
+        elif not label or not _DIGITS.issuperset(label):
+            return False
+    return True
+
+
 def host_ip(host: str) -> Optional[ipaddress.IPv4Address | ipaddress.IPv6Address]:
     """The address a host spells, without any lookup: an IPv4 / IPv6 literal (an IPv6 zone dropped), or a legacy
     IPv4 spelling the resolver library accepts (``127.1``, ``2130706433``, ``0x7f.0.0.1``, ``0177.0.0.1``). None for a
@@ -106,7 +123,7 @@ def host_ip(host: str) -> Optional[ipaddress.IPv4Address | ipaddress.IPv6Address
         return ipaddress.ip_address(host.split("%", 1)[0])
     except ValueError:
         pass
-    if _LEGACY_IPV4.fullmatch(host):
+    if is_legacy_ipv4_spelling(host):
         try:
             return ipaddress.IPv4Address(socket.inet_aton(host))  # parses only; never a DNS query
         except OSError:

@@ -10,9 +10,11 @@ A rule check, no LLM ($0). It runs when T9 finishes a piece (stage ``write``, se
 2. **Sales links point to AA.** A sales link (:func:`is_sales_link`: the request's CTA, a booking word in the link's
    text or path, or a product word with a commercial tour host or a product listing path) must go to an AA tour page
    (a trip page ``/trip/<served tour id>`` on a trip page host, one of the tenant's own pages of an AA tour in
-   ``acp_deliver.tenant_tour_pages``, or an Adventure Asia host) or to the tenant's TripPlanner site
-   (:func:`tripplanner_hosts`). Any other link (a museum, a map, a social profile) passes: d21 limits sales links
-   only. Links are read from the HTML the publisher sends (:func:`extract_links`).
+   ``acp_deliver.tenant_tour_pages``, or an Adventure Asia host) or to the TripPlanner site
+   (:func:`tripplanner_hosts`, and since AA-1114 the tenant's OWN verified TripPlanner hosts: the ``active`` rows of
+   ``shared.tenant_tripplanner_domain`` of the same tenant, matched as the exact host). Any other link (a museum, a
+   map, a social profile) passes: d21 limits sales links only. Links are read from the HTML the publisher sends
+   (:func:`extract_links`).
 
 A piece that fails gets one open ``subject_gate`` row in ``acp_shared.content_compliance_flag`` (CIS 360): admin
 Tenant content QA › Compliance lists it, and the publish route refuses it with 409 and the row's ``tenant_message``
@@ -94,7 +96,8 @@ DEFAULT_AA_HOSTS = ("adventure.asia",)
 # client host it 307s to). Env TRIP_PAGE_HOSTS adds more.
 DEFAULT_TRIP_PAGE_HOSTS = ("aa-cis.lumiguides.it.com", "go-dev.lumiguides.it.com")
 # The TripPlanner site (one platform site today: the Dev custom domain, served by ECS behind CloudFront; the
-# per-tenant white-label site of ADR 0019 R5 adds the tenant's own host here). Env TRIPPLANNER_SITE_HOSTS adds more.
+# per-tenant custom hosts of ADR 0019 R8 are read per tenant in load_targets, TENANT_TRIPPLANNER_HOSTS_SQL). Env
+# TRIPPLANNER_SITE_HOSTS adds more.
 # The former Vercel host left with the Vercel project (AA-1038): a retired *.vercel.app name can be claimed by anyone,
 # so it must never stay an allowed sales target.
 DEFAULT_TRIPPLANNER_HOSTS = ("tripplanner.lumiguides.it.com",)
@@ -102,8 +105,13 @@ DEFAULT_TRIPPLANNER_HOSTS = ("tripplanner.lumiguides.it.com",)
 _MAX_LINKS = 200
 
 
+def _raw_host(url: str) -> str:
+    """The link's host as written: lower-case, trailing root dot removed, a leading www. KEPT."""
+    return (urlparse(url).hostname or "").lower().rstrip(".")
+
+
 def _host(url: str) -> str:
-    host = (urlparse(url).hostname or "").lower().rstrip(".")
+    host = _raw_host(url)
     return host[4:] if host.startswith("www.") else host
 
 
@@ -304,6 +312,10 @@ class AllowedTargets:
     tripplanner_hosts: frozenset = frozenset()
     tenant_pages: frozenset = frozenset()    # normalised host+path of the tenant's pages of served AA tours
     served_trip_ids: frozenset = frozenset()  # tour ids the linked trip pages name that are served
+    # AA-1114: the tenant's own verified (active) TripPlanner hosts, as stored (www. kept). Exact host only: a
+    # sub-domain, the apex or the www. twin of an agency host is not on the TripPlanner edge, so it is not the planner
+    # (unlike the platform hosts, which match sub-domains).
+    tenant_tripplanner_hosts: frozenset = frozenset()
 
 
 def trip_page_tour_id(url: str, targets: AllowedTargets) -> Optional[str]:
@@ -323,6 +335,10 @@ def allowed_sales_target(url: str, targets: AllowedTargets) -> bool:
     if not host:
         return False
     if _host_in(host, targets.aa_hosts) or _host_in(host, targets.tripplanner_hosts):
+        return True
+    # The tenant's own host is compared as written (www. kept on both sides): a stored www.agency.example never
+    # allows the apex agency.example, which is the agency's own site and not on the TripPlanner edge.
+    if _raw_host(url) in targets.tenant_tripplanner_hosts:
         return True
     tid = trip_page_tour_id(url, targets)
     if tid is not None:
@@ -393,6 +409,17 @@ TENANT_PAGES_SQL = """
      WHERE p.tenant_id = $1::text
 """
 
+# AA-1114: the tenant's verified TripPlanner custom hosts (CIS 428). Only `active` rows (the certificate is issued and
+# the host is attached to the agency edge, so TripPlanner serves it as this tenant) and only this tenant's: another
+# tenant's host is never an allowed target. The stored host is lower-case without a trailing dot (CIS 428 CHECK) and
+# is kept exactly as verified: a leading www. is NOT dropped (dropping it would allow the apex, which the tenant never
+# verified), so allowed_sales_target compares it with the link's host as written (_raw_host).
+TENANT_TRIPPLANNER_HOSTS_SQL = """
+    SELECT d.domain
+      FROM shared.tenant_tripplanner_domain d
+     WHERE d.tenant_id = $1::uuid AND d.status = 'active'
+"""
+
 PIECE_SQL = """
     SELECT cp.piece_id::text AS piece_id, cp.tenant_id::text AS tenant_id, cp.content_text, cp.status,
            cp.angle_gate_request_id::text AS request_id, COALESCE(cp.channel, r.channel) AS channel
@@ -428,8 +455,20 @@ async def load_targets(conn, tenant_id: str, links: list[Link]) -> AllowedTarget
     states = await _tl.served_states(conn, trip_ids + [r["tour_id"] for r in page_rows])
     served = {t for t, s in states.items() if s.state == "served"}
     pages = frozenset(_norm_url(r["url"]) for r in page_rows if r["tour_id"] in served)
+    own_hosts = await tenant_tripplanner_hosts(conn, tenant_id) if links else frozenset()
     return AllowedTargets(base.aa_hosts, base.trip_page_hosts, base.tripplanner_hosts, pages,
-                          frozenset(t for t in trip_ids if t in served))
+                          frozenset(t for t in trip_ids if t in served), own_hosts)
+
+
+async def tenant_tripplanner_hosts(conn, tenant_id: str) -> frozenset[str]:
+    """The tenant's own verified TripPlanner hosts (AA-1114). Empty for a tenant id that is not a uuid (the gate never
+    raises on a malformed id: no host is allowed, the platform hosts still are)."""
+    try:
+        tid = str(uuid.UUID(str(tenant_id)))
+    except ValueError:
+        return frozenset()
+    rows = await conn.fetch(TENANT_TRIPPLANNER_HOSTS_SQL, tid)
+    return frozenset(h for h in (str(r["domain"]).lower().rstrip(".") for r in rows) if h)
 
 
 async def check(conn, *, tenant_id: str, request_id: str, text: str) -> GateResult:
