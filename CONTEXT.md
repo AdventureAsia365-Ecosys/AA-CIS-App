@@ -532,6 +532,19 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   personal data; the CRM's PII stages run in the CRM gateway). Admin: `GET /admin/llm-config` returns `pii_class`
   (null before 373) for AI gateway › Routing › "Routing by data class"; the route PATCHes and Route control refuse a
   model with no US deployment for a pii stage.
+- **Free-text PII scrub** (AA-1113, root ADR 0009 d10, accepted S283; `shared/llm_client/free_text_scrub.py` +
+  `pii_patterns.py`, a copy of the CRM log scrub and its F3 detectors, never imported across repos): the stages that
+  carry tenant free text (every tenant stage `t<n>_*` by name, fail safe: the writers and the repair / FAQ / judge
+  stages that re-read their seed, agency facts and brand rules; `NOT_FREE_TEXT_STAGES` takes one out only once proven
+  free of tenant text, empty today; a migration may later move the flag into the stage row) send only a scrubbed copy of their request (system, user, few-shots):
+  e-mails, phones, cards, CCCD numbers, passports, OTPs after a cue, JWTs, credentials and signed links become bracket
+  labels (`[email]`, `[phone]` ...); dates, UUIDs and plain links stay; nothing is restored in the reply.
+  `LLMClient._generate_with` runs it after the switch and budget gates and before the first attempt (so the route,
+  legacy keys, the truncation retry, the shadow and the cassette see only the scrubbed copy); the admin `probe` too.
+  **Fail closed**: a scrub that raises or leaves an e-mail / `+` phone refuses the call (`FreeTextScrubFailed`, one
+  0 USD row refused / `other`, `quality_signal.pii_scrub.status = failed`). The receipt (counts per label, never a value) goes on the gateway's own
+  rows of the request (`quality_signal.pii_scrub`: refusals, failed attempts) and the log line `llm_free_text_scrubbed`;
+  the call site's success row is unchanged. Other stages get the same request object back.
 - **Cost parity** (AA-1002 slice S6, migration 312 contract): `pricing.quote(model, Usage, deployment)` prices one
   billed request from its full usage (uncached input, output, cache reads, 5-minute writes 1.25x, 1-hour writes 2x,
   Message Batches 50% off every token, Anthropic `inference_geo: "us"` 1.1x, Claude Haiku 5.5 x5 above 100K prompt

@@ -78,7 +78,9 @@ CALL_PATH = ("client.py", "embed.py", "decide.py", "judge.py", "shadow.py", "bed
              "route_watch.py",  # AA-1042: route alerts (ledger SQL) and the cached hold switch (no row = off)
              "expected_refusal.py",  # AA-900 S271: the expected-refusal SQL / predicate for display (pure, no I/O)
              "cassette.py",  # AA-900 S271 W0: record-only raw-reply store (best-effort background write, never raises)
-             "attribution.py")  # AA-1058: the cost attribution rules (pure data + a lookup, no I/O)
+             "attribution.py",  # AA-1058: the cost attribution rules (pure data + a lookup, no I/O)
+             "free_text_scrub.py",  # AA-1113: the free-text PII scrub (pure; other stages get the same request object)
+             "pii_patterns.py")  # AA-1113: the scrub's regex detectors, ported from the CRM (pure, no I/O)
 
 
 def _imported_modules(path: Path) -> set[str]:
