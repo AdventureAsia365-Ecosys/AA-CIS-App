@@ -28,7 +28,7 @@ from .errors import (ACCESS_DENIED, BUDGET, DEADLINE, DISABLED, MAX_CHAIN_ATTEMP
                      RouteRoleNotServed, account_level_class, classify)
 from . import (breaker, capacity, central_budget, connection_budget, connections, data_scope, effort_rule, family_rule,
                prompt_registry, stage_params, stream_sink, tenant_budget, token_floor)
-from . import app_profile
+from . import app_profile, free_text_scrub
 from . import cassette
 from .vendor_route import (VendorDeployment, deployment_plan, pinned_deployment, role_refusal, route_reach,
                            split_pin, sunk_skips, vendor_deployment_for)
@@ -38,18 +38,12 @@ logger = structlog.get_logger()
 
 BEDROCK_REGION = os.environ.get("BEDROCK_REGION", "us-west-1")
 
-# Default model tier — override via ECS env var DEFAULT_MODEL_TIER. Only reached when a call
-# passes neither an explicit request.model_tier NOR a request.stage (AA-518) — every real call
-# site in this codebase now passes at least one of those two, so this is belt-and-suspenders for
-# an unforeseen caller, not the live default path anymore.
-# Options: "haiku" (cheapest) | "sonnet" (premium). "gpt-4.1" (OpenAI platform API) is retired (S235,
-# migration 224 disables its catalog row) and refused by the gate below.
+# Default model tier (ECS env DEFAULT_MODEL_TIER): only for a call with neither request.model_tier nor request.stage
+# (AA-518: every call site passes one). "haiku" | "sonnet"; "gpt-4.1" is retired (S235, migration 224), refused below.
 DEFAULT_MODEL_TIER = os.environ.get("DEFAULT_MODEL_TIER", "haiku")
 
-# BEDROCK_SONNET/BEDROCK_HAIKU/COST_TABLE relocated to pricing.py (AA-518/AA-505) so Mechanism-B
-# call sites (invoke_claude() direct, e.g. T5 atomize, N7 E2-E5) can price a call without
-# importing this whole client — re-exported here unchanged so nothing importing them FROM this
-# module breaks.
+# BEDROCK_SONNET / BEDROCK_HAIKU / COST_TABLE live in pricing.py (AA-518 / AA-505: direct invoke_claude() call sites
+# price a call without importing this client); re-exported here unchanged.
 
 LEGACY_ACC2_NATIVE_ENV = "LLM_LEGACY_ACC2_NATIVE"
 # AA-1002 (S3) rollback switches, read per call (ECS env, AA-CIS-Infra task definition):
@@ -1084,6 +1078,8 @@ def attempt_outcome(exc: BaseException) -> tuple[str, str]:
     from shared.cost_guard import BudgetExceeded
     if any(isinstance(link, LLMStageDisabled) for link in _causes(exc)):
         return core_outcome_of(DISABLED)           # AA-642 A1: the stage kill switch, nothing was sent
+    if any(isinstance(link, free_text_scrub.FreeTextScrubFailed) for link in _causes(exc)):
+        return "refused", OTHER                    # AA-1113: the PII scrub could not run, nothing was sent
     status, cls = core_failed_outcome(exc)
     if cls == ROLE_NOT_SERVED:
         # AA-642 A5 (review S263): the model (or every model of the request) was left out because no connection may
@@ -1335,16 +1331,12 @@ def openai_chat_body(request: LLMRequest, model: str,
 
 class LLMClient:
     """
-    Legacy haiku/sonnet chain (acc3 is the only satellite account — AA-998 removed the
-    cross-account fallback tiers T1.5b/T2.5b; an acc3 failure degrades Sonnet to acc3 Haiku,
-    then raises, and the route's next model or the job retry takes over):
-    T1:    Claude Sonnet 4.5 (Bedrock, acc2 native) + prompt caching — AA-843: only when
-                                 LLM_LEGACY_ACC2_NATIVE is on (default off; acc2 always refuses)
-    T1.5a: Claude Sonnet     (Bedrock satellite, acc3)
-    T2:    Claude Haiku 4.5  (Bedrock, acc2 native) + prompt caching — AA-843: same flag as T1
-    T2.5a: Claude Haiku      (Bedrock satellite, acc3)
-    T3:    GPT-4.1           (OpenAI platform API) — S235: retired; runs only if the gpt-4.1
-                                 catalog row is enabled again (openai_platform_allowed)
+    Legacy haiku/sonnet chain (acc3 is the only satellite account — AA-998 removed the cross-account fallback tiers
+    T1.5b/T2.5b; an acc3 failure degrades Sonnet to acc3 Haiku, then raises, and the route's next model or the job
+    retry takes over). T1 / T2: Claude Sonnet 4.5 / Haiku 4.5 on Bedrock acc2 native + prompt caching, only when
+    LLM_LEGACY_ACC2_NATIVE is on (AA-843, default off; acc2 always refuses). T1.5a / T2.5a: Claude Sonnet / Haiku on the
+    acc3 satellite. T3: GPT-4.1 (OpenAI platform API), retired S235; runs only if its catalog row is enabled again
+    (openai_platform_allowed).
     """
 
     def __init__(self):
@@ -1358,9 +1350,8 @@ class LLMClient:
                 retries={"total_max_attempts": 1, "mode": "standard"},
             ),
         )
-        # AA-1002 (S9): no OpenAI client is built here any more. Each call gets the client of its connection
-        # (adapters/openai_chat.client_for: the connection's secret, else its allowlisted credential env; its endpoint,
-        # timeout and retries). An object set here (tests, a one-off script) is used for every OpenAI-format call.
+        # AA-1002 (S9): each OpenAI-format call gets its connection's client (adapters/openai_chat.client_for); an
+        # object set here (tests, a one-off script) is used for every such call instead.
         self._openai = None
 
     def generate(self, request: LLMRequest) -> LLMResponse:
@@ -1452,10 +1443,8 @@ class LLMClient:
         log_gateway_failed_attempt(request, exc, model=model, latency_ms=0)
 
     def _generate(self, request: LLMRequest) -> LLMResponse:
-        # AA-518 — request.stage (when set) resolves the admin's per-stage config; an explicit
-        # request.model_tier still wins over it (AA-237's opt-in haiku->sonnet auto-upgrade, and
-        # any other real per-request override), same relationship model_tier already had with
-        # the DEFAULT_MODEL_TIER env var before this task.
+        # AA-518 — request.stage (when set) resolves the admin's per-stage config; an explicit request.model_tier
+        # still wins over it (AA-237's opt-in haiku->sonnet auto-upgrade, any other per-request override).
         stage_cfg = get_stage_config_sync(request.stage) if request.stage else None
         if stage_cfg is None:
             return self._generate_with(request, stage_cfg)
@@ -1468,15 +1457,13 @@ class LLMClient:
             _STAGE_SCOPES.reset(token)
 
     def _generate_with(self, request: LLMRequest, stage_cfg) -> LLMResponse:
-        # The satellite account. AA-998: acc3 is the only one (llm_role_config.account_route is CHECKed
-        # to acc3 / NULL by migration 295); any other stored value is ignored, never called.
+        # AA-998: acc3 is the only satellite (account_route CHECKed to acc3 / NULL, 295); any other value is ignored.
         primary_acct = DEFAULT_SATELLITE_ACCOUNT
         if stage_cfg and stage_cfg.account_route and stage_cfg.account_route != primary_acct:
             logger.warning("llm_account_route_ignored", stage=request.stage, account_route=stage_cfg.account_route,
                            used=primary_acct)
 
-        # AA-659 / ADR 0006 — the stage route is model_id + fallback_model_ids. An explicit
-        # request.model_tier still wins and runs alone (no route, no shadow).
+        # AA-659 / ADR 0006 — the route is model_id + fallback_model_ids; a request.model_tier runs alone (no shadow).
         if request.model_tier:
             chain = [request.model_tier]
         elif stage_cfg:
@@ -1503,6 +1490,8 @@ class LLMClient:
             self._tenant_budget_gate(request, chain[0])
             # AA-1025 A7: the central LLM budgets (app / stage / job kind / eval / ad-hoc caps), before any attempt.
             self._central_budget_gate(request, chain[0])
+            # AA-1113 (ADR 0009 d10): a free-text stage sends only its scrubbed request (fail closed, no attempt).
+            request = self._free_text_gate(request, chain[0])
             if len(chain) == 1:
                 try:
                     resp = self._call_key_logged(request, chain[0], primary_acct, role=role, position=0)
@@ -1583,6 +1572,16 @@ class LLMClient:
         try:
             central_budget.check(request.stage, estimate_call_usd(request, first_key))
         except central_budget.CentralBudgetExceeded as e:
+            pin = split_pin(first_key)
+            log_gateway_failed_attempt(request, e, model=pin[0] if pin else first_key, latency_ms=0)
+            raise
+
+    def _free_text_gate(self, request: LLMRequest, first_key: str) -> LLMRequest:
+        """AA-1113 (root ADR 0009 d10): the scrubbed copy for a free-text stage, else the same request. A scrub that
+        cannot run is refused like a gate: one 0 USD row (refused / other, quality_signal.pii_scrub failed), raised."""
+        try:
+            return free_text_scrub.scrub_for_stage(request, _ATTEMPT_SCOPE.get())
+        except free_text_scrub.FreeTextScrubFailed as e:
             pin = split_pin(first_key)
             log_gateway_failed_attempt(request, e, model=pin[0] if pin else first_key, latency_ms=0)
             raise
@@ -2519,6 +2518,7 @@ class LLMClient:
                                                     {"connection_test": target.connection.connection_key}))
         try:
             self._app_profile_gate(request, model.model_key)   # AA-1025 H1a: AI off for the app = no test call either
+            request = self._free_text_gate(request, model.model_key)   # AA-1113: a free-text stage is scrubbed here too
             return self._call_target(request, model, target, admit=False, count=count)
         except Exception as e:
             billed = _billed_usage_of(e)
