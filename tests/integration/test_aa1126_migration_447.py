@@ -1,6 +1,6 @@
 """AA-1126 l16 (S283) — CIS 447: the two spend environment keys (cis / tripplanner) in shared.setting_definition, the
-tenant AI allowance notices (one per tenant, kind and month; TripPlanner may only INSERT its own kind) and the CRM agency
-AI budget per plan (crm.ai_budget_usd_monthly, at today's CRM default). conftest replays every migration. Runs in a
+once-only indexes of the AI allowance notices and the TripPlanner degraded-check bell (all written by CIS: TripPlanner
+holds no privilege on shared.notifications, CIS 274 / 351) and the CRM agency AI budget per plan (crm.ai_budget_usd_monthly, at today's CRM default). conftest replays every migration. Runs in a
 transaction that is rolled back; invented ids and values only."""
 import json
 import os
@@ -94,44 +94,31 @@ async def test_one_allowance_notice_per_tenant_kind_and_month(conn):
 
 
 @pytest.mark.asyncio
-async def test_tripplanner_inserts_its_own_notice_only(conn):
-    for priv in ("SELECT", "UPDATE", "DELETE"):
+async def test_tripplanner_holds_no_privilege_on_notifications_and_no_policy_was_added(conn):
+    """S284 redesign: TripPlanner records its notices in its own outbox (tp-034) and CIS writes the bell rows, so the
+    CIS 274 policy set and the CIS 351 privilege set stay as they were."""
+    for priv in ("SELECT", "INSERT", "UPDATE", "DELETE"):
         assert await conn.fetchval("SELECT has_table_privilege('tripplanner', 'shared.notifications', $1) AS ok",
                                    priv) is False
-    assert await conn.fetchval("SELECT has_table_privilege('tripplanner', 'shared.notifications', 'INSERT') AS ok")
-    await conn.execute("SET LOCAL ROLE tripplanner")
-    await conn.execute(NOTICE, TENANT, "tripplanner.ai_allowance_used", "tripplanner_ai", "tripplanner:2026-11")
-    with pytest.raises(asyncpg.exceptions.UniqueViolationError):          # the plain INSERT's "already noticed"
-        async with conn.transaction():
-            await conn.execute(NOTICE, TENANT, "tripplanner.ai_allowance_used", "tripplanner_ai",
-                               "tripplanner:2026-11")
-    with pytest.raises(asyncpg.exceptions.InsufficientPrivilegeError):    # another kind: refused by the policy
-        async with conn.transaction():
-            await conn.execute(NOTICE, TENANT, "ai.allowance_used", "ai_allowance", "content:2026-11")
-    await conn.execute("RESET ROLE")
+    policies = [r["policyname"] for r in await conn.fetch(
+        "SELECT policyname FROM pg_policies WHERE schemaname = 'shared' AND tablename = 'notifications' "
+        "ORDER BY policyname")]
+    assert not [p for p in policies if "tripplanner" in p]
 
 
 PLATFORM = "00000000-0000-0000-0000-000000000001"
 DEGRADED = ("INSERT INTO shared.notifications (tenant_id, actor_type, event_type, entity_type, entity_id, payload, "
             "target_roles) VALUES ($1::uuid, 'system', 'platform.tripplanner.spend_degraded', 'tripplanner_ai', $2, "
-            "'{}'::jsonb, $3::text[])")
+            "'{}'::jsonb, ARRAY['admin']) ON CONFLICT DO NOTHING RETURNING id")
 
 
 @pytest.mark.asyncio
-async def test_tripplanner_raises_one_degraded_bell_per_check_and_day(conn):
-    """AA-1126 L4: the staff bell of a degraded TripPlanner spend check, admin-only, on the AA internal tenant."""
-    await conn.execute("SET LOCAL ROLE tripplanner")
-    await conn.execute(DEGRADED, PLATFORM, "spend_unreadable:2026-11-17", ["admin"])
-    with pytest.raises(asyncpg.exceptions.UniqueViolationError):          # once per check and UTC day
-        async with conn.transaction():
-            await conn.execute(DEGRADED, PLATFORM, "spend_unreadable:2026-11-17", ["admin"])
-    await conn.execute(DEGRADED, PLATFORM, "spend_unreadable:2026-11-18", ["admin"])        # the next day
-    await conn.execute(DEGRADED, PLATFORM, "tenant_sessions:2026-11-17", ["admin"])         # another check
-    for tenant_id, roles in ((TENANT, ["admin"]), (PLATFORM, ["tenant"]), (PLATFORM, ["content"])):
-        with pytest.raises(asyncpg.exceptions.InsufficientPrivilegeError):   # a tenant's row or a wider audience
-            async with conn.transaction():
-                await conn.execute(DEGRADED, tenant_id, "zz:2026-11-17", roles)
-    await conn.execute("RESET ROLE")
+async def test_one_degraded_bell_per_check_and_day(conn):
+    """AA-1126 L4: the admin bell CIS raises from TripPlanner's ai.spend_degraded events, on the AA internal tenant."""
+    assert await conn.fetchval(DEGRADED, PLATFORM, "spend_unreadable:2026-11-17") is not None
+    assert await conn.fetchval(DEGRADED, PLATFORM, "spend_unreadable:2026-11-17") is None     # once per check and day
+    assert await conn.fetchval(DEGRADED, PLATFORM, "spend_unreadable:2026-11-18") is not None  # the next day
+    assert await conn.fetchval(DEGRADED, PLATFORM, "tenant_sessions:2026-11-17") is not None   # another check
 
 
 @pytest.mark.asyncio

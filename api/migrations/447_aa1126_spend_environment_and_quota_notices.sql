@@ -30,27 +30,23 @@
 --        tripplanner.spend.near_cap_pct           pct 50..99, default 80 (today's 0.8); impact medium, single
 --      TripPlanner's daily app cap itself keeps its one source, the app profile (AI gateway > App profiles, CIS 414).
 --      Each seed row carries its plain label and its EN + VI operator guide (CIS 416 rule).
---   2. The tenant-facing AI allowance notices in shared.notifications (target_roles {tenant}, read by the Content
---      studio bell, GET /v1/notifications):
+--   2. The AI allowance notices and the TripPlanner degraded-check bell in shared.notifications, all written by CIS:
 --        a. a partial UNIQUE index notifications_ai_allowance_once_uq on (tenant_id, event_type, entity_id) for the two
---           event types ai.allowance_used (written by CIS when a tenant's AI budget stops its Content studio writing)
---           and tripplanner.ai_allowance_used (written by TripPlanner when an agency's AI sessions quota or AI budget
---           stops new AI sessions). entity_id is '<kind>:<YYYY-MM>', so a notice is written at most once per tenant,
---           kind and month: CIS writes INSERT ... ON CONFLICT DO NOTHING; TripPlanner, which may not read the table,
---           writes a plain INSERT and treats the unique violation as "already noticed". Today's table has no row of
---           either type.
---        b. GRANT INSERT on shared.notifications and USAGE on its id sequence to tripplanner, and the RLS policy
---           notifications_tripplanner_insert (PERMISSIVE INSERT TO tripplanner) WITH CHECK the row is exactly a
---           system, tenant-only tripplanner.ai_allowance_used notice of the tripplanner_ai entity type. TripPlanner gets
---           no SELECT, UPDATE or DELETE (the same one-way pattern as its ledger rows, CIS 173): it cannot read or change
---           any notification, and it can write no other kind.
---        c. AA-1126 L4: the staff bell of a TripPlanner spend check that degraded under the prod spend rules (a spend,
---           AI budget or AI sessions read failed and the AI went on without it). The policy above also lets the
---           tripplanner role INSERT exactly one more kind: event platform.tripplanner.spend_degraded (platform.*: the
---           admin bell only, never a content role's), entity type tripplanner_ai, target_roles {admin}, the AA
---           internal tenant. A partial UNIQUE index notifications_tp_spend_degraded_once_uq on (tenant_id,
---           event_type, entity_id) with entity_id '<check>:<YYYY-MM-DD>' keeps it to one bell per check and UTC day
---           (TripPlanner writes a plain INSERT; the unique violation = already raised today).
+--           tenant-facing event types (target_roles {tenant}, read by the Content studio bell, GET /v1/notifications)
+--           ai.allowance_used (CIS, when a tenant's AI budget stops its Content studio writing) and
+--           tripplanner.ai_allowance_used (CIS, from TripPlanner's outbox event ai.allowance_used when an agency's AI
+--           sessions quota stops new AI sessions). entity_id is '<kind>:<YYYY-MM>', so a notice is written at most once
+--           per tenant, kind and month (INSERT ... ON CONFLICT DO NOTHING). Today's table has no row of either type.
+--        b. AA-1126 L4: the admin bell platform.tripplanner.spend_degraded (platform.*: the admin bell only, never a
+--           content role's; target_roles {admin}, the AA internal tenant), written by CIS from TripPlanner's outbox
+--           event ai.spend_degraded (a spend, AI budget or AI sessions read failed under the prod spend rules and the
+--           AI went on without it). A partial UNIQUE index notifications_tp_spend_degraded_once_uq on (tenant_id,
+--           event_type, entity_id) with entity_id '<check>:<YYYY-MM-DD>' keeps it to one bell per check and UTC day.
+--      TripPlanner gets NO grant on shared.notifications (S284 redesign): CIS 274 (the tenant notification policies)
+--      and CIS 351 (tripplanner holds INSERT on shared.llm_call_log and nothing else of schema shared) forbid it, and
+--      data standards DM-5.4 routes cross-app lineage through a producer outbox and a contract view. TripPlanner
+--      writes the two events into its own outbox (tripplanner tp-034) and CIS pulls them through
+--      tripplanner.v_ai_notices_v1 on the worker's ops tick (services/tripplanner_notices.py, AA-CIS-App code PR).
 --   3. The CRM agency AI budget comes from the plan (slice L3): a feature crm.ai_budget_usd_monthly (product crm, limit,
 --      usd_month) in shared.entitlement_feature, so it is a limit on the Plans page (PlanDrawer) and a per-tenant
 --      override in Tenant 360 like crm.seats, and one plan_feature row on each live crm plan (crm.core, crm.pro) at
@@ -61,24 +57,22 @@
 --
 -- Behaviour on apply. None for running code: no value row is seeded (both keys read dev, today's behaviour), nothing
 -- on main writes the three notice types, and the CRM plan rows equal the CRM default (2 USD) the CRM enforces today.
+-- No grant or policy changes (shared.notifications keeps CIS 274's policies; tripplanner keeps CIS 351's set).
 -- The code PRs (AA-CIS-App, AA-TripPlanner-Web, AA-Partner) start using them.
 --
--- Class: CONTRACT (root ADR 0017 decision 3; no migrate directive line): config rows INSERTed into an existing table,
--- an index, a grant and a policy on an existing table. MIG-4: a migration-only PR, applied on Dev by Infra Migration
+-- Class: CONTRACT (root ADR 0017 decision 3; no migrate directive line): config rows INSERTed into existing tables and
+-- two indexes on an existing table. MIG-4: a migration-only PR, applied on Dev by Infra Migration
 -- Apply when the job tables are idle (ADR 0017a), then the code PRs. DM-6.1: no personal data (the payload carries the
 -- kind and the month only). DM-7.1: no new table. MIG-6: no SECURITY DEFINER routine.
 --
--- Number. 445 is the newest CIS migration on main (17/11/2026) and lane l15 of this wave (AA-1126 gateway spend
--- controls) holds 446: this file ships with it in ONE migration-only PR (batch cis 446-447). If the owner main max + 1
--- differs at merge, renumber (git grep '447_' and '447' here, in tests/integration/test_aa1126_migration_447.py,
--- compiled_defaults.json and docs/implementation-notes/AA-1126-l16-quota-ux.md).
+-- Number. 446 (AA-1126 gateway spend controls) is the newest CIS migration on main (applied 17/11/2026), so this is
+-- main max + 1. If the owner main max + 1 differs at merge, renumber (git grep '447_' and '447' here, in
+-- tests/integration/test_aa1126_migration_447.py, compiled_defaults.json and docs/implementation-notes/AA-1126-l16-quota-ux.md).
 --
 -- Locks. INSERT of five definition rows; CREATE UNIQUE INDEX (two) (not CONCURRENTLY: one transaction; shared.notifications
--- holds a few hundred rows, a SHARE lock for milliseconds); one GRANT and one policy (ACCESS EXCLUSIVE, milliseconds).
--- lock_timeout 5s.
+-- holds a few hundred rows, a SHARE lock for milliseconds). lock_timeout 5s.
 --
--- Rollback (a new forward migration, after the code PRs are reverted): DROP POLICY notifications_tripplanner_insert;
--- REVOKE INSERT and the sequence USAGE from tripplanner; DROP INDEX notifications_ai_allowance_once_uq and
+-- Rollback (a new forward migration, after the code PRs are reverted): DROP INDEX notifications_ai_allowance_once_uq and
 -- notifications_tp_spend_degraded_once_uq; DELETE the five keys' value rows, then the keys.
 
 BEGIN;
@@ -111,34 +105,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS notifications_ai_allowance_once_uq
     ON shared.notifications (tenant_id, event_type, entity_id)
  WHERE event_type IN ('ai.allowance_used', 'tripplanner.ai_allowance_used');
 
--- 2c. At most one TripPlanner "spend check degraded" staff bell per check and UTC day (entity_id '<check>:<YYYY-MM-DD>').
+-- 2b. At most one TripPlanner "spend check degraded" staff bell per check and UTC day (entity_id '<check>:<YYYY-MM-DD>').
 CREATE UNIQUE INDEX IF NOT EXISTS notifications_tp_spend_degraded_once_uq
     ON shared.notifications (tenant_id, event_type, entity_id)
  WHERE event_type = 'platform.tripplanner.spend_degraded';
-
--- 2b. TripPlanner writes its own two kinds, and nothing else (no read, no update, no delete).
-GRANT INSERT ON shared.notifications TO tripplanner;
-DO $$
-DECLARE
-    seq text := pg_get_serial_sequence('shared.notifications', 'id');
-BEGIN
-    IF seq IS NULL THEN
-        RAISE EXCEPTION 'migration 447: shared.notifications.id has no sequence';
-    END IF;
-    EXECUTE format('GRANT USAGE ON SEQUENCE %s TO tripplanner', seq);
-END $$;
-
-DROP POLICY IF EXISTS notifications_tripplanner_insert ON shared.notifications;
-CREATE POLICY notifications_tripplanner_insert ON shared.notifications
-    AS PERMISSIVE FOR INSERT TO tripplanner
-    WITH CHECK (entity_type = 'tripplanner_ai'
-                AND actor_type = 'system'
-                AND is_read = false
-                AND ((event_type = 'tripplanner.ai_allowance_used'
-                      AND target_roles = ARRAY['tenant']::text[])
-                  OR (event_type = 'platform.tripplanner.spend_degraded'
-                      AND target_roles = ARRAY['admin']::text[]
-                      AND tenant_id = '00000000-0000-0000-0000-000000000001'::uuid)));
 
 -- 3. The CRM agency AI budget per plan (L3).
 INSERT INTO shared.entitlement_feature (feature_key, product, value_kind, unit, description)
@@ -164,15 +134,14 @@ BEGIN
                        'tripplanner.spend.near_cap_pct')) <> 5 THEN
         RAISE EXCEPTION 'migration 447: the five spend keys are not registered';
     END IF;
-    IF has_table_privilege('tripplanner', 'shared.notifications', 'SELECT')
-       OR has_table_privilege('tripplanner', 'shared.notifications', 'UPDATE')
-       OR has_table_privilege('tripplanner', 'shared.notifications', 'DELETE') THEN
-        RAISE EXCEPTION 'migration 447: tripplanner must only INSERT into shared.notifications';
+    IF to_regrole('tripplanner') IS NOT NULL
+       AND has_table_privilege('tripplanner', 'shared.notifications', 'SELECT, INSERT, UPDATE, DELETE') THEN
+        RAISE EXCEPTION 'migration 447: tripplanner holds a privilege on shared.notifications (CIS 351: none)';
     END IF;
 END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('447', now(), 'AA-1126: spend environment settings (CIS, TripPlanner), the TripPlanner cap settings, the tenant AI allowance notices and the TripPlanner degraded-check bell')
+VALUES ('447', now(), 'AA-1126: spend environment settings (CIS, TripPlanner), the TripPlanner cap settings, the once-only indexes of the AI allowance notices and the TripPlanner degraded-check bell')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;
