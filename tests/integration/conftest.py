@@ -47,6 +47,10 @@ os.environ.setdefault("LLM_CASSETTE", "off")
 # AA-1024 G3 (c): the deploy gate's ECS exec heartbeat list reads S3 (no AWS here); unit-tested with a fake client.
 os.environ.setdefault("DEPLOY_GATE_ECSX", "off")
 
+import _llm_cache_reset  # noqa: E402 — after the env defaults above: some gateway modules read env at import
+# S283: record the LLM gateway caches cold, before any test module is collected (_fresh_db_per_module resets them)
+_llm_cache_reset.snapshot()
+
 _SCHEMA_APPLIED = False
 
 # AA-1028 R1 slice 2 (CIS 356): the grants CI's legacy app_user (a writer of shared.tenants here only) needs for 356's
@@ -937,6 +941,9 @@ def _fresh_db_per_module(_setup_schema):
     module's own module-scoped fixtures (autouse fixtures of a conftest come first within their scope)."""
     if _DB_RESET:
         reset_db_from_template()
+    # S283: and a cold LLM gateway — its registry caches keep the last good rows of the previous module's database
+    # (tests/integration/_llm_cache_reset.py; the nightly random order failed test_aa1002_migration_304 on them)
+    _llm_cache_reset.reset()
     yield
 
 
