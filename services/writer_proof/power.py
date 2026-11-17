@@ -29,7 +29,16 @@ the R1 calibration already measured: the claim instrument's own disagreement wit
      The noise allowance (k SE_noise of the A' arm) is unknown before the run: the margin stands for it, so both are
      upper bounds when the A' noise turns out larger.
 
-`adequate` is power >= min_power at the pre-registered n, margin, rule and (improve) true effect. An underpowered
+The writer's spread is real in every W5 workflow: B is regenerated, A is the stored output (one earlier draw of the
+same writer), so d also carries which sentences each draw wrote (S283 review). For a count metric the claim rates give
+a reference minimum, `writer_sd_floor` = sqrt(2 x claims_per_item x Var(m)): the spread of d if each blog's sentences
+were independent draws from the measured claims (Var(m) over every claim with rates; within-blog correlation only
+widens it). A registered pre-registration states power.writer_sd (prereg.py); a stated value below the floor makes
+the check inadequate (`writer_sd_below_floor`), so a paid run never rests on a writer spread the data already refutes.
+`item_fail_rate` has no floor (None): its writer spread is stated, not derived.
+
+`adequate` is power >= min_power at the pre-registered n, margin, rule and (improve) true effect, and the stated
+writer_sd is not below the floor. An underpowered
 pre-registration is refused by the runner's spend gate (a paid run that cannot decide is waste: the S271 lesson "an
 eval refuses at $0 when it cannot give a valid verdict").
 
@@ -134,6 +143,17 @@ def judge_variance(rates: list[tuple[str, float, int]], *, metric: str, claims_p
     return {"var": sum(vals) / len(vals), "pseudo_items": len(full), "scaled": False}
 
 
+def writer_sd_floor(rates: list[tuple[str, float, int]], *, metric: str, claims_per_item: int) -> Optional[float]:
+    """The reference minimum of the writer's spread of d for a count metric (module docstring): sqrt(2 x
+    claims_per_item x the population variance of m over the claims). None for item_fail_rate or fewer than 2 claims.
+    Pure."""
+    if metric == "item_fail_rate" or len(rates) < 2:
+        return None
+    ms = [m for _, m, _ in rates]
+    mbar = sum(ms) / len(ms)
+    return math.sqrt(2 * claims_per_item * sum((m - mbar) ** 2 for m in ms) / len(ms))
+
+
 def check(votes_by_claim: dict[str, list], *, n_items: int, margin_abs: float, metric: str, alpha: float = 0.05,
           min_power: float = 0.8, claims_per_item: int = 60, writer_sd: Optional[float] = None,
           rule: str = "non_inferior", effect_abs: Optional[float] = None,
@@ -154,6 +174,8 @@ def check(votes_by_claim: dict[str, list], *, n_items: int, margin_abs: float, m
     flips = sum(1 for _, m, _ in rates if 0 < m < 1)
     jv = judge_variance(rates, metric=metric, claims_per_item=claims_per_item)
     var_d = 2 * jv["var"] + float(writer_sd or 0.0) ** 2
+    floor = writer_sd_floor(rates, metric=metric, claims_per_item=claims_per_item)
+    below = writer_sd is not None and floor is not None and float(writer_sd) < floor - 1e-9
     nd = NormalDist()
     z_a, z_b = nd.inv_cdf(1 - alpha), nd.inv_cdf(min_power)
     se = math.sqrt(var_d / n_items)
@@ -174,10 +196,11 @@ def check(votes_by_claim: dict[str, list], *, n_items: int, margin_abs: float, m
             "claims_not_unanimous": flips,
             "claims_per_item": claims_per_item, "pseudo_items": jv["pseudo_items"], "scaled": jv["scaled"],
             "judge_var_per_item": round(jv["var"], 6), "writer_sd": writer_sd,
+            "writer_sd_floor": None if floor is None else round(floor, 6), "writer_sd_below_floor": below,
             "var_diff": round(var_d, 6), "n_items": n_items, "se_diff": round(se, 6), "margin_abs": margin_abs,
             "alpha": alpha, "power": round(power, 4), "min_power": min_power,
             "n_needed": n_needed, **resolvable,
-            "adequate": power >= min_power,
+            "adequate": power >= min_power and not below,
             "bound": "upper bound (judge noise only)" if writer_sd is None else "judge noise + assumed writer_sd"}
 
 

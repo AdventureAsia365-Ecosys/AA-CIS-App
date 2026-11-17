@@ -259,10 +259,15 @@ async def plan(pool, pre: pr.Prereg, *, r1_report: Optional[str] = None, instrum
     out["power"] = _power(pre, r1_report, instrument, two_step_report)
     if not out["power"].get("checked"):
         blocking.append(f"power not checked: {out['power'].get('why')}")
-    elif not out["power"]["adequate"]:
-        blocking.append(f"underpowered ({out['power']['rule']} at a true effect of {out['power']['true_effect']}): "
-                        f"power {out['power']['power']} < {out['power']['min_power']} "
-                        f"(n {out['power']['n_items']}, needs {out['power']['n_needed'] or 'no n: effect <= margin'})")
+    else:
+        if out["power"].get("writer_sd_below_floor"):
+            blocking.append(f"power.writer_sd {out['power']['writer_sd']} is below the writer spread the claim rates "
+                            f"imply ({out['power']['writer_sd_floor']}): state a writer_sd >= it, re-pick the margin")
+        pw = out["power"]
+        if pw["power"] < pw["min_power"]:
+            blocking.append(f"underpowered ({pw['rule']} at a true effect of {pw['true_effect']}): "
+                            f"power {pw['power']} < {pw['min_power']} "
+                            f"(n {pw['n_items']}, needs {pw['n_needed'] or 'no n: effect <= margin'})")
     out["blocking"] = list(dict.fromkeys(blocking))
     out["ready_for_live"] = not out["blocking"]
     return out

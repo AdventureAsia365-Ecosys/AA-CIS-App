@@ -259,6 +259,7 @@ def test_the_registered_v7_null_run_loads_from_the_lock():
     assert pre.doc["judge"] == {"model_key": MODEL, "connection": CONN, "instrument": IID, "advisory": True}
     assert pre.doc["sample"] == {"rule": "seeded_hash", "n": 12, "noise": 0} and pre.doc["sample_ids"] == []
     assert pre.doc["decision"]["metric"] == "fail_claims_per_item" and pre.doc["cap_usd"] <= pr.workflow_cap("null")
+    assert pre.doc["power"]["writer_sd"] is not None                  # S283 review: never a judge-only upper bound
     assert runner.CAMPAIGN_ORDER[0] == pre.id
 
 
@@ -375,6 +376,50 @@ def test_prereg_power_of_a_claim_instrument_needs_the_two_step_report():
     assert out["n_items"] == 12 and out["metric"] == "fail_claims_per_item" and out["claims"] == 40
     with pytest.raises(power.PowerRefused, match="no step votes"):
         power.prereg_power(pre, fire, two_step_report={"votes": {}})
+
+
+def _flat_rates(m: float, n: int = 480):
+    return [(_h(i % 250) + f"{i:04d}", m, 3) for i in range(n)]
+
+
+def test_writer_sd_floor_is_the_independence_spread_of_a_count():
+    rates = [(_h(i), (0.0 if i % 2 else 0.5), 3) for i in range(100)]          # Var(m) = 0.0625
+    got = power.writer_sd_floor(rates, metric="fail_claims_per_item", claims_per_item=60)
+    assert got == pytest.approx((2 * 60 * 0.0625) ** 0.5)
+    assert power.writer_sd_floor(rates, metric="item_fail_rate", claims_per_item=60) is None
+    assert power.writer_sd_floor(rates[:1], metric="fail_claims_per_item", claims_per_item=60) is None
+    assert power.writer_sd_floor(_flat_rates(0.2), metric="fail_claims_per_item", claims_per_item=60) == 0.0
+
+
+def test_a_stated_writer_sd_below_the_floor_is_never_adequate():
+    rates = [(_h(i), (0.0 if i % 2 else 0.5), 3) for i in range(240)]          # floor about 2.74
+    kw = dict(n_items=12, metric="fail_claims_per_item", claims_per_item=60, rates=rates)
+    low = power.check({}, margin_abs=50.0, writer_sd=1.0, **kw)
+    assert low["power"] >= 0.8 and low["writer_sd_below_floor"] and not low["adequate"]
+    ok = power.check({}, margin_abs=50.0, writer_sd=3.0, **kw)
+    assert ok["adequate"] and not ok["writer_sd_below_floor"] and ok["bound"] == "judge noise + assumed writer_sd"
+    draft = power.check({}, margin_abs=50.0, **kw)                              # a draft: the judge-only upper bound
+    assert draft["adequate"] and draft["bound"].startswith("upper bound")
+
+
+def test_a_registered_file_states_the_writer_spread():
+    d = _rule_doc()
+    d["power"] = {**d["power"], "writer_sd": None}
+    assert any("states power.writer_sd" in p for p in pr.problems(d))
+    assert not any("writer_sd" in p for p in pr.problems({**d, "status": "draft"}))
+
+
+def test_the_v7_margin_holds_power_with_the_writer_spread():
+    """The registered margin is powered with the stated writer spread, not on the re-judge noise alone: at the
+    measured chain re-judge variance (about 4.31 claims^2 a blog, v7 fire + gated runs), flat rates reproduce it."""
+    pre = pr.load("w5-null-t9-blog-v7")
+    m = 0.0786                                                                 # 60 m (1 - m) = 4.345
+    out = power.check_prereg(pre, {}, rates=_flat_rates(m))
+    assert out["judge_var_per_item"] == pytest.approx(4.3, abs=0.1) and out["writer_sd"] == 4.6
+    assert out["adequate"] and out["min_resolvable_margin"] <= pre.doc["decision"]["margin_abs"]
+    old = power.check({}, n_items=12, margin_abs=2.5, metric="fail_claims_per_item", claims_per_item=60,
+                      writer_sd=4.6, rates=_flat_rates(m))
+    assert not old["adequate"]                                                 # the first margin: about 0.48
 
 
 # ── the runner's plan of the registered v7 null run ──────────────────────────────────────────────────────────────

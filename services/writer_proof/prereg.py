@@ -22,7 +22,8 @@ call what the proof measures and how it decides:
     "decision": {"rule": "non_inferior" | "improve", "metric": "item_fail_rate", "margin_abs": 0.10,
                  "alpha": 0.05, "noise_se_k": 2.0},
     "requirements": {"paired_all": true, "max_mixed_judges": 0, "max_hard_stop_1": 0},
-    "power": {"min_power": 0.8, "writer_sd": null, "claims_per_item": 60, "effect_abs": null},
+    "power": {"min_power": 0.8, "writer_sd": 4.6, "claims_per_item": 60, "effect_abs": null},   writer_sd: null
+                                                  in a draft only (a registered file states it, power.py)
     "cap_usd": 5.0                                <= the workflow's D12 cap (setting, workflow_cap)
   }
 
@@ -233,6 +234,11 @@ def problems(doc: Any) -> list[str]:
         sd = pw.get("writer_sd")
         if sd is not None and (_num(sd) is None or _num(sd) < 0):
             p.append("power.writer_sd must be null or >= 0")
+        elif sd is None and status == "registered":
+            # S283 review: B is regenerated and A is a stored draw, so d carries the writer's spread; a judge-only
+            # power is an upper bound a paid run must not rest on (power.writer_sd_floor)
+            p.append("a registered pre-registration states power.writer_sd (the writer's spread of d; null leaves "
+                     "a judge-noise-only upper bound on power)")
         cpi = pw.get("claims_per_item")
         if cpi is not None and (not isinstance(cpi, int) or isinstance(cpi, bool) or cpi < 1):
             p.append("power.claims_per_item must be a positive integer")
