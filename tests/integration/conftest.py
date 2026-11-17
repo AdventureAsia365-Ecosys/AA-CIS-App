@@ -34,8 +34,7 @@ DB_NAME = os.environ.get("CIS_TEST_DB_NAME", "cis_integration_test")
 DB_USER = os.environ.get("CIS_TEST_DB_USER", "cistest")
 DB_PASS = os.environ.get("CIS_TEST_DB_PASS", "cistest")
 
-# AA-902: the bronze bucket name comes from the environment (shared/aws_client/bronze.py); a fixed
-# test name keeps S3Archiver & co. from asking STS for the account.
+# AA-902: a fixed bronze bucket name (shared/aws_client/bronze.py) keeps S3Archiver & co. from asking STS.
 os.environ.setdefault("BRONZE_BUCKET", "aa-cis-bronze-test")
 os.environ.setdefault("BEDROCK_ACCT_PRIMARY", "acc3-test-account")
 # AA-900 W0: the R1 freeze (services/writing_memory/r1_gate.py) is off for the release / mining / L0 mechanics these
@@ -47,10 +46,7 @@ os.environ.setdefault("LLM_CASSETTE", "off")
 # AA-1024 G3 (c): the deploy gate's ECS exec heartbeat list reads S3 (no AWS here); unit-tested with a fake client.
 os.environ.setdefault("DEPLOY_GATE_ECSX", "off")
 
-import _llm_cache_reset  # noqa: E402 — after the env defaults above: some gateway modules read env at import
-# S283: record the LLM gateway caches cold, before any test module is collected (_fresh_db_per_module resets them)
-_llm_cache_reset.snapshot()
-
+from _llm_cache_reset import cold_llm_gateway  # noqa: E402,F401 — S283: after the env defaults (see the module)
 _SCHEMA_APPLIED = False
 
 # AA-1028 R1 slice 2 (CIS 356): the grants CI's legacy app_user (a writer of shared.tenants here only) needs for 356's
@@ -941,9 +937,6 @@ def _fresh_db_per_module(_setup_schema):
     module's own module-scoped fixtures (autouse fixtures of a conftest come first within their scope)."""
     if _DB_RESET:
         reset_db_from_template()
-    # S283: and a cold LLM gateway — its registry caches keep the last good rows of the previous module's database
-    # (tests/integration/_llm_cache_reset.py; the nightly random order failed test_aa1002_migration_304 on them)
-    _llm_cache_reset.reset()
     yield
 
 

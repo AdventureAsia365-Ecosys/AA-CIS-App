@@ -20,6 +20,8 @@ import pkgutil
 import re
 import types
 
+import pytest
+
 import shared.llm_client as _pkg
 
 # Lower-case private module globals of these types are caches or state (constants are UPPER_CASE).
@@ -65,3 +67,16 @@ def reset() -> None:
                 current[:] = cold
             else:
                 setattr(mod, name, copy.copy(cold))
+
+
+# Recorded at import: conftest imports this module after its env defaults and before any test module is collected,
+# so the gateway modules are still cold here.
+snapshot()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def cold_llm_gateway():
+    """Every test module starts with a cold LLM gateway, like it starts with a fresh database (conftest
+    _fresh_db_per_module): the registry caches would otherwise keep the previous module's rows."""
+    reset()
+    yield
