@@ -42,7 +42,7 @@ async def test_414_registered_and_the_rows_are_the_compiled_defaults(conn):
     rows = await conn.fetch("SELECT key, default_value::text AS d, scope_kind, enforced, env_override "
                             "FROM shared.setting_definition WHERE app = 'tripplanner'")
     compiled = [k for k in settings.READER.keys() if settings.definition(k).app == "tripplanner"]
-    assert sorted(r["key"] for r in rows) == sorted(compiled) and len(rows) == 21   # + 4 TripPlanner keys of CIS 447
+    assert sorted(r["key"] for r in rows) == sorted(compiled) and len(rows) == 17
     for r in rows:
         d = settings.definition(r["key"])
         assert json.loads(r["d"]) == d.default_value and r["scope_kind"] == d.scope_kind

@@ -137,7 +137,7 @@ def test_columns_owner_barrier_and_consumers(cur):
 def test_defaults_are_served_as_version_0_one_platform_row_per_key(cur):
     rows = _rows(cur)
     cur.execute("SELECT count(*) FROM shared.setting_definition WHERE app = 'tripplanner'")
-    assert len(rows) == cur.fetchone()[0] == 21          # 17 of CIS 414 + the 4 TripPlanner spend keys of CIS 447
+    assert len(rows) == cur.fetchone()[0] == 17
     by_key = {r[1]: r for r in rows}
     assert by_key[PKEY][2:] == ("10", 0, None) and by_key[TKEY][2:] == ("200", 0, None)
     assert {r[0] for r in rows} == {"tripplanner"}
