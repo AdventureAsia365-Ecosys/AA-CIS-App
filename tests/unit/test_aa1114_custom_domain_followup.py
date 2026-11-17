@@ -113,7 +113,7 @@ def test_load_targets_reads_the_tenants_active_hosts(no_served):
     # stored as verified: lower-case, no trailing dot, a leading www. kept
     assert targets.tenant_tripplanner_hosts == {OWN, "www.plan.quillmere.example.invalid",
                                                 "go.quillmere.example.invalid"}
-    assert "tripplanner.lumiguides.it.com" in targets.tripplanner_hosts
+    assert {"tripplanner.lumiguides.it.com"} <= set(targets.tripplanner_hosts)  # set membership, not a URL check
 
 
 def test_the_query_is_this_tenants_active_rows_only():
