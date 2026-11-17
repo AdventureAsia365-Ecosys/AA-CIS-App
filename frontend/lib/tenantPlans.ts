@@ -523,7 +523,8 @@ export async function sendJson<T>(path: string, method: string, body?: unknown):
 export interface CrmOnboarding { tenant_id: string | null; status: "done" | "partial" | "failed" | "skipped";
                                  steps: string[]; error: { step: string; http_status: number | null; code: string } | null }
 export interface ProvisionJob { job_id: string; status: string; steps: string[]; error: string | null;
-                                result: Record<string, unknown> | null; crm_onboarding?: CrmOnboarding | null }
+                                result: Record<string, unknown> | null; crm_onboarding?: CrmOnboarding | null;
+                                tenant_id?: string | null }
 
 /** The add-on drawer's seats: empty, or a whole number 1-500. True when the text is neither. Pure. */
 export function seatsInvalid(value: string): boolean {
@@ -551,6 +552,42 @@ export function crmOnboardingNote(c: CrmOnboarding | null | undefined): "done" |
   if (!c) return null;
   if (c.status !== "done") return "attention";
   return c.steps.includes("crm_owner_not_invited") ? "noInvite" : "done";
+}
+
+/** AA-1116: the New tenant modal's add-on choices for one product: the live (not retired) plans, like Tenant 360's
+ *  add_on_plans. Pure. */
+export function addOnChoices(plans: Plan[] | undefined, product: "crm" | "tripplanner"):
+  { plan_key: string; name: string }[] {
+  return (plans ?? []).filter((p) => p.product === product && !p.retired_at)
+    .map((p) => ({ plan_key: p.plan_key, name: p.name }))
+    .sort((a, b) => a.plan_key.localeCompare(b.plan_key));
+}
+
+export interface NewTenantDraft {
+  name: string; slug: string; plan_tier: string; posts_per_week: number;
+  crmPlan: string; tripplannerPlan: string; ownerEmail: string;
+}
+
+/** AA-1116: the New tenant request (POST /admin/tenants/provision): the account, its content subscription and the
+ *  chosen add-ons in one saga; a crm add-on also creates the CRM agency and, with an address, invites its owner in the
+ *  same request. The address goes only with a crm add-on (the API refuses it otherwise). Pure. */
+export function newTenantBody(requestKey: string, d: NewTenantDraft) {
+  const addOns = [
+    ...(d.crmPlan ? [{ product: "crm", plan_key: d.crmPlan, seats: null }] : []),
+    ...(d.tripplannerPlan ? [{ product: "tripplanner", plan_key: d.tripplannerPlan, seats: null }] : []),
+  ];
+  const owner = d.crmPlan ? d.ownerEmail.trim() : "";
+  return {
+    request_key: requestKey, name: d.name.trim(), slug: d.slug.trim(), plan_tier: d.plan_tier,
+    posts_per_week: d.posts_per_week, add_ons: addOns, ...(owner ? { crm_owner_email: owner } : {}),
+  };
+}
+
+/** The tenant a provisioning job set up: the POST's own read (a crm add-on runs the saga in the request) or the
+ *  finished job's result; null while the worker has not run it yet. Pure. */
+export function provisionedTenantId(job: ProvisionJob): string | null {
+  const fromResult = job.result && typeof job.result.tenant_id === "string" ? job.result.tenant_id : null;
+  return job.tenant_id ?? fromResult;
 }
 
 export function newRequestKey(prefix = "admin-ui"): string {

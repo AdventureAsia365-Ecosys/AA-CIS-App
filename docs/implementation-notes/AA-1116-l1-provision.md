@@ -45,6 +45,17 @@ in `AA-1116-l1-discount.md`.
 - Tenant 360 › Subscription › Add an add-on: an optional "Owner e-mail" field for a NEW crm add-on (sent as
   `crm_owner_email`), and a toast with the CRM outcome (ready and invited / ready, invite on Platform › Agencies /
   needs a look with the CRM's code). `runSaga` keeps the POST's `crm_onboarding` while it polls the job.
+- Review fix (Done-when "New tenant to a working CRM with no manual step"): the New tenant dialog
+  (`frontend/app/admin/tenants/_components/CreateTenantModal.tsx`, moved out of `page.tsx`) calls
+  `POST /api/admin/tenants/provision` through `runSaga`, with a CRM add-on choice, the optional owner e-mail and a
+  TripPlanner add-on choice (live plans from `GET /admin/plans`). The result dialog adds the CRM agency outcome. Pure
+  helpers `addOnChoices`, `newTenantBody`, `provisionedTenantId` in `lib/tenantPlans.ts` (unit tests).
+- Review fix (cross-tenant invite on a reused `request_key`): the job and the saga's stored outcome are both found by
+  the key alone, so a key first used for tenant A, sent again for tenant B with B's owner address, would have invited
+  B's owner into A's CRM agency past B's scope check. Before any CRM call the route now checks that an earlier job of
+  the key names the same mode and tenant (attach) or slug (create), and that the saga's outcome is the attach's tenant
+  or carries the create's slug; otherwise `crm_onboarding` is `skipped` with `request_key_reused` and the CRM is not
+  called (unit tests).
 
 ## Tradeoffs
 
@@ -52,9 +63,9 @@ in `AA-1116-l1-discount.md`.
   timeout each, the owner invite mails inside the CRM transaction). Accepted: one staff click, no hand step.
 - A staff member without `crm-platform-admin` gets the tenant and the subscription but `crm_onboarding.status`
   `failed` with the CRM's 403 code; Platform › Agencies stays the fallback.
-- The New tenant modal (`frontend/app/admin/tenants/page.tsx`) still calls the synchronous `POST /admin/tenants`
-  without add-ons; the Tenant 360 add-on drawer is the UI path that runs the saga today. Moving the modal onto the
-  saga with a CRM option and an owner address field is the follow-up UI slice (the attach drawer already has the field).
+- New tenant now runs the saga (review fix, see Changed): a tenant without add-ons waits for the worker (the dialog
+  polls the job up to 30 s, then says "being set up" and the list shows it a moment later) instead of the old
+  synchronous `POST /admin/tenants`. That route stays for API callers.
 
 ## Should know
 

@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import {
   INT4_MAX, RATE_LIMIT_RPM_MAX, defaultOverrideMode, featuresFor, limitText, lockedLimitKeys, overrideBody,
   overrideDraftOf, overrideFeatures, overrideModes, planBody, planDraftOf, refusalOf, runSaga, tierChoices, money,
-  crmOnboardingNote, crmOwnerField, addOnBody, seatsInvalid,
+  crmOnboardingNote, crmOwnerField, addOnBody, seatsInvalid, addOnChoices, newTenantBody, provisionedTenantId,
   termText, PRODUCTS, PRICE_UNITS,
   addOnDecisionPath, addOnRequestPath, approveBody, requestShown, requestTone, sortAddOnRequests,
   END_PILOT_REASON_MAX, endPilotPath,
@@ -392,4 +392,33 @@ test("AA-1116: money and term text", () => {
   assert.equal(termText(["crm", "content"], "On", "Off"), "crm, content");
   assert.equal(termText(true, "On", "Off"), "On");
   assert.equal(termText(26000, "On", "Off"), "26,000");
+});
+
+test("AA-1116 New tenant: add-on choices, the saga body and the set-up tenant", () => {
+  const plans = [
+    plan({ plan_key: "crm.pro", product: "crm", name: "CRM Pro" }),
+    plan({ plan_key: "crm.core", product: "crm", name: "CRM Core" }),
+    plan({ plan_key: "crm.old", product: "crm", name: "Old", retired_at: "2026-10-01T00:00:00Z" }),
+    plan({ plan_key: "tripplanner.hosted", product: "tripplanner", name: "Hosted" }),
+  ];
+  assert.deepEqual(addOnChoices(plans, "crm"), [{ plan_key: "crm.core", name: "CRM Core" },
+                                                { plan_key: "crm.pro", name: "CRM Pro" }]);
+  assert.deepEqual(addOnChoices(plans, "tripplanner"), [{ plan_key: "tripplanner.hosted", name: "Hosted" }]);
+  assert.deepEqual(addOnChoices(undefined, "crm"), []);
+
+  const d = { name: " Quillmoor Trails ", slug: "quillmoor-trails", plan_tier: "starter", posts_per_week: 3,
+              crmPlan: "crm.core", tripplannerPlan: "", ownerEmail: " owner@quillmoor.example.test " };
+  assert.deepEqual(newTenantBody("k1", d), {
+    request_key: "k1", name: "Quillmoor Trails", slug: "quillmoor-trails", plan_tier: "starter", posts_per_week: 3,
+    add_ons: [{ product: "crm", plan_key: "crm.core", seats: null }], crm_owner_email: "owner@quillmoor.example.test" });
+  // no crm add-on: no address (the API refuses an address without one), even when one was typed
+  assert.deepEqual(newTenantBody("k2", { ...d, crmPlan: "", tripplannerPlan: "tripplanner.hosted" }), {
+    request_key: "k2", name: "Quillmoor Trails", slug: "quillmoor-trails", plan_tier: "starter", posts_per_week: 3,
+    add_ons: [{ product: "tripplanner", plan_key: "tripplanner.hosted", seats: null }] });
+  assert.deepEqual(newTenantBody("k3", { ...d, ownerEmail: "  " }).crm_owner_email, undefined);
+
+  const job = { job_id: "j", status: "queued", steps: [], error: null, result: null };
+  assert.equal(provisionedTenantId(job), null);
+  assert.equal(provisionedTenantId({ ...job, tenant_id: "t1" }), "t1");
+  assert.equal(provisionedTenantId({ ...job, status: "succeeded", result: { tenant_id: "t2" } }), "t2");
 });

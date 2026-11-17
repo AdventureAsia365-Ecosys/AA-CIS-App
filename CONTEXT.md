@@ -3114,7 +3114,9 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   `GET /tenants/{id}`, `POST /tenants`, `POST /tenants/{id}/owner-invite` (already there = done), nudges the account
   feed with one unchanged `account.status_changed` event when it created the agency, and audits `tenant.crm_onboarded`
   (never the address). The response carries `crm_onboarding` {status done / partial / failed / skipped, steps, error};
-  `POST /admin/tenants/{tenant_id}/crm-onboarding` (admin, `tenant.write`) runs it again. Platform › Agencies keeps
+  `POST /admin/tenants/{tenant_id}/crm-onboarding` (admin, `tenant.write`) runs it again. A reused `request_key` whose
+  first job or stored outcome names another tenant (or slug) never reaches the CRM (`request_key_reused`). The New
+  tenant dialog of Platform › Tenants runs this saga with its add-on choices and the owner address. Platform › Agencies keeps
   its buttons for the cases the relay refuses (no `crm-platform-admin` group, CRM down). Platform › Agencies shows the CRM allowed features read-only once the CRM
   projected the agency from CIS (crm.ops.v1 1.11 `managed_by` cis) and still edits them while it is `managed_by` ops. The bridge triggers of 355 stay: `POST /admin/tenants`, PATCH, offboard and
   restore still write only `shared.tenants`.
