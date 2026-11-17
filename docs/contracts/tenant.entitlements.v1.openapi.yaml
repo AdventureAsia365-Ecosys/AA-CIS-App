@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: tenant.entitlements.v1 (AA-CIS-App → AA-Partner CRM, AA-Booking, TripPlanner; tenant account and entitlements)
-  version: "1.9"
+  version: "1.10"
   description: >-
     CIS shared is the master of the tenant account: lifecycle status, data region, product subscriptions and the
     entitlements they give (root ADR 0019 d1, d2). This contract tells the other apps, per tenant, which feature keys
@@ -115,6 +115,14 @@ info:
     NULL = no limit). The entitlement feed may carry the new feature key ai.budget_addon_usd_monthly on plans only; it
     is never served as a tenant entitlement. Readers name their columns; a reader that knows only the 1.8 columns
     keeps its rows. No personal data.
+    1.10 (AA-1116, additive; no HTTP shape change; CIS 443-444): catalog.v_tenant_billing_v1 appends discount_pct
+    (numeric(5,2), 0-100) and discount_kind (founding | combo | null): the share of THIS line's amount the CIS quote
+    takes off (the founding offer on an eligible line, or the combo on every line when the tenant holds every combo
+    product; never both, the larger discount applies), null on the row of a tenant without a subscription. CIS
+    computes it with the same rule as the Tenant 360 quote and the agency's Billing tab and refreshes it every hour
+    and on each Tenant 360 billing write. Booking takes the share off the line it prices (same currency, agreed price
+    and seat rules as 1.9) and drafts it as a discount line; a pilot with bill_free stays unbilled. Readers name their
+    columns; a reader that knows only the 1.9 columns keeps its rows. No personal data.
   x-aa-contract: tenant.entitlements.v1
   x-aa-producer: AA-CIS-App
   x-aa-consumers: [AA-Partner, AA-Booking, AA-TripPlanner-Web]

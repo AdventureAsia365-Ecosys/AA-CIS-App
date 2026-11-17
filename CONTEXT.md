@@ -3142,7 +3142,11 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   `plan_key`).
 - **Billing from Booking** (AA-1037 R4, root ADR 0019 d9): every agency invoice is issued in AA-Booking. Booking reads
   `catalog.v_tenant_billing_v1` (CIS 377: subscriptions with plan prices and the bill-to fields, SELECT to `booking`
-  only) and publishes `booking.v_tenant_billing_status` (bk-042, SELECT to `cis_app`). The hourly job
+  only) and publishes `booking.v_tenant_billing_status` (bk-042, SELECT to `cis_app`). AA-1116 contract 1.10 (CIS
+  443-444): the view also serves `discount_pct` / `discount_kind` per subscription line, the share the CIS quote
+  (`services/tenant_account/quote.py`: founding or combo, the larger) takes off that line, stored in
+  `shared.tenant_subscription.quote_discount_pct` / `_kind` by `services/tenant_account/quote_discount.py` (every
+  hour in `tenant_billing_tick`, and at once after a Tenant 360 billing details / terms write). The hourly job
   `tenant_billing_tick` (`services/tenant_account/billing.py`, queued by the api's ops sampler, key per UTC hour,
   `TENANT_BILLING_TICK=off` stops it) writes a newer `paid_through` to the live subscriptions, moves `warn` -> account
   `past_due` + the bell `tenant.billing.overdue` (once a day; tenant, admin, finance), `past_due` -> `suspended` with
