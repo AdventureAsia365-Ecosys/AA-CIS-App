@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import {
   INT4_MAX, RATE_LIMIT_RPM_MAX, defaultOverrideMode, featuresFor, limitText, lockedLimitKeys, overrideBody,
   overrideDraftOf, overrideFeatures, overrideModes, planBody, planDraftOf, refusalOf, runSaga, tierChoices, money,
+  crmOnboardingNote,
   termText, PRODUCTS, PRICE_UNITS,
   addOnDecisionPath, addOnRequestPath, approveBody, requestShown, requestTone, sortAddOnRequests,
   END_PILOT_REASON_MAX, endPilotPath,
@@ -215,6 +216,22 @@ test("the saga call waits for its job", async () => {
   assert.equal(job.status, "succeeded");
   assert.deepEqual(calls.map((c) => c[1]), ["POST", "GET", "GET"]);
   assert.equal(calls[1][0], "/api/admin/tenants/provision/j");
+});
+
+test("AA-1116: the polled job keeps the CRM onboarding the POST answered, and its note", async () => {
+  const crm = { tenant_id: "t1", status: "done", steps: ["crm_agency_created", "crm_owner_invited"], error: null };
+  const answers = [{ job_id: "j", status: "queued", steps: [], error: null, result: null, crm_onboarding: crm },
+                   { job_id: "j", status: "succeeded", steps: ["crm_subscribed"], error: null, result: {} }];
+  globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => answers.shift() });
+  const job = await runSaga("/api/admin/tenants/t1/provision", { request_key: "k" }, { sleep: async () => {} });
+  assert.equal(job.status, "succeeded");
+  assert.deepEqual(job.crm_onboarding, crm);
+  assert.equal(crmOnboardingNote(crm), "done");
+  assert.equal(crmOnboardingNote({ ...crm, steps: ["crm_agency_exists", "crm_owner_not_invited"] }), "noInvite");
+  assert.equal(crmOnboardingNote({ ...crm, status: "partial" }), "attention");
+  assert.equal(crmOnboardingNote({ ...crm, status: "skipped" }), "attention");
+  assert.equal(crmOnboardingNote(null), null);
+  assert.equal(crmOnboardingNote(undefined), null);
 });
 
 test("override rules: no 'off' for a limit, no override of the request rate, a number for the rewrite quota", () => {

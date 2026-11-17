@@ -42,6 +42,9 @@ in `AA-1116-l1-discount.md`.
   in the job payload), `crm_onboarding` on the response, new `POST /admin/tenants/{tenant_id}/crm-onboarding`
   (`tenant.write`, admin role; not in the A10b E2E write allow-list, so the E2E identities are refused).
 - Snapshots: route policy, role matrix, `docs/api/openapi.json`.
+- Tenant 360 › Subscription › Add an add-on: an optional "Owner e-mail" field for a NEW crm add-on (sent as
+  `crm_owner_email`), and a toast with the CRM outcome (ready and invited / ready, invite on Platform › Agencies /
+  needs a look with the CRM's code). `runSaga` keeps the POST's `crm_onboarding` while it polls the job.
 
 ## Tradeoffs
 
@@ -51,7 +54,7 @@ in `AA-1116-l1-discount.md`.
   `failed` with the CRM's 403 code; Platform › Agencies stays the fallback.
 - The New tenant modal (`frontend/app/admin/tenants/page.tsx`) still calls the synchronous `POST /admin/tenants`
   without add-ons; the Tenant 360 add-on drawer is the UI path that runs the saga today. Moving the modal onto the
-  saga with a CRM option and an owner address field is the follow-up UI slice.
+  saga with a CRM option and an owner address field is the follow-up UI slice (the attach drawer already has the field).
 
 ## Should know
 

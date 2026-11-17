@@ -519,8 +519,18 @@ export async function sendJson<T>(path: string, method: string, body?: unknown):
   return parsed as T;
 }
 
+/** AA-1116: the CRM agency + first-owner invite run in the same request as a crm add-on (POST response only). */
+export interface CrmOnboarding { tenant_id: string | null; status: "done" | "partial" | "failed" | "skipped";
+                                 steps: string[]; error: { step: string; http_status: number | null; code: string } | null }
 export interface ProvisionJob { job_id: string; status: string; steps: string[]; error: string | null;
-                                result: Record<string, unknown> | null }
+                                result: Record<string, unknown> | null; crm_onboarding?: CrmOnboarding | null }
+
+/** The CRM onboarding needs a look from staff (not done, or done without the owner invited). Pure. */
+export function crmOnboardingNote(c: CrmOnboarding | null | undefined): "done" | "noInvite" | "attention" | null {
+  if (!c) return null;
+  if (c.status !== "done") return "attention";
+  return c.steps.includes("crm_owner_not_invited") ? "noInvite" : "done";
+}
 
 export function newRequestKey(prefix = "admin-ui"): string {
   const rnd = typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -537,12 +547,14 @@ export async function runSaga(path: string, body: unknown, { timeoutMs = 30000, 
                               pollPath = (jobId: string) => `/api/admin/tenants/provision/${jobId}` } = {}):
   Promise<ProvisionJob> {
   let job = await sendJson<ProvisionJob>(path, "POST", body);
+  // AA-1116: only the POST answers the CRM onboarding; the polled job keeps it
+  const crm = job.crm_onboarding ?? null;
   const until = Date.now() + timeoutMs;
   while (!TERMINAL.has(job.status) && Date.now() < until) {
     await sleep(everyMs);
     job = await sendJson<ProvisionJob>(pollPath(job.job_id), "GET");
   }
-  return job;
+  return crm ? { ...job, crm_onboarding: crm } : job;
 }
 
 export function sagaFailed(job: ProvisionJob): boolean {
