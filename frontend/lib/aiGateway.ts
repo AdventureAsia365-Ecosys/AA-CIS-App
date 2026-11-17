@@ -1450,10 +1450,6 @@ export interface AppProfile {
   central_cap: { per_day_usd: number | null; per_month_usd: number | null; hard_stop: boolean } | null;
   /** True for the app whose gateway acts on the profile today (CIS). */
   enforced_here: boolean;
-  /** AA-1126: the app's spend rules (<app>.spend.environment) and what its daily budget does when reached under them
-   *  (TripPlanner and the CRM only; lib/spendRules.ts). null / absent = not known or not an app-wide cap. */
-  spend_environment?: "dev" | "prod" | null;
-  budget_rule?: "alert_only" | "stops_ai" | null;
 }
 
 export interface AppProfilesResp {

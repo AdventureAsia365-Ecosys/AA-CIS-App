@@ -14,3 +14,9 @@ export function capRuleOf(value: unknown): CapRule | null {
 export function capRuleTone(rule: CapRule): "warning" | "info" {
   return rule === "stops_ai" ? "warning" : "info";
 }
+
+/** The rule of an App profiles row (GET /admin/ai-gateway/app-profiles `budget_rule`, AA-1126; TripPlanner and the
+ *  CRM only). Read off the row so the AppProfile type stays as it is (an older backend sends no such field). */
+export function budgetRuleOf(row: object): CapRule | null {
+  return capRuleOf((row as { budget_rule?: unknown }).budget_rule);
+}

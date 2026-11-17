@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { capRuleOf, capRuleTone } from "./spendRules.ts";
+import { budgetRuleOf, capRuleOf, capRuleTone } from "./spendRules.ts";
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 
@@ -20,11 +20,13 @@ test("the rule follows the API value and nothing else", () => {
   for (const v of [null, undefined, "", "prod", "dev", 1]) assert.equal(capRuleOf(v), null);
   assert.equal(capRuleTone("stops_ai"), "warning");
   assert.equal(capRuleTone("alert_only"), "info");
+  assert.equal(budgetRuleOf({ app: "crm", budget_rule: "alert_only" }), "alert_only");
+  assert.equal(budgetRuleOf({ app: "cis" }), null);
 });
 
 test("the App profiles card shows the budget's rule beside the budget", () => {
   const card = read("../app/admin/ai-gateway/AppProfilesCard.tsx");
-  assert.match(card, /capRuleOf\(p\.budget_rule\)/);
+  assert.match(card, /budgetRuleOf\(p\)/);
   assert.match(card, /rule === "alert_only" \? "ruleAlertOnly" : "ruleStops"/);
   const msgs = read("../app/admin/ai-gateway/appProfiles.messages.ts");
   assert.equal((msgs.match(/ruleAlertOnly:/g) || []).length, 2);   // English and Vietnamese
