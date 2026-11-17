@@ -18,8 +18,8 @@ worker binds it, ``bind_payload``; new ``s1_rewrite`` jobs carry the setting's v
 Settings, area Spend). When the run's ledger spend has reached its cap the gateway refuses the next call before any
 attempt: ``RunCapReached`` (a ``BudgetExceeded``: the job ends ``stopped_budget``, nothing is retried; the gateway
 writes the 0 USD refused / budget ledger row and remembers the stop for the job, ``note_stop``, so a pipeline that
-turns a failed call into a failed draft still ends its job ``stopped_budget``: the S1 rewrite job reads ``job_stop``) and one admin bell + ops e-mail per class and 24 h (scope
-``llm:run:<class>``).
+turns a failed call into a failed draft still ends its job ``stopped_budget``: the S1 rewrite job reads ``job_stop``)
+and one admin bell + ops e-mail per class and 24 h (scope ``llm:run:<class>``).
 
 Spend is read from ``shared.llm_call_log`` (one indexed query: ``job_id``, or ``stage`` + ``created_at``), cached
 ``SPEND_TTL_SECONDS`` per run in this process, so a run passes its cap by at most the calls already running plus one

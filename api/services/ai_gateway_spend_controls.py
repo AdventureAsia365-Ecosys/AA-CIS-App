@@ -5,8 +5,9 @@ Platform › Settings, area Spend), and the anomaly breaker of every app with it
 - ``read(pool)``: each key of ``shared/llm_client/caps_settings.ALL`` with its label, unit, value in force, default and
   where the value comes from (``shared.settings.resolve``), the Platform › Settings link that edits it, and the anomaly
   breaker's verdict per app (``anomaly_breaker.status``), and ``run_cap_scopes`` (the central budget scopes whose
-  per-run cap is one of these settings, shown on the Budgets tab's central caps instead of a per-run amount). A key the compiled defaults do not have yet (the code shipped
-  before CIS 446) is listed under ``missing`` and the gateway keeps today's behaviour for it.
+  per-run cap is one of these settings, shown on the Budgets tab's central caps instead of a per-run amount). A key
+  the compiled defaults do not have yet (the code shipped before CIS 446) is listed under ``missing`` and the gateway
+  keeps today's behaviour for it.
 - ``reset(pool, app, actor)``: the admin reset of one app's breaker (``app_profile.reset_anomaly``), audited with the
   verdict it cleared.
 """

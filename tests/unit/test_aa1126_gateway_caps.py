@@ -170,6 +170,36 @@ def test_failover_continue_raises_the_real_error_when_the_lifted_call_fails_too(
     assert calls == [False, True] and bells == [("continue", ("acc1", "acc3"), "s1_generate")]
 
 
+# ── G1: a partial plan (review S283) ─────────────────────────────────────────────────────────────────────────────
+
+def _partial(world, monkeypatch):
+    """sonnet-5-5 on acc3 (over its cap, healthy) and on a second Bedrock connection (down): one model, so the plan
+    keeps the second deployment and raises only its outage."""
+    world.conns["bedrock-llm-org"] = _org()
+    world.deps.append(_dep("sonnet-5-5", "bedrock-llm-org", "us.anthropic.claude-sonnet-5-5", 20))
+    world.reset()
+    world.fail = {"bedrock-llm-org": RuntimeError("org outage")}
+    _route(monkeypatch, "sonnet-5-5")
+    _over(monkeypatch, "acc3")
+
+
+def test_failover_continue_lifts_the_caps_when_the_kept_rungs_of_a_plan_fail(world, monkeypatch, bells):
+    _settings(monkeypatch, connection_cap_mode="failover_continue")
+    _partial(world, monkeypatch)
+    resp = world.generate(stage="adhoc_s3")
+    assert resp.content == "from acc3"
+    assert [c[1] for c in world.calls] == ["bedrock-llm-org", "acc3"]   # the kept rung, then the over-cap one
+    assert bells == [("continue", ("acc3",), "adhoc_s3")]
+
+
+def test_hard_stop_keeps_the_provider_error_of_a_partial_plan(world, monkeypatch, bells):
+    _settings(monkeypatch, connection_cap_mode="hard_stop")
+    _partial(world, monkeypatch)
+    with pytest.raises(RuntimeError, match="org outage"):
+        world.generate(stage="adhoc_s3")
+    assert [c[1] for c in world.calls] == ["bedrock-llm-org"] and bells == []
+
+
 def test_the_continue_alert_never_breaks_the_call(monkeypatch):
     def boom(keys, stage):
         raise RuntimeError("no database")
@@ -406,3 +436,16 @@ def test_the_spend_queries_use_the_indexed_columns():
     assert "job_id = $1" in run_cap.JOB_SPEND_SQL
     assert "stage = $1 AND created_at >= $2" in run_cap.EVAL_SPEND_SQL and "eval_run" in run_cap.EVAL_SPEND_SQL
     assert "stage = $1 AND created_at >= $2" in run_cap.STAGE_SPEND_SQL
+
+
+# ── review S283: a spend stop is noted for the job (the S1 job ends stopped_budget: test_aa1126_spend_stops) ──
+
+def test_the_gateway_notes_a_run_cap_refusal_for_the_job(world, monkeypatch, bells):
+    _settings(monkeypatch, s1=2)
+    monkeypatch.setattr(run_cap, "loader", lambda run: 2.0)
+    run_cap.invalidate()
+    with bind_job(JOB), capacity.bind_kind("s1_rewrite"), run_cap.bind_payload({}):
+        with pytest.raises(run_cap.RunCapReached) as e:
+            world.generate(model_tier="sonnet-5-5")
+    assert run_cap.job_stop(JOB) is e.value
+    assert run_cap.job_stop(JOB, pop=True) is e.value and run_cap.job_stop(JOB) is None

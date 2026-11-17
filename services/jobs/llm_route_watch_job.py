@@ -8,7 +8,8 @@ What it does (shared/llm_client/route_watch.py has the rules): ``watch`` reads t
 shift) of ``shared.llm_call_log`` per stage and raises, through ``shared/ops_checks.raise_alert`` (admin bell + at
 most one e-mail per check and UTC day), the fallback-rate, last-model, primary-back and cost-shift alerts of each
 stage, and (AA-1126 G2) rings the anomaly breaker bell of every tripped app; ``digest`` builds the summary of the
-last 24 h and raises the ``route_digest`` alert when a stage used a fallback model or lost requests. A dry run evaluates and returns the findings, raises nothing.
+last 24 h and raises the ``route_digest`` alert when a stage used a fallback model or lost requests. A dry run
+evaluates and returns the findings, raises nothing.
 
 Schedule: queued by the api's ops metrics sampler (no cron in the api): one ``watch`` run per ``BUCKET_MINUTES``
 UTC bucket (idempotency key ``llm_route_watch:<bucket start>``) and one ``digest`` run per UTC day from

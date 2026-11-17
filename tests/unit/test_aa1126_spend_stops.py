@@ -1,7 +1,7 @@
 """AA-1126 (S283) review fixes — the spend controls end where they say they end (no paid call, no database).
 
-- G1: failover_continue also lifts the caps when a model's plan kept other deployments and only they failed (the
-  over-cap rung was a budget skip, not in the failure chain).
+- G1 (the gateway tests are in test_aa1126_gateway_caps.py, with its fake providers): a budget skip is noted per
+  request only.
 - G4: an S1 rewrite job that reaches its run cap ends ``stopped_budget`` (not ``failed``): ``_run_tour_safe`` stops at
   the first spend stop and raises it, also when the graph swallowed the refusal (the gateway notes it for the job), and
   the worker reads a spend stop in a wrapped failure.
@@ -21,12 +21,8 @@ from fastapi import HTTPException
 from shared import cost_guard
 from shared.jobs import queue
 from shared.jobs.registry import JobContext
-from shared.llm_client import anomaly_breaker, caps_settings, capacity, central_budget, connection_budget, run_cap
-from shared.llm_client.call_log import bind_job
-from tests.unit.test_aa1002_s3_deployment_routing import _dep, _org, _route
-from tests.unit.test_aa1126_gateway_caps import (  # noqa: F401 — the fixtures are used by name
-    JOB, NOW, POLICY, _Conn, _over, _settings, bells, world,
-)
+from shared.llm_client import anomaly_breaker, caps_settings, central_budget, connection_budget, run_cap
+from tests.unit.test_aa1126_gateway_caps import JOB, NOW, POLICY, _Conn, _settings
 
 
 def _cap_stop(spent=2.0) -> run_cap.RunCapReached:
@@ -34,35 +30,7 @@ def _cap_stop(spent=2.0) -> run_cap.RunCapReached:
     return run_cap.refusal(run, 2.0, spent)
 
 
-# ── G1: a partial plan ───────────────────────────────────────────────────────────────────────────────────────────
-
-def _partial(world, monkeypatch):
-    """sonnet-5-5 on acc3 (over its cap, healthy) and on a second Bedrock connection (down): one model, so the plan
-    keeps the second deployment and raises only its outage."""
-    world.conns["bedrock-llm-org"] = _org()
-    world.deps.append(_dep("sonnet-5-5", "bedrock-llm-org", "us.anthropic.claude-sonnet-5-5", 20))
-    world.reset()
-    world.fail = {"bedrock-llm-org": RuntimeError("org outage")}
-    _route(monkeypatch, "sonnet-5-5")
-    _over(monkeypatch, "acc3")
-
-
-def test_failover_continue_lifts_the_caps_when_the_kept_rungs_of_a_plan_fail(world, monkeypatch, bells):
-    _settings(monkeypatch, connection_cap_mode="failover_continue")
-    _partial(world, monkeypatch)
-    resp = world.generate(stage="adhoc_s3")
-    assert resp.content == "from acc3"
-    assert [c[1] for c in world.calls] == ["bedrock-llm-org", "acc3"]   # the kept rung, then the over-cap one
-    assert bells == [("continue", ("acc3",), "adhoc_s3")]
-
-
-def test_hard_stop_keeps_the_provider_error_of_a_partial_plan(world, monkeypatch, bells):
-    _settings(monkeypatch, connection_cap_mode="hard_stop")
-    _partial(world, monkeypatch)
-    with pytest.raises(RuntimeError, match="org outage"):
-        world.generate(stage="adhoc_s3")
-    assert [c[1] for c in world.calls] == ["bedrock-llm-org"] and bells == []
-
+# ── G1 ───────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 def test_a_budget_skip_is_noted_only_inside_a_request():
     connection_budget.note_skip("acc3")                                   # outside run_with_cap_mode: nothing kept
@@ -74,6 +42,7 @@ def test_a_budget_skip_is_noted_only_inside_a_request():
         return "ok"
     assert connection_budget.run_with_cap_mode(call, "s1_generate") == "ok"
     assert seen == [["acc1"]] and connection_budget._SKIPPED.get() is None
+
 
 
 # ── G4: the S1 rewrite job ends stopped_budget ──────────────────────────────────────────────────────────────────
@@ -90,17 +59,6 @@ def test_spend_stop_in_reads_the_explicit_chain_only():
     assert run_cap.spend_stop_in(context_only) is None
     assert run_cap.spend_stop_in(connection_budget.exceeded("over", ("acc3",))) is None
     assert run_cap.spend_stop_in(None) is None
-
-
-def test_the_gateway_notes_a_run_cap_refusal_for_the_job(world, monkeypatch, bells):
-    _settings(monkeypatch, s1=2)
-    monkeypatch.setattr(run_cap, "loader", lambda run: 2.0)
-    run_cap.invalidate()
-    with bind_job(JOB), capacity.bind_kind("s1_rewrite"), run_cap.bind_payload({}):
-        with pytest.raises(run_cap.RunCapReached) as e:
-            world.generate(model_tier="sonnet-5-5")
-    assert run_cap.job_stop(JOB) is e.value
-    assert run_cap.job_stop(JOB, pop=True) is e.value and run_cap.job_stop(JOB) is None
 
 
 @pytest.mark.asyncio
