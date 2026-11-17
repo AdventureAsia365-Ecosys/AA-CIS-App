@@ -4616,6 +4616,11 @@ D12 caps and minimum samples in force (re-read before the file is checked) hold 
 `cis.spend.writer_proof_*_cap_usd`, defaults null $5, T9 $15, S1 $8, T2 $5, $33 in total, read against the ledger; minimum
 samples `cis.quality.writer_proof_*_min_items`). `runner campaign` is the DRY plan of all four in order. `runner report` gives the
 pre-registered verdict, the targets and the cost and requests per object from `shared.llm_call_log`.
+S283: the judge may be a **pinned claim instrument** (`judge.instrument`, `services/writer_proof/instrument.py`): the
+AA-1048 chain R1 fire then two-step v7, ADVISORY (v7 missed one AA-1048 bar), judging every sentence of each output and
+counting the flagged claims (`fail_claims_per_item`); R2 then skips its kappa block and judges the whole fixed sample.
+A file may fix its sample as a rule (`sample`: n GATE items by a seeded hash of the id, drawn from the registered
+golden version). The registered null run is `w5-null-t9-blog-v7`.
 _Avoid_: A/B test (a proof has a fixed pre-registered rule), experiment.
 
 **Scope (writing memory)**:
