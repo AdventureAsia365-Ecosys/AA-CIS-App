@@ -84,6 +84,13 @@ export function TpStageCaps({ spend, testId = "tp-stage-caps" }: { spend: TpSpen
   );
 }
 
+/** TripPlanner's spend could not be read: paused under the dev spend rules, AI on with a staff bell under prod. */
+function SpendUnreadable({ card }: { card: TripPlannerCard }) {
+  const t = useT(TP_CAPS);
+  const prod = card.ai?.spend_environment === "prod";
+  return <div style={{ ...small, color: K.danger }}>{t(prod ? "unreadableProd" : "unreadable")}</div>;
+}
+
 export function TripPlannerCapsSection() {
   const t = useT(TP_CAPS);
   const q = useQuery({
@@ -106,10 +113,7 @@ export function TripPlannerCapsSection() {
         </div>
       )}
       {s && <TpStageCaps spend={s} testId="cost-tp-stage-caps" />}
-      {!q.isLoading && !q.isError && card && !s && (
-        <div style={{ ...small, color: K.danger }}>
-          {t(card.ai?.spend_environment === "prod" ? "unreadableProd" : "unreadable")}</div>
-      )}
+      {!q.isLoading && !q.isError && card && !s && <SpendUnreadable card={card} />}
     </Section>
   );
 }
