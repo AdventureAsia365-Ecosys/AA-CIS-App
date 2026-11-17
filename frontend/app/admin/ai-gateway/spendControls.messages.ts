@@ -6,8 +6,10 @@ import { defineMessages } from "../../_kit/core/i18n";
 
 /** The state of one app's anomaly breaker (lib/spendControls BreakerState). */
 export const BREAKER_STATE = defineMessages(
-  { ok: "Normal", tripped_alert: "Over the line (alert only)", refusing: "Refusing new AI calls" },
-  { ok: "Bình thường", tripped_alert: "Vượt ngưỡng (chỉ cảnh báo)", refusing: "Đang từ chối lệnh gọi AI mới" },
+  { ok: "Normal", tripped_alert: "Over the line (alert only)",
+    not_enforced: "Over the line (alert only: not enforced for this app yet)", refusing: "Refusing new AI calls" },
+  { ok: "Bình thường", tripped_alert: "Vượt ngưỡng (chỉ cảnh báo)",
+    not_enforced: "Vượt ngưỡng (chỉ cảnh báo: app này chưa áp dụng chặn)", refusing: "Đang từ chối lệnh gọi AI mới" },
 );
 
 /** Where a value comes from (settings reader Resolution.source). */
@@ -56,6 +58,14 @@ export const SPEND_CONTROLS = defineMessages(
     capFailsOver: "Fails over at the cap",
     capAlertOnly: "Alert only",
     capModeNote: (mode: string) => `What a connection at its budget does in this environment: ${mode}.`,
+    runCapNote: "The run caps above are the only per-run caps of those runs. The day and month caps of the same runs "
+      + "are central caps below (S1 rewrite job, eval, ad-hoc).",
+    breakerEnforcedNote: "Only CIS refuses calls in mode enforce today: TripPlanner and the CRM show their state and "
+      + "ring the bell, their own gateways do not read the breaker yet.",
+    runCapFromSettings: "Set in Platform › Settings",
+    runCapEditorNote: (value: string) => `The per-run cap of this scope is ${value}, a Platform › Settings value (one `
+      + "place to change it, approved and audited). Day and month caps are set here.",
+    errRunSetting: "The per-run cap of this scope is set on Platform › Settings, not here.",
   },
   {
     title: "Kiểm soát chi tiêu của môi trường này",
@@ -95,5 +105,13 @@ export const SPEND_CONTROLS = defineMessages(
     capFailsOver: "Chuyển kết nối khi chạm trần",
     capAlertOnly: "Chỉ cảnh báo",
     capModeNote: (mode: string) => `Kết nối chạm ngân sách làm gì ở môi trường này: ${mode}.`,
+    runCapNote: "Các trần mỗi lượt ở trên là trần mỗi lượt duy nhất của các lần chạy đó. Trần ngày và trần tháng của "
+      + "cùng các lần chạy là trần trung tâm ở bên dưới (job viết lại S1, eval, adhoc).",
+    breakerEnforcedNote: "Hiện chỉ CIS từ chối lệnh gọi ở chế độ enforce: TripPlanner và CRM hiện trạng thái và báo "
+      + "chuông, cổng AI riêng của chúng chưa đọc breaker.",
+    runCapFromSettings: "Đặt ở Nền tảng › Cài đặt",
+    runCapEditorNote: (value: string) => `Trần mỗi lượt của phạm vi này là ${value}, một giá trị ở Nền tảng › Cài đặt `
+      + "(một nơi duy nhất để sửa, có duyệt và ghi nhật ký). Trần ngày và trần tháng đặt ở đây.",
+    errRunSetting: "Trần mỗi lượt của phạm vi này đặt ở Nền tảng › Cài đặt, không đặt ở đây.",
   },
 );

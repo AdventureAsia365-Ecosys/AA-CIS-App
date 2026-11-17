@@ -9,6 +9,8 @@
 //   Anomaly breaker     each app's spend today against its trip line; Reset (ai.admin, not a tighten-only role;
 //                       POST /api/admin/ai-gateway/anomaly-breaker/{app}/reset, confirm first, audited).
 //   useAtCapText        the Budgets tab's connection tier says "Fails over at the cap" under failover_continue.
+//   useRunCapSetting    one source per cap (review S283): the central caps of job:s1_rewrite / eval / adhoc show their
+//                       per-run cap as the Platform › Settings value (RunCapCell, RunCapEditorNote), never a 2nd value.
 // Built on the kit only (Section, DataTable, Badge, Button, ConfirmModal, DateText, ErrorState, Toast).
 
 import Link from "next/link";
@@ -22,7 +24,8 @@ import {
 import { usd } from "@/lib/aiGateway";
 import {
   SPEND_CONTROLS_API, SPEND_CONTROLS_KEY, SPEND_SETTINGS_HREF, anomalyResetPath, breakerState, breakerTone,
-  changedFromDefault, connectionAtCap, mayReset, settingValueText, type AnomalyVerdict, type SpendControlSetting,
+  changedFromDefault, connectionAtCap, mayReset, runCapSettingOf, settingValueText, type AnomalyVerdict,
+  type SpendControlSetting,
   type SpendControlsResp,
 } from "@/lib/spendControls";
 import { BUDGETS } from "./budgets.messages";
@@ -54,6 +57,49 @@ export function useAtCapText(): (hardStop: boolean) => string {
     const at = connectionAtCap(hardStop, mode);
     return at === "fails_over" ? tsc("capFailsOver") : at === "stops" ? t("stopsAtCap") : t("alertOnly");
   }, [mode, t, tsc]);
+}
+
+/** The setting that is the per-run cap of a central budget scope (null: none, or not loaded yet). */
+export function useRunCapSetting(): (scope: string | null | undefined) => SpendControlSetting | null {
+  const data = useSpendControls().data;
+  return useCallback((scope) => runCapSettingOf(data, scope), [data]);
+}
+
+/** The per-run cell of a central cap: for a scope whose per-run cap is a setting, its value and the link that edits
+ *  it; else ``otherwise`` (the row's own per-run amount). */
+export function RunCapCell({ scope, otherwise }: { scope: string; otherwise: React.ReactNode }) {
+  const t = useT(SPEND_CONTROLS);
+  const setting = useRunCapSetting()(scope);
+  if (!setting) return <>{otherwise}</>;
+  return (
+    <div style={{ display: "grid", gap: 2, justifyItems: "end" }}>
+      <span style={{ fontFamily: mono }}>{settingValueText(setting.value, setting)}</span>
+      <Link href={setting.href} style={{ fontSize: 12 }} onClick={(e) => e.stopPropagation()}>
+        {t("runCapFromSettings")}</Link>
+    </div>
+  );
+}
+
+/** The central cap editor's per-run rule for its scope: the setting that is its per-run cap (null: none), whether the
+ *  editor shows a per-run field (a job scope without such a setting) and the error of a per-run amount it sends anyway
+ *  ("" when none). */
+export function useRunCapRule(scope: string, kind: string, body: { per_run_usd: number | null } | undefined) {
+  const t = useT(SPEND_CONTROLS);
+  const setting = useRunCapSetting()(scope);
+  const sendsRun = body !== undefined && body.per_run_usd !== null;
+  return { setting, perRunField: kind === "job" && !setting, error: setting && sendsRun ? t("errRunSetting") : "" };
+}
+
+/** The central cap editor's line in place of the per-run field for such a scope (nothing for any other scope). */
+export function RunCapEditorNote({ setting }: { setting: SpendControlSetting | null }) {
+  const t = useT(SPEND_CONTROLS);
+  if (!setting) return null;
+  return (
+    <div role="note" style={small} data-testid="central-run-cap-setting">
+      {t("runCapEditorNote", settingValueText(setting.value, setting))}{" "}
+      <Link href={setting.href}>{t("runCapFromSettings")}</Link>
+    </div>
+  );
 }
 
 function useAppName(): (app: string) => string {
@@ -205,6 +251,7 @@ function BreakerPart({ data, onReset }: { data: SpendControlsResp | undefined; o
       <div style={{ padding: "4px 16px 0", display: "grid", gap: 4 }}>
         <strong style={{ color: K.ink, fontSize: 14 }}>{t("breakerTitle")}</strong>
         <span style={small}>{on ? t("breakerHelp", anomaly.mode) : t("breakerOff")}</span>
+        {on && <span style={small}>{t("breakerEnforcedNote")}</span>}
         {access.tightenOnly && <span style={small}>{t("resetTighten")}</span>}
       </div>
       {on && <BreakerTable apps={anomaly.apps} loading={!data} canReset={canReset} onReset={onReset} />}
@@ -225,6 +272,7 @@ export default function SpendControlsSection() {
       ) : (
         <div style={{ display: "grid", gap: 12, minWidth: 0 }}>
           <SettingsTable rows={data?.settings ?? []} loading={!data} />
+          <div style={{ ...small, padding: "0 16px" }}>{t("runCapNote")}</div>
           <Notes data={data} />
           <BreakerPart data={data} onReset={reset.ask} />
         </div>

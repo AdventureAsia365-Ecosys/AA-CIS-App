@@ -14,7 +14,11 @@ tripped when the app's AI spend today exceeds ``max(multiple x normal day, floor
   ends ``stopped_budget``; the gateway writes the 0 USD refused / budget ledger row).
 
 On the call path the CIS gateway checks its own app (``call_log.APP``); ``status`` serves every app to the admin
-(``GET /admin/ai-gateway/anomaly-breaker``), so TripPlanner and the CRM can read the same verdict later. Reads are
+(``GET /admin/ai-gateway/spend-controls``). Only the apps in ``ENFORCED_APPS`` (CIS) have a gateway that reads the
+breaker, so only they are refused in mode enforce; TripPlanner and the CRM show their verdict with ``enforced`` false
+("over the line, not enforced for this app yet") until their own gateways call it (a follow-up lane). Every app's
+trip still rings the bell: ``alert_tripped`` runs in each ``llm_route_watch`` watch run (every 15 min), not only on
+CIS calls (review S283). Reads are
 cached per process (the baseline per app and UTC day, today's spend ``SPEND_TTL_SECONDS``). Never fails closed: a
 read error leaves the breaker closed (logged), the same rule as the central and connection budgets.
 """
@@ -38,6 +42,7 @@ SPEND_TTL_SECONDS = 60.0  # technical-constant: in-process cache refresh of a re
 FAILURE_TTL_SECONDS = 60.0  # technical-constant: back-off after a failed cache read
 SCOPE_PREFIX = "anomaly:"
 APPS = ("cis", "tripplanner", "crm")      # the apps with AI (AA-Booking has none)
+ENFORCED_APPS = ("cis",)                  # the apps whose gateway refuses on the breaker (this one); see the docstring
 
 # The app of a ledger row: the platform_cost rule (an old CIS row has no app).
 _APP_EXPR = "coalesce(l.app, l.quality_signal ->> 'app', 'cis')"
@@ -96,11 +101,16 @@ class Verdict:
     reset_by: Optional[str] = None
 
     @property
+    def enforced(self) -> bool:
+        """The app's gateway reads the breaker (``ENFORCED_APPS``): in mode enforce a trip refuses its calls."""
+        return self.app in ENFORCED_APPS
+
+    @property
     def refuses(self) -> bool:
-        return self.tripped and self.mode == caps_settings.ENFORCE
+        return self.tripped and self.mode == caps_settings.ENFORCE and self.enforced
 
     def as_dict(self) -> dict:
-        return {**asdict(self), "refuses": self.refuses}
+        return {**asdict(self), "refuses": self.refuses, "enforced": self.enforced}
 
 
 def threshold(median_usd: float, policy: caps_settings.AnomalyPolicy) -> float:
@@ -161,20 +171,38 @@ async def evaluate(conn, app: str, *, mode: str, policy: caps_settings.AnomalyPo
                    reset_by=getattr(profile, "anomaly_reset_by", None))
 
 
+async def verdicts(conn, *, now: Optional[datetime] = None) -> list[Verdict]:
+    """The verdict of every app with AI, read through ``conn`` (no cache); [] when the breaker is off."""
+    mode, policy = caps_settings.anomaly_mode(), caps_settings.anomaly_policy()
+    if mode == caps_settings.OFF or policy is None:
+        return []
+    try:
+        profiles = await app_profile.read_all(conn)
+    except app_profile.AppProfileUnavailable:
+        profiles = {}
+    return [await evaluate(conn, app, mode=mode, policy=policy, profile=profiles.get(app), now=now) for app in APPS]
+
+
 async def status(conn, *, now: Optional[datetime] = None) -> dict:
     """The admin view: the settings in force and the verdict of every app with AI (mode off: no verdicts read)."""
     mode, policy = caps_settings.anomaly_mode(), caps_settings.anomaly_policy()
     out = {"mode": mode, "policy": None if policy is None else asdict(policy), "apps": []}
     if mode == caps_settings.OFF or policy is None:
         return out
-    try:
-        profiles = await app_profile.read_all(conn)
-    except app_profile.AppProfileUnavailable:
-        profiles = {}
-    for app in APPS:
-        v = await evaluate(conn, app, mode=mode, policy=policy, profile=profiles.get(app), now=now)
-        out["apps"].append(v.as_dict())
+    out["apps"] = [v.as_dict() for v in await verdicts(conn, now=now)]
     return out
+
+
+async def alert_tripped(conn, *, now: Optional[datetime] = None) -> list[str]:
+    """The periodic evaluation (each ``llm_route_watch`` watch run): ring the bell of every tripped app, whatever app
+    it is (the CIS call path only sees CIS). The bell is once per app and 24 h (``cost_guard.maybe_alert_central``).
+    Returns the tripped apps. Raises what the reads raise (the job logs it)."""
+    tripped = [v for v in await verdicts(conn, now=now) if v.tripped]
+    for v in tripped:
+        if _first_time(v):
+            logger.warning("llm_anomaly_breaker_tripped", source="watch", **v.as_dict())
+            await alert_on(conn, v)
+    return [v.app for v in tripped]
 
 
 # ── the call path (sync, cached) ────────────────────────────────────────────────────────────────────────────────────
@@ -249,20 +277,30 @@ def current(app: str, now: Optional[datetime] = None) -> Optional[Verdict]:
 
 
 def message(v: Verdict) -> str:
-    action = ("new AI calls of the app are refused until an administrator resets the breaker (AI gateway > Budgets > "
-              "Spend controls) or the UTC day ends" if v.refuses else "alert only: calls go on")
+    if v.refuses:
+        action = ("new AI calls of the app are refused until an administrator resets the breaker (AI gateway > "
+                  "Budgets > Spend controls) or the UTC day ends")
+    elif v.mode == caps_settings.ENFORCE and not v.enforced:
+        action = "alert only: this app's gateway does not read the breaker yet, so its calls go on"
+    else:
+        action = "alert only: calls go on"
     return (f"AI anomaly breaker tripped for app {v.app}: ${v.spent_usd:.2f} spent since {v.since} is above "
             f"${v.threshold_usd:.2f} ({v.multiple:g} x the ${v.median_usd:.2f} median day of the last "
             f"{v.baseline_days} days, floor ${v.floor_usd:.2f}); {action}.")
 
 
+async def alert_on(conn, v: Verdict) -> None:
+    """The bell + ops e-mail of a tripped verdict through ``conn`` (deduplicated per scope and 24 h)."""
+    summary = {"provider": "llm", "scope": f"{SCOPE_PREFIX}{v.app}", "day_spent_usd": round(v.spent_usd, 4),
+               "per_day_usd": round(v.threshold_usd, 4), "hard_stop": v.refuses, "hard_stop_day": v.refuses,
+               "used_pct": round(100.0 * v.spent_usd / v.threshold_usd, 1) if v.threshold_usd > 0 else None}
+    await cost_guard.maybe_alert_central(conn, summary, alert_pct=100, stopped=v.refuses, message=message(v))
+
+
 async def _alert(v: Verdict) -> None:
     conn = await connections._connect()
     try:
-        summary = {"provider": "llm", "scope": f"{SCOPE_PREFIX}{v.app}", "day_spent_usd": round(v.spent_usd, 4),
-                   "per_day_usd": round(v.threshold_usd, 4), "hard_stop": v.refuses, "hard_stop_day": v.refuses,
-                   "used_pct": round(100.0 * v.spent_usd / v.threshold_usd, 1) if v.threshold_usd > 0 else None}
-        await cost_guard.maybe_alert_central(conn, summary, alert_pct=100, stopped=v.refuses, message=message(v))
+        await alert_on(conn, v)
     finally:
         await conn.close()
 
@@ -272,15 +310,23 @@ def send(v: Verdict) -> None:
     connections.run_sync(lambda: _alert(v))
 
 
-def alert(v: Verdict) -> None:
-    """One admin bell + ops e-mail per app and 24 h (scope llm:anomaly:<app>); once per trip window in this process
-    (no database call on every refused call). Best effort: never raises."""
+def _first_time(v: Verdict) -> bool:
+    """True once per trip window and state in this process (then False): the bell is not rewritten on every call or
+    every watch run; the bell itself is deduplicated per scope and 24 h too."""
     key = (v.app, v.since, v.refuses)
     if key in _alerted:
-        return
+        return False
     if len(_alerted) > 100:
         _alerted.clear()
     _alerted.add(key)
+    return True
+
+
+def alert(v: Verdict) -> None:
+    """One admin bell + ops e-mail per app and 24 h (scope llm:anomaly:<app>); once per trip window in this process
+    (no database call on every refused call). Best effort: never raises."""
+    if not _first_time(v):
+        return
     logger.warning("llm_anomaly_breaker_tripped", **v.as_dict())
     try:
         send(v)

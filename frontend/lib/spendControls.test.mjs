@@ -15,7 +15,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { ACTION_CAPABILITY, PAGE_ACTIONS } from "./aiGateway.ts";
 import {
   SPEND_SETTINGS_HREF, anomalyResetPath, breakerState, breakerTone, breakerUsedPct, changedFromDefault,
-  connectionAtCap, mayReset, settingValueText,
+  connectionAtCap, mayReset, runCapSettingOf, settingValueText,
 } from "./spendControls.ts";
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
@@ -42,8 +42,32 @@ test("breakerState / breakerTone: normal, alert only, refusing", () => {
   assert.equal(breakerState({ tripped: true, refuses: false }), "tripped_alert");
   assert.equal(breakerState({ tripped: true, refuses: true }), "refusing");
   assert.deepEqual(["ok", "tripped_alert", "refusing"].map(breakerTone), ["success", "warning", "danger"]);
+  // review S283: an app whose gateway does not read the breaker is never shown as refusing
+  assert.equal(breakerState({ tripped: true, refuses: false, mode: "enforce", enforced: false }), "not_enforced");
+  assert.equal(breakerState({ tripped: true, refuses: false, mode: "alert", enforced: false }), "tripped_alert");
+  assert.equal(breakerTone("not_enforced"), "warning");
   assert.equal(breakerUsedPct({ spent_usd: 50, threshold_usd: 25 }), 200);
   assert.equal(breakerUsedPct({ spent_usd: 5, threshold_usd: 0 }), null);
+});
+
+test("runCapSettingOf: the setting that is a central scope's per-run cap (one source of truth)", () => {
+  const s1 = { key: "cis.spend.run_cap_s1_rewrite_usd", value: 2, href: "/admin/platform/settings?key=x" };
+  const data = { settings: [s1], run_cap_scopes: { "job:s1_rewrite": s1.key, eval: "cis.spend.run_cap_eval_usd" } };
+  assert.equal(runCapSettingOf(data, "job:s1_rewrite"), s1);
+  assert.equal(runCapSettingOf(data, "eval"), null);                     // key not among the settings sent
+  assert.equal(runCapSettingOf(data, "job:a3_atomize"), null);
+  assert.equal(runCapSettingOf(undefined, "job:s1_rewrite"), null);       // before the read
+  assert.equal(runCapSettingOf({ settings: [s1] }, "job:s1_rewrite"), null);   // an older API
+});
+
+test("the central caps show the per-run cap of such a scope from Platform › Settings, never a second value", () => {
+  assert.match(BUDGETS_TAB, /<RunCapCell scope=\{c\.row\.original\.scope\}/);
+  assert.match(BUDGETS_TAB, /<RunCapEditorNote setting=\{run\.setting\} \/>/);
+  assert.match(BUDGETS_TAB, /\{run\.perRunField && \(/);                    // no per-run field for those scopes
+  assert.match(BUDGETS_TAB, /run\.error/);
+  assert.match(SECTION, /perRunField: kind === "job" && !setting/);
+  assert.match(SECTION, /t\("errRunSetting"\)/);
+  assert.match(SECTION, /t\("runCapNote"\)/);                               // and the section says so
 });
 
 test("connectionAtCap follows the connection's policy and the environment's mode", () => {

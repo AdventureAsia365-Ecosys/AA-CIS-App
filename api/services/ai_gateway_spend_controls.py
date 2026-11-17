@@ -4,7 +4,8 @@ Platform › Settings, area Spend), and the anomaly breaker of every app with it
 
 - ``read(pool)``: each key of ``shared/llm_client/caps_settings.ALL`` with its label, unit, value in force, default and
   where the value comes from (``shared.settings.resolve``), the Platform › Settings link that edits it, and the anomaly
-  breaker's verdict per app (``anomaly_breaker.status``). A key the compiled defaults do not have yet (the code shipped
+  breaker's verdict per app (``anomaly_breaker.status``), and ``run_cap_scopes`` (the central budget scopes whose
+  per-run cap is one of these settings, shown on the Budgets tab's central caps instead of a per-run amount). A key the compiled defaults do not have yet (the code shipped
   before CIS 446) is listed under ``missing`` and the gateway keeps today's behaviour for it.
 - ``reset(pool, app, actor)``: the admin reset of one app's breaker (``app_profile.reset_anomaly``), audited with the
   verdict it cleared.
@@ -64,7 +65,13 @@ async def read(pool: Any) -> dict:
         logger.warning("ai_gateway_spend_controls_anomaly_failed", error=str(e)[:300])
     return {"settings": rows, "missing": missing, "settings_href": settings_href(),
             "connection_cap_mode": caps_settings.connection_cap_mode(), "anomaly": anomaly,
-            "errors": [error] if error else []}
+            "run_cap_scopes": run_cap_scopes(), "errors": [error] if error else []}
+
+
+def run_cap_scopes() -> dict:
+    """The central budget scopes whose per-run cap is a setting (review S283, one source of truth) -> that setting's
+    key: the Budgets tab's central caps show the setting there and its editor takes no per-run cap for them. Pure."""
+    return {scope: caps_settings.RUN_CAP_KEYS[cls] for scope, cls in caps_settings.RUN_CAP_SCOPES.items()}
 
 
 async def reset(pool: Any, app: str, *, actor: str) -> dict:

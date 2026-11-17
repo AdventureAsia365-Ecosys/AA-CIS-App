@@ -44,6 +44,8 @@ export interface AnomalyVerdict {
   threshold_usd: number;
   tripped: boolean;
   refuses: boolean;
+  /** The app's gateway reads the breaker (CIS today); false: a trip only alerts, even in mode enforce. */
+  enforced?: boolean;
   reset_at: string | null;
   reset_by: string | null;
 }
@@ -56,6 +58,8 @@ export interface SpendControlsResp {
   connection_cap_mode: string;
   anomaly: { mode: string; policy: { multiple: number; floor_usd: number; baseline_days: number } | null;
     apps: AnomalyVerdict[] };
+  /** Central budget scopes (job:s1_rewrite, eval, adhoc) whose per-run cap is one of the settings -> its key. */
+  run_cap_scopes?: Record<string, string>;
   errors: string[];
 }
 
@@ -78,12 +82,14 @@ export function changedFromDefault(s: Pick<SpendControlSetting, "value" | "defau
   return JSON.stringify(s.value) !== JSON.stringify(s.default_value);
 }
 
-export type BreakerState = "ok" | "tripped_alert" | "refusing";
+export type BreakerState = "ok" | "tripped_alert" | "not_enforced" | "refusing";
 
-/** An app's breaker: under its line, over it but only alerting, or refusing its calls (mode enforce). Pure. */
-export function breakerState(v: Pick<AnomalyVerdict, "tripped" | "refuses">): BreakerState {
+/** An app's breaker: under its line, over it but only alerting, over it in mode enforce for an app whose gateway does
+ *  not read the breaker yet (TripPlanner, CRM: alert only), or refusing its calls (mode enforce). Pure. */
+export function breakerState(v: Pick<AnomalyVerdict, "tripped" | "refuses" | "mode" | "enforced">): BreakerState {
   if (!v.tripped) return "ok";
-  return v.refuses ? "refusing" : "tripped_alert";
+  if (v.refuses) return "refusing";
+  return v.mode === "enforce" && v.enforced === false ? "not_enforced" : "tripped_alert";
 }
 
 export function breakerTone(state: BreakerState): "success" | "warning" | "danger" {
@@ -107,4 +113,12 @@ export function connectionAtCap(hardStop: boolean, mode: string | null | undefin
 /** Only an administrator who may write (and is not a tighten-only role) resets a breaker, and only a tripped one. */
 export function mayReset(v: Pick<AnomalyVerdict, "tripped">, canReset: boolean, tightenOnly: boolean): boolean {
   return v.tripped && canReset && !tightenOnly;
+}
+
+/** The setting that is the per-run cap of a central budget scope (job:s1_rewrite, eval, adhoc: one source of truth,
+ *  Platform › Settings), from the spend-controls read; null for any other scope or before the read. Pure. */
+export function runCapSettingOf(data: Pick<SpendControlsResp, "settings" | "run_cap_scopes"> | undefined,
+  scope: string | null | undefined): SpendControlSetting | null {
+  const key = scope ? data?.run_cap_scopes?.[scope] : undefined;
+  return (key && data?.settings.find((s) => s.key === key)) || null;
 }

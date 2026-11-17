@@ -7,8 +7,8 @@ Payload: {"trigger": "schedule" | "manual", "mode": "watch" | "digest" (default 
 What it does (shared/llm_client/route_watch.py has the rules): ``watch`` reads the last 60 min (and 24 h for the cost
 shift) of ``shared.llm_call_log`` per stage and raises, through ``shared/ops_checks.raise_alert`` (admin bell + at
 most one e-mail per check and UTC day), the fallback-rate, last-model, primary-back and cost-shift alerts of each
-stage; ``digest`` builds the summary of the last 24 h and raises the ``route_digest`` alert when a stage used a
-fallback model or lost requests. A dry run evaluates and returns the findings, raises nothing.
+stage, and (AA-1126 G2) rings the anomaly breaker bell of every tripped app; ``digest`` builds the summary of the
+last 24 h and raises the ``route_digest`` alert when a stage used a fallback model or lost requests. A dry run evaluates and returns the findings, raises nothing.
 
 Schedule: queued by the api's ops metrics sampler (no cron in the api): one ``watch`` run per ``BUCKET_MINUTES``
 UTC bucket (idempotency key ``llm_route_watch:<bucket start>``) and one ``digest`` run per UTC day from
@@ -26,7 +26,7 @@ import structlog
 
 from shared import ops_checks
 from shared.jobs.registry import JobContext, enqueue, job_kind
-from shared.llm_client import route_watch
+from shared.llm_client import anomaly_breaker, route_watch
 
 logger = structlog.get_logger()
 
@@ -55,13 +55,27 @@ async def run(ctx: JobContext) -> dict:
     report = await route_watch.evaluate(ctx.pool, mode=mode)
     findings = report.pop("findings")
     alerts = {} if dry_run or not findings else await ops_checks.alert_all(ctx.pool, findings)
+    anomaly = await anomaly_watch(ctx.pool) if mode == "watch" and not dry_run else None
     result = {"kind": KIND, "trigger": payload.get("trigger", "manual"), "mode": mode, "dry_run": dry_run,
-              **report, "findings": [finding_view(f) for f in findings], "alerts": alerts}
+              **report, "findings": [finding_view(f) for f in findings], "alerts": alerts,
+              **({"anomaly_tripped": anomaly} if anomaly is not None else {})}
     logger.info("llm_route_watch_done", job_id=ctx.job_id, mode=mode, dry_run=dry_run,
                 findings=[f.check for f in findings], alerts=alerts)
     result = json.loads(json.dumps(result, default=str))
     ctx.set_result(result)
     return result
+
+
+async def anomaly_watch(pool) -> Optional[list[str]]:
+    """AA-1126 G2 (review S283): every app's anomaly breaker evaluated and a tripped one alerted (TripPlanner and the
+    CRM included: the CIS call path sees only CIS). The tripped apps, or None when the read failed (logged; the route
+    alerts above stand)."""
+    try:
+        async with pool.acquire() as conn:
+            return await anomaly_breaker.alert_tripped(conn)
+    except Exception as e:  # noqa: BLE001 — best effort, the watch run's own alerts are the job's result
+        logger.warning("llm_route_watch_anomaly_failed", error=str(e)[:300])
+        return None
 
 
 def bucket_start(now: datetime) -> datetime:

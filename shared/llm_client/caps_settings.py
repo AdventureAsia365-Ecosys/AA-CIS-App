@@ -48,6 +48,10 @@ ANOMALY_MODES = (OFF, ALERT, ENFORCE)
 
 # The run classes with a hard cap per run (G4) and the setting of each one's default cap.
 RUN_CAP_KEYS = {"s1_rewrite": RUN_CAP_S1_REWRITE_USD, "eval": RUN_CAP_EVAL_USD, "adhoc": RUN_CAP_ADHOC_USD}
+# One source of truth per cap (review S283): the per-run cap of these runs is the setting above, never a central
+# budget's per_run_usd. The central budget scope of each run class (AI gateway › Budgets › central caps), whose day /
+# month caps still apply: a central ``job:s1_rewrite`` row takes no per-run cap (refused on write, ignored on read).
+RUN_CAP_SCOPES = {"job:s1_rewrite": "s1_rewrite", "eval": "eval", "adhoc": "adhoc"}
 
 ALL = (CONNECTION_CAP_MODE, ANOMALY_MODE, ANOMALY_MULTIPLE, ANOMALY_FLOOR_USD, ANOMALY_BASELINE_DAYS,
        RUN_CAP_S1_REWRITE_USD, RUN_CAP_EVAL_USD, RUN_CAP_ADHOC_USD)
@@ -99,6 +103,12 @@ def anomaly_policy() -> Optional[AnomalyPolicy]:
     return AnomalyPolicy(multiple=multiple, floor_usd=floor, baseline_days=int(days))
 
 
+def run_class_of_scope(scope: Optional[str]) -> Optional[str]:
+    """The run class whose per-run cap is a setting, for a central budget scope (``job:s1_rewrite`` / ``eval`` /
+    ``adhoc``), else None. Pure."""
+    return RUN_CAP_SCOPES.get(scope or "")
+
+
 def run_cap_usd(run_class: Optional[str]) -> Optional[float]:
     """G4: the default hard cap of one run of ``run_class`` (``s1_rewrite`` / ``eval`` / ``adhoc``), or None."""
     key = RUN_CAP_KEYS.get(run_class or "")
@@ -108,4 +118,5 @@ def run_cap_usd(run_class: Optional[str]) -> Optional[float]:
 __all__ = ["ALERT", "ALL", "ANOMALY_BASELINE_DAYS", "ANOMALY_FLOOR_USD", "ANOMALY_MODE", "ANOMALY_MODES",
            "ANOMALY_MULTIPLE", "AnomalyPolicy", "CAP_MODES", "CONNECTION_CAP_MODE", "ENFORCE", "FAILOVER_CONTINUE",
            "HARD_STOP", "OFF", "RUN_CAP_ADHOC_USD", "RUN_CAP_EVAL_USD", "RUN_CAP_KEYS", "RUN_CAP_S1_REWRITE_USD",
-           "anomaly_mode", "anomaly_policy", "connection_cap_mode", "run_cap_usd"]
+           "RUN_CAP_SCOPES", "anomaly_mode", "anomaly_policy", "connection_cap_mode", "run_cap_usd",
+           "run_class_of_scope"]

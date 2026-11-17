@@ -472,8 +472,9 @@ class Worker:
             log.warning("job_stopped_budget", reason=str(e))
         except Exception as e:
             # AA-1016 (review S262): a tenant approval stop raised `from` inside a pipeline (or wrapped by LangGraph)
-            # still ends the job stopped_budget, so the approval re-queue finds it.
-            stop = approval_stop_in(e)
+            # still ends the job stopped_budget, so the approval re-queue finds it. AA-1126: a run cap / anomaly breaker
+            # refusal wrapped by a pipeline likewise (run_cap.spend_stop_in).
+            stop = approval_stop_in(e) or run_cap.spend_stop_in(e)
             if stop is not None:
                 await queue.stop_budget(self.pool, job.id, self.worker_id, str(stop), ctx.result,
                                         round(ctx.cost_usd, 6))

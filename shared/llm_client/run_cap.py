@@ -17,7 +17,8 @@ worker binds it, ``bind_payload``; new ``s1_rewrite`` jobs carry the setting's v
 ``stamp``), else the class's setting (``caps_settings.run_cap_usd``: ``cis.spend.run_cap_*_usd`` on Platform ›
 Settings, area Spend). When the run's ledger spend has reached its cap the gateway refuses the next call before any
 attempt: ``RunCapReached`` (a ``BudgetExceeded``: the job ends ``stopped_budget``, nothing is retried; the gateway
-writes the 0 USD refused / budget ledger row) and one admin bell + ops e-mail per class and 24 h (scope
+writes the 0 USD refused / budget ledger row and remembers the stop for the job, ``note_stop``, so a pipeline that
+turns a failed call into a failed draft still ends its job ``stopped_budget``: the S1 rewrite job reads ``job_stop``) and one admin bell + ops e-mail per class and 24 h (scope
 ``llm:run:<class>``).
 
 Spend is read from ``shared.llm_call_log`` (one indexed query: ``job_id``, or ``stage`` + ``created_at``), cached
@@ -285,12 +286,61 @@ def refusal_of(stage: Optional[str]) -> Optional[RunCapReached]:
     return None
 
 
+# ── a spend stop inside a job (review S283: the S1 rewrite job must end stopped_budget, not failed) ──────────────────
+
+def spend_stop_in(exc: Optional[BaseException]) -> Optional[cost_guard.BudgetExceeded]:
+    """The ``RunCapReached`` or ``AnomalyBreakerTripped`` in ``exc`` or its explicit cause chain (``raise ... from``),
+    else None. A pipeline that turns the gateway's failures into a failed result re-raises these two (no retry can pass
+    them: the run spent its cap, the app's breaker is tripped); the worker reads the chain too. Pure."""
+    from .anomaly_breaker import AnomalyBreakerTripped
+    from .errors import _chain
+
+    if exc is None:
+        return None
+    for link in _chain(exc, implicit=False):
+        if isinstance(link, (RunCapReached, AnomalyBreakerTripped)):
+            return link
+    return None
+
+
+_job_stops: dict[str, cost_guard.BudgetExceeded] = {}
+
+
+def note_stop(exc: BaseException) -> None:
+    """The gateway refused a call of the bound job with a spend stop (``spend_stop_in``): remember it for the job, so
+    a handler whose pipeline swallowed the refusal (the S1 graph turns a failed call into a failed draft) still ends
+    the job ``stopped_budget`` (``job_stop``). No job bound, or another refusal: nothing. Never raises."""
+    try:
+        stop = spend_stop_in(exc)
+        if stop is None:
+            return
+        from .call_log import current_job_id
+        job_id = current_job_id()
+        if not job_id:
+            return
+        if len(_job_stops) > 1000:
+            _job_stops.clear()
+        _job_stops[str(job_id)] = stop
+    except Exception as e:  # noqa: BLE001 — the refusal stands whatever this note does
+        logger.warning("llm_run_cap_note_stop_failed", error=str(e)[:200])
+
+
+def job_stop(job_id: Optional[str], *, pop: bool = False) -> Optional[cost_guard.BudgetExceeded]:
+    """The spend stop the gateway raised for ``job_id`` in this process (``note_stop``), else None; ``pop`` forgets it
+    (the job handler, once it has ended the job with it)."""
+    if not job_id:
+        return None
+    key = str(job_id)
+    return _job_stops.pop(key, None) if pop else _job_stops.get(key)
+
+
 def invalidate() -> None:
     with _lock:
         _spend.clear()
         _failed_at.clear()
         _first_seen.clear()
+        _job_stops.clear()
 
 
-__all__ = ["RunCapReached", "Run", "bind_payload", "cap_for", "cap_of_payload", "check", "invalidate", "refusal_of",
-           "run_of", "spend_of", "stamp"]
+__all__ = ["RunCapReached", "Run", "bind_payload", "cap_for", "cap_of_payload", "check", "invalidate", "job_stop",
+           "note_stop", "refusal_of", "run_of", "spend_of", "spend_stop_in", "stamp"]

@@ -1536,10 +1536,11 @@ class LLMClient:
         self._refuse(request, first_key, app_profile.refusal(request.stage))
 
     def _refuse(self, request: LLMRequest, first_key: str, exc: Optional[BaseException]) -> None:
-        """A gate's refusal before any attempt (None = none): its 0 USD 'refused' ledger row, then raised as is."""
+        """A gate's refusal before any attempt (None = none): its 0 USD 'refused' row, kept for the job, then raised."""
         if exc is not None:
             pin = split_pin(first_key)
             log_gateway_failed_attempt(request, exc, model=pin[0] if pin else first_key, latency_ms=0)
+            run_cap.note_stop(exc)
             raise exc
 
     def _stage_switch_gate(self, request: LLMRequest, stage_cfg, first_key: str) -> None:

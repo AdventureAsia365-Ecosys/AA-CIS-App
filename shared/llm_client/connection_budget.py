@@ -23,7 +23,8 @@ module only caches them for the sync gateway:
 AA-1126 G1 (S283): what a reached cap does is the environment's setting ``cis.llm.connection_cap_mode``
 (``caps_settings``). ``hard_stop`` (the default, Dev) is the rule above. ``failover_continue`` (prod) keeps leaving an
 over-cap connection out while another rung can answer; when the request still fails and a connection cap took part
-(``budget_keys``), ``run_with_cap_mode`` raises one alert (bell + ops e-mail + log, once per 24 h) and runs the request
+(``budget_keys``, or a connection the request left out for its cap while the rungs it kept failed: ``note_skip``),
+``run_with_cap_mode`` raises one alert (bell + ops e-mail + log, once per 24 h) and runs the request
 again with the caps lifted for it (``caps_lifted``: ``stops`` answers None), so the call goes to the first healthy rung
 and a customer is never refused because of a connection cap.
 """
@@ -135,6 +136,7 @@ def check(connection_key: str, what: str) -> None:
     over = stops(conn)
     if over is not None:
         logger.info("llm_direct_call_skip", model=what, connection=connection_key, reason="monthly budget reached")
+        note_skip(connection_key)
         raise budget_error(what, [(connection_key, over)])
 
 
@@ -169,6 +171,10 @@ def budget_error(model_key: str, skips: list) -> ConnectionBudgetExceeded:
 # ── AA-1126 G1: failover_continue (the connection cap never refuses the call) ────────────────────────────────────────
 
 _LIFTED: ContextVar[bool] = ContextVar("llm_connection_caps_lifted", default=False)
+# The connections this request left out for their budget (``note_skip``), bound by ``run_with_cap_mode``. A plan that
+# keeps other deployments raises only their provider errors when they fail, so the chain alone would not show that a
+# healthy over-cap rung was left out (review S283).
+_SKIPPED: ContextVar[Optional[list]] = ContextVar("llm_connection_cap_skips", default=None)
 CONTINUE_SCOPE = "connection_continue"
 T = TypeVar("T")
 
@@ -181,6 +187,14 @@ def caps_lifted() -> Iterator[None]:
         yield
     finally:
         _LIFTED.reset(token)
+
+
+def note_skip(connection_key: str) -> None:
+    """Record that this request left ``connection_key`` out for its monthly budget (a deployment plan, the vendor
+    deployment, a direct path's ``check``). Outside ``run_with_cap_mode`` nothing is recorded. Never raises."""
+    skipped = _SKIPPED.get()
+    if skipped is not None:
+        skipped.append(connection_key)
 
 
 def budget_keys(exc: BaseException) -> tuple:
@@ -199,12 +213,18 @@ def run_with_cap_mode(call: Callable[[], T], stage: Optional[str]) -> T:
     """Run ``call`` (one gateway request: its whole route). In ``failover_continue`` mode a failure in which a
     connection cap took part is alerted and ``call`` runs once more with the caps lifted; otherwise the failure is
     raised as it is (``hard_stop``: today's budget stop)."""
+    skipped: list = []
+    token = _SKIPPED.set(skipped)
     try:
         return call()
     except Exception as e:
-        keys = budget_keys(e)
+        # The caps in the failure chain (a model / route left empty), else any connection the request left out for
+        # its cap while the rungs it kept failed (a partial plan: only their provider errors are raised).
+        keys = budget_keys(e) or tuple(dict.fromkeys(skipped))
         if not keys or _LIFTED.get() or caps_settings.connection_cap_mode() != caps_settings.FAILOVER_CONTINUE:
             raise
+    finally:
+        _SKIPPED.reset(token)
     logger.warning("llm_connection_caps_lifted", stage=stage, connections=list(keys),
                    hint="every rung was over its connection cap or failed: the call goes on (failover_continue)")
     alert_continue(keys, stage)
