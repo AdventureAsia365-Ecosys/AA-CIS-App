@@ -65,9 +65,14 @@ function useSection<T>(path: string, key: string) {
   return useQuery({ queryKey: ["platform-delivery", key], queryFn: () => apiGet<T>(path), staleTime: 60_000 });
 }
 
-function TabState({ error, loading, t, onRetry }: { error: Error | null; loading: boolean; t: AT; onRetry: () => void }) {
-  if (error) return <ErrorState message={`${t("loadError")}: ${error.message}`} onRetry={onRetry} />;
-  if (loading) return <KpiTile label={t("entries")} value={undefined} />;
+/** Error, loading or "nothing published yet" of a tab's section; null once there are apps to show. */
+function TabState({ q, empty, t }: {
+  q: { error: unknown; isLoading: boolean; data?: { apps: unknown[] }; refetch: () => unknown }; empty: string; t: AT;
+}) {
+  const error = q.error as Error | null;
+  if (error) return <ErrorState message={`${t("loadError")}: ${error.message}`} onRetry={() => void q.refetch()} />;
+  if (q.isLoading) return <KpiTile label={t("entries")} value={undefined} />;
+  if (q.data && !q.data.apps.length) return <EmptyState title={empty} />;
   return null;
 }
 
@@ -242,8 +247,7 @@ export function MergeQueueTab() {
   return (
     <div style={grid} data-testid="delivery-queue-tab">
       <span style={small}>{t("queueIntro")}</span>
-      <TabState error={q.error as Error | null} loading={q.isLoading} t={t} onRetry={() => void q.refetch()} />
-      {q.data && !apps.length && <EmptyState title={t("noQueueApps")} />}
+      <TabState q={q} empty={t("noQueueApps")} t={t} />
       {apps.length > 0 && <RepoPicker apps={apps} active={app?.id ?? "all"} t={t}
         onPick={(id) => set("repo", id === "all" ? null : id)} />}
       {app ? <QueueRepo app={app} t={t} /> : apps.length > 0 && (
@@ -456,18 +460,35 @@ function WeeklyChart({ app, t }: { app: GitApp; t: AT }) {
   );
 }
 
+function GitTiles({ app, win, days, t }: { app: GitApp; win: GitWindow | undefined; days: number; t: AT }) {
+  return (
+    <div style={tiles}>
+      <KpiTile size="sm" label={t("commits")} value={fmtNum(win?.commits)} hint={t("commitsHint", days)} />
+      <KpiTile size="sm" label={t("lines")} value={fmtLines(win?.additions, win?.deletions)}
+        hint={t("n", win?.files_read ?? 0)} />
+      <KpiTile size="sm" label={t("merges")} value={fmtNum(win?.merges)} />
+      <KpiTile size="sm" label={t("coverage")} value={fmtRatio(app.git.files_coverage)} info={t("tipCoverage")} />
+    </div>
+  );
+}
+
+function PrefixSection({ win, t }: { win: GitWindow | undefined; t: AT }) {
+  const prefixes = Object.entries(win?.merges_by_prefix ?? {});
+  return (
+    <Section title={t("secPrefixes")} testId="git-prefixes">
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        {prefixes.map(([p, n]) => <Badge key={p} tone="neutral" dot={false}>{p}: {n}</Badge>)}
+        {!prefixes.length && <span style={small}>{t("noCommits")}</span>}
+      </div>
+    </Section>
+  );
+}
+
 function GitRepo({ app, period, t }: { app: GitApp; period: string; t: AT }) {
   const win = app.git.windows?.[period];
-  const days = Number(period.slice(1)) || app.git.days;
   return (
     <div style={grid} data-testid={`git-app-${app.id}`}>
-      <div style={tiles}>
-        <KpiTile size="sm" label={t("commits")} value={fmtNum(win?.commits)} hint={t("commitsHint", days)} />
-        <KpiTile size="sm" label={t("lines")} value={fmtLines(win?.additions, win?.deletions)}
-          hint={t("n", win?.files_read ?? 0)} />
-        <KpiTile size="sm" label={t("merges")} value={fmtNum(win?.merges)} />
-        <KpiTile size="sm" label={t("coverage")} value={fmtRatio(app.git.files_coverage)} info={t("tipCoverage")} />
-      </div>
+      <GitTiles app={app} win={win} days={Number(period.slice(1)) || app.git.days} t={t} />
       <Section title={t("secHeatmap")} description={t("secHeatmapDesc")} testId="git-heatmap">
         <div style={{ display: "grid", gap: 8 }}><Heatmap app={app} t={t} cell={13} /><HeatLegend t={t} />
           <WeeklyChart app={app} t={t} /></div>
@@ -475,13 +496,7 @@ function GitRepo({ app, period, t }: { app: GitApp; period: string; t: AT }) {
       <Section title={t("secKinds")} description={t("secKindsDesc")} testId="git-kinds">
         <KindBar win={win} t={t} />
       </Section>
-      <Section title={t("secPrefixes")} testId="git-prefixes">
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {Object.entries(win?.merges_by_prefix ?? {}).map(([p, n]) => <Badge key={p} tone="neutral" dot={false}>
-            {p}: {n}</Badge>)}
-          {!Object.keys(win?.merges_by_prefix ?? {}).length && <span style={small}>{t("noCommits")}</span>}
-        </div>
-      </Section>
+      <PrefixSection win={win} t={t} />
       <HotspotSection app={app} win={win} t={t} />
       <FilesSection app={app} win={win} t={t} />
       <CommitGraph app={app} t={t} />
@@ -518,31 +533,42 @@ function GitOverview({ apps, period, t, open }: { apps: GitApp[]; period: string
   );
 }
 
+function GitPickers({ apps, active, keys, period, t }: {
+  apps: GitApp[]; active: string; keys: string[]; period: string; t: AT;
+}) {
+  const { set, setMany } = useUrlFilters();
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+      <RepoPicker apps={apps} active={active} t={t}
+        onPick={(id) => setMany({ repo: id === "all" ? null : id, dir: null })} />
+      {keys.length > 1 && <SegmentedControl<string> label={t("windowPicker")} size="sm" value={period}
+        testId="git-period" onChange={(v) => set("period", v)}
+        options={keys.map((k) => ({ value: k, label: t("lastDays", Number(k.slice(1))) }))} />}
+    </div>
+  );
+}
+
+/** The period in the URL when the summary has it, else the shortest window. */
+function pickPeriod(keys: string[], asked: string): string {
+  return keys.includes(asked) ? asked : keys[0] ?? "d30";
+}
+
 export function GitMapTab() {
   const t = useActivityT();
-  const { get, set, setMany } = useUrlFilters();
+  const { get, setMany } = useUrlFilters();
   const q = useSection<GitResp>(GIT_PATH, "git");
   const apps = q.data?.apps ?? [];
   const app = apps.find((a) => a.id === get("repo"));
   const keys = windowKeys(apps[0]?.git);
-  const period = keys.includes(get("period")) ? get("period") : keys[0] ?? "d30";
+  const period = pickPeriod(keys, get("period"));
+  const has = apps.length > 0;
   return (
     <div style={grid} data-testid="delivery-git-tab">
       <span style={small}>{t("gitIntro")}</span>
-      <TabState error={q.error as Error | null} loading={q.isLoading} t={t} onRetry={() => void q.refetch()} />
-      {q.data && !apps.length && <EmptyState title={t("noGitApps")} />}
-      {apps.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
-          <RepoPicker apps={apps} active={app?.id ?? "all"} t={t}
-            onPick={(id) => setMany({ repo: id === "all" ? null : id, dir: null })} />
-          {keys.length > 1 && <SegmentedControl<string> label={t("windowPicker")} size="sm" value={period}
-            testId="git-period" onChange={(v) => set("period", v)}
-            options={keys.map((k) => ({ value: k, label: t("lastDays", Number(k.slice(1))) }))} />}
-        </div>
-      )}
+      <TabState q={q} empty={t("noGitApps")} t={t} />
+      {has && <GitPickers apps={apps} active={app?.id ?? "all"} keys={keys} period={period} t={t} />}
       {app ? <GitRepo app={app} period={period} t={t} />
-        : apps.length > 0 && <GitOverview apps={apps} period={period} t={t}
-          open={(id) => setMany({ repo: id, dir: null })} />}
+        : has && <GitOverview apps={apps} period={period} t={t} open={(id) => setMany({ repo: id, dir: null })} />}
     </div>
   );
 }
