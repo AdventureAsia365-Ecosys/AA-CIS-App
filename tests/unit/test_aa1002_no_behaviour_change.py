@@ -80,7 +80,8 @@ CALL_PATH = ("client.py", "embed.py", "decide.py", "judge.py", "shadow.py", "bed
              "cassette.py",  # AA-900 S271 W0: record-only raw-reply store (best-effort background write, never raises)
              "attribution.py",  # AA-1058: the cost attribution rules (pure data + a lookup, no I/O)
              "free_text_scrub.py",  # AA-1113: the free-text PII scrub (pure; other stages get the same request object)
-             "pii_patterns.py")  # AA-1113: the scrub's regex detectors, ported from the CRM (pure, no I/O)
+             "pii_patterns.py",  # AA-1113: the scrub's regex detectors, ported from the CRM (pure, no I/O)
+             "caps_settings.py")  # AA-1126: the spend-control settings (shared.settings snapshot; unseeded = today)
 
 
 def _imported_modules(path: Path) -> set[str]:
