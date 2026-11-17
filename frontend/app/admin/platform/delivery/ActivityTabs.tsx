@@ -297,7 +297,7 @@ function HeatLegend({ t }: { t: AT }) {
 
 const KIND_VAR: Record<CommitKind, string> = {
   agent: "--aa-accent", ci_bot: "--aa-info", release_please: "--aa-purple", dependabot: "--aa-green",
-  bot: "--aa-muted", human: "--aa-kit-amber",
+  bot: "--aa-muted", human: "--aa-slate",
 };
 
 function useKindColors(): Record<CommitKind, string> & { axis: string } {
