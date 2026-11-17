@@ -15,13 +15,20 @@ run by the hourly ``tenant_account_tick`` job (``services/jobs/tenant_account_ti
    passed ``expires_at`` (an override that ended) is re-synced, so the table and the feed follow the live view.
 3. **Pilot end** (root ADR 0019 d16): a pilot tenant past ``pilot_ends_at`` is reported (count + log line
    ``tenant_pilot_ended``), never changed: ending a real agency's service is the tech lead's call, with notice.
+4. **AI allowance holds** (AA-1126 L1): the Content studio jobs a tenant's AI budget held (``stopped_budget``, error
+   ``tenant_ai_budget_approval``) are re-queued once their tenant no longer needs approval (a new month, an upgrade, a
+   raised budget or the hard stop switched off): ``shared.jobs.queue.retry_by_reason`` keeps every job of a tenant
+   that still needs approval held. Holds since the start of the previous UTC month are looked at (a monthly allowance:
+   an older hold has already had its reset). The agency was told the work continues on its own
+   (``tenant_budget.ON_HOLD_MESSAGE``). Best effort: a failure is logged and the tick goes on.
 
 Each tenant's trial end is its own transaction (one bad row never holds the others); rows another run holds are
 skipped (``SKIP LOCKED``). ``aa.actor`` = ``job:tenant_account_tick:<job id>`` on every write.
 """
 from __future__ import annotations
 
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Optional
 
 import structlog
 
@@ -113,9 +120,34 @@ async def ended_pilots(pool) -> list[dict]:
     return [{"tenant_id": r["tenant_id"], "pilot_ends_at": r["pilot_ends_at"].isoformat()} for r in rows]
 
 
+def allowance_holds_since(now: Optional[datetime] = None) -> datetime:
+    """The first instant of the previous UTC month: the oldest AI allowance hold the tick looks at."""
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    first = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return (first.replace(year=first.year - 1, month=12) if first.month == 1 else first.replace(month=first.month - 1))
+
+
+async def resume_allowance_holds(pool, now: Optional[datetime] = None) -> int:
+    """AA-1126 L1: re-queue the jobs a tenant's AI budget held once the tenant no longer needs approval; the number
+    re-queued. Never raises (logged)."""
+    from shared.jobs import queue  # lazy: the job queue imports the registry
+
+    try:
+        out = await queue.retry_by_reason(pool, queue.RETRY_REASON_TENANT_BUDGET,
+                                          since=allowance_holds_since(now), dry_run=False)
+    except Exception as exc:  # noqa: BLE001 — best effort, the tick's other steps go on
+        logger.warning("tenant_ai_allowance_resume_failed", error=str(exc)[:300])
+        return 0
+    if out.get("requeued"):
+        logger.info("tenant_ai_allowance_holds_resumed", requeued=out["requeued"], held=out.get("held_count"))
+    return int(out.get("requeued") or 0)
+
+
 async def tick(pool, *, job_id: str) -> dict[str, Any]:
     actor = actor_for(job_id)
     trials = await end_trials(pool, actor=actor)
     synced = await sync_expired(pool, actor=actor)
     pilots = await ended_pilots(pool)
-    return {"trials": trials, "expired_entitlements_synced": synced, "pilots_ended": pilots}
+    resumed = await resume_allowance_holds(pool)
+    return {"trials": trials, "expired_entitlements_synced": synced, "pilots_ended": pilots,
+            "allowance_holds_resumed": resumed}

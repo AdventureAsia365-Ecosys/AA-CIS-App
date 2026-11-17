@@ -54,6 +54,7 @@ from api.routers.v1_tours import get_tenant
 from services.acp_angle_gate import service
 from services.acp_angle_gate.goals import GOALS
 from api.routers._served import refuse_http
+from api.core.ai_allowance import refuse_if_allowance_used
 from services.acp_shared import atom_replaced
 from shared.tour_liveness import TourNotServedError
 
@@ -86,6 +87,7 @@ async def set_goal(request_id: UUID, body: SetGoalBody, request: Request, tenant
     leaves 'pending_goal' (angles ready) or `generation_failed` is true (choose again)."""
     tenant_id = UUID(tenant["sub"])
     pool = request.app.state.pool
+    await refuse_if_allowance_used(pool, str(tenant_id), action="angles")   # AA-1126 L1: 402 ai_quota_exhausted
     try:
         return await service.start_goal_generation(tenant_id, request_id, body.goal, pool)
     except TourNotServedError as exc:          # AA-986 L3: 409 tour_discontinued / tour_paused

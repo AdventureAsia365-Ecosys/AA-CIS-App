@@ -50,7 +50,12 @@ _TITLES = {
     "tour.reinstated": "Tour served again",
     "tour.pages_to_put_back": "Pages to put back online",   # AA-1039 (option A): the restore fan-out writes it
     "tour.pages_to_review": "Pages about a tour no longer offered",   # AA-1039 (S276): the retire fan-out writes it
+    # AA-1126 L1 / L2: the plan's AI allowance of the month is used up (shared/cost_guard.notify_tenant_allowance_used)
+    "ai.allowance_used": "AI writing allowance used up",
+    "tripplanner.ai_allowance_used": "Trip planner AI allowance used up",
 }
+# AA-1126: rows whose bell entry links to the plan page (the studio's Add-ons) so the agency can upgrade.
+_UPGRADE_ROWS = ("ai.allowance_used", "tripplanner.ai_allowance_used")
 # Rows that carry a page list with a one-click action per page (put back online / move to draft).
 _PAGE_ROWS = ("tour.pages_to_put_back", "tour.pages_to_review")
 
@@ -94,7 +99,25 @@ def _message(event_type: str, p: dict) -> str:
         if dated:
             msg += " Pages with a date go to draft on that date, as set in your Content studio Settings."
         return msg
+    if event_type == "ai.allowance_used":
+        return ("Your plan's AI writing allowance for this month is used up. New rewrites and posts wait until it "
+                f"resets on {_day(p.get('resets_at'))}; what is already queued is written then. Upgrade your plan to "
+                "keep writing now.")
+    if event_type == "tripplanner.ai_allowance_used":
+        return ("Your plan's AI allowance for the trip planner is used up for this month. New visitors still get "
+                f"the planner, without AI-written trip days, until it resets on {_day(p.get('resets_at'))}. Upgrade "
+                "your plan to keep the AI on for every visitor.")
     return p.get("message") or ""
+
+
+def _day(value) -> str:
+    """'1 December 2026' from an ISO date, or 'the 1st of next month' when the payload has none."""
+    from datetime import date
+    try:
+        d = date.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return "the 1st of next month"
+    return f"{d.day} {d.strftime('%B')} {d.year}"
 
 
 def _pages(p: dict, review: bool = False) -> list[dict]:
@@ -120,6 +143,8 @@ def _item(r) -> dict:
         "reason": p.get("reason"),
         "live_posts": int(p.get("live_posts") or 0),
         "pages": _pages(p, review=r["event_type"] == "tour.pages_to_review") if r["event_type"] in _PAGE_ROWS else [],
+        "upgrade": r["event_type"] in _UPGRADE_ROWS,      # AA-1126: the bell links to the plan page
+        "resets_at": p.get("resets_at") if r["event_type"] in _UPGRADE_ROWS else None,
         "is_read": bool(r["is_read"]),
         "created_at": r["created_at"].isoformat() if r["created_at"] else None,
     }

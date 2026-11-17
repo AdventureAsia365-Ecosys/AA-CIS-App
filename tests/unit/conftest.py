@@ -135,6 +135,7 @@ def _llm_breaker_off(request, monkeypatch):
     monkeypatch.setattr(central_budget, "loader_rows", lambda: {})
     monkeypatch.setattr(tenant_budget, "loader_tenants", lambda: frozenset())
     monkeypatch.setattr(tenant_budget, "loader_state", lambda tenant_id: None)
+    monkeypatch.setattr(tenant_budget, "alerter_unreadable", lambda tenant_id: None)   # AA-1126 L4: no DB bell
     monkeypatch.setattr(prompt_registry, "loader", lambda: set())
     # AA-1025 H2: no TPM limit, no prod guard in unit tests (tests that need them set capacity's loaders).
     from shared.llm_client import capacity
