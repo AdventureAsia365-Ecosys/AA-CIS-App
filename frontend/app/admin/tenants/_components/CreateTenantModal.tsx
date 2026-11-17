@@ -29,19 +29,35 @@ type Tr = Translator<typeof TEN.en>;
 
 const autoSlug = (n: string) => n.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
-/** The note under the tenant's name: the CRM agency outcome of a crm add-on follows the usual note. */
+/** The CRM agency outcome of a crm add-on, as one sentence ("" without a crm add-on). */
+function crmNoteText(job: ProvisionJob, t: Tr): string {
+  const crm = crmOnboardingNote(job.crm_onboarding);
+  if (crm === "done") return t("crmReadyNote");
+  if (crm === "noInvite") return t("crmNoInviteNote");
+  if (crm === "attention") return t("crmAttentionNote", job.crm_onboarding?.error?.code ?? job.crm_onboarding?.status ?? "");
+  return "";
+}
+
+/** The result dialog: the CRM agency outcome of a crm add-on follows the usual note. */
 function createdNotice(job: ProvisionJob, name: string, t: Tr): TenantNotice {
   const tenantId = provisionedTenantId(job) ?? "";
   if (job.status !== "succeeded") {   // still queued / running after the wait: the worker finishes it
     return { tenant_id: tenantId, tenant_name: name, title: t("tenantSettingUp"), note: t("settingUpNote") };
   }
-  const crm = crmOnboardingNote(job.crm_onboarding);
-  const crmNote = crm === "done" ? t("crmReadyNote") : crm === "noInvite" ? t("crmNoInviteNote")
-    : crm === "attention" ? t("crmAttentionNote", job.crm_onboarding?.error?.code ?? job.crm_onboarding?.status ?? "")
-      : "";
+  const crmNote = crmNoteText(job, t);
   return { tenant_id: tenantId, tenant_name: name, title: t("tenantCreated"),
            note: crmNote ? `${t("createdNote")} ${crmNote}` : t("createdNote") };
 }
+
+/** The form's first problem as a message, or "" when it can be sent. */
+function formProblem(name: string, slug: string, postsPerWeek: string, ownerBad: boolean, t: Tr): string {
+  if (!name.trim() || !slug.trim()) return t("nameSlugRequired");
+  const ppw = Number(postsPerWeek);
+  if (!Number.isInteger(ppw) || ppw < 1 || ppw > 14) return t("ppwRange");
+  return ownerBad ? t("ownerEmailInvalid") : "";
+}
+
+const SAGA_WAITING = new Set(["succeeded", "queued", "running"]);
 
 function AddOnSelect({ label, value, choices, disabled, onChange, testId }: {
   label: string; value: string; choices: { plan_key: string; name: string }[]; disabled: boolean;
@@ -80,19 +96,16 @@ export function CreateTenantModal({ onClose, onCreated }: {
   const owner = crmOwnerField(crmPlan ? "crm" : "", true, ownerEmail);
 
   async function submit() {
-    if (!name.trim() || !slug.trim()) { setError(t("nameSlugRequired")); return; }
-    const ppw = Number(postsPerWeek);
-    if (!Number.isInteger(ppw) || ppw < 1 || ppw > 14) { setError(t("ppwRange")); return; }
-    if (owner.bad) { setError(t("ownerEmailInvalid")); return; }
+    const problem = formProblem(name, slug, postsPerWeek, owner.bad, t);
+    if (problem) { setError(problem); return; }
     setLoading(true); setError("");
     try {
       const job = await runSaga("/api/admin/tenants/provision", newTenantBody(newRequestKey(), {
-        name, slug, plan_tier: plan, posts_per_week: ppw, crmPlan, tripplannerPlan: tpPlan, ownerEmail: owner.owner,
+        name, slug, plan_tier: plan, posts_per_week: Number(postsPerWeek), crmPlan, tripplannerPlan: tpPlan,
+        ownerEmail: owner.owner,
       }));
-      if (job.status !== "succeeded" && job.status !== "queued" && job.status !== "running") {
-        setError(t("setupFailed", job.error ?? job.status)); return;
-      }
-      onCreated(createdNotice(job, name.trim(), t));
+      if (SAGA_WAITING.has(job.status)) onCreated(createdNotice(job, name.trim(), t));
+      else setError(t("setupFailed", job.error ?? job.status));
     } catch (e) {
       setError(e instanceof Error && e.message ? e.message : t("createFailed"));
     } finally { setLoading(false); }
