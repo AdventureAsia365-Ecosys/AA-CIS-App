@@ -227,6 +227,8 @@ PAGE_WRITES: dict[str, tuple[str, str]] = {
     "route_test": ("POST", "/admin/ai-gateway/route-trace/test"),
     # AA-1076 Batches tab: send a wave through the gateway batch lane, cancel a batch (ai.admin)
     "batches": ("POST", "/admin/ai-gateway/batches"),
+    # AA-1126 G2 Budgets › Spend controls: reset an app's anomaly breaker (ai.admin, not a tighten-only role)
+    "anomaly_reset": ("POST", "/admin/ai-gateway/anomaly-breaker/{app}/reset"),
 }
 
 

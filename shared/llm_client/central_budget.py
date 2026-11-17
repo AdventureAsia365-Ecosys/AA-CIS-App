@@ -8,6 +8,8 @@ together (the spend of ``shared.llm_call_log``), whatever connection answers. Sc
 - ``stage:<stage>`` the spend of one stage (the request's ``stage``).
 - ``job:<kind>``   the spend of the jobs of one kind (rows whose ``job_id`` is a job of that kind); its ``per_run_usd``
                    is the spend of the running job (``call_log.current_job_id``, every attempt and retry of it).
+                   Not for ``job:s1_rewrite``: its per-run cap is a setting (AA-1126, ``run_cap.py``), so a
+                   per_run_usd on that row is ignored here and refused by the Budgets API.
 - ``eval``         the eval runs: a call under an eval label (``call_log.bind_eval_stage``) or of the stage
                    ``writing_memory_eval``; spend = the rows of ``EVAL_STAGES`` (the labels eval rows are written
                    under).
@@ -45,7 +47,7 @@ import structlog
 
 from shared import cost_guard
 
-from . import connections
+from . import caps_settings, connections
 
 logger = structlog.get_logger()
 
@@ -131,7 +133,10 @@ def row_of(raw: dict) -> Optional[CentralBudget]:
         v = raw.get(key)
         return None if v is None else float(v)
 
-    return CentralBudget(scope=scope, per_run_usd=num("per_run_usd"), per_day_usd=num("per_day_usd"),
+    # AA-1126 (review S283): the per-run cap of an S1 rewrite job is the setting cis.spend.run_cap_s1_rewrite_usd
+    # (run_cap.py), one source of truth: a per_run_usd left on job:s1_rewrite from before is not enforced twice.
+    per_run = None if caps_settings.run_class_of_scope(scope) else num("per_run_usd")
+    return CentralBudget(scope=scope, per_run_usd=per_run, per_day_usd=num("per_day_usd"),
                          per_month_usd=num("per_month_usd"), hard_stop=bool(raw.get("hard_stop", False)),
                          alert_pct=int(raw.get("alert_pct") or 80))
 

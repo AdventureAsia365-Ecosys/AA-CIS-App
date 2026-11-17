@@ -36,12 +36,22 @@ import structlog
 
 from services.content_generation.s1_checkpoint import BULKY_KEYS, S1Checkpoint, clear_fields
 from shared.jobs.registry import JobContext, NonRetryable, job_kind
-from shared.llm_client import batch_lane
+from shared.llm_client import batch_lane, run_cap
 from shared.llm_client.errors import is_llm_access_denied
 
 logger = structlog.get_logger()
 
 KIND = "s1_rewrite"
+
+
+def _typed_stop(e: BaseException) -> bool:
+    """The failures ``_run_tour_safe`` raises typed: an account-level LLM refusal (AA-900) or a spend stop (AA-1126)."""
+    return is_llm_access_denied(e) or run_cap.spend_stop_in(e) is not None
+
+
+def _raise_if(exc: Optional[BaseException]) -> None:
+    if exc is not None:
+        raise exc
 
 
 @job_kind(KIND, concurrency=6, max_attempts=1, expected_seconds=600)
@@ -104,14 +114,20 @@ async def run(ctx: JobContext) -> dict:
             else:
                 result = await _run_tour_safe(req, job_id=ctx.job_id, stage_cb=_stage_cb, checkpoint=checkpoint)
         except Exception as e:
-            # AA-900: _run_tour_safe raises only an account-level LLM refusal; it still takes the failed-job path below
+            # AA-900: _run_tour_safe raises an account-level LLM refusal; it still takes the failed-job path below
             # (checkpoint cleared), then reaches the worker typed, so the job fails at once with llm_access_denied.
-            if not is_llm_access_denied(e):
+            # AA-1126 (review S283): and a spend stop (the run cap of this job, the app's anomaly breaker), which
+            # reaches the worker typed too, so the job ends stopped_budget.
+            if not _typed_stop(e):
                 raise
             denied = e
+    # AA-1126: a spend stop the graph swallowed (a refused call turned into a failed draft) still stops the job.
+    stopped = run_cap.job_stop(ctx.job_id, pop=True)     # popped always: the note never outlives its job
+    denied = denied or stopped
 
-    # _run_tour_safe swallows any other final failure and returns None after 3 internal attempts.
-    if result is None:
+    # _run_tour_safe swallows any other final failure and returns None after 3 internal attempts. A spend stop with no
+    # stored version takes the same path (nothing to resume).
+    if result is None or (denied is not None and not result.get("version_id")):
         # AA-993 G2 review: a failed job leaves no resume state. `queue.retry` (Jobs page Retry) keeps `progress`, so a
         # stale checkpoint would replay the same failing result; clearing it also drops the bulky keys from the
         # failed row. A release never reaches this line (the handler is cancelled), so deploy resumes keep theirs.
@@ -127,6 +143,9 @@ async def run(ctx: JobContext) -> dict:
     # Persist the written version id immediately so a crash before `complete()` is idempotent; the bulky checkpoint
     # payloads (writer state, rewrite result) are dropped from progress in the same write.
     await ctx.progress(phase="done", version_id=version_id, **{k: None for k in BULKY_KEYS})
+    # AA-1126: the run reached its cap (or the breaker tripped) after the version was stored: the job still ends
+    # stopped_budget (a retry returns the stored version: phase done), so the wave counts a budget stop.
+    _raise_if(denied)
     return {
         "version_id":   version_id,
         "status":       result.get("status"),

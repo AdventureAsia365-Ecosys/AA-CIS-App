@@ -121,6 +121,7 @@ def vendor_deployment_for(model: CatalogModel, allowed_scopes: Optional[tuple] =
         over = connection_budget.stops(found.connection) if found is not None else None
         if over is not None:
             _skip_log(model.model_key, found.connection.connection_key, "monthly budget reached")
+            connection_budget.note_skip(found.connection.connection_key)    # AA-1126 G1: seen by run_with_cap_mode
             if budget_skips is not None:
                 budget_skips.append((found.connection.connection_key, over))
             return None
@@ -417,6 +418,7 @@ def deployment_plan(model: CatalogModel, allowed_scopes: Optional[tuple] = None,
             over = connection_budget.stops(c.connection)
             if over is not None:
                 _skip(model, c.deployment, "monthly budget reached")
+                connection_budget.note_skip(c.connection.connection_key)    # AA-1126 G1: seen by run_with_cap_mode
                 budget_skips.append((c.connection.connection_key, over))
                 continue
             plan.append(c)

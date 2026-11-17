@@ -334,8 +334,9 @@ def embed(stage: str, texts: list[str], *, input_type: Optional[str] = "search_d
         raise ValueError("embed() needs at least one text")
     cfg = get_stage_config_sync(stage)
     chain = [cfg.model_id, *cfg.fallback_model_ids]
-    from . import app_profile
-    app_refusal = app_profile.refusal(stage)            # AA-1025 H1a: AI off for the app, before anything else
+    from . import anomaly_breaker, app_profile
+    # AA-1025 H1a: AI off for the app, before anything else; AA-1126 G2: the app's anomaly breaker (mode enforce).
+    app_refusal = app_profile.refusal(stage) or anomaly_breaker.refusal(stage)
     if app_refusal is not None:
         _log_failure(stage, cfg.model_id, app_refusal)
         raise app_refusal

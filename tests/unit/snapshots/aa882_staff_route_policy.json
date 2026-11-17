@@ -183,6 +183,10 @@
     "capability": "spend.read",
     "module": "api.routers.admin_llm_route"
   },
+  "GET /admin/ai-gateway/spend-controls": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_ai_gateway_spend"
+  },
   "GET /admin/ai-gateway/tenant-budgets/{tenant_id}": {
     "capability": "spend.read|tenant.book.account.read",
     "module": "api.routers.admin_ai_gateway"
@@ -1210,6 +1214,10 @@
   "POST /admin/aa-content/{content_id}/retire": {
     "capability": "master.admin",
     "module": "api.routers.admin_aa_content"
+  },
+  "POST /admin/ai-gateway/anomaly-breaker/{app}/reset": {
+    "capability": "ai.admin",
+    "module": "api.routers.admin_ai_gateway_spend"
   },
   "POST /admin/ai-gateway/batches": {
     "capability": "ai.admin",

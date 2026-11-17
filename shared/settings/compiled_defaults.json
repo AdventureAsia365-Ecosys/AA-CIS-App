@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -1130,6 +1130,222 @@
    }
   },
   {
+   "key": "cis.delivery.queue_ejection_amber_pct",
+   "app": "cis",
+   "area": "delivery",
+   "label": "Delivery: merge queue ejection rate for amber (%)",
+   "description": "Platform › Delivery, tab Merge queue (api/services/delivery_metrics.py) colours the ejection rate amber at or below this percent and above the green value; above it red. Starting value 25 %.",
+   "value_type": "pct",
+   "unit": "%",
+   "min_value": 0,
+   "max_value": 100,
+   "allowed_values": null,
+   "default_value": 25,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The ejection rate above which an app's merge queue turns red; between the green value and this it is amber.",
+     "raise": "Many ejections stay amber longer.",
+     "lower": "Many ejections turn red sooner.",
+     "when": "Keep it above the green value.",
+     "example": "With the default of 25 %, 3 ejections out of 20 entries is amber and 6 out of 20 is red."
+    },
+    "vi": {
+     "what": "Tỉ lệ bị loại mà trên mức đó hàng merge của app chuyển đỏ; giữa mức xanh và mức này là vàng.",
+     "raise": "Bị loại nhiều giữ màu vàng lâu hơn.",
+     "lower": "Bị loại nhiều chuyển đỏ sớm hơn.",
+     "when": "Giữ cao hơn mức xanh.",
+     "example": "Với mặc định 25 %, 3 lần bị loại trên 20 lượt là vàng và 6 trên 20 là đỏ."
+    }
+   }
+  },
+  {
+   "key": "cis.delivery.queue_ejection_green_pct",
+   "app": "cis",
+   "area": "delivery",
+   "label": "Delivery: merge queue ejection rate for green (%)",
+   "description": "Platform › Delivery, tab Merge queue (api/services/delivery_metrics.py) colours the ejection rate of an app (queue entries the merge queue removed without a merge, over the entries that merged or were ejected in the last 4 weeks) green at or below this percent. Starting value 10 %.",
+   "value_type": "pct",
+   "unit": "%",
+   "min_value": 0,
+   "max_value": 100,
+   "allowed_values": null,
+   "default_value": 10,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The share of merge-queue entries the queue throws out (red or timed-out checks) at or under which an app shows green.",
+     "raise": "More ejections are tolerated before the colour changes.",
+     "lower": "A few ejections are enough to show amber.",
+     "when": "Lower it once ejections are rare; raise it while a known flaky check is being fixed.",
+     "example": "With the default of 10 %, 1 ejection out of 20 entries (5 %) is green."
+    },
+    "vi": {
+     "what": "Tỉ lệ lượt vào hàng merge bị hàng loại ra (check đỏ hoặc quá giờ) mà bằng hoặc dưới mức đó app hiện xanh.",
+     "raise": "Chấp nhận nhiều lần bị loại hơn trước khi đổi màu.",
+     "lower": "Vài lần bị loại là đủ hiện vàng.",
+     "when": "Giảm khi việc bị loại đã hiếm; tăng trong lúc đang sửa một check chập chờn đã biết.",
+     "example": "Với mặc định 10 %, 1 lần bị loại trên 20 lượt (5 %) là xanh."
+    }
+   }
+  },
+  {
+   "key": "cis.delivery.queue_flaky_amber_pct",
+   "app": "cis",
+   "area": "delivery",
+   "label": "Delivery: merge queue flaky rate for amber (%)",
+   "description": "Platform › Delivery, tab Merge queue (api/services/delivery_metrics.py) colours the flaky rate amber at or below this percent and above the green value; above it red. Starting value 15 %.",
+   "value_type": "pct",
+   "unit": "%",
+   "min_value": 0,
+   "max_value": 100,
+   "allowed_values": null,
+   "default_value": 15,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The flaky rate above which an app's merge queue turns red; between the green value and this it is amber.",
+     "raise": "Many flaky checks stay amber longer.",
+     "lower": "Many flaky checks turn red sooner.",
+     "when": "Keep it above the green value.",
+     "example": "With the default of 15 %, 2 flaky entries out of 20 is amber and 4 out of 20 is red."
+    },
+    "vi": {
+     "what": "Tỉ lệ chập chờn mà trên mức đó hàng merge của app chuyển đỏ; giữa mức xanh và mức này là vàng.",
+     "raise": "Chập chờn nhiều giữ màu vàng lâu hơn.",
+     "lower": "Chập chờn nhiều chuyển đỏ sớm hơn.",
+     "when": "Giữ cao hơn mức xanh.",
+     "example": "Với mặc định 15 %, 2 lượt chập chờn trên 20 là vàng và 4 trên 20 là đỏ."
+    }
+   }
+  },
+  {
+   "key": "cis.delivery.queue_flaky_green_pct",
+   "app": "cis",
+   "area": "delivery",
+   "label": "Delivery: merge queue flaky rate for green (%)",
+   "description": "Platform › Delivery, tab Merge queue (api/services/delivery_metrics.py) colours the flaky rate of an app (queue entries with a flaky signal: a merge_group re-run that turned green, or an ejection on red checks followed by a merge with no new commit, over the entries that merged or were ejected in the last 4 weeks) green at or below this percent. Starting value 5 %.",
+   "value_type": "pct",
+   "unit": "%",
+   "min_value": 0,
+   "max_value": 100,
+   "allowed_values": null,
+   "default_value": 5,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The share of merge-queue entries that show a flaky signal (a re-run turned green, or an ejection then a merge with no new commit) at or under which an app shows green.",
+     "raise": "More flaky checks are tolerated before the colour changes.",
+     "lower": "A single flaky check is enough to show amber.",
+     "when": "Lower it once the checks are stable; raise it while a known flaky test is quarantined.",
+     "example": "With the default of 5 %, 1 flaky entry out of 25 (4 %) is green."
+    },
+    "vi": {
+     "what": "Tỉ lệ lượt vào hàng merge có dấu hiệu chập chờn (chạy lại thì xanh, hoặc bị loại rồi merge mà không có commit mới) mà bằng hoặc dưới mức đó app hiện xanh.",
+     "raise": "Chấp nhận nhiều check chập chờn hơn trước khi đổi màu.",
+     "lower": "Một check chập chờn là đủ hiện vàng.",
+     "when": "Giảm khi các check đã ổn định; tăng trong lúc một test chập chờn đã biết đang được cách ly.",
+     "example": "Với mặc định 5 %, 1 lượt chập chờn trên 25 (4 %) là xanh."
+    }
+   }
+  },
+  {
+   "key": "cis.delivery.queue_wait_amber_hours",
+   "app": "cis",
+   "area": "delivery",
+   "label": "Delivery: merge queue wait p95 for amber (hours)",
+   "description": "Platform › Delivery, tab Merge queue (api/services/delivery_metrics.py) colours the merge-queue wait p95 amber at or below this value and above the green value; above it red. Starting value 4 h.",
+   "value_type": "numeric",
+   "unit": "hours",
+   "min_value": 0.1,
+   "max_value": 336,
+   "allowed_values": null,
+   "default_value": 4,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The p95 queue wait above which an app's merge queue turns red; between the green value and this it is amber.",
+     "raise": "A slow queue stays amber longer.",
+     "lower": "A slow queue turns red sooner.",
+     "when": "Keep it above the green value.",
+     "example": "With the default of 4 hours, a p95 wait of 2 hours is amber and 6 hours is red."
+    },
+    "vi": {
+     "what": "Thời gian chờ p95 trong hàng merge mà trên mức đó hàng merge của app chuyển đỏ; giữa mức xanh và mức này là vàng.",
+     "raise": "Hàng merge chậm giữ màu vàng lâu hơn.",
+     "lower": "Hàng merge chậm chuyển đỏ sớm hơn.",
+     "when": "Giữ cao hơn mức xanh.",
+     "example": "Với mặc định 4 giờ, chờ p95 2 giờ là vàng và 6 giờ là đỏ."
+    }
+   }
+  },
+  {
+   "key": "cis.delivery.queue_wait_green_hours",
+   "app": "cis",
+   "area": "delivery",
+   "label": "Delivery: merge queue wait p95 for green (hours)",
+   "description": "Platform › Delivery, tab Merge queue (api/services/delivery_metrics.py) colours the merge-queue wait of an app (p95 hours from a pull request entering the GitHub merge queue to its merge, over the entries merged in the last 4 weeks) green at or below this value. Starting value 1 h.",
+   "value_type": "numeric",
+   "unit": "hours",
+   "min_value": 0.1,
+   "max_value": 168,
+   "allowed_values": null,
+   "default_value": 1,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The p95 time a pull request waits in the merge queue before it merges, at or under which the queue of an app shows green.",
+     "raise": "Longer queue waits still show green.",
+     "lower": "Only a fast queue shows green; a slow merge_group check stands out.",
+     "when": "Lower it once the merge_group checks are fast and cached; raise it while the queue runs a long suite on purpose.",
+     "example": "With the default of 1 hour, a queue whose p95 wait is 40 minutes is green."
+    },
+    "vi": {
+     "what": "Thời gian chờ p95 của một pull request trong hàng merge trước khi được merge, mà bằng hoặc dưới mức đó hàng merge của app hiện xanh.",
+     "raise": "Hàng merge chờ lâu hơn vẫn hiện xanh.",
+     "lower": "Chỉ hàng merge nhanh mới hiện xanh; check merge_group chậm nổi bật.",
+     "when": "Giảm khi check merge_group đã nhanh và có cache; tăng khi hàng merge cố ý chạy bộ kiểm tra dài.",
+     "example": "Với mặc định 1 giờ, hàng merge có thời gian chờ p95 40 phút là xanh."
+    }
+   }
+  },
+  {
    "key": "cis.delivery.recovery_amber_hours",
    "app": "cis",
    "area": "delivery",
@@ -1921,6 +2137,193 @@
      "lower": "Bài về tour đã gỡ được hạ xuống sớm hơn; tenant có ít thời gian xử lý hơn.",
      "when": "Đổi khi tenant xin thêm thời gian trước khi bài bị hạ (nâng lên), hoặc khi tour đã gỡ phải rời các kênh nhanh hơn (hạ xuống).",
      "example": "Với mặc định 7 ngày."
+    }
+   }
+  },
+  {
+   "key": "cis.llm.anomaly_baseline_days",
+   "app": "cis",
+   "area": "spend",
+   "label": "AI anomaly breaker: days in the normal-day baseline",
+   "description": "The anomaly breaker's normal day is the median of an app's daily AI spend over this many UTC days before today (days with no spend count as 0). Read by shared/llm_client/anomaly_breaker.py.",
+   "value_type": "int",
+   "unit": "days",
+   "min_value": 7,
+   "max_value": 60,
+   "allowed_values": null,
+   "default_value": 14,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many past days make up an app's normal day of AI spend (their median).",
+     "raise": "The normal day moves slowly: a lasting rise in use takes longer to stop tripping the breaker.",
+     "lower": "The normal day follows recent use quickly; a few busy days in a row raise the threshold fast.",
+     "when": "Keep two weeks; shorten it while a new app is still growing quickly.",
+     "example": "With 14, the normal day is the median of the last 14 days before today."
+    },
+    "vi": {
+     "what": "Bao nhiêu ngày gần nhất tạo nên ngày chi tiêu AI bình thường của một app (lấy trung vị).",
+     "raise": "Ngày bình thường thay đổi chậm: mức dùng tăng lâu dài phải chờ lâu hơn mới hết làm ngắt breaker.",
+     "lower": "Ngày bình thường theo sát mức dùng gần đây; vài ngày bận liên tiếp làm ngưỡng tăng nhanh.",
+     "when": "Giữ hai tuần; rút ngắn khi một app mới còn đang tăng nhanh.",
+     "example": "Với 14, ngày bình thường là trung vị của 14 ngày trước hôm nay."
+    }
+   }
+  },
+  {
+   "key": "cis.llm.anomaly_breaker_mode",
+   "app": "cis",
+   "area": "spend",
+   "label": "AI anomaly breaker: mode",
+   "description": "The AI gateway's anomaly breaker (shared/llm_client/anomaly_breaker.py) compares an app's AI spend today (UTC, or since its last reset) with a multiple of its median daily spend over the last days. off: not checked. alert: when tripped, one admin bell and one ops e-mail per app and day; nothing is refused. enforce: when tripped, the app's new AI calls are refused (budget stop) until an administrator resets the breaker (AI gateway > Budgets > Spend controls) or the UTC day ends. Each environment sets its own value.",
+   "value_type": "enum",
+   "unit": null,
+   "min_value": null,
+   "max_value": null,
+   "allowed_values": [
+    "off",
+    "alert",
+    "enforce"
+   ],
+   "default_value": "alert",
+   "scope_kind": "platform",
+   "impact": "high",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "Whether an unusual jump in an app's AI spend today only raises an alert, or also stops that app's new AI calls.",
+     "raise": "enforce: a runaway loop or abuse is stopped within a minute of crossing the threshold; real work of that app also waits until someone resets the breaker.",
+     "lower": "alert or off: nothing is ever refused by the breaker; you rely on the alert (or nothing) to notice a runaway spend.",
+     "when": "Use enforce in prod, where it is the only control allowed to stop customer AI calls. Keep alert on Dev, where waves make big days normal.",
+     "example": "With the default alert, a multiple of 4 and a median day of 10 USD, a day above 40 USD rings the bell once; with enforce, the app's calls are also refused until an admin presses Reset."
+    },
+    "vi": {
+     "what": "Khi chi tiêu AI hôm nay của một app tăng bất thường thì chỉ cảnh báo, hay dừng luôn các lệnh gọi AI mới của app đó.",
+     "raise": "enforce: một vòng lặp chạy mất kiểm soát hay bị lạm dụng sẽ bị chặn trong vòng một phút sau khi vượt ngưỡng; việc thật của app đó cũng phải chờ tới khi có người reset.",
+     "lower": "alert hoặc off: breaker không bao giờ từ chối lệnh gọi nào; chỉ dựa vào cảnh báo (hoặc không gì cả) để phát hiện chi tiêu mất kiểm soát.",
+     "when": "Dùng enforce ở prod, nơi đây là cơ chế duy nhất được phép dừng lệnh gọi AI của khách. Giữ alert ở Dev, nơi các wave làm ngày chi nhiều là chuyện bình thường.",
+     "example": "Với mặc định alert, bội số 4 và ngày trung vị 10 USD, một ngày vượt 40 USD làm chuông kêu một lần; với enforce, lệnh gọi của app còn bị từ chối tới khi admin bấm Reset."
+    }
+   }
+  },
+  {
+   "key": "cis.llm.anomaly_floor_usd",
+   "app": "cis",
+   "area": "spend",
+   "label": "AI anomaly breaker: spend floor",
+   "description": "The anomaly breaker never trips while an app's AI spend today is at or below this many USD, whatever its median day is (an app with little or no history would otherwise trip on its first busy hour). Read by shared/llm_client/anomaly_breaker.py.",
+   "value_type": "usd",
+   "unit": "USD/day",
+   "min_value": 0,
+   "max_value": 10000,
+   "allowed_values": null,
+   "default_value": 25,
+   "scope_kind": "platform",
+   "impact": "high",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The AI spend of one app in one day under which the anomaly breaker never trips.",
+     "raise": "Small apps and quiet days never trip; a runaway spend on a quiet app runs up to this amount first.",
+     "lower": "A runaway spend on a quiet app is caught sooner; a normal busy hour may trip it.",
+     "when": "Set it a little above the busiest normal day of the smallest app.",
+     "example": "With 25 USD, an app whose median day is 1 USD trips only once today's spend passes 25 USD."
+    },
+    "vi": {
+     "what": "Chi tiêu AI trong một ngày của một app mà dưới mức đó breaker bất thường không bao giờ ngắt.",
+     "raise": "App nhỏ và ngày vắng không bao giờ ngắt; chi tiêu mất kiểm soát trên app vắng chạy tới mức này trước.",
+     "lower": "Chi tiêu mất kiểm soát trên app vắng bị bắt sớm hơn; một giờ bận bình thường có thể làm ngắt.",
+     "when": "Đặt cao hơn một chút so với ngày bận bình thường nhất của app nhỏ nhất.",
+     "example": "Với 25 USD, một app có ngày trung vị 1 USD chỉ ngắt khi chi tiêu hôm nay vượt 25 USD."
+    }
+   }
+  },
+  {
+   "key": "cis.llm.anomaly_multiple",
+   "app": "cis",
+   "area": "spend",
+   "label": "AI anomaly breaker: multiple of a normal day",
+   "description": "The anomaly breaker trips when an app's AI spend today is above this multiple of its median daily spend over the baseline days (and above the floor). Read by shared/llm_client/anomaly_breaker.py.",
+   "value_type": "numeric",
+   "unit": "x",
+   "min_value": 1.5,
+   "max_value": 100,
+   "allowed_values": null,
+   "default_value": 4,
+   "scope_kind": "platform",
+   "impact": "high",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many normal days of AI spend an app may use in one day before the anomaly breaker trips.",
+     "raise": "Busier days pass without a trip; a runaway spend runs longer before it is caught.",
+     "lower": "A runaway spend is caught sooner; an honest busy day (a launch, a big import) trips it more often.",
+     "when": "Lower it once daily spend is steady; raise it before a planned busy day, or reset the breaker that day.",
+     "example": "With 4 and a median day of 10 USD, the breaker trips above 40 USD today (if that is above the floor)."
+    },
+    "vi": {
+     "what": "Một app được tiêu bao nhiêu lần chi tiêu AI của một ngày bình thường trong một ngày trước khi breaker bất thường ngắt.",
+     "raise": "Ngày bận hơn vẫn qua mà không ngắt; chi tiêu mất kiểm soát chạy lâu hơn mới bị bắt.",
+     "lower": "Chi tiêu mất kiểm soát bị bắt sớm hơn; một ngày bận thật (ra mắt, nhập lớn) dễ làm ngắt hơn.",
+     "when": "Giảm khi chi tiêu ngày đã ổn định; tăng trước một ngày bận đã lên kế hoạch, hoặc reset breaker hôm đó.",
+     "example": "Với 4 và ngày trung vị 10 USD, breaker ngắt khi hôm nay vượt 40 USD (nếu số đó cao hơn mức sàn)."
+    }
+   }
+  },
+  {
+   "key": "cis.llm.connection_cap_mode",
+   "app": "cis",
+   "area": "spend",
+   "label": "AI connections: what a monthly cap does",
+   "description": "How the AI gateway (shared/llm_client/connection_budget.py) treats a connection that reached its monthly budget (AI gateway > Providers > Connections). hard_stop: the connection is left out of every route and a call with no other way in stops as a budget stop (the Dev rule). failover_continue: it is still left out while another connection or route model can answer; when every one is over its cap the call goes on (caps lifted for that call) and one alert per day is raised, so a customer is never blocked by a connection cap (the prod rule). A connection whose own cost policy is alert only stays alert only. Each environment sets its own value.",
+   "value_type": "enum",
+   "unit": null,
+   "min_value": null,
+   "max_value": null,
+   "allowed_values": [
+    "hard_stop",
+    "failover_continue"
+   ],
+   "default_value": "hard_stop",
+   "scope_kind": "platform",
+   "impact": "high",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "What happens when an AI connection (an AWS account or a vendor API key) reaches its monthly budget: stop using it, or fail over and keep serving.",
+     "raise": "failover_continue: calls fail over to the next connection and, when every connection is over its cap, still go on with an alert. Spend can pass the connection budgets.",
+     "lower": "hard_stop: a connection over its budget is never called; a job with no other way in stops as a budget stop and waits.",
+     "when": "Keep hard_stop on Dev to avoid over-testing. Use failover_continue in prod, where customers pay per use and must not be blocked by a platform cap.",
+     "example": "With the default hard_stop, a job whose every connection is at 100 % of its budget stops. With failover_continue the call goes to the next connection, and if all are at 100 % it still goes to the first healthy one and the admin bell says so."
+    },
+    "vi": {
+     "what": "Điều gì xảy ra khi một kết nối AI (một tài khoản AWS hay một khoá API của nhà cung cấp) chạm ngân sách tháng: ngừng dùng, hay chuyển sang kết nối khác và vẫn phục vụ.",
+     "raise": "failover_continue: lệnh gọi chuyển sang kết nối kế tiếp và, khi mọi kết nối đều vượt trần, vẫn chạy tiếp kèm cảnh báo. Chi tiêu có thể vượt ngân sách kết nối.",
+     "lower": "hard_stop: kết nối vượt ngân sách không bao giờ được gọi; job không còn đường nào khác sẽ dừng vì ngân sách và chờ.",
+     "when": "Giữ hard_stop ở Dev để tránh test quá tay. Dùng failover_continue ở prod, nơi khách trả theo mức dùng và không được bị chặn bởi trần của nền tảng.",
+     "example": "Với mặc định hard_stop, job mà mọi kết nối đều ở 100 % ngân sách sẽ dừng. Với failover_continue lệnh gọi sang kết nối kế, và nếu tất cả đều 100 % thì vẫn tới kết nối khoẻ đầu tiên và chuông admin báo việc đó."
     }
    }
   },
@@ -8969,6 +9372,45 @@
    }
   },
   {
+   "key": "cis.spend.environment",
+   "app": "cis",
+   "area": "spend",
+   "label": "AI spend rules: environment",
+   "description": "Which AI spend rules CIS follows (tech lead policy S283). dev = hard caps everywhere: a tenant AI budget that cannot be read stops the tenant's Content studio writing until it can (AA-642 A8). prod = pay per use: only a tenant's plan allowance stops its AI; a budget that cannot be read degrades with a warning (log + admin bell) and the call goes on. Read by shared/llm_client/tenant_budget.py.",
+   "value_type": "enum",
+   "unit": null,
+   "min_value": null,
+   "max_value": null,
+   "allowed_values": [
+    "dev",
+    "prod"
+   ],
+   "default_value": "dev",
+   "scope_kind": "platform",
+   "impact": "high",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "Which AI spend rules CIS follows. dev keeps every hard stop. prod follows the pay-per-use rules: only a tenant's own plan allowance stops its AI writing, and when a tenant's AI budget cannot be read the writing goes on with a warning to staff instead of stopping.",
+     "raise": "prod (the looser choice): no tenant is stopped because a budget could not be read; staff get a bell instead.",
+     "lower": "dev (the stricter choice): a budget that cannot be read stops that tenant's writing until it can be read.",
+     "when": "Set prod on the production environment; keep dev on Dev and test environments. To check the prod behaviour on Dev, set prod, test, then set dev again.",
+     "example": "With the default dev: the budget database read fails, so a tenant's rewrite waits and retries. With prod: the rewrite runs and an admin bell says the budget could not be read."
+    },
+    "vi": {
+     "what": "CIS áp dụng quy tắc chi tiêu AI nào. dev giữ mọi điểm chặn cứng. prod theo quy tắc trả theo mức dùng: chỉ hạn mức AI trong gói của chính tenant mới dừng việc viết bằng AI, và khi không đọc được ngân sách AI của tenant thì việc viết vẫn chạy kèm cảnh báo cho staff thay vì dừng.",
+     "raise": "prod (lựa chọn nới hơn): không tenant nào bị dừng chỉ vì không đọc được ngân sách; staff nhận chuông cảnh báo.",
+     "lower": "dev (lựa chọn chặt hơn): không đọc được ngân sách thì việc viết của tenant đó dừng tới khi đọc được.",
+     "when": "Đặt prod trên môi trường production; giữ dev trên Dev và môi trường test. Muốn xem hành vi prod trên Dev thì đặt prod, kiểm thử, rồi đặt lại dev.",
+     "example": "Với mặc định dev: đọc ngân sách lỗi thì bản viết lại của tenant chờ và chạy lại sau. Với prod: bản viết lại vẫn chạy và chuông admin báo không đọc được ngân sách."
+    }
+   }
+  },
+  {
    "key": "cis.spend.instrument_eval_cap_usd",
    "app": "cis",
    "area": "spend",
@@ -9325,6 +9767,114 @@
      "lower": "Research dừng sớm hơn trong tháng; 0 là dừng mọi chi tiêu research.",
      "when": "Tăng trong một tháng để mở một thị trường mới; phần lấy từ khoá theo tour khi viết lại bản Master không nằm trong trần này.",
      "example": "Với mặc định 5 USD, lần chạy sắp vượt 5 USD trong tháng 11 sẽ dừng trước lời gọi đó."
+    }
+   }
+  },
+  {
+   "key": "cis.spend.run_cap_adhoc_usd",
+   "app": "cis",
+   "area": "spend",
+   "label": "Ad-hoc runs: hard cap per run",
+   "description": "The most one ad-hoc run (a call whose stage starts with adhoc_) may spend on AI calls, from the ledger: the job's rows when it runs in a job, else the rows of its stage since its process started. The job payload's cap_usd wins when it carries one. At the cap the gateway refuses the run's next call (a budget stop). Read by shared/llm_client/run_cap.py.",
+   "value_type": "usd",
+   "unit": "USD/run",
+   "min_value": 0.05,
+   "max_value": 50,
+   "allowed_values": null,
+   "default_value": 5,
+   "scope_kind": "platform",
+   "impact": "high",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The most AI money one ad-hoc script run (an A/B test, a backfill, a one-off check) may spend.",
+     "raise": "Bigger one-off runs finish without splitting; a script with a bug costs more before it stops.",
+     "lower": "A script with a bug stops sooner; a big approved run must be split or given its own cap in a job.",
+     "when": "Keep it near the largest one-off run you approve without a job; raise it for the day of a bigger approved run.",
+     "example": "With 5 USD, an A/B script whose calls have cost 5 USD gets no further call."
+    },
+    "vi": {
+     "what": "Số tiền AI tối đa một lần chạy script adhoc (A/B, backfill, kiểm tra một lần) được tiêu.",
+     "raise": "Lần chạy một lần lớn hơn xong mà không phải chia; script có lỗi tốn nhiều hơn trước khi dừng.",
+     "lower": "Script có lỗi dừng sớm hơn; lần chạy lớn đã duyệt phải chia nhỏ hoặc chạy trong job có trần riêng.",
+     "when": "Giữ gần mức lần chạy một lần lớn nhất bạn duyệt không qua job; tăng trong ngày có lần chạy lớn đã duyệt.",
+     "example": "Với 5 USD, một script A/B đã tốn 5 USD cho lệnh gọi sẽ không được gọi thêm."
+    }
+   }
+  },
+  {
+   "key": "cis.spend.run_cap_eval_usd",
+   "app": "cis",
+   "area": "spend",
+   "label": "Eval runs: hard cap per run",
+   "description": "The most one eval run may spend on AI calls (a run bound with an eval label, or the job it runs in), from the ledger. The job payload's cap_usd wins when it carries one (the W5 proofs and writing-memory R2 jobs do). At the cap the gateway refuses the run's next call (a budget stop). Read by shared/llm_client/run_cap.py.",
+   "value_type": "usd",
+   "unit": "USD/run",
+   "min_value": 0.05,
+   "max_value": 50,
+   "allowed_values": null,
+   "default_value": 10,
+   "scope_kind": "platform",
+   "impact": "high",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The most AI money one evaluation run may spend when it does not state its own cap.",
+     "raise": "Bigger eval sets finish in one run; a mistaken run costs more before it stops.",
+     "lower": "A mistaken run stops sooner; a large eval set must be split into several runs.",
+     "when": "Keep it near the largest eval you approve; a run that states its own cap is not affected.",
+     "example": "With 10 USD, an eval run with no cap of its own stops once its calls have cost 10 USD."
+    },
+    "vi": {
+     "what": "Số tiền AI tối đa một lần chạy đánh giá (eval) được tiêu khi lần chạy đó không tự ghi trần riêng.",
+     "raise": "Bộ eval lớn hơn chạy xong trong một lần; lần chạy nhầm tốn nhiều hơn trước khi dừng.",
+     "lower": "Lần chạy nhầm dừng sớm hơn; bộ eval lớn phải chia thành nhiều lần chạy.",
+     "when": "Giữ gần mức eval lớn nhất bạn duyệt; lần chạy có trần riêng không bị ảnh hưởng.",
+     "example": "Với 10 USD, một lần eval không có trần riêng sẽ dừng khi lệnh gọi đã tốn 10 USD."
+    }
+   }
+  },
+  {
+   "key": "cis.spend.run_cap_s1_rewrite_usd",
+   "app": "cis",
+   "area": "spend",
+   "label": "Tour rewrite in a wave: hard cap per run",
+   "description": "The most one S1 rewrite job (one tour of a rerun wave) may spend on AI calls, from the ledger (shared.llm_call_log rows of the job, every attempt). The job payload's cap_usd wins when it carries one; new jobs carry this value from when they were queued. At the cap the gateway refuses the job's next call and the job stops as stopped_budget. Read by shared/llm_client/run_cap.py.",
+   "value_type": "usd",
+   "unit": "USD/run",
+   "min_value": 0.05,
+   "max_value": 20,
+   "allowed_values": null,
+   "default_value": 2,
+   "scope_kind": "platform",
+   "impact": "high",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The most AI money one tour rewrite (one job of a rerun wave) may spend before it is stopped.",
+     "raise": "A tour whose writer retries a lot can finish; a stuck tour costs more before it stops.",
+     "lower": "A stuck tour is stopped sooner; a long tour with honest retries may stop before it is written.",
+     "when": "Keep it a few times the usual cost per tour; lower it for a trial wave.",
+     "example": "With 2 USD, a tour whose calls have cost 2 USD gets no further call and its job ends as stopped by budget."
+    },
+    "vi": {
+     "what": "Số tiền AI tối đa một lần viết lại một tour (một job của wave chạy lại) được tiêu trước khi bị dừng.",
+     "raise": "Tour có writer phải thử lại nhiều vẫn xong được; tour bị kẹt tốn nhiều hơn trước khi dừng.",
+     "lower": "Tour bị kẹt dừng sớm hơn; tour dài có lượt thử lại chính đáng có thể dừng trước khi viết xong.",
+     "when": "Giữ ở mức vài lần chi phí thường của một tour; giảm khi chạy wave thử.",
+     "example": "Với 2 USD, một tour đã tiêu 2 USD cho lệnh gọi sẽ không được gọi thêm và job kết thúc vì ngân sách."
     }
    }
   },
@@ -11280,6 +11830,81 @@
    }
   },
   {
+   "key": "tripplanner.spend.environment",
+   "app": "tripplanner",
+   "area": "spend",
+   "label": "TripPlanner AI spend rules: environment",
+   "description": "Which AI spend rules TripPlanner follows (tech lead policy S283). dev = hard caps everywhere: the app's daily AI cap (AI gateway > App profiles) and the planning chat's monthly app cap stop the AI of every agency, and a spend or quota that cannot be read stops it too. prod = pay per use: those app-wide caps only alert, a spend or quota that cannot be read degrades with a warning and the call goes on; an agency's own AI sessions quota and AI budget stay hard. Read by AA-TripPlanner-Web through catalog.v_app_settings_v1.",
+   "value_type": "enum",
+   "unit": null,
+   "min_value": null,
+   "max_value": null,
+   "allowed_values": [
+    "dev",
+    "prod"
+   ],
+   "default_value": "dev",
+   "scope_kind": "platform",
+   "impact": "high",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "Which AI spend rules TripPlanner follows. dev keeps every hard stop, including the app-wide daily AI cap and the planning chat's monthly cap for the whole app. prod follows the pay-per-use rules: those app-wide caps only raise an alert, and a spend or quota that cannot be read lets the AI go on with a warning. Each agency's own AI sessions and AI budget from its plan always stop at their limit.",
+     "raise": "prod (the looser choice): one busy agency can no longer use up the AI of every other agency; staff get alerts instead.",
+     "lower": "dev (the stricter choice): the app-wide caps stop the AI of every agency once reached.",
+     "when": "Set prod on the production environment; keep dev on Dev and test environments. To check the prod behaviour on Dev, set prod, test, then set dev again.",
+     "example": "With the default dev: once the app's daily cap is reached, every planner shows places without AI-written days until the next day. With prod: the planners keep their AI and an alert is raised."
+    },
+    "vi": {
+     "what": "TripPlanner áp dụng quy tắc chi tiêu AI nào. dev giữ mọi điểm chặn cứng, kể cả trần AI theo ngày của cả app và trần theo tháng của chat lập kế hoạch cho cả app. prod theo quy tắc trả theo mức dùng: các trần cấp app đó chỉ cảnh báo, và khi không đọc được chi tiêu hay hạn mức thì AI vẫn chạy kèm cảnh báo. Số phiên AI và ngân sách AI theo gói của từng đại lý luôn dừng khi chạm hạn.",
+     "raise": "prod (lựa chọn nới hơn): một đại lý đông khách không còn làm cạn AI của mọi đại lý khác; staff nhận cảnh báo.",
+     "lower": "dev (lựa chọn chặt hơn): chạm trần cấp app là AI của mọi đại lý dừng.",
+     "when": "Đặt prod trên môi trường production; giữ dev trên Dev và môi trường test. Muốn xem hành vi prod trên Dev thì đặt prod, kiểm thử, rồi đặt lại dev.",
+     "example": "Với mặc định dev: chạm trần ngày của app thì mọi trang lập kế hoạch chỉ hiện địa điểm, không có ngày viết bằng AI, tới hôm sau. Với prod: các trang vẫn có AI và hệ thống phát cảnh báo."
+    }
+   }
+  },
+  {
+   "key": "tripplanner.spend.near_cap_pct",
+   "app": "tripplanner",
+   "area": "spend",
+   "label": "TripPlanner AI cap warning at (% of a cap)",
+   "description": "The share of a TripPlanner daily AI cap (the app's daily cap on AI gateway > App profiles, or a stage cap) at which TripPlanner raises its 'near cap' alert and the Apps board marks the cap near. Read by AA-TripPlanner-Web backend/shared/spend_rules.py and by the CIS Apps board.",
+   "value_type": "pct",
+   "unit": "%",
+   "min_value": 50,
+   "max_value": 99,
+   "allowed_values": null,
+   "default_value": 80,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "At what share of a TripPlanner daily AI cap staff get the 'near cap' alert, and the Apps board shows the cap as near.",
+     "raise": "The warning comes later, closer to the cap, with less time to act.",
+     "lower": "The warning comes earlier and more often on busy days.",
+     "when": "Lower it when a cap is reached before anyone reacts to the warning; raise it when the warning fires on most ordinary days.",
+     "example": "With the default 80 and a 5 USD daily cap: the alert is raised once TripPlanner has spent 4 USD in that UTC day."
+    },
+    "vi": {
+     "what": "Ở mức bao nhiêu phần trăm của một trần AI theo ngày của TripPlanner thì staff nhận cảnh báo 'gần chạm trần', và bảng Apps hiện trần đó là gần chạm.",
+     "raise": "Cảnh báo đến muộn hơn, sát trần hơn, còn ít thời gian xử lý.",
+     "lower": "Cảnh báo đến sớm hơn và nhiều hơn trong ngày đông khách.",
+     "when": "Giảm khi trần bị chạm trước khi có ai kịp xử lý cảnh báo; tăng khi cảnh báo bật vào hầu hết các ngày bình thường.",
+     "example": "Với mặc định 80 và trần ngày 5 USD: cảnh báo bật khi TripPlanner đã tiêu 4 USD trong ngày UTC đó."
+    }
+   }
+  },
+  {
    "key": "tripplanner.spend.plan_chat_monthly_cap_usd",
    "app": "tripplanner",
    "area": "spend",
@@ -11348,6 +11973,78 @@
      "lower": "Trò chuyện của mỗi đại lý dừng sớm hơn; chi phí của một đại lý được giới hạn chặt hơn.",
      "when": "Tăng cho đại lý có khách thật sự dùng trò chuyện (đặt riêng trên dòng của đại lý); giảm nếu trò chuyện của một đại lý tốn hơn giá trị mang lại.",
      "example": "Với mặc định 2 USD mỗi tháng: trò chuyện của đại lý dừng tới hết tháng khi đại lý đó đã chi 2 USD."
+    }
+   }
+  },
+  {
+   "key": "tripplanner.spend.stage_cap_compose_usd",
+   "app": "tripplanner",
+   "area": "spend",
+   "label": "TripPlanner daily AI cap: trip-day writing",
+   "description": "TripPlanner's AI spend per UTC day on the AI-written trip days alone (tp_compose), on top of the app's daily cap (AI gateway > App profiles); both apply. 0 = no stage cap: only the app cap applies (today's behaviour). Under tripplanner.spend.environment = prod a reached cap only alerts. Read by AA-TripPlanner-Web backend/shared/spend_rules.py through catalog.v_app_settings_v1; the Apps board and the Spend page show it.",
+   "value_type": "usd",
+   "unit": "USD/day",
+   "min_value": 0,
+   "max_value": 200,
+   "allowed_values": null,
+   "default_value": 0,
+   "scope_kind": "platform",
+   "impact": "high",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The most TripPlanner may spend on AI for the AI-written trip days in one UTC day, on top of the app's daily cap on AI gateway > App profiles. 0 means no separate cap for this stage.",
+     "raise": "The trip-day writing keeps its AI longer on a busy day; AA's AI bill for it can grow up to the new cap.",
+     "lower": "The trip-day writing falls back to its basic version earlier on a busy day, and leaves more of the app's daily cap to the other stages.",
+     "when": "Set it when one stage uses up the app's daily cap and the other stages lose their AI; keep 0 while the app cap alone is enough. Under the prod spend rules it only raises an alert.",
+     "example": "With the default 0 the trip-day writing has no cap of its own. With 3: once it has spent 3 USD in a UTC day, planners show places with plain day lines until the next UTC day, while search keeps its AI."
+    },
+    "vi": {
+     "what": "Số tiền AI tối đa TripPlanner được dùng cho các ngày lịch trình viết bằng AI trong một ngày UTC, thêm vào trần ngày của app ở AI gateway > App profiles. 0 nghĩa là bước này không có trần riêng.",
+     "raise": "Phần viết ngày lịch trình giữ AI lâu hơn trong ngày đông khách; hoá đơn AI của AA cho bước này có thể tăng tới mức trần mới.",
+     "lower": "Phần viết ngày lịch trình chuyển sang bản cơ bản sớm hơn trong ngày đông khách, và chừa nhiều trần ngày của app hơn cho các bước khác.",
+     "when": "Đặt khi một bước dùng hết trần ngày của app làm các bước khác mất AI; giữ 0 khi trần của app là đủ. Với quy tắc chi tiêu prod thì trần này chỉ cảnh báo.",
+     "example": "Với mặc định 0, phần viết ngày lịch trình không có trần riêng. Với 3: khi phần này đã tiêu 3 USD trong một ngày UTC, trang lập kế hoạch hiện địa điểm với dòng ngày đơn giản tới ngày UTC sau, còn tìm kiếm vẫn có AI."
+    }
+   }
+  },
+  {
+   "key": "tripplanner.spend.stage_cap_search_usd",
+   "app": "tripplanner",
+   "area": "spend",
+   "label": "TripPlanner daily AI cap: free-text search",
+   "description": "TripPlanner's AI spend per UTC day on the free-text search alone (tp_search_embed), on top of the app's daily cap (AI gateway > App profiles); both apply. 0 = no stage cap: only the app cap applies (today's behaviour). Under tripplanner.spend.environment = prod a reached cap only alerts. Read by AA-TripPlanner-Web backend/shared/spend_rules.py through catalog.v_app_settings_v1; the Apps board and the Spend page show it.",
+   "value_type": "usd",
+   "unit": "USD/day",
+   "min_value": 0,
+   "max_value": 200,
+   "allowed_values": null,
+   "default_value": 0,
+   "scope_kind": "platform",
+   "impact": "high",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The most TripPlanner may spend on AI for the free-text search in one UTC day, on top of the app's daily cap on AI gateway > App profiles. 0 means no separate cap for this stage.",
+     "raise": "The free-text search keeps its AI longer on a busy day; AA's AI bill for it can grow up to the new cap.",
+     "lower": "The free-text search falls back to its basic version earlier on a busy day, and leaves more of the app's daily cap to the other stages.",
+     "when": "Set it when one stage uses up the app's daily cap and the other stages lose their AI; keep 0 while the app cap alone is enough. Under the prod spend rules it only raises an alert.",
+     "example": "With the default 0 the free-text search has no cap of its own. With 1: once it has spent 1 USD in a UTC day, search uses the keyword ranking until the next UTC day, while the trip-day writing keeps its AI."
+    },
+    "vi": {
+     "what": "Số tiền AI tối đa TripPlanner được dùng cho phần tìm kiếm bằng câu chữ tự do trong một ngày UTC, thêm vào trần ngày của app ở AI gateway > App profiles. 0 nghĩa là bước này không có trần riêng.",
+     "raise": "Phần tìm kiếm giữ AI lâu hơn trong ngày đông khách; hoá đơn AI của AA cho bước này có thể tăng tới mức trần mới.",
+     "lower": "Phần tìm kiếm chuyển sang bản cơ bản sớm hơn trong ngày đông khách, và chừa nhiều trần ngày của app hơn cho các bước khác.",
+     "when": "Đặt khi một bước dùng hết trần ngày của app làm các bước khác mất AI; giữ 0 khi trần của app là đủ. Với quy tắc chi tiêu prod thì trần này chỉ cảnh báo.",
+     "example": "Với mặc định 0, phần tìm kiếm không có trần riêng. Với 1: khi phần này đã tiêu 1 USD trong một ngày UTC, tìm kiếm dùng xếp hạng theo từ khoá tới ngày UTC sau, còn phần viết ngày lịch trình vẫn có AI."
     }
    }
   }

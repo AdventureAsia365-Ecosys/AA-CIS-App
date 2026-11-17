@@ -313,8 +313,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("PUT", "/admin/budgets/{provider}/{scope}"): SPEND_WRITE,
     ("DELETE", "/admin/budgets/llm/{scope}"): SPEND_WRITE,        # AA-1025 A7: remove a central LLM cap
     # ── admin_ai_gateway (AA-804) — AI providers page: every paid source's health / spend / balance and the job trace
-    ("GET", "/admin/ai-gateway/providers"): SPEND_READ,
-    ("GET", "/admin/ai-gateway/trace"): SPEND_READ,
+    ("GET", "/admin/ai-gateway/providers"): SPEND_READ, ("GET", "/admin/ai-gateway/trace"): SPEND_READ,
     ("GET", "/admin/ai-gateway/budgets"): SPEND_READ,   # AA-804 UI 2: every cap by tier (Budgets tab)
     ("GET", "/admin/ai-gateway/calls"): SPEND_READ,     # AA-804 UI 3: every logged paid call (Calls tab)
     ("GET", "/admin/ai-gateway/experiments"): SPEND_READ,   # AA-900 UI (C4): prompt register + eval runs
@@ -329,10 +328,11 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/ai-gateway/credit/check"): SPEND_WRITE,   # AA-1025 B5: the low-credit check now (bell + e-mail)
     ("GET", "/admin/ai-gateway/app-profiles"): SPEND_READ,           # AA-1025 H1a: the app profile of every app
     ("PATCH", "/admin/ai-gateway/app-profiles/{app}"): AI_ADMIN,     # AA-1025 H1a: AI on / off per app, audited
+    ("GET", "/admin/ai-gateway/spend-controls"): SPEND_READ,         # AA-1126: spend controls + anomaly breaker
+    ("POST", "/admin/ai-gateway/anomaly-breaker/{app}/reset"): AI_ADMIN,   # AA-1126 G2: reset one app's breaker
     ("GET", "/admin/ai-gateway/capacity"): SPEND_READ,               # AA-1025 H2: TPM limits, lines, claim hold
     # AA-1076: the gateway batch lane (Batches tab): status + spend per batch; send a wave (paid) and cancel one
-    ("GET", "/admin/ai-gateway/batches"): SPEND_READ,
-    ("GET", "/admin/ai-gateway/batches/{job_id}"): SPEND_READ,
+    ("GET", "/admin/ai-gateway/batches"): SPEND_READ, ("GET", "/admin/ai-gateway/batches/{job_id}"): SPEND_READ,
     ("POST", "/admin/ai-gateway/batches"): AI_ADMIN,               # paid: the AI & spend owner (ai.admin)
     ("POST", "/admin/ai-gateway/batches/{job_id}/cancel"): AI_ADMIN,
     # AA-1045 — the usage explorer (AI & spend): money reads; the saved views are the caller's own (spend.read, like the

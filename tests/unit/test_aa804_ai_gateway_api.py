@@ -83,6 +83,9 @@ def test_routes_are_served_and_run_the_policy():
                           # AA-1025 H1a: the app profile of every app
                           ("GET", "/admin/ai-gateway/app-profiles"), ("PATCH", "/admin/ai-gateway/app-profiles/{app}"),
                           ("DELETE", "/admin/ai-gateway/credit/entries/{entry_id}"),
+                          # AA-1126: the spend controls of this environment and the anomaly breaker reset
+                          ("GET", "/admin/ai-gateway/spend-controls"),
+                          ("POST", "/admin/ai-gateway/anomaly-breaker/{app}/reset"),
                           # AA-1025 H2: TPM limits, line shares and prod guards
                           ("GET", "/admin/ai-gateway/capacity"),
                           # AA-1076: the gateway batch lane (Batches tab)

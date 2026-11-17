@@ -66,6 +66,7 @@ from api.routers.admin_job_runner import router as admin_job_runner_router  # AA
 from api.routers.admin_budgets import router as admin_budgets_router  # AA-649
 from api.routers.admin_ai_gateway import router as admin_ai_gateway_router  # AA-804
 from api.routers.admin_llm_route_control import router as admin_llm_route_control_router  # AA-1042
+from api.routers.admin_ai_gateway_spend import router as admin_ai_gateway_spend_router  # AA-1126
 from api.routers.admin_llm_route import router as admin_llm_route_router  # AA-1042 (Trace tab)
 from api.routers.admin_llm_route import quality_router as admin_llm_route_quality_router  # AA-1042 (Tenant QA list)
 from api.routers.admin_usage_explorer import router as admin_usage_explorer_router  # AA-1045
@@ -385,6 +386,7 @@ app.include_router(admin_job_runner_router)  # AA-650 — /admin/job-runner/*
 app.include_router(admin_budgets_router)  # AA-649 — /admin/budgets (cost guard limits)
 app.include_router(admin_ai_gateway_router)  # AA-804 — /admin/ai-gateway/{providers,trace} (AI providers page)
 app.include_router(admin_llm_route_control_router)  # AA-1042 — /admin/ai-gateway/route-control/* (Route control tab)
+app.include_router(admin_ai_gateway_spend_router)  # AA-1126 — /admin/ai-gateway/spend-controls, anomaly breaker reset
 app.include_router(admin_llm_route_router)  # AA-1042 — /admin/ai-gateway/route-* (Trace tab: trace, alerts)
 app.include_router(admin_llm_route_quality_router)  # AA-1042 — /admin/content-quality/fallback-writes (tenant_content)
 app.include_router(admin_usage_explorer_router)  # AA-1045 — /admin/usage-explorer/* (AI & spend › Usage explorer)

@@ -9,7 +9,8 @@ The admin Settings → Budgets UI (AA-665) is built on these two endpoints.
 
 AA-1025 A7 (CIS migration 340): provider 'llm' is a central LLM cap, checked by the gateway before any attempt
 (shared/llm_client/central_budget.py). Its scope is app:<app> | stage:<stage> | job:<kind> | eval | adhoc; it may set
-per_month_usd (the UTC month) and, for job:<kind> only, per_run_usd (the running job's spend). A provider row keeps
+per_month_usd (the UTC month) and, for job:<kind> only, per_run_usd (the running job's spend); AA-1126: not for
+job:s1_rewrite, whose per-run cap is the setting cis.spend.run_cap_s1_rewrite_usd (422 names it). A provider row keeps
 global | job:<kind> and no month cap. Before 340 the database refuses an 'llm' row (409 with the reason).
 """
 from __future__ import annotations
@@ -26,7 +27,7 @@ from api.core.staff_authz import staff_policy
 from api.routers.admin import verify_admin_secret
 from api.services import settings_registry
 from shared.cost_guard import CENTRAL_PROVIDER, PROVIDERS, day_spend
-from shared.llm_client import central_budget
+from shared.llm_client import caps_settings, central_budget
 
 logger = structlog.get_logger()
 
@@ -56,6 +57,11 @@ def _valid(provider: str, scope: str, body: Optional[BudgetUpdate] = None) -> No
                                                         "'job:<kind>', 'eval' or 'adhoc'")
         if body is not None and body.per_run_usd is not None and not scope.startswith("job:"):
             raise HTTPException(status_code=422, detail="a per-run cap applies to an llm 'job:<kind>' scope only")
+        run_class = caps_settings.run_class_of_scope(scope)
+        if body is not None and body.per_run_usd is not None and run_class:
+            # AA-1126 (review S283): one source of truth: this run's per-run cap is a Platform › Settings value.
+            raise HTTPException(status_code=422, detail=f"the per-run cap of llm {scope} is the setting "
+                                f"{caps_settings.RUN_CAP_KEYS[run_class]} on Platform › Settings (area Spend)")
         return
     if provider not in PROVIDERS:
         raise HTTPException(status_code=422, detail=f"provider must be one of {[*PROVIDERS, CENTRAL_PROVIDER]}")
@@ -120,6 +126,8 @@ async def upsert_budget(provider: str, scope: str, body: BudgetUpdate, request: 
                 raw = await conn.fetchval("SELECT to_jsonb(b) FROM shared.spend_budget b "
                                           "WHERE provider = $1 AND scope = $2", provider, scope)
                 before = budget_row(json.loads(raw) if isinstance(raw, str) else dict(raw)) if raw else None
+                if before and central and caps_settings.run_class_of_scope(scope):
+                    before["per_run_usd"] = None     # AA-1126: not enforced (a setting), so clearing it loosens nothing
                 after = {**body.model_dump(), "hard_stop": hard_stop}
                 worse = settings_registry.loosened(before, after, caps=("per_run_usd", "per_day_usd", "per_month_usd"),
                                                    stops=("hard_stop",), up_is_looser=("alert_pct",))
