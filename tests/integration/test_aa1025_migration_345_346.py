@@ -55,7 +55,8 @@ def test_registration_and_shapes(cur):
         assert cur.fetchone()["ok"] == 1
     cur.execute("SELECT column_name FROM information_schema.columns WHERE table_schema = 'shared' "
                 "AND table_name = 'llm_app_profile'")
-    assert {r["column_name"] for r in cur.fetchall()} == {
+    # The 345/346 columns must be there; later migrations may add more (CIS 446: anomaly breaker reset columns).
+    assert {r["column_name"] for r in cur.fetchall()} >= {
         "app", "ai_enabled", "bulk_paused", "default_daily_budget_usd", "degrade_mode", "disabled_reason",
         "updated_at", "updated_by"}
     cur.execute("SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = 'geo' "
