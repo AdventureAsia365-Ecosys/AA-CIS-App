@@ -84,7 +84,8 @@ function TableDemo() {
   const noteRef = useRef<HTMLInputElement>(null);
   const columns = useMemo<ColumnDef<DemoTrip, unknown>[]>(() => [
     { id: "name", header: t("colTrip"), accessorKey: "name" },
-    { id: "days", header: t("colDays"), accessorKey: "days", meta: { align: "right" } },
+    // No column meta here: an app may type ColumnMeta with its own keys (Booking does), and the gallery is shared.
+    { id: "days", header: t("colDays"), accessorKey: "days" },
     { id: "status", header: t("colStatus"), accessorKey: "status", cell: (c) => <StatusBadge status={c.row.original.status} /> },
   ], [t]);
   return (
