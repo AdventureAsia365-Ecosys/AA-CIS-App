@@ -24,6 +24,8 @@ from shared.llm_client import tenant_budget
 logger = structlog.get_logger()
 
 PAYMENT_REQUIRED = 402
+# The budget read (tests/unit/conftest.py replaces it: no database in unit tests).
+reader = cost_guard.tenant_budget_check
 
 
 async def allowance_used(conn: Any, tenant_id: str) -> bool:
@@ -32,7 +34,7 @@ async def allowance_used(conn: Any, tenant_id: str) -> bool:
     if not tenant_budget.enabled():
         return False
     try:
-        budget = await cost_guard.tenant_budget_check(conn, str(tenant_id))
+        budget = await reader(conn, str(tenant_id))
     except Exception as exc:  # noqa: BLE001 — L4: a read error never blocks the request
         logger.warning("tenant_ai_allowance_check_unreadable", tenant_id=str(tenant_id), error=str(exc)[:200])
         return False

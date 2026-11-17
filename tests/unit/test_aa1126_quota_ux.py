@@ -16,7 +16,7 @@ from fastapi import HTTPException
 from api.core import ai_allowance
 from api.routers import v1_notifications
 from services.tenant_account import lifecycle
-from shared import cost_guard
+from shared import cost_guard, tenant_ai_notices
 from shared.llm_client import spend_environment, tenant_budget
 from shared.llm_client.call_log import bind_tenant
 
@@ -72,7 +72,7 @@ def _check(monkeypatch, result=None, error=None):
         if error:
             raise error
         return result
-    monkeypatch.setattr(cost_guard, "tenant_budget_check", check)
+    monkeypatch.setattr(ai_allowance, "reader", check)
 
 
 @pytest.mark.parametrize("budget, used", [(None, False), ("under", False), ("over", True), ("over_soft", False)])
@@ -178,20 +178,20 @@ class _Conn:
 
 def test_the_tenant_notice_is_once_a_month_and_never_raises():
     conn = _Conn(returns=7)
-    assert run(cost_guard.notify_tenant_allowance_used(conn, TENANT, now=NOV)) is True
+    assert run(tenant_ai_notices.notify_tenant_allowance_used(conn, TENANT, now=NOV)) is True
     sql, args = conn.calls[0]
     assert "ON CONFLICT (tenant_id, event_type, entity_id)" in sql
     assert args[:4] == (TENANT, "ai.allowance_used", "ai_allowance", "content:2026-11")
     assert '"resets_at": "2026-12-01"' in args[4]
-    assert run(cost_guard.notify_tenant_allowance_used(_Conn(returns=None), TENANT, now=NOV)) is False
-    assert run(cost_guard.notify_tenant_allowance_used(_Conn(error=RuntimeError("zz")), TENANT, now=NOV)) is False
+    assert run(tenant_ai_notices.notify_tenant_allowance_used(_Conn(returns=None), TENANT, now=NOV)) is False
+    assert run(tenant_ai_notices.notify_tenant_allowance_used(_Conn(error=RuntimeError("zz")), TENANT, now=NOV)) is False
 
 
 def test_the_unreadable_bell_is_once_a_day_and_never_raises():
     conn = _Conn(recent=False)
-    assert run(cost_guard.maybe_alert_tenant_unreadable(conn, TENANT)) is True
-    assert run(cost_guard.maybe_alert_tenant_unreadable(_Conn(recent=True), TENANT)) is False
-    assert run(cost_guard.maybe_alert_tenant_unreadable(_Conn(error=RuntimeError("zz")), TENANT)) is False
+    assert run(tenant_ai_notices.maybe_alert_tenant_unreadable(conn, TENANT)) is True
+    assert run(tenant_ai_notices.maybe_alert_tenant_unreadable(_Conn(recent=True), TENANT)) is False
+    assert run(tenant_ai_notices.maybe_alert_tenant_unreadable(_Conn(error=RuntimeError("zz")), TENANT)) is False
 
 
 @pytest.mark.parametrize("event", ["ai.allowance_used", "tripplanner.ai_allowance_used"])

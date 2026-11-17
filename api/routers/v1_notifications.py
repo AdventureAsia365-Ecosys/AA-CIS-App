@@ -50,7 +50,7 @@ _TITLES = {
     "tour.reinstated": "Tour served again",
     "tour.pages_to_put_back": "Pages to put back online",   # AA-1039 (option A): the restore fan-out writes it
     "tour.pages_to_review": "Pages about a tour no longer offered",   # AA-1039 (S276): the retire fan-out writes it
-    # AA-1126 L1 / L2: the plan's AI allowance of the month is used up (shared/cost_guard.notify_tenant_allowance_used)
+    # AA-1126 L1 / L2: the plan's AI allowance of the month is used up (shared/tenant_ai_notices.notify_tenant_allowance_used)
     "ai.allowance_used": "AI writing allowance used up",
     "tripplanner.ai_allowance_used": "Trip planner AI allowance used up",
 }

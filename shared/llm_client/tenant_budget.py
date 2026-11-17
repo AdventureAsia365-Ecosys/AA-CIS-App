@@ -49,7 +49,7 @@ from typing import Optional
 
 import structlog
 
-from shared import cost_guard
+from shared import cost_guard, tenant_ai_notices
 
 from . import connections, spend_environment
 
@@ -130,7 +130,7 @@ def approval_required(budget: cost_guard.TenantAIBudget) -> TenantBudgetApproval
 # AA-1126 (CIS 447): the spend rules in force, ``cis.spend.environment`` (shared/llm_client/spend_environment.py). dev
 # keeps today's fail-closed read (AA-642 A8); prod degrades with a warning (L4).
 # In-process pace of the best-effort "budget unreadable" bell (the bell itself is also de-duplicated in the database,
-# one unread bell per tenant per 24 h, cost_guard.maybe_alert_tenant_unreadable).
+# one unread bell per tenant per 24 h, tenant_ai_notices.maybe_alert_tenant_unreadable).
 UNREADABLE_BELL_EVERY_SECONDS = 600.0  # technical-constant: in-process de-dup of a best-effort bell write
 _bell_at: dict[str, float] = {}
 
@@ -138,7 +138,7 @@ _bell_at: dict[str, float] = {}
 async def _alert_unreadable(tenant_id: str) -> None:
     conn = await connections._connect()
     try:
-        await cost_guard.maybe_alert_tenant_unreadable(conn, tenant_id)
+        await tenant_ai_notices.maybe_alert_tenant_unreadable(conn, tenant_id)
     finally:
         await conn.close()
 
@@ -263,7 +263,7 @@ async def _load_state(tenant_id: str) -> Optional[cost_guard.TenantAIBudget]:
             await cost_guard.maybe_alert_tenant(conn, budget)
         if budget is not None and budget.needs_approval:
             # AA-1126 L1: the agency is told too (Content studio bell), once per month
-            await cost_guard.notify_tenant_allowance_used(conn, budget.tenant_id)
+            await tenant_ai_notices.notify_tenant_allowance_used(conn, budget.tenant_id)
         return budget
     finally:
         await conn.close()
