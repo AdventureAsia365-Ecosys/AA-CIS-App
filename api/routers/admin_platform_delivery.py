@@ -1,9 +1,13 @@
 """AA-1108 — Platform › Delivery: CI/CD and DORA per app for the admin page /admin/platform/delivery.
 
-  GET /admin/platform/delivery[?refresh=1]     the delivery summary per app (five DORA keys with n, lead-time
-                                               segments, CI health per workflow, main state, merge-queue wait,
-                                               flaky jobs, deploys and failed deploys with recovery time, 12-week
-                                               trend), each metric's colour and the thresholds in force
+  GET /admin/platform/delivery[?refresh=1][&section=dora|queue|git]
+                                               dora (default): the delivery summary per app (five DORA keys with n,
+                                               lead-time segments, CI health per workflow, main state, merge-queue
+                                               wait, flaky jobs, deploys and failed deploys with recovery time,
+                                               12-week trend), each metric's colour and the thresholds in force;
+                                               queue (AA-1125): the merge-queue entries of the apps with a merge queue,
+                                               coloured with the CIS 445 settings; git (AA-1125): commit activity,
+                                               churn hotspots, author kinds and the recent commit graph per repo
                                                                                                     ops.read (admin)
 
 Read only. The summary comes from the root repo workflow "Delivery metrics" through S3
@@ -14,6 +18,8 @@ the BFF refuses every other role first (frontend/lib/rbac.ts API_READ_RULES "pla
 Included in main.py WITHOUT an include prefix: staff_policy reads the route template from scope["route"].path.
 """
 from __future__ import annotations
+
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
@@ -28,9 +34,13 @@ _NO_STORE = {"Cache-Control": "private, no-store"}
 
 
 @router.get("", summary="CI/CD and DORA per app: deploys, lead time, failures, recovery, CI health (Dev numbers)")
-async def get_delivery(refresh: bool = Query(False, description="re-read the published summary (at most every 30 s)")):
+async def get_delivery(
+    refresh: bool = Query(False, description="re-read the published summary (at most every 30 s)"),
+    section: Literal["dora", "queue", "git"] = Query(
+        "dora", description="dora: DORA and CI per app; queue: merge-queue entries; git: commit activity and churn"),
+):
     try:
-        body = await delivery_metrics.view(refresh=refresh)
+        body = await delivery_metrics.view(refresh=refresh, section=section)
     except delivery_metrics.DeliveryMissing as e:
         raise HTTPException(status_code=404, detail=str(e))
     except delivery_metrics.DeliveryUnavailable as e:
