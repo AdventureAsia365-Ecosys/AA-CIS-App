@@ -140,7 +140,8 @@ class TestGetGateTelemetry:
         await get_gate_telemetry(req, x_admin_secret=_TEST_SECRET)
 
         by_tc_sql = conn.fetch.call_args_list[0].args[0]
-        assert "jsonb_array_length(cp.flags)" in by_tc_sql
+        # AA-922: only an array-shaped flags value is measured (CASE, not an AND that Postgres may reorder)
+        assert "jsonb_array_length((CASE WHEN jsonb_typeof(cp.flags) = 'array'" in by_tc_sql
         assert "cp.status = 'approved'" in by_tc_sql
         assert "FILTER (WHERE cp.status = 'held')" in by_tc_sql
         assert "cp.attempt_number >= 2" in by_tc_sql

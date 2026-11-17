@@ -24,3 +24,5 @@ def json_array(column: str) -> str:
 
 # content_piece.gate_ledger as the routers alias it ("cp"): the admin A4 and content-quality reads unnest it.
 GATE_LEDGER = json_array("cp.gate_ledger")
+# content_piece.flags (nullable, same array contract): NULL and a non-array both read as no flags (AA-922).
+FLAGS = json_array("cp.flags")

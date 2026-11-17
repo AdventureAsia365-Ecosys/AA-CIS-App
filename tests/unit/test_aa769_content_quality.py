@@ -86,7 +86,9 @@ async def test_list_pieces_filters_by_gate_from_ledger_not_held_reason():
     out = await cq.list_pieces(_request(conn), limit=50, offset=0, tenant_id=None, channel="blog", status=None,
                                gate="F9_cta_fact", q=None, sort="cost_usd", sort_dir="asc", x_admin_secret=SECRET)
     sql, *params = conn.fetch.await_args.args
-    assert "jsonb_array_elements(cp.gate_ledger || COALESCE(cp.flags" in sql
+    # AA-922: ledger and flags each read as an array (an object || an object is an object and raised)
+    assert "jsonb_array_elements((CASE WHEN jsonb_typeof(cp.gate_ledger) = 'array'" in sql
+    assert "|| (CASE WHEN jsonb_typeof(cp.flags) = 'array'" in sql
     assert "held_reason ILIKE" not in sql
     assert "ORDER BY cost_usd ASC" in sql
     assert params == ["blog", "F9_cta_fact", 50, 0]

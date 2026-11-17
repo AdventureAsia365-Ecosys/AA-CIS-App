@@ -60,7 +60,7 @@ from services.quality import registry as qr
 from services.quality import final_contract  # AA-1047 W1 (REPORT-mode exit contract)
 from services.writing_memory import signals as wm  # AA-916
 from services.writing_memory.reason_codes import FACT_NOT_IN_SOURCE, ReasonCode, suggested_reason
-from shared.repository.jsonb_sql import GATE_LEDGER as _LEDGER  # S282: unnest gate_ledger only as an array
+from shared.repository.jsonb_sql import FLAGS as _FLAGS, GATE_LEDGER as _LEDGER  # S282/AA-922: arrays only
 
 logger = structlog.get_logger()
 
@@ -112,7 +112,7 @@ _FAILED_GATES_SQL = f"""
     COALESCE((SELECT jsonb_agg(DISTINCT g->>'gate') FROM jsonb_array_elements({_LEDGER}) g
               WHERE (g->>'passed')::boolean = false AND COALESCE((g->>'blocking')::boolean, true)),
              '[]'::jsonb) AS failed_gates,
-    COALESCE((SELECT jsonb_agg(DISTINCT g->>'gate') FROM jsonb_array_elements(COALESCE(cp.flags, '[]'::jsonb)) g),
+    COALESCE((SELECT jsonb_agg(DISTINCT g->>'gate') FROM jsonb_array_elements({_FLAGS}) g),
              '[]'::jsonb) AS flag_gates
 """
 
@@ -164,7 +164,7 @@ def _piece_filters(tenant_id, channel, status, gate, q) -> tuple[str, list]:
     if gate:
         params.append(gate)
         where.append(
-            f"EXISTS (SELECT 1 FROM jsonb_array_elements(cp.gate_ledger || COALESCE(cp.flags, '[]'::jsonb)) g "
+            f"EXISTS (SELECT 1 FROM jsonb_array_elements({_LEDGER} || {_FLAGS}) g "
             f"WHERE g->>'gate' = ${len(params)} AND (g->>'passed')::boolean = false)")
     if q:
         params.append(f"%{q}%")

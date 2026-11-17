@@ -78,6 +78,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from api.core.staff_authz import staff_policy
 from api.routers.admin import verify_admin_secret
 from shared import tour_liveness as _tl
+from shared.repository.jsonb_sql import FLAGS as _FLAGS  # AA-922: AND does not order evaluation, CASE does
 from shared.repository.jsonb_sql import GATE_LEDGER as _LEDGER  # S282: unnest gate_ledger only as an array
 
 logger = structlog.get_logger()
@@ -733,9 +734,7 @@ async def get_gate_telemetry(
                 count(*) AS total,
                 count(*) FILTER (
                     WHERE cp.status = 'approved'
-                      AND cp.flags IS NOT NULL
-                      AND jsonb_typeof(cp.flags) = 'array'
-                      AND jsonb_array_length(cp.flags) > 0
+                      AND jsonb_array_length({_FLAGS}) > 0
                 ) AS warn_count,
                 count(*) FILTER (WHERE cp.status = 'held') AS held_count,
                 count(*) FILTER (WHERE cp.status = 'failed') AS failed_count,
