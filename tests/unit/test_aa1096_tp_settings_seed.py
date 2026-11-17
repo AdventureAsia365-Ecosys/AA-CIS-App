@@ -31,6 +31,7 @@ TP_SEED = {
     "tripplanner.ai.plan_chat_max_tokens": 700,
     "tripplanner.handoff.advisor_demo": True,
     "tripplanner.handoff.require_registration": True,
+    "tripplanner.spend.environment": "dev",            # AA-1126 (CIS 447): the spend rules, today's hard behaviour
 }
 
 
