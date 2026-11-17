@@ -87,8 +87,9 @@ reports:
   - '2. Scorecard: this month vs last month vs 3-month average (EX-04)'
   - '3. Delivery per app: released versions (DEV-02) and per-app Jira epic highlights; DORA headline (DEV-01)'
   - '4. Content and catalog: tours published, republished, retired, served; quality gate pass rate (CIS-01, CIS-05)'
-  - '5. Demand funnel: TripPlanner session -> trip started -> inquiry sent -> Booking inquiry -> trip case -> proposal sent
-    -> confirmed (TP-01, BK-02); acquisition sources (MKT-01)'
+  - '5. Agency demand (B2B model, ADR 0019): agency growth and trial-to-paid (MKT-01); B2B trade bookings per agency,
+    request to confirmed (BK-02). The traveller funnel (TripPlanner session to Booking inquiry) is historical since
+    2026-11-03 and is not counted'
   - 6. Commercial summary from FI-07 (aggregates only); shows 'not live (Dev)' until the first real booking
   - 7. Partners (EX-03, EX-07 summary)
   - '8. Cost and unit costs (FI-01, FI-05 headline): total by app, top 5 movers with reasons, cost per published tour'

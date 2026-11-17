@@ -1294,7 +1294,9 @@ kpis:
   version: 1
   name: Entitlement trend
   definition: 'Agencies per feature key live at each month end in shared.v_tenant_entitlement_v1 (by product and
-    source: plan, trial, override), and usage against the entitled limit for the metered keys (AI spend vs
+    source: plan, trial, override): rows of kind agency (a named view column), canary agencies left out through
+    shared.tenants.is_canary not true on tenant_id (is_canary is not a view column), so demo and internal tenants never
+    count; and usage against the entitled limit for the metered keys (AI spend vs
     ai.budget_usd_monthly as in K-TEN-AICAP, rewrites vs content.rewrite as in K-PART-QUOTA, CRM seats from the
     crm.ops.v1 usage meters), quarter over quarter from the daily values in shared.kpi_daily once the snapshot job
     computes them (the view holds today only)'
@@ -1302,6 +1304,7 @@ kpis:
   threshold: Trend; the business owner reads it with the pricing review
   sources:
   - shared.v_tenant_entitlement_v1
+  - shared.tenants
   - shared.kpi_daily
   defined_in: EX-05
   used_by:
@@ -1361,7 +1364,8 @@ kpis:
   name: Tenant pipeline forecast
   definition: 'Projected agencies with a paid subscription at 3 and 6 months: paying now (K-PART-PAYING) + agencies in
     trial (shared.tenant_subscription status trialing, by trial_ends_at) x the trailing trial-to-paid rate (K-MKT-CONV,
-    over a window that is an admin setting registered with the generator) + the pipeline before a trial (shared.tenants
+    over a window that is an admin setting registered with the generator; trials of kind agency, is_canary not true, as
+    in K-MKT-CONV) + the pipeline before a trial (shared.tenants
     kind agency without a live subscription; CRM agencies by state and owner from crm.ops.v1 GET /tenants and
     /data-coverage, read with an administrator''s staff session). Each projection is kept so K-FC-ACCURACY can score it
     a quarter later'
@@ -1807,7 +1811,8 @@ kpis:
 - id: K-MKT-CONV
   version: 2
   name: Trial to paid conversion
-  definition: 'Subscriptions whose trial_ends_at falls in the period and that are active or past_due after it / all
+  definition: 'Subscriptions of agencies (shared.tenants kind agency, is_canary not true; demo and internal tenants
+    never count) whose trial_ends_at falls in the period and that are active or past_due after it / all such agency
     subscriptions whose trial ended in the period (cancelled or lapsed trials stay in the denominator), per product, read
     from shared.tenant_subscription. Re-pointed on 2026-11-17 (slice R7) from the traveller source-to-inquiry conversion
     (B2C retired)'
@@ -1815,6 +1820,7 @@ kpis:
   threshold: Trend; amber and red levels become admin settings before a report colours them
   sources:
   - shared.tenant_subscription
+  - shared.tenants
   defined_in: MKT-01
   used_by:
   - MKT-01
@@ -1848,8 +1854,10 @@ kpis:
   version: 1
   name: Contracted MRR trend
   definition: 'Month-end contracted MRR per product and billing currency, read only from named v1 columns of
-    catalog.v_tenant_billing_v1 (tenant.entitlements.v1 1.9): rows with subscription_status active or past_due,
-    trial_ends_at not in the future and bill_free not true; the fee is agreed_price_monthly in agreed_currency while
+    catalog.v_tenant_billing_v1 (tenant.entitlements.v1 1.9): rows of kind agency (so the demo tenant and internal
+    tenants never count, whatever their subscription), canary agencies left out through shared.tenants.is_canary not
+    true on tenant_id (is_canary is not a view column; CIS owns shared.tenants), with subscription_status active or
+    past_due, trial_ends_at not in the future and bill_free not true; the fee is agreed_price_monthly in agreed_currency while
     agreed_until is empty or not past, else the list price (price_usd_monthly, or price_vnd_monthly when
     billing_currency is VND); per seat on a per-seat price_unit (times the greater of seats and seats_min), else the
     plan fee plus seats above seats_included at price_extra_seat_usd or price_extra_seat_vnd; a yearly billing_interval
@@ -1861,6 +1869,7 @@ kpis:
   threshold: Trend; the business owner sets the goal
   sources:
   - catalog.v_tenant_billing_v1
+  - shared.tenants
   - shared.kpi_daily
   defined_in: EX-05
   used_by:
