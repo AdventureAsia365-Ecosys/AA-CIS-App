@@ -400,3 +400,24 @@ def test_plan_of_the_v7_null_run_resolves_the_sample_and_prices_the_instrument(f
     assert judge["instrument"] == IID and judge["call"]["outputs"] == 12 and judge["call"]["pricing"] == "ledger_mean"
     assert out["power"]["checked"] and out["power"]["metric"] == "fail_claims_per_item"
     assert not [b for b in out["blocking"] if "instrument" in b or "sample rule" in b]
+
+
+def test_log_row_writes_the_billed_reply_and_an_unusable_one(monkeypatch):
+    from shared.llm_client import call_log
+    seen = []
+
+    async def record(pool, **kw):
+        seen.append(("ok", kw))
+
+    async def unusable(resp, **kw):
+        seen.append(("unusable", kw))
+    monkeypatch.setattr(call_log, "record_call_with_pool", record)
+    monkeypatch.setattr(call_log, "record_unusable", unusable)
+    inst = wi.instruments(wi.pinned(IID))["classify"]
+    signal = {"prompt_version": inst.prompt_version.tag, "issue": "AA-1051"}
+    asyncio.run(wi._log_row(None, _resp({"kind": "restatement"}), inst, signal, {"kind": "restatement"}, None))
+    asyncio.run(wi._log_row(None, _resp({}), inst, signal, None, ValueError("not json")))
+    (kind, ok), (kind2, bad) = seen
+    assert kind == "ok" and ok["stage"] == "adhoc_aa1048" and ok["role"] == "judge" and ok["model"] == MODEL
+    assert ok["quality_signal"]["json_parsed"] is True and "pricing_mode" in ok          # **billed_fields(resp)
+    assert kind2 == "unusable" and bad["quality_signal_extra"] == signal
