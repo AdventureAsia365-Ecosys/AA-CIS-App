@@ -241,3 +241,21 @@ def test_a_failing_requeue_never_stops_the_tick(monkeypatch):
         raise RuntimeError("zz queue down")
     monkeypatch.setattr(queue, "retry_by_reason", retry)
     assert run(lifecycle.resume_allowance_holds(object(), NOV)) == 0
+
+
+# ── the spend environment reader (its registration test ships with CIS 447: test_aa1126_spend_environment_keys) ───────
+
+@pytest.mark.parametrize("value, expected", [("prod", "prod"), ("dev", "dev"), (None, "dev"), ("staging", "dev")])
+def test_the_reader_answers_dev_unless_prod(monkeypatch, value, expected):
+    from shared import settings
+    monkeypatch.setattr(settings, "get", lambda key: value)
+    assert spend_environment.spend_environment() == expected
+
+
+def test_the_reader_answers_dev_on_a_read_error(monkeypatch):
+    from shared import settings
+
+    def boom(key):
+        raise KeyError(key)
+    monkeypatch.setattr(settings, "get", boom)
+    assert spend_environment.spend_environment() == "dev"
