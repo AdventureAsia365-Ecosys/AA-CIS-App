@@ -14,8 +14,8 @@ from shared.cost_guard import _INSERT_ALERT_SQL, _PLATFORM_TENANT_ID, _RECENT_AL
 logger = structlog.get_logger()
 
 
-# L1: when a tenant's AI budget stops its Content studio writing, the agency is told in its own bell (shared.notifications
-# row for target_roles {tenant}, GET /v1/notifications), once per tenant and UTC month: the CIS 447 partial unique index
+# L1: when a tenant's AI budget stops its Content studio writing, the agency is told in its own bell (a
+# shared.notifications row for target_roles {tenant}, GET /v1/notifications), once per tenant and UTC month: the CIS 447 partial unique index
 # notifications_ai_allowance_once_uq on (tenant_id, event_type, entity_id) makes a second write a no-op. TripPlanner
 # writes its own notice (event tripplanner.ai_allowance_used, entity type tripplanner_ai) when an agency's AI sessions
 # quota stops new AI sessions (AA-TripPlanner-Web backend/shared/tenant_sessions.py; CIS 447 lets its role INSERT that
