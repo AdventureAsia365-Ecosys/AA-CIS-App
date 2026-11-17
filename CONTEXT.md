@@ -3670,7 +3670,9 @@ publish fails closed (503 `content_check_unavailable`, "try again"); a repeat pu
 in flight is not checked again. Links are read from the HTML the publisher sends (the same markdown render, every
 `<a href>` through an HTML parser, entities decoded, `//host` and scheme-less hrefs resolved) plus bare and
 scheme-less URLs of the text and the raw piece; a trip page link counts only with a real uuid; the TripPlanner hosts
-include the Dev domain `tripplanner.lumiguides.it.com`. Admin Tenant content QA › Compliance
+include the Dev domain `tripplanner.lumiguides.it.com` and (AA-1114) the tenant's OWN verified custom hosts (the
+`active` rows of `shared.tenant_tripplanner_domain` of that tenant, exact host: never a sub-domain of it or another
+tenant's host). Admin Tenant content QA › Compliance
 (`/admin/tenant-qa/compliance`, API `GET /admin/tenant-qa/compliance`, `POST …/{flag_id}/release`) lists both kinds;
 a release sends the `content_sha256` the gate read and is refused (409) when the text changed since; it lets exactly
 that text through. Flags are admin data; tenants never see them.

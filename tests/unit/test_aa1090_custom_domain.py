@@ -444,6 +444,7 @@ def test_add_stores_audits_and_queues(editor):
     ({"status": None}, "tenant_not_found", 404),
     ({"status": "offboarding"}, "tenant_offboarded", 409),
     ({"has_tp": False}, "no_tripplanner", 409),
+    ({"entitled": False}, "custom_domain_not_included", 409),   # AA-1114: a plan without tp.custom_domain
     ({"taken": True}, tpd.DOMAIN_TAKEN, 409),
     ({"tenant_count": 1}, "domain_limit_reached", 409),
     ({"edge_count": 10}, "edge_full", 409),
@@ -560,6 +561,24 @@ def test_post_passes_to_the_service(client, monkeypatch):
     resp = client.post(PATH, headers=_h(), json={"domain": "trip.quillmere.example.invalid"})
     assert resp.status_code == 201 and resp.json()["status"] == "pending"
     assert adder.await_args.kwargs == {"domain": "trip.quillmere.example.invalid", "actor": "admin:u-admin"}
+
+
+def test_post_refuses_a_plan_without_the_custom_domain_feature(client, monkeypatch, editor):
+    """AA-1114: the route answers the add_domain entitlement refusal as a 409 with its code and sentence."""
+    conn = EditorConn(entitled=False)
+
+    class _Acq:
+        async def __aenter__(self):
+            return conn
+
+        async def __aexit__(self, *a):
+            return False
+
+    monkeypatch.setattr(client.app.state.pool, "acquire", lambda: _Acq(), raising=False)
+    resp = client.post(PATH, headers=_h(), json={"domain": "trip.quillmere.example.invalid"})
+    assert resp.status_code == 409 and resp.headers["X-Error-Code"] == "custom_domain_not_included"
+    body = resp.json()["detail"]
+    assert body["detail"] == "custom_domain_not_included" and "Pro" in body["message"] and conn.inserted == []
 
 
 @pytest.mark.parametrize("role", ["content", "customer_success", None])
