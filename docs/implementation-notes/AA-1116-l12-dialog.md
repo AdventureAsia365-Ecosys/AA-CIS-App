@@ -14,6 +14,11 @@ show was the outcome: the result was one sentence (created + a CRM note). This l
   add-on the CRM agency (`crm_agency_created` / `crm_agency_exists`) and the owner invitation (`crm_owner_invited`
   "sent", `crm_owner_invite_pending` "already pending", `crm_owner_present` "owner already in",
   `crm_owner_not_invited` "Not sent (no e-mail)"). A CRM refusal shows "Needs a look" with the CRM's code, as sent.
+- **The owner line is never "still setting up" once the CRM answered** (review fix): the onboarding runs only inside
+  the POST, so nothing finishes the invitation later. When the agency is there but the CRM refused the invite
+  (`status` partial, `error.step` owner_invite, no owner step), the owner line reads "Needs a look" with the CRM's
+  code, matching the dialog's attention note. Both CRM lines read pending only when the POST carried no
+  `crm_onboarding`.
 - **States**: done, still setting up (the worker has not reached the step within the dialog's 30 s wait), not sent,
   needs a look. No list while the job has no steps yet (the "being set up" note is enough).
 - **Pure helper** `provisionOutcome(job, products)` in `lib/tenantPlans.ts` (unit tested); the dialog component
@@ -28,7 +33,7 @@ show was the outcome: the result was one sentence (created + a CRM note). This l
 - `frontend/app/admin/tenants/page.tsx`: the result dialog renders the outcome.
 - `frontend/app/admin/tenants/messages.ts`: the outcome copy, English and Vietnamese.
 - `frontend/lib/tenantPlans.test.mjs`: the outcome cases (content only, crm + tripplanner with the seat minimum, no
-  owner address, CRM refused, job still running).
+  owner address, CRM refused, agency created but the invite refused (partial), no CRM answer yet, job still running).
 
 ## Tradeoffs
 

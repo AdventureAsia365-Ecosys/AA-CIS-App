@@ -626,11 +626,13 @@ function crmFailure(crm: CrmOnboarding | null): string {
   return crm.error?.code ?? crm.status;
 }
 
-function ownerRow(steps: Set<string>, agency: boolean, broken: OutcomeState, failure: string): OutcomeRow {
+/** The owner invitation line. The onboarding runs only inside the POST, so once the CRM has answered nothing will
+ *  finish an invitation later: with no owner step it needs a look (e.g. status partial, the CRM refused the invite
+ *  after creating the agency), with the CRM's code. Pending only before any CRM answer. Pure. */
+function ownerRow(steps: Set<string>, broken: OutcomeState, failure: string): OutcomeRow {
   const owner = Object.keys(OWNER_DONE).find((s) => steps.has(s));
   if (owner) return { item: "crmOwner", state: "done", detail: OWNER_DONE[owner] };
   if (steps.has("crm_owner_not_invited")) return { item: "crmOwner", state: "skipped", detail: "" };
-  if (agency) return { item: "crmOwner", state: "pending", detail: "" };
   return { item: "crmOwner", state: broken, detail: failure };
 }
 
@@ -642,7 +644,7 @@ function crmRows(crm: CrmOnboarding | null): OutcomeRow[] {
   const broken: OutcomeState = crm ? "attention" : "pending";
   const agencyRow: OutcomeRow = agency ? { item: "crmAgency", state: "done", detail: "" }
     : { item: "crmAgency", state: broken, detail: failure };
-  return [agencyRow, ownerRow(steps, agency, broken, failure)];
+  return [agencyRow, ownerRow(steps, broken, failure)];
 }
 
 /** AA-1116: the New tenant saga's outcome, one row per thing it sets up, from the job's steps and the POST's CRM

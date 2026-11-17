@@ -449,6 +449,16 @@ test("AA-1116: the New tenant result lists what the saga set up, line by line", 
                       error: { step: "agency", http_status: 403, code: "forbidden" } } }), ["crm"]);
   assert.deepEqual(refused.slice(-2).map((r) => [r.item, r.state, r.detail]), [
     ["crmAgency", "attention", "forbidden"], ["crmOwner", "attention", "forbidden"]]);
+  // the agency created, then the CRM refused the owner invite (status partial): the owner line needs a look, with
+  // the CRM's code, never "still setting up" (the onboarding does not run again after the POST)
+  const partial = provisionOutcome(job({ steps: ["tenant_created", "content_active", "crm_subscribed"],
+    crm_onboarding: { tenant_id: "t", status: "partial", steps: ["crm_agency_created"],
+                      error: { step: "owner_invite", http_status: 409, code: "x" } } }), ["crm"]);
+  assert.deepEqual(partial.slice(-2).map((r) => [r.item, r.state, r.detail]), [
+    ["crmAgency", "done", ""], ["crmOwner", "attention", "x"]]);
+  // no CRM answer yet (crm_onboarding absent): both CRM lines read pending
+  const noAnswer = provisionOutcome(job({ steps: ["tenant_created", "content_active", "crm_subscribed"] }), ["crm"]);
+  assert.deepEqual(noAnswer.slice(-2).map((r) => [r.item, r.state]), [["crmAgency", "pending"], ["crmOwner", "pending"]]);
   // a job still running with the POST's steps: the add-on not subscribed yet reads pending
   const running = provisionOutcome(job({ status: "running", steps: ["tenant_created"] }), ["tripplanner"]);
   assert.deepEqual(running.map((r) => r.state), ["done", "pending", "pending"]);
