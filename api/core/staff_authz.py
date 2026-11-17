@@ -404,8 +404,9 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/tenants/provision"): TENANT_WRITE,
     ("POST", "/admin/tenants/{tenant_id}/provision"): TENANT_WRITE,
     ("GET", "/admin/tenants/provision/{job_id}"): TENANT_READ,
-    # AA-1028 R1 slice 3 — saga cancel of add-ons, Tenant 360 › Subscription (overrides), the plan catalogue
+    # AA-1028 R1 slice 3 — saga cancel of add-ons, Tenant 360 › Subscription (overrides), the plan catalogue; AA-1116
     ("POST", "/admin/tenants/{tenant_id}/provision/cancel"): TENANT_WRITE,
+    ("POST", "/admin/tenants/{tenant_id}/crm-onboarding"): TENANT_WRITE,  # CRM agency + owner invite (crm.ops relay)
     # Tenant 360 › Subscription: the TripPlanner lead route (AA-1038 S272, CIS 390), own domains (AA-1090 R8, CIS 428)
     **{(m, "/admin/tenants/{tenant_id}/tripplanner-site/" + p): _TENANT_BILLING_READ if m == "GET" else TENANT_WRITE
        for m, p in (("GET", "lead-route"), ("PUT", "lead-route"), ("GET", "domains"), ("POST", "domains"),
@@ -488,8 +489,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/tenant-assignments"): _TENANT_ONE_READ,
     ("GET", "/admin/tenant-assignments/staff"): TENANT_ASSIGN,
     # AA-1035 R2 slice 2 (root ADR 0019 d5) — read-only "view as tenant" (admin_view_as.py, api/core/view_as.py): start
-    # one (scoped: require_tenant_scope), read / end the caller's own (admin: every session; ending another's revokes
-    # it)
+    # one (scoped: require_tenant_scope), read / end the caller's own (admin: every session; ending another's: revoke)
     ("POST", "/admin/tenants/{tenant_id}/view-as"): TENANT_VIEW_AS,
     ("GET", "/admin/view-as/sessions"): TENANT_VIEW_AS,
     ("GET", "/admin/view-as/sessions/{session_id}"): TENANT_VIEW_AS,

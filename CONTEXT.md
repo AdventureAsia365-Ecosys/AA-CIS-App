@@ -3124,9 +3124,18 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   /admin/tenants/provision/{job_id}` reads the job. Idempotent per `request_key` (job key `tenant_provision:<key>`; the
   database steps are one transaction that writes the audit row naming the key, so a retry after a commit returns the
   stored outcome). The feed events carry `aa.actor` = `job:tenant_provision:<job id>`. The CRM (`crm_entitlement_pull`,
-  plan / seats / allowed features / CIS lock) and Booking (`bk_tenant_pull`) projections follow by themselves; creating
-  the CRM agency itself and inviting its owner stay on Platform › Agencies (the relay uses the staff's own WORKFORCE
-  token, which a job does not have). Platform › Agencies shows the CRM allowed features read-only once the CRM
+  plan / seats / allowed features / CIS lock) and Booking (`bk_tenant_pull`) projections follow by themselves. AA-1116
+  (S282 G5 / G11): a create or attach with a `crm` add-on also creates the CRM agency and, with `crm_owner_email`,
+  sends its first-owner invitation in the same staff request (`services/tenant_account/crm_onboarding.py`): the CRM
+  takes those writes only with the staff member's own WORKFORCE token, which the job does not have, so the route runs
+  the saga's idempotent transaction itself under the job's id (the job then returns it `resumed`) and relays
+  `GET /tenants/{id}`, `POST /tenants`, `POST /tenants/{id}/owner-invite` (already there = done), nudges the account
+  feed with one unchanged `account.status_changed` event when it created the agency, and audits `tenant.crm_onboarded`
+  (never the address). The response carries `crm_onboarding` {status done / partial / failed / skipped, steps, error};
+  `POST /admin/tenants/{tenant_id}/crm-onboarding` (admin, `tenant.write`) runs it again. A reused `request_key` whose
+  first job or stored outcome names another tenant (or slug) never reaches the CRM (`request_key_reused`). The New
+  tenant dialog of Platform › Tenants runs this saga with its add-on choices and the owner address. Platform › Agencies keeps
+  its buttons for the cases the relay refuses (no `crm-platform-admin` group, CRM down). Platform › Agencies shows the CRM allowed features read-only once the CRM
   projected the agency from CIS (crm.ops.v1 1.11 `managed_by` cis) and still edits them while it is `managed_by` ops. The bridge triggers of 355 stay: `POST /admin/tenants`, PATCH, offboard and
   restore still write only `shared.tenants`.
 - Platform › Agencies shows the CRM's allowed features read-only (crm.ops.v1 1.11: the CRM refuses the L1 write with

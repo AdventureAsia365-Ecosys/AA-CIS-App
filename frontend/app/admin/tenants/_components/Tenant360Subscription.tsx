@@ -24,10 +24,12 @@ import {
 import type { Translator } from "../../../_kit/core/i18n";
 import {
   DEFAULT_OVERRIDE_RULES, FEATURES_API, LIVE_STATUSES, PLANS_KEY, defaultOverrideMode, limitText, newRequestKey,
-  overrideBody, overrideDraftOf, overrideFeatures, overrideModes, overridePath, overrideUnit, runSaga, sagaFailed,
+  addOnBody, crmOnboardingNote, crmOwnerField, overrideBody, seatsInvalid, overrideDraftOf, overrideFeatures,
+  overrideModes, overridePath, overrideUnit, runSaga,
+  sagaFailed,
   sendJson, sourceTone, statusTone, subscriptionKey, subscriptionPath, unitText,
   type EntitlementRow, type Feature, type OverrideDraft, type OverrideDraftError, type OverrideRow, type OverrideRules,
-  type Product, type SubscriptionResp, type SubscriptionRow,
+  type ProvisionJob, type Product, type SubscriptionResp, type SubscriptionRow,
 } from "@/lib/tenantPlans";
 import { actorLabel } from "@/lib/aiGateway";
 import { can } from "@/lib/rbac";
@@ -68,6 +70,26 @@ function FeatureCell({ description, featureKey }: { description?: string; featur
 
 // ── add-on drawer ────────────────────────────────────────────────────────────────────────────────────────────────
 
+/** AA-1116: one toast with the CRM agency outcome of a crm add-on (nothing for another product). */
+function notifyCrm(job: ProvisionJob, toast: ReturnType<typeof useToast>, t: Translator<typeof T360_SUB.en>) {
+  const crm = crmOnboardingNote(job.crm_onboarding);
+  if (crm === "done") toast.success(t("crmDone"));
+  else if (crm === "noInvite") toast.success(t("crmNoInvite"));
+  else if (crm === "attention") toast.error(t("crmAttention", job.crm_onboarding?.error?.code ?? job.crm_onboarding?.status ?? ""));
+}
+
+/** AA-1116: the CRM owner address of a new crm add-on (the CRM sends the invitation). */
+function OwnerEmailField({ value, bad, disabled, onChange }: {
+  value: string; bad: boolean; disabled: boolean; onChange: (v: string) => void;
+}) {
+  const t = useT(T360_SUB);
+  return (
+    <Field label={t("fieldOwnerEmail")} hint={t("fieldOwnerEmailHint")} error={bad ? t("err_ownerEmail") : undefined}>
+      <Input type="email" autoComplete="off" value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} />
+    </Field>
+  );
+}
+
 function AddOnDrawer({ tenantId, data, start, onClose }: {
   tenantId: string; data: SubscriptionResp; start: SubscriptionRow | null; onClose: () => void;
 }) {
@@ -78,15 +100,18 @@ function AddOnDrawer({ tenantId, data, start, onClose }: {
   const plans = data.add_on_plans.filter((p) => p.product === product);
   const [planKey, setPlanKey] = useState(start?.plan_key ?? plans[0]?.plan_key ?? "");
   const [seats, setSeats] = useState(start?.seats == null ? "" : String(start.seats));
+  const [ownerEmail, setOwnerEmail] = useState("");
   const [error, setError] = useState("");
-  const seatsBad = seats.trim() !== "" && (!/^\d{1,3}$/.test(seats.trim()) || Number(seats) < 1 || Number(seats) > 500);
+  const seatsBad = seatsInvalid(seats);
+  // AA-1116: a crm add-on creates the CRM agency in the same request and, with an address, invites its owner
+  const { ask: askOwner, owner, bad: ownerBad } = crmOwnerField(product, !start, ownerEmail);
   const run = useMutation({
-    mutationFn: () => runSaga(`/api/admin/tenants/${tenantId}/provision`, {
-      request_key: newRequestKey(), add_ons: [{ product, plan_key: planKey, seats: seats.trim() ? Number(seats) : null }],
-    }),
+    mutationFn: () => runSaga(`/api/admin/tenants/${tenantId}/provision`,
+      addOnBody(newRequestKey(), product, planKey, seats, owner)),
     onSuccess: (job) => {
       void qc.invalidateQueries({ queryKey: subscriptionKey(tenantId) });
       void qc.invalidateQueries({ queryKey: PLANS_KEY });
+      notifyCrm(job, toast, t);
       if (job.status === "succeeded") { toast.success(t("addOnDone")); onClose(); }
       else if (sagaFailed(job) && job.status !== "queued" && job.status !== "running") {
         setError(t("jobFailed", job.error ?? job.status));
@@ -99,7 +124,7 @@ function AddOnDrawer({ tenantId, data, start, onClose }: {
       footer={
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <Button variant="ghost" onClick={onClose} disabled={run.isPending}>{t("close")}</Button>
-          <Button variant="primary" disabled={!planKey || seatsBad || run.isPending} testId="addon-save"
+          <Button variant="primary" disabled={!planKey || seatsBad || ownerBad || run.isPending} testId="addon-save"
             onClick={() => { setError(""); run.mutate(); }}>
             {run.isPending ? t("working") : t("submitAddOn")}
           </Button>
@@ -124,6 +149,7 @@ function AddOnDrawer({ tenantId, data, start, onClose }: {
             <Input inputMode="numeric" value={seats} disabled={run.isPending} onChange={(e) => setSeats(e.target.value)} />
           </Field>
         )}
+        {askOwner && <OwnerEmailField value={ownerEmail} bad={ownerBad} disabled={run.isPending} onChange={setOwnerEmail} />}
         {error && <span role="alert" style={{ fontSize: 12, color: K.danger }}>{error}</span>}
       </div>
     </Drawer>

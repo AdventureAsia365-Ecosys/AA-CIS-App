@@ -258,9 +258,12 @@ def test_writes_refuse_non_admin(client, role):
 def test_create_enqueues_one_job(client, monkeypatch):
     from services.jobs import tenant_provision_job as job
 
+    from api.routers import admin_tenant_provision as route
+
     c, pool = client
     enq = AsyncMock(return_value=("8a1f2b3c-4d5e-4f60-8a1b-2c3d4e5f6a7b", True))
     monkeypatch.setattr(job, "enqueue_request", enq)
+    monkeypatch.setattr(route, "_crm_onboarding", AsyncMock(return_value=None))  # AA-1116: test_aa1116_crm_onboarding
     body = {"request_key": KEY, "name": "Larkspur Journeys", "slug": "larkspur-journeys", "plan_tier": "starter",
             "posts_per_week": 3, "add_ons": [{"product": "crm", "plan_key": "crm.core"}]}
     pool.fetchrow = AsyncMock(return_value=_row({**body, "mode": "create"}))
@@ -276,9 +279,12 @@ def test_create_enqueues_one_job(client, monkeypatch):
 def test_attach_enqueues_and_status_reads_the_job(client, monkeypatch):
     from services.jobs import tenant_provision_job as job
 
+    from api.routers import admin_tenant_provision as route
+
     c, pool = client
     monkeypatch.setattr(job, "enqueue_request", AsyncMock(return_value=("8a1f2b3c-4d5e-4f60-8a1b-2c3d4e5f6a7b",
                                                                         False)))
+    monkeypatch.setattr(route, "_crm_onboarding", AsyncMock(return_value=None))  # AA-1116: test_aa1116_crm_onboarding
     payload = {"request_key": KEY, "mode": "attach", "tenant_id": TID,
                "add_ons": [{"product": "crm", "plan_key": "crm.pro", "seats": 3}]}
     result = {"tenant_id": TID, "steps": ["crm_subscribed"]}

@@ -3289,6 +3289,114 @@
         "title": "CreditEntryBody",
         "type": "object"
       },
+      "CrmOnboardingError": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "http_status": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Http Status"
+          },
+          "step": {
+            "title": "Step",
+            "type": "string"
+          }
+        },
+        "required": [
+          "step",
+          "code"
+        ],
+        "title": "CrmOnboardingError",
+        "type": "object"
+      },
+      "CrmOnboardingIn": {
+        "properties": {
+          "owner_email": {
+            "anyOf": [
+              {
+                "maxLength": 254,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The agency owner's e-mail for the CRM first-owner invitation (needs a crm add-on in the request; sent to the CRM only, never stored or logged by CIS)",
+            "title": "Owner Email"
+          },
+          "ticket_ref": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,10}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The CRM ticket reference of the agency create / owner invite (default CISONB-<unix time>)",
+            "title": "Ticket Ref"
+          }
+        },
+        "title": "CrmOnboardingIn",
+        "type": "object"
+      },
+      "CrmOnboardingOut": {
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CrmOnboardingError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "done",
+              "partial",
+              "failed",
+              "skipped"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "tenant_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tenant Id"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "CrmOnboardingOut",
+        "type": "object"
+      },
       "CtaCheckBody": {
         "properties": {
           "cta": {
@@ -7870,6 +7978,32 @@
             "title": "Add Ons",
             "type": "array"
           },
+          "crm_owner_email": {
+            "anyOf": [
+              {
+                "maxLength": 254,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The agency owner's e-mail for the CRM first-owner invitation (needs a crm add-on in the request; sent to the CRM only, never stored or logged by CIS)",
+            "title": "Crm Owner Email"
+          },
+          "crm_ticket_ref": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,10}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The CRM ticket reference of the agency create / owner invite (default CISONB-<unix time>)",
+            "title": "Crm Ticket Ref"
+          },
           "request_key": {
             "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,63}$",
             "title": "Request Key",
@@ -7920,6 +8054,32 @@
             "maxItems": 2,
             "title": "Add Ons",
             "type": "array"
+          },
+          "crm_owner_email": {
+            "anyOf": [
+              {
+                "maxLength": 254,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The agency owner's e-mail for the CRM first-owner invitation (needs a crm add-on in the request; sent to the CRM only, never stored or logged by CIS)",
+            "title": "Crm Owner Email"
+          },
+          "crm_ticket_ref": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,10}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The CRM ticket reference of the agency create / owner invite (default CISONB-<unix time>)",
+            "title": "Crm Ticket Ref"
           },
           "kind": {
             "anyOf": [
@@ -8011,6 +8171,16 @@
           "created": {
             "title": "Created",
             "type": "boolean"
+          },
+          "crm_onboarding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CrmOnboardingOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "error": {
             "anyOf": [
@@ -45469,6 +45639,108 @@
         "summary": "Tenant month-to-date LLM cost, $/piece, $/tour, margin",
         "tags": [
           "admin-tenant360"
+        ]
+      }
+    },
+    "/admin/tenants/{tenant_id}/crm-onboarding": {
+      "post": {
+        "description": "AA-1116: the step the provisioning routes run, again (a live crm subscription is required). 200 with the\noutcome, a CRM refusal included (``status`` partial / failed with the CRM's code); 404 / 409 / 422 before any CRM\ncall.",
+        "operationId": "crm_onboarding_route_admin_tenants__tenant_id__crm_onboarding_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-user-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-User-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CrmOnboardingIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CrmOnboardingOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create the tenant's CRM agency when it has none and invite its first owner (idempotent)",
+        "tags": [
+          "admin"
         ]
       }
     },

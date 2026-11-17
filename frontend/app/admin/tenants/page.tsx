@@ -13,6 +13,8 @@
 // AA-1031 (S264): Members tab (Content studio memberships: invite, send again, change role, remove), ./_components.
 // AA-1028 R1 slice 3: Subscription tab (subscriptions, entitlements, overrides, add-ons); the create modal's tier choices
 // come from the plan catalogue (useContentTiers), not a hard-coded list.
+// AA-1116: New tenant (./_components/CreateTenantModal) runs the tenant_provision saga with its add-ons; a CRM add-on
+// sets up the CRM agency and invites its owner in the same request.
 // AA-1035 (directory capability UI): the write controls follow the role (lib/tenantDirectory.ts): New tenant and
 // Offboard / Restore need tenant.write, the status pill toggles for tenant.write or billing.write, and the
 // unmapped-markets banner (tenant.read) is not even fetched for the desk roles. The backend stays the authority.
@@ -24,15 +26,15 @@ import {
   AlertCircle, Loader2, CheckCircle, Ban, Globe, RotateCcw,
 } from "lucide-react";
 import {
-  Button, PageFrame, Modal, PageHeader, useT, Input, Textarea,
+  Button, PageFrame, Modal, PageHeader, useT, Textarea,
   K, serif, mono, sans, Section, Eyebrow, Badge, LoadingScreen,
-  DataTable, SegmentedControl, type ColumnDef,
+  DataTable, type ColumnDef,
   type Tone,
   ButtonGroup, ChipButton, Pressable, useAdminIdentity,
 } from "../../_kit";
 import { legacyTenantLinkTarget, tenant360Href } from "@/lib/adminIa";
 import { tenantDirectoryControls, type TenantDirectoryControls } from "@/lib/tenantDirectory";
-import { useContentTiers } from "./_components/useContentTiers";
+import { CreateTenantModal, type TenantNotice } from "./_components/CreateTenantModal";
 import type { Lifecycle, Tenant, TenantStatus } from "./_components/tenantRow";
 import { TEN } from "./messages";
 
@@ -48,11 +50,7 @@ const TENANT_STATUS_STYLE: Record<
 };
 
 // AA-1036 R3 slice 3 (root ADR 0019 d6): no tenant API key is issued, rotated or shown any more; create and restore
-// end in this small result dialog instead of the old one-time key dialog.
-interface TenantNotice {
-  tenant_id: string; tenant_name: string;
-  title: string; note: string;
-}
+// end in a small result dialog (TenantNotice, ./_components/CreateTenantModal) instead of the old one-time key dialog.
 
 // AA-629 Tier 2 — GET /admin/unmapped-market-requests
 interface UnmappedMarketRequest {
@@ -112,93 +110,6 @@ function LifecycleBar({ lc }: { lc: Lifecycle }) {
         )}
       </div>
     </div>
-  );
-}
-
-// ─── Create Tenant Modal ──────────────────────────────────────────────────────
-
-function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (k: TenantNotice) => void }) {
-  const t = useT(TEN);
-  const [name, setName]   = useState("");
-  const [slug, setSlug]   = useState("");
-  const [plan, setPlan]   = useState("starter");
-  const { tiers } = useContentTiers(plan);
-  // AA-384: posts_per_week is a free tenant choice now, not implied by plan — caller states its
-  // own posting cadence at creation (1-14, no default that matches a tier).
-  const [postsPerWeek, setPostsPerWeek] = useState("3");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  const autoSlug = (n: string) => n.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-
-  async function submit() {
-    if (!name.trim() || !slug.trim()) { setError(t("nameSlugRequired")); return; }
-    const ppw = Number(postsPerWeek);
-    if (!Number.isInteger(ppw) || ppw < 1 || ppw > 14) {
-      setError(t("ppwRange")); return;
-    }
-    setLoading(true); setError("");
-    try {
-      const res = await fetch("/api/admin/tenants", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), slug: slug.trim(), plan_tier: plan, posts_per_week: ppw }),
-      });
-      const data = await res.json();
-      if (!res.ok) { setError(data.detail ?? t("createFailed")); return; }
-      onCreated({ tenant_id: data.tenant_id, tenant_name: data.name, title: t("tenantCreated"), note: t("createdNote") });
-    } catch { setError(t("connectionError")); } finally { setLoading(false); }
-  }
-
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      title={t("newTenant")}
-      width={440}
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>{t("cancel")}</Button>
-          <Button variant="primary" disabled={loading} onClick={submit}>
-            {loading ? <><Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> {t("creating")}</> : t("createTenant")}
-          </Button>
-        </>
-      }
-    >
-        {[
-          { key: "name", label: t("companyName"), value: name, onChange: (v: string) => { setName(v); setSlug(autoSlug(v)); }, placeholder: "WanderLux Travel" },
-          { key: "slug", label: t("slug"),        value: slug, onChange: setSlug, placeholder: "wanderlux-travel" },
-        ].map(f => (
-          <div key={f.key} style={{ marginBottom: 16 }}>
-            <label style={{ fontSize: 11, fontWeight: 600, color: K.muted, textTransform: "uppercase", letterSpacing: "0.1em", display: "block", marginBottom: 6 }}>{f.label}</label>
-            <Input value={f.value} onChange={e => f.onChange(e.target.value)} placeholder={f.placeholder}
-              aria-label={f.label} style={{ width: "100%" }} />
-          </div>
-        ))}
-        <div style={{ marginBottom: 24 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: K.muted, textTransform: "uppercase", letterSpacing: "0.1em", display: "block", marginBottom: 8 }}>{t("plan")}</label>
-          <SegmentedControl
-            label={t("plan")}
-            value={plan}
-            onChange={setPlan}
-            options={tiers.map(p => ({ value: p, label: p }))}
-          />
-        </div>
-        <div style={{ marginBottom: 24 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: K.muted, textTransform: "uppercase", letterSpacing: "0.1em", display: "block", marginBottom: 8 }}>
-            {t("ppwLabel")}
-          </label>
-          <Input type="number" min={1} max={14} value={postsPerWeek} onChange={e => setPostsPerWeek(e.target.value)}
-            aria-label={t("ppwLabel")} style={{ width: 100 }} />
-          <p style={{ fontSize: 11, color: K.muted2, margin: "6px 0 0" }}>
-            {t("ppwHelp")}
-          </p>
-        </div>
-        {error && (
-          <div style={{ marginBottom: 14, padding: "9px 12px", background: K.dangerSoft, border: `1px solid ${K.dangerBorder}`, borderRadius: 8, fontSize: 12, color: K.danger }}>
-            {error}
-          </div>
-        )}
-    </Modal>
   );
 }
 
@@ -658,7 +569,7 @@ function TenantsPageInner() {
         </PageFrame>
 
 
-      {controls.create && showCreate && <CreateModal onClose={() => setShowCreate(false)} onCreated={k => { setShowCreate(false); setNotice(k); load(); }} />}
+      {controls.create && showCreate && <CreateTenantModal onClose={() => setShowCreate(false)} onCreated={k => { setShowCreate(false); setNotice(k); load(); }} />}
       {notice && <TenantNoticeModal notice={notice} onClose={() => setNotice(null)} />}
     </>
   );

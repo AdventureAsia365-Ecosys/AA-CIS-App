@@ -519,8 +519,76 @@ export async function sendJson<T>(path: string, method: string, body?: unknown):
   return parsed as T;
 }
 
+/** AA-1116: the CRM agency + first-owner invite run in the same request as a crm add-on (POST response only). */
+export interface CrmOnboarding { tenant_id: string | null; status: "done" | "partial" | "failed" | "skipped";
+                                 steps: string[]; error: { step: string; http_status: number | null; code: string } | null }
 export interface ProvisionJob { job_id: string; status: string; steps: string[]; error: string | null;
-                                result: Record<string, unknown> | null }
+                                result: Record<string, unknown> | null; crm_onboarding?: CrmOnboarding | null;
+                                tenant_id?: string | null }
+
+/** The add-on drawer's seats: empty, or a whole number 1-500. True when the text is neither. Pure. */
+export function seatsInvalid(value: string): boolean {
+  const v = value.trim();
+  return v !== "" && (!/^\d{1,3}$/.test(v) || Number(v) < 1 || Number(v) > 500);
+}
+
+/** AA-1116: the owner address of a NEW crm add-on (asked only then); bad = typed but not one address. Pure. */
+export function crmOwnerField(product: string, isNew: boolean, value: string): { ask: boolean; owner: string; bad: boolean } {
+  const ask = product === "crm" && isNew;
+  const owner = ask ? value.trim() : "";
+  return { ask, owner, bad: owner !== "" && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(owner) };
+}
+
+/** The add-on saga body (the owner address only when one was typed). Pure. */
+export function addOnBody(requestKey: string, product: string, planKey: string, seats: string, owner: string) {
+  return {
+    request_key: requestKey, add_ons: [{ product, plan_key: planKey, seats: seats.trim() ? Number(seats) : null }],
+    ...(owner ? { crm_owner_email: owner } : {}),
+  };
+}
+
+/** The CRM onboarding needs a look from staff (not done, or done without the owner invited). Pure. */
+export function crmOnboardingNote(c: CrmOnboarding | null | undefined): "done" | "noInvite" | "attention" | null {
+  if (!c) return null;
+  if (c.status !== "done") return "attention";
+  return c.steps.includes("crm_owner_not_invited") ? "noInvite" : "done";
+}
+
+/** AA-1116: the New tenant modal's add-on choices for one product: the live (not retired) plans, like Tenant 360's
+ *  add_on_plans. Pure. */
+export function addOnChoices(plans: Plan[] | undefined, product: "crm" | "tripplanner"):
+  { plan_key: string; name: string }[] {
+  return (plans ?? []).filter((p) => p.product === product && !p.retired_at)
+    .map((p) => ({ plan_key: p.plan_key, name: p.name }))
+    .sort((a, b) => a.plan_key.localeCompare(b.plan_key));
+}
+
+export interface NewTenantDraft {
+  name: string; slug: string; plan_tier: string; posts_per_week: number;
+  crmPlan: string; tripplannerPlan: string; ownerEmail: string;
+}
+
+/** AA-1116: the New tenant request (POST /admin/tenants/provision): the account, its content subscription and the
+ *  chosen add-ons in one saga; a crm add-on also creates the CRM agency and, with an address, invites its owner in the
+ *  same request. The address goes only with a crm add-on (the API refuses it otherwise). Pure. */
+export function newTenantBody(requestKey: string, d: NewTenantDraft) {
+  const addOns = [
+    ...(d.crmPlan ? [{ product: "crm", plan_key: d.crmPlan, seats: null }] : []),
+    ...(d.tripplannerPlan ? [{ product: "tripplanner", plan_key: d.tripplannerPlan, seats: null }] : []),
+  ];
+  const owner = d.crmPlan ? d.ownerEmail.trim() : "";
+  return {
+    request_key: requestKey, name: d.name.trim(), slug: d.slug.trim(), plan_tier: d.plan_tier,
+    posts_per_week: d.posts_per_week, add_ons: addOns, ...(owner ? { crm_owner_email: owner } : {}),
+  };
+}
+
+/** The tenant a provisioning job set up: the POST's own read (a crm add-on runs the saga in the request) or the
+ *  finished job's result; null while the worker has not run it yet. Pure. */
+export function provisionedTenantId(job: ProvisionJob): string | null {
+  const fromResult = job.result && typeof job.result.tenant_id === "string" ? job.result.tenant_id : null;
+  return job.tenant_id ?? fromResult;
+}
 
 export function newRequestKey(prefix = "admin-ui"): string {
   const rnd = typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -537,12 +605,14 @@ export async function runSaga(path: string, body: unknown, { timeoutMs = 30000, 
                               pollPath = (jobId: string) => `/api/admin/tenants/provision/${jobId}` } = {}):
   Promise<ProvisionJob> {
   let job = await sendJson<ProvisionJob>(path, "POST", body);
+  // AA-1116: only the POST answers the CRM onboarding; the polled job keeps it
+  const crm = job.crm_onboarding ?? null;
   const until = Date.now() + timeoutMs;
   while (!TERMINAL.has(job.status) && Date.now() < until) {
     await sleep(everyMs);
     job = await sendJson<ProvisionJob>(pollPath(job.job_id), "GET");
   }
-  return job;
+  return crm ? { ...job, crm_onboarding: crm } : job;
 }
 
 export function sagaFailed(job: ProvisionJob): boolean {

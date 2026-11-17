@@ -196,6 +196,10 @@ class AdminTenantAuditAction:
     # PII-tagged bill-to fields are audited as set / changed / cleared with a short hash, never in clear) or a
     # subscription's commercial terms (interval, agreed price, price lock). details: before / after.
     BILLING_DETAILS_SET = "tenant.billing_details_set"
+    # AA-1116 (S282 G5 / G11): the tenant's CRM agency was created and / or its first owner invited through the
+    # crm.ops.v1 relay with the staff member's own token (services/tenant_account/crm_onboarding.py). details: steps,
+    # ticket ref, the CRM status codes, owner_invite sent / pending / owner_present / not_sent (never the address).
+    CRM_ONBOARDED = "tenant.crm_onboarded"
     SUBSCRIPTION_TERMS_SET = "tenant.subscription_terms_set"
 
 
