@@ -402,6 +402,15 @@ def test_a_stated_writer_sd_below_the_floor_is_never_adequate():
     assert draft["adequate"] and draft["bound"].startswith("upper bound")
 
 
+def test_the_plan_names_a_writer_spread_below_the_floor_and_an_underpowered_file():
+    base = {"checked": True, "writer_sd": 1.0, "writer_sd_floor": 2.7, "writer_sd_below_floor": True, "power": 0.5,
+            "min_power": 0.8, "rule": "non_inferior", "true_effect": 0.0, "n_items": 12, "n_needed": 30}
+    got = runner._power_blocking(base)
+    assert len(got) == 2 and "below the writer spread" in got[0] and got[1].startswith("underpowered")
+    assert runner._power_blocking({**base, "writer_sd_below_floor": False, "power": 0.9}) == []
+    assert runner._power_blocking({"checked": False, "why": "no R1 report"}) == ["power not checked: no R1 report"]
+
+
 def test_a_registered_file_states_the_writer_spread():
     d = _rule_doc()
     d["power"] = {**d["power"], "writer_sd": None}

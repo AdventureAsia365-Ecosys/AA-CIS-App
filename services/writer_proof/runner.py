@@ -257,19 +257,24 @@ async def plan(pool, pre: pr.Prereg, *, r1_report: Optional[str] = None, instrum
             blocking.append(f"{arm}: estimated {est} USD > its run cap {out['arm_caps'][arm]} (its share of the "
                             f"{gate_cap} USD cap, at most the R2 run cap {r2.cfg.R2_RUN_CAP_USD}): plan fewer items")
     out["power"] = _power(pre, r1_report, instrument, two_step_report)
-    if not out["power"].get("checked"):
-        blocking.append(f"power not checked: {out['power'].get('why')}")
-    else:
-        if out["power"].get("writer_sd_below_floor"):
-            blocking.append(f"power.writer_sd {out['power']['writer_sd']} is below the writer spread the claim rates "
-                            f"imply ({out['power']['writer_sd_floor']}): state a writer_sd >= it, re-pick the margin")
-        pw = out["power"]
-        if pw["power"] < pw["min_power"]:
-            blocking.append(f"underpowered ({pw['rule']} at a true effect of {pw['true_effect']}): "
-                            f"power {pw['power']} < {pw['min_power']} "
-                            f"(n {pw['n_items']}, needs {pw['n_needed'] or 'no n: effect <= margin'})")
+    blocking.extend(_power_blocking(out["power"]))
     out["blocking"] = list(dict.fromkeys(blocking))
     out["ready_for_live"] = not out["blocking"]
+    return out
+
+
+def _power_blocking(pw: dict) -> list[str]:
+    """The blocking lines of a power record (`_power`): not checked, a stated writer spread below the floor the claim
+    rates imply (power.writer_sd_floor), or power below the target. Pure."""
+    if not pw.get("checked"):
+        return [f"power not checked: {pw.get('why')}"]
+    out = []
+    if pw.get("writer_sd_below_floor"):
+        out.append(f"power.writer_sd {pw['writer_sd']} is below the writer spread the claim rates imply "
+                   f"({pw['writer_sd_floor']}): state a writer_sd >= it and re-pick the margin")
+    if pw["power"] < pw["min_power"]:
+        out.append(f"underpowered ({pw['rule']} at a true effect of {pw['true_effect']}): power {pw['power']} < "
+                   f"{pw['min_power']} (n {pw['n_items']}, needs {pw['n_needed'] or 'no n: effect <= margin'})")
     return out
 
 
