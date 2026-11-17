@@ -34,7 +34,7 @@ import {
 } from "../../_kit";
 import { legacyTenantLinkTarget, tenant360Href } from "@/lib/adminIa";
 import { tenantDirectoryControls, type TenantDirectoryControls } from "@/lib/tenantDirectory";
-import { CreateTenantModal, type TenantNotice } from "./_components/CreateTenantModal";
+import { CreateTenantModal, OutcomeList, type TenantNotice } from "./_components/CreateTenantModal";
 import type { Lifecycle, Tenant, TenantStatus } from "./_components/tenantRow";
 import { TEN } from "./messages";
 
@@ -134,6 +134,7 @@ function TenantNoticeModal({ notice, onClose }: { notice: TenantNotice; onClose:
       <p style={{ fontSize: 13, color: K.muted, margin: 0 }}>
         <strong style={{ color: K.ink }}>{notice.tenant_name}</strong> {notice.note}
       </p>
+      {notice.outcome && <OutcomeList rows={notice.outcome} />}
     </Modal>
   );
 }

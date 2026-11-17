@@ -5,15 +5,16 @@
 // subscription and the chosen add-ons (CRM, TripPlanner) in one job; a CRM add-on also creates the CRM agency and, with
 // the owner's address, sends the first-owner invitation in the same request, so there is no hand step on Tenant 360 ›
 // Subscription or Platform › Agencies. The content tiers come from the plan catalogue (useContentTiers), the add-on
-// plans from GET /api/admin/plans (live plans only). The API re-checks everything.
+// plans from GET /api/admin/plans (live plans only). The API re-checks everything. The result dialog lists the saga's
+// outcome line by line (OutcomeList: tenant, content subscription, each add-on, the CRM agency and owner invitation).
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { AlertTriangle, CheckCircle, Loader2, MinusCircle } from "lucide-react";
 import { Button, Field, Input, K, Modal, Select, SegmentedControl, useT } from "../../../_kit";
 import {
   PLANS_API, PLANS_KEY, addOnChoices, crmOnboardingNote, crmOwnerField, newRequestKey, newTenantBody,
-  provisionedTenantId, runSaga, sendJson, type PlansResp, type ProvisionJob,
+  provisionOutcome, provisionedTenantId, runSaga, sendJson, type OutcomeRow, type PlansResp, type ProvisionJob,
 } from "@/lib/tenantPlans";
 import type { Translator } from "../../../_kit/core/i18n";
 import { useContentTiers } from "./useContentTiers";
@@ -23,6 +24,8 @@ import { TEN } from "../messages";
 export interface TenantNotice {
   tenant_id: string; tenant_name: string;
   title: string; note: string;
+  /** AA-1116: the New tenant saga's outcome, one row per thing it set up (absent for a restore). */
+  outcome?: OutcomeRow[];
 }
 
 type Tr = Translator<typeof TEN.en>;
@@ -39,14 +42,61 @@ function crmNoteText(job: ProvisionJob, t: Tr): string {
 }
 
 /** The result dialog: the CRM agency outcome of a crm add-on follows the usual note. */
-function createdNotice(job: ProvisionJob, name: string, t: Tr): TenantNotice {
+function createdNotice(job: ProvisionJob, name: string, products: ("crm" | "tripplanner")[], t: Tr): TenantNotice {
   const tenantId = provisionedTenantId(job) ?? "";
+  const outcome = provisionOutcome(job, products);
   if (job.status !== "succeeded") {   // still queued / running after the wait: the worker finishes it
-    return { tenant_id: tenantId, tenant_name: name, title: t("tenantSettingUp"), note: t("settingUpNote") };
+    return { tenant_id: tenantId, tenant_name: name, title: t("tenantSettingUp"), note: t("settingUpNote"), outcome };
   }
   const crmNote = crmNoteText(job, t);
   return { tenant_id: tenantId, tenant_name: name, title: t("tenantCreated"),
-           note: crmNote ? `${t("createdNote")} ${crmNote}` : t("createdNote") };
+           note: crmNote ? `${t("createdNote")} ${crmNote}` : t("createdNote"), outcome };
+}
+
+const OUTCOME_TONE = {
+  done: { Icon: CheckCircle, color: K.success },
+  pending: { Icon: Loader2, color: K.muted },
+  skipped: { Icon: MinusCircle, color: K.muted },
+  attention: { Icon: AlertTriangle, color: K.amber },
+} as const;
+
+/** AA-1116: the saga's outcome in the result dialog, one line per thing set up, with its state and detail. */
+export function OutcomeList({ rows }: { rows: OutcomeRow[] }) {
+  const t = useT(TEN);
+  if (!rows.length) return null;
+  const detail = (r: OutcomeRow) => {
+    if (!r.detail) return "";
+    if (/^\d+$/.test(r.detail)) return t("outcomeSeats", r.detail);
+    switch (r.detail) {
+      case "trialing": return t("outcomeDetail_trialing");
+      case "active": return t("outcomeDetail_active");
+      case "invited": return t("outcomeDetail_invited");
+      case "invite_pending": return t("outcomeDetail_invite_pending");
+      case "owner_present": return t("outcomeDetail_owner_present");
+      default: return r.detail;   // a CRM / saga error code, shown as sent
+    }
+  };
+  return (
+    <div data-testid="tenant-outcome" style={{ marginTop: 12 }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: K.ink, marginBottom: 6 }}>{t("outcomeTitle")}</div>
+      <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+        {rows.map((r) => {
+          const { Icon, color } = OUTCOME_TONE[r.state];
+          const d = detail(r);
+          return (
+            <li key={r.item} data-testid={`tenant-outcome-${r.item}`} data-state={r.state}
+              style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12.5, color: K.muted, minWidth: 0 }}>
+              <Icon size={14} color={color} aria-hidden="true" style={{ flexShrink: 0, marginTop: 2 }} />
+              <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
+                <strong style={{ color: K.ink, fontWeight: 500 }}>{t(`outcome_${r.item}`)}</strong>
+                {" · "}{t(`outcomeState_${r.state}`)}{d ? ` (${d})` : ""}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
 }
 
 /** The form's first problem as a message, or "" when it can be sent. */
@@ -104,7 +154,8 @@ export function CreateTenantModal({ onClose, onCreated }: {
         name, slug, plan_tier: plan, posts_per_week: Number(postsPerWeek), crmPlan, tripplannerPlan: tpPlan,
         ownerEmail: owner.owner,
       }));
-      if (SAGA_WAITING.has(job.status)) onCreated(createdNotice(job, name.trim(), t));
+      const products = [...(crmPlan ? ["crm" as const] : []), ...(tpPlan ? ["tripplanner" as const] : [])];
+      if (SAGA_WAITING.has(job.status)) onCreated(createdNotice(job, name.trim(), products, t));
       else setError(t("setupFailed", job.error ?? job.status));
     } catch (e) {
       setError(e instanceof Error && e.message ? e.message : t("createFailed"));
