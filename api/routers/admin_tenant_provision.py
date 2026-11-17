@@ -191,7 +191,13 @@ def _crm_request(add_ons: list[AddOnIn], owner_email: Optional[str], ticket: Opt
 async def _crm_onboarding(request: Request, req: pv.ProvisionRequest, out: ProvisionJobOut,
                           crm: dict) -> CrmOnboardingOut:
     """Run the saga's transaction now (idempotent per request key, under the job's id) to know the tenant, then
-    the CRM agency and owner invite with the caller's own token. Never raises: the outcome is reported."""
+    the CRM agency and owner invite with the caller's own token. Never raises: the outcome is reported.
+
+    A reused request key is refused here (``request_key_reused``, no CRM call): the job and the saga's stored outcome
+    are found by the key alone, so a key first used for tenant A would otherwise send B's owner the invitation to A's
+    CRM agency, past the tenant scope check of B."""
+    if not await _same_request(request, req, out):
+        return _key_reused(req, out)
     try:
         result = await pv.provision(request.app.state.pool, req, job_id=out.job_id)
     except pv.ProvisionError as e:   # the job is refused the same way; nothing to set up in the CRM
@@ -199,6 +205,8 @@ async def _crm_onboarding(request: Request, req: pv.ProvisionRequest, out: Provi
     except Exception:  # noqa: BLE001 — a lost connection / deadlock: the job retries; onboarding runs again later
         logger.warning("crm_onboarding_provision_deferred", job_id=out.job_id, exc_info=True)
         return CrmOnboardingOut(status="skipped", error=CrmOnboardingError(step="provision", code="provision_pending"))
+    if not await _outcome_is_this_request(request, req, result):
+        return _key_reused(req, out)
     out.tenant_id = result["tenant_id"]
     out.steps = list(result["steps"])
     try:
@@ -210,6 +218,41 @@ async def _crm_onboarding(request: Request, req: pv.ProvisionRequest, out: Provi
         return CrmOnboardingOut(tenant_id=result["tenant_id"], status="skipped",
                                 error=CrmOnboardingError(step="check", http_status=e.status, code=e.code))
     return CrmOnboardingOut(**done)
+
+
+# The fields that say which tenant a provisioning request is for: a reused key with other values is another request.
+_REQUEST_IDENTITY = {"create": ("mode", "slug"), "attach": ("mode", "tenant_id")}
+TENANT_SLUG_SQL = "SELECT slug FROM shared.tenants WHERE tenant_id = $1::uuid"
+
+
+def _key_reused(req: pv.ProvisionRequest, out: ProvisionJobOut) -> CrmOnboardingOut:
+    logger.warning("crm_onboarding_request_key_reused", job_id=out.job_id, mode=req.mode)
+    return CrmOnboardingOut(status="skipped", error=CrmOnboardingError(step="check", code="request_key_reused"))
+
+
+async def _same_request(request: Request, req: pv.ProvisionRequest, out: ProvisionJobOut) -> bool:
+    """A new job is this request. An earlier job of the same key must name the same mode and tenant (attach) or
+    slug (create)."""
+    if out.created:
+        return True
+    row = await request.app.state.pool.fetchrow(
+        "SELECT payload FROM shared.job WHERE id = $1::uuid AND kind = $2", out.job_id, pv.KIND)
+    stored = (_json(row["payload"]) or {}) if row is not None else {}
+    mine = req.to_payload()
+    fields = _REQUEST_IDENTITY.get(req.mode, ("mode",))
+    return all(str(stored.get(f) or "").lower() == str(mine.get(f) or "").lower() for f in fields)
+
+
+async def _outcome_is_this_request(request: Request, req: pv.ProvisionRequest, result: dict) -> bool:
+    """The saga's stored outcome is found by the key alone (``provision.DONE_SQL``), even after its job is gone: its
+    tenant must be the attach's tenant, or carry the create's slug."""
+    tenant_id = str(result.get("tenant_id") or "").lower()
+    if req.mode == "attach":
+        return bool(tenant_id) and tenant_id == str(req.tenant_id or "").lower()
+    if req.mode == "create":
+        slug = await request.app.state.pool.fetchval(TENANT_SLUG_SQL, tenant_id) if tenant_id else None
+        return slug is not None and slug == req.slug
+    return False
 
 
 def _json(v):

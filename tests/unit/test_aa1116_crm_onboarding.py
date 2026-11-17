@@ -278,6 +278,7 @@ def saga(client, monkeypatch):
     enq = AsyncMock(return_value=(JOB, True))
     monkeypatch.setattr(job, "enqueue_request", enq)
     pool.fetchrow = AsyncMock(return_value=_job_row({**CREATE, "mode": "create"}))
+    pool.fetchval = AsyncMock(return_value=CREATE["slug"])   # the provisioned tenant's slug (the create check)
     provision = AsyncMock(return_value={"tenant_id": TID, "steps": ["tenant_created", "content_active",
                                                                     "crm_subscribed"]})
     monkeypatch.setattr(pv, "provision", provision)
@@ -382,4 +383,60 @@ def test_the_onboarding_route_is_admin_only(client, saga, role):
     c, _ = client
     _, _, onboard = saga
     assert c.post(f"/admin/tenants/{TID}/crm-onboarding", json={}, headers=_h(role)).status_code == 403
+    assert not onboard.await_count
+
+
+# ── a reused request key never sends an owner invitation to another tenant's CRM agency (review fix) ───────────
+OTHER = "1116c000-0000-4000-8000-0000000000b2"
+ATTACH = {"request_key": KEY, "add_ons": [{"product": "crm", "plan_key": "crm.core"}], "crm_owner_email": OWNER}
+
+
+def _skipped_reused(resp):
+    assert resp.status_code == 202, resp.text
+    assert resp.json()["crm_onboarding"] == {"tenant_id": None, "status": "skipped", "steps": [],
+                                             "error": {"step": "check", "http_status": None,
+                                                       "code": "request_key_reused"}}
+
+
+def test_a_key_first_used_for_another_tenant_sends_nothing_to_the_crm(client, saga):
+    c, pool = client
+    enq, provision, onboard = saga
+    enq.return_value = (JOB, False)    # the key's first job: an attach for tenant TID
+    pool.fetchrow.return_value = _job_row({"request_key": KEY, "mode": "attach", "tenant_id": TID,
+                                           "add_ons": [{"product": "crm", "plan_key": "crm.core", "seats": None}]})
+    _skipped_reused(c.post(f"/admin/tenants/{OTHER}/provision", json=ATTACH, headers=_h()))
+    assert not provision.await_count and not onboard.await_count
+    # the same key on the create route (another mode) is refused the same way
+    _skipped_reused(c.post("/admin/tenants/provision", json={**CREATE, "crm_owner_email": OWNER}, headers=_h()))
+    assert not provision.await_count and not onboard.await_count
+
+
+def test_a_create_key_reused_with_another_slug_sends_nothing(client, saga):
+    c, _ = client
+    enq, provision, onboard = saga
+    enq.return_value = (JOB, False)    # stored payload: the create of marrowfen-tours
+    body = {**CREATE, "slug": "quillmere-trails", "crm_owner_email": OWNER}
+    _skipped_reused(c.post("/admin/tenants/provision", json=body, headers=_h()))
+    assert not provision.await_count and not onboard.await_count
+
+
+def test_the_same_request_again_still_onboards(client, saga):
+    c, pool = client
+    enq, _, onboard = saga
+    enq.return_value = (JOB, False)    # a retry of the same attach (same key, same tenant)
+    pool.fetchrow.return_value = _job_row({"request_key": KEY, "mode": "attach", "tenant_id": TID,
+                                           "add_ons": [{"product": "crm", "plan_key": "crm.core", "seats": None}]})
+    resp = c.post(f"/admin/tenants/{TID}/provision", json=ATTACH, headers=_h())
+    assert resp.status_code == 202 and resp.json()["crm_onboarding"]["status"] == "done"
+    assert onboard.await_args.args[1] == TID
+
+
+def test_a_stored_outcome_of_another_tenant_sends_nothing(client, saga):
+    """A new job (the first one's row is gone) but the saga's outcome, found by the key alone, is another tenant's."""
+    c, pool = client
+    _, provision, onboard = saga
+    _skipped_reused(c.post(f"/admin/tenants/{OTHER}/provision", json=ATTACH, headers=_h()))   # provision: TID
+    assert provision.await_count == 1 and not onboard.await_count
+    pool.fetchval.return_value = "another-slug"   # a create whose stored outcome is a tenant with another slug
+    _skipped_reused(c.post("/admin/tenants/provision", json={**CREATE, "crm_owner_email": OWNER}, headers=_h()))
     assert not onboard.await_count
