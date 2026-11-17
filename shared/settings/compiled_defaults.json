@@ -11574,6 +11574,42 @@
    }
   },
   {
+   "key": "tripplanner.spend.near_cap_pct",
+   "app": "tripplanner",
+   "area": "spend",
+   "label": "TripPlanner AI cap warning at (% of a cap)",
+   "description": "The share of a TripPlanner daily AI cap (the app's daily cap on AI gateway > App profiles, or a stage cap) at which TripPlanner raises its 'near cap' alert and the Apps board marks the cap near. Read by AA-TripPlanner-Web backend/shared/spend_rules.py and by the CIS Apps board.",
+   "value_type": "pct",
+   "unit": "%",
+   "min_value": 50,
+   "max_value": 99,
+   "allowed_values": null,
+   "default_value": 80,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "At what share of a TripPlanner daily AI cap staff get the 'near cap' alert, and the Apps board shows the cap as near.",
+     "raise": "The warning comes later, closer to the cap, with less time to act.",
+     "lower": "The warning comes earlier and more often on busy days.",
+     "when": "Lower it when a cap is reached before anyone reacts to the warning; raise it when the warning fires on most ordinary days.",
+     "example": "With 80 and a 5 USD daily cap: the alert is raised once TripPlanner has spent 4 USD today."
+    },
+    "vi": {
+     "what": "Ở mức bao nhiêu phần trăm của một trần AI theo ngày của TripPlanner thì staff nhận cảnh báo 'gần chạm trần', và bảng Apps hiện trần đó là gần chạm.",
+     "raise": "Cảnh báo đến muộn hơn, sát trần hơn, còn ít thời gian xử lý.",
+     "lower": "Cảnh báo đến sớm hơn và nhiều hơn trong ngày đông khách.",
+     "when": "Giảm khi trần bị chạm trước khi có ai kịp xử lý cảnh báo; tăng khi cảnh báo bật vào hầu hết các ngày bình thường.",
+     "example": "Với 80 và trần ngày 5 USD: cảnh báo bật khi TripPlanner đã tiêu 4 USD trong hôm nay."
+    }
+   }
+  },
+  {
    "key": "tripplanner.spend.plan_chat_monthly_cap_usd",
    "app": "tripplanner",
    "area": "spend",
@@ -11642,6 +11678,78 @@
      "lower": "Trò chuyện của mỗi đại lý dừng sớm hơn; chi phí của một đại lý được giới hạn chặt hơn.",
      "when": "Tăng cho đại lý có khách thật sự dùng trò chuyện (đặt riêng trên dòng của đại lý); giảm nếu trò chuyện của một đại lý tốn hơn giá trị mang lại.",
      "example": "Với mặc định 2 USD mỗi tháng: trò chuyện của đại lý dừng tới hết tháng khi đại lý đó đã chi 2 USD."
+    }
+   }
+  },
+  {
+   "key": "tripplanner.spend.stage_cap_compose_usd",
+   "app": "tripplanner",
+   "area": "spend",
+   "label": "TripPlanner daily AI cap: trip-day writing",
+   "description": "TripPlanner's AI spend per UTC day on the AI-written trip days alone (tp_compose), on top of the app's daily cap (AI gateway > App profiles); both apply. 0 = no stage cap: only the app cap applies (today's behaviour). Under tripplanner.spend.environment = prod a reached cap only alerts. Read by AA-TripPlanner-Web backend/shared/spend_rules.py through catalog.v_app_settings_v1; the Apps board and the Spend page show it.",
+   "value_type": "usd",
+   "unit": "USD/day",
+   "min_value": 0,
+   "max_value": 200,
+   "allowed_values": null,
+   "default_value": 0,
+   "scope_kind": "platform",
+   "impact": "high",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The most TripPlanner may spend on AI for the AI-written trip days in one UTC day, on top of the app's daily cap on AI gateway > App profiles. 0 means no separate cap for this stage.",
+     "raise": "The trip-day writing keeps its AI longer on a busy day; AA's AI bill for it can grow up to the new cap.",
+     "lower": "The trip-day writing falls back to its basic version earlier on a busy day, and leaves more of the app's daily cap to the other stages.",
+     "when": "Set it when one stage uses up the app's daily cap and the other stages lose their AI; keep 0 while the app cap alone is enough. Under the prod spend rules it only raises an alert.",
+     "example": "With 3: once the trip-day writing has spent 3 USD today, planners show places with plain day lines until the next UTC day, while search keeps its AI."
+    },
+    "vi": {
+     "what": "Số tiền AI tối đa TripPlanner được dùng cho các ngày lịch trình viết bằng AI trong một ngày UTC, thêm vào trần ngày của app ở AI gateway > App profiles. 0 nghĩa là bước này không có trần riêng.",
+     "raise": "Phần viết ngày lịch trình giữ AI lâu hơn trong ngày đông khách; hoá đơn AI của AA cho bước này có thể tăng tới mức trần mới.",
+     "lower": "Phần viết ngày lịch trình chuyển sang bản cơ bản sớm hơn trong ngày đông khách, và chừa nhiều trần ngày của app hơn cho các bước khác.",
+     "when": "Đặt khi một bước dùng hết trần ngày của app làm các bước khác mất AI; giữ 0 khi trần của app là đủ. Với quy tắc chi tiêu prod thì trần này chỉ cảnh báo.",
+     "example": "Với 3: khi phần viết ngày lịch trình đã tiêu 3 USD trong hôm nay, trang lập kế hoạch hiện địa điểm với dòng ngày đơn giản tới ngày UTC sau, còn tìm kiếm vẫn có AI."
+    }
+   }
+  },
+  {
+   "key": "tripplanner.spend.stage_cap_search_usd",
+   "app": "tripplanner",
+   "area": "spend",
+   "label": "TripPlanner daily AI cap: free-text search",
+   "description": "TripPlanner's AI spend per UTC day on the free-text search alone (tp_search_embed), on top of the app's daily cap (AI gateway > App profiles); both apply. 0 = no stage cap: only the app cap applies (today's behaviour). Under tripplanner.spend.environment = prod a reached cap only alerts. Read by AA-TripPlanner-Web backend/shared/spend_rules.py through catalog.v_app_settings_v1; the Apps board and the Spend page show it.",
+   "value_type": "usd",
+   "unit": "USD/day",
+   "min_value": 0,
+   "max_value": 200,
+   "allowed_values": null,
+   "default_value": 0,
+   "scope_kind": "platform",
+   "impact": "high",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The most TripPlanner may spend on AI for the free-text search in one UTC day, on top of the app's daily cap on AI gateway > App profiles. 0 means no separate cap for this stage.",
+     "raise": "The free-text search keeps its AI longer on a busy day; AA's AI bill for it can grow up to the new cap.",
+     "lower": "The free-text search falls back to its basic version earlier on a busy day, and leaves more of the app's daily cap to the other stages.",
+     "when": "Set it when one stage uses up the app's daily cap and the other stages lose their AI; keep 0 while the app cap alone is enough. Under the prod spend rules it only raises an alert.",
+     "example": "With 1: once the free-text search has spent 1 USD today, search uses the keyword ranking until the next UTC day, while the trip-day writing keeps its AI."
+    },
+    "vi": {
+     "what": "Số tiền AI tối đa TripPlanner được dùng cho phần tìm kiếm bằng câu chữ tự do trong một ngày UTC, thêm vào trần ngày của app ở AI gateway > App profiles. 0 nghĩa là bước này không có trần riêng.",
+     "raise": "Phần tìm kiếm giữ AI lâu hơn trong ngày đông khách; hoá đơn AI của AA cho bước này có thể tăng tới mức trần mới.",
+     "lower": "Phần tìm kiếm chuyển sang bản cơ bản sớm hơn trong ngày đông khách, và chừa nhiều trần ngày của app hơn cho các bước khác.",
+     "when": "Đặt khi một bước dùng hết trần ngày của app làm các bước khác mất AI; giữ 0 khi trần của app là đủ. Với quy tắc chi tiêu prod thì trần này chỉ cảnh báo.",
+     "example": "Với 1: khi phần tìm kiếm đã tiêu 1 USD trong hôm nay, tìm kiếm dùng xếp hạng theo từ khoá tới ngày UTC sau, còn phần viết ngày lịch trình vẫn có AI."
     }
    }
   }

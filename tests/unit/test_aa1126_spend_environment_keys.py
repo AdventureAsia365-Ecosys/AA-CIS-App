@@ -45,3 +45,26 @@ def test_reader_answers_dev_when_the_setting_cannot_be_read(monkeypatch):
         raise RuntimeError("zz no settings")
     monkeypatch.setattr(settings, "get", boom)
     assert se.spend_environment() == "dev"
+
+
+CAP_KEYS = ("tripplanner.spend.stage_cap_compose_usd", "tripplanner.spend.stage_cap_search_usd",
+            "tripplanner.spend.near_cap_pct")
+
+
+@pytest.mark.parametrize("key", CAP_KEYS)
+def test_the_tripplanner_cap_keys_are_settings_the_admin_page_renders(key):
+    """The stage caps and the near-cap share were a TripPlanner env var / constant mirrored by a CIS constant: now one
+    admin-editable setting each, read by TripPlanner and by the CIS Apps board (S283: admin pages true to the code)."""
+    row = {r["key"]: r for r in gen.seed_rows()[0]}[key]
+    assert row["app"] == "tripplanner" and row["area"] == "spend" and row["enforced"] is True
+    assert row["env_override"] is None and row["scope_kind"] == "platform" and row["label"]
+    for lang in ("en", "vi"):
+        guide = row["guide"][lang]
+        assert all(guide.get(part) for part in ("what", "raise", "lower", "when", "example")), (key, lang)
+    assert settings.definition(key).default_value == row["default_value"]
+
+
+def test_the_stage_caps_default_to_no_cap_and_the_warning_to_80_percent():
+    assert settings.get("tripplanner.spend.stage_cap_compose_usd") == 0
+    assert settings.get("tripplanner.spend.stage_cap_search_usd") == 0
+    assert settings.get("tripplanner.spend.near_cap_pct") == 80

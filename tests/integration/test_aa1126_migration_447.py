@@ -20,6 +20,8 @@ DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 M447 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
                     "447_aa1126_spend_environment_and_quota_notices.sql")
 KEYS = ("cis.spend.environment", "tripplanner.spend.environment")
+CAP_KEYS = {"tripplanner.spend.stage_cap_compose_usd": 0, "tripplanner.spend.stage_cap_search_usd": 0,
+            "tripplanner.spend.near_cap_pct": 80}
 TENANT = "00000000-0000-4000-8000-0000000a1126"
 INS = ("INSERT INTO shared.setting_value (key, value, version, proposed_by, reason, evidence_ref) "
        "VALUES ($1, $2::jsonb, 1, 'admin:zz-a', 'zz test: a reason of at least twenty characters', NULL) RETURNING id")
@@ -61,6 +63,16 @@ async def test_447_registered_and_each_key_is_the_compiled_default(conn):
 
 
 @pytest.mark.asyncio
+async def test_the_tripplanner_cap_keys_are_registered_with_their_defaults(conn):
+    for key, default in CAP_KEYS.items():
+        row = await conn.fetchrow("SELECT app, default_value::text AS d, enforced, "
+                                  "shared.setting_guide_complete(guide) AS guided "
+                                  "FROM shared.setting_definition WHERE key = $1", key)
+        assert row is not None and row["app"] == "tripplanner", key
+        assert json.loads(row["d"]) == default and row["enforced"] is True and row["guided"] is True
+
+
+@pytest.mark.asyncio
 async def test_only_dev_or_prod(conn):
     for key in KEYS:
         with pytest.raises(asyncpg.exceptions.CheckViolationError):
@@ -96,6 +108,29 @@ async def test_tripplanner_inserts_its_own_notice_only(conn):
     with pytest.raises(asyncpg.exceptions.InsufficientPrivilegeError):    # another kind: refused by the policy
         async with conn.transaction():
             await conn.execute(NOTICE, TENANT, "ai.allowance_used", "ai_allowance", "content:2026-11")
+    await conn.execute("RESET ROLE")
+
+
+PLATFORM = "00000000-0000-0000-0000-000000000001"
+DEGRADED = ("INSERT INTO shared.notifications (tenant_id, actor_type, event_type, entity_type, entity_id, payload, "
+            "target_roles) VALUES ($1::uuid, 'system', 'platform.tripplanner.spend_degraded', 'tripplanner_ai', $2, "
+            "'{}'::jsonb, $3::text[])")
+
+
+@pytest.mark.asyncio
+async def test_tripplanner_raises_one_degraded_bell_per_check_and_day(conn):
+    """AA-1126 L4: the staff bell of a degraded TripPlanner spend check, admin-only, on the AA internal tenant."""
+    await conn.execute("SET LOCAL ROLE tripplanner")
+    await conn.execute(DEGRADED, PLATFORM, "spend_unreadable:2026-11-17", ["admin"])
+    with pytest.raises(asyncpg.exceptions.UniqueViolationError):          # once per check and UTC day
+        async with conn.transaction():
+            await conn.execute(DEGRADED, PLATFORM, "spend_unreadable:2026-11-17", ["admin"])
+    await conn.execute(DEGRADED, PLATFORM, "spend_unreadable:2026-11-18", ["admin"])        # the next day
+    await conn.execute(DEGRADED, PLATFORM, "tenant_sessions:2026-11-17", ["admin"])         # another check
+    for tenant_id, roles in ((TENANT, ["admin"]), (PLATFORM, ["tenant"]), (PLATFORM, ["content"])):
+        with pytest.raises(asyncpg.exceptions.InsufficientPrivilegeError):   # a tenant's row or a wider audience
+            async with conn.transaction():
+                await conn.execute(DEGRADED, tenant_id, "zz:2026-11-17", roles)
     await conn.execute("RESET ROLE")
 
 
