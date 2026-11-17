@@ -26,6 +26,18 @@ call what the proof measures and how it decides:
     "cap_usd": 5.0                                <= the workflow's D12 cap (setting, workflow_cap)
   }
 
+AA-1051 S283, two optional blocks:
+  "judge": {"model_key": ..., "connection": ..., "instrument": "aa1048-two-step-v7", "advisory": true}
+        a pinned claim instrument judges the runs (services/writer_proof/instrument.py, instrument.PINNED): model and
+        connection must be the instrument's own; an advisory instrument (instrument.ADVISORY) needs advisory true.
+  "sample": {"rule": "seeded_hash", "n": 12, "noise": 0}
+        the fixed sample as a rule instead of a list: the n GATE items of the writer (non-trap) of the registered golden
+        version chosen by `pick_sample` with the pre-registration id as the seed (exactly what `draft` writes), the
+        noise subset likewise. The stored split rows and items of a golden version never change (splits.py), so the
+        rule names one sample before any data is read, and a file can be registered without reading the database.
+        `sample_ids` / `noise_sample_ids` stay empty in the file; `resolve` fills them from the version's items (the
+        runner does, before every plan, run and report), and the lock still hashes the file as written.
+
 `power.effect_abs` is the pre-registered true improvement an `improve` decision is powered for (required for that
 rule, > margin_abs: the margin is the smallest improvement that counts, the effect what the sample must detect). A
 `null` workflow takes no release_id and decides non_inferior only.
@@ -92,6 +104,7 @@ def total_cap() -> float:
     from shared import settings
     return float(settings.get(TOTAL_CAP_SETTING))
 STATUSES = ("draft", "registered")
+SAMPLE_RULES = ("seeded_hash",)
 RULES = ("non_inferior", "improve")
 DIRECTIONS = ("lower", "higher")
 TARGET_OPS = ("<=", ">=", "==")
@@ -182,13 +195,7 @@ def problems(doc: Any) -> list[str]:
         p.append("sample_ids must be a list of golden sample ids")
         ids = []
     else:
-        if len(set(ids)) != len(ids):
-            p.append("sample_ids must be distinct")
-        if ids != sorted(ids):
-            p.append("sample_ids must be sorted")
-        floor = min_items(wf)
-        if status == "registered" and len(ids) < floor:
-            p.append(f"a registered {wf} proof needs >= {floor} sample ids, has {len(ids)}")
+        p.extend(_sample_problems(doc, ids, wf, status))
     noise = doc.get("noise_sample_ids", [])
     if not isinstance(noise, list) or any(not isinstance(i, str) for i in noise):
         p.append("noise_sample_ids must be a list of sample ids")
@@ -208,6 +215,9 @@ def problems(doc: Any) -> list[str]:
             and (judge.get("connection") is None or (isinstance(judge["connection"], str)
                                                       and _KEY_RE.match(judge["connection"])))):
         p.append("judge.model_key (and optional judge.connection) must pin the judge (D7)")
+    else:
+        from services.writer_proof.instrument import judge_problems
+        p.extend(judge_problems(judge))
     p.extend(_metric_problems(doc.get("metrics")))
     p.extend(_decision_problems(doc.get("decision"), doc.get("metrics")))
     req = doc.get("requirements", {})
@@ -248,6 +258,39 @@ def problems(doc: Any) -> list[str]:
             date.fromisoformat(str(doc.get("registered_on")))
         except ValueError:
             p.append("a registered pre-registration has registered_on (YYYY-MM-DD)")
+    return p
+
+
+def _sample_problems(doc: dict, ids: list, wf: str, status: Any) -> list[str]:
+    """The sample list, or the sample rule (S283) with an empty list."""
+    rule = doc.get("sample")
+    if rule is not None:
+        return _rule_problems(rule, ids, doc.get("noise_sample_ids", []), wf, status)
+    p: list[str] = []
+    if len(set(ids)) != len(ids):
+        p.append("sample_ids must be distinct")
+    if ids != sorted(ids):
+        p.append("sample_ids must be sorted")
+    floor = min_items(wf)
+    if status == "registered" and len(ids) < floor:
+        p.append(f"a registered {wf} proof needs >= {floor} sample ids, has {len(ids)}")
+    return p
+
+
+def _rule_problems(rule: Any, ids: list, noise_ids: Any, wf: str, status: Any) -> list[str]:
+    if not isinstance(rule, dict) or set(rule) - {"rule", "n", "noise"} or rule.get("rule") not in SAMPLE_RULES:
+        return [f"sample must be {{rule: {'|'.join(SAMPLE_RULES)}, n, noise}}"]
+    n, noise = rule.get("n"), rule.get("noise", 0)
+    p: list[str] = []
+    if not (isinstance(n, int) and not isinstance(n, bool) and n >= 1):
+        return ["sample.n must be a positive integer"]
+    if not (isinstance(noise, int) and not isinstance(noise, bool) and 0 <= noise <= n):
+        p.append("sample.noise must be an integer in [0, sample.n]")
+    if ids or noise_ids:
+        p.append("a sample rule leaves sample_ids and noise_sample_ids empty (resolve fills them)")
+    floor = min_items(wf)
+    if status == "registered" and n < floor:
+        p.append(f"a registered {wf} proof needs >= {floor} samples, its rule draws {n}")
     return p
 
 
@@ -428,6 +471,30 @@ def pick_sample(candidates: Iterable[str], n: int, *, seed: str) -> list[str]:
     return sorted(ranked[:max(0, n)])
 
 
+def gate_ids(items: list[dict], writer: str) -> list[str]:
+    """The sample ids of the writer's non-trap GATE items (`items` as r2.PgStore.items returns them). Pure."""
+    return [it["sample_id"] for it in items
+            if it.get("writer") == writer and not it.get("trap") and it.get("eval_split") == "gate"]
+
+
+def resolve(pre: Prereg, items: list[dict]) -> Prereg:
+    """S283: a pre-registration with a sample rule, its sample filled from `items` (the golden version's items with
+    their split, r2.PgStore.items): the same draw as `draft`. The rule moves to `sample_resolved`, so the resolved
+    document is an ordinary list-form one (`problems` checks it as such) and resolving twice changes nothing. The sha
+    stays the file's (the lock hashes the file as registered). A file with a sample list is returned unchanged. Pure."""
+    rule = pre.doc.get("sample")
+    if not isinstance(rule, dict):
+        return pre
+    gate = gate_ids(items, pre.writer)
+    picked = pick_sample(gate, int(rule["n"]), seed=pre.id)
+    noise = int(rule.get("noise") or 0)
+    doc = {**{k: v for k, v in pre.doc.items() if k != "sample"}, "sample_ids": picked,
+           "noise_sample_ids": pick_sample(picked, noise, seed=f"{pre.id}:noise") if noise else [],
+           "sample_resolved": {"rule": rule["rule"], "gate_items_available": len(gate), "asked": int(rule["n"]),
+                               "picked": len(picked)}}
+    return Prereg(doc=doc, sha256=pre.sha256, path=pre.path)
+
+
 def draft(template: dict, *, items: list[dict], golden_version: str, n: Optional[int] = None,
           noise: int = 0) -> dict:
     """A filled draft: the template with the golden version and a fixed sample of the writer's non-trap GATE items
@@ -435,11 +502,12 @@ def draft(template: dict, *, items: list[dict], golden_version: str, n: Optional
     draft: the tech lead registers it in a reviewed PR. Pure."""
     wf = template["workflow"]
     writer = WORKFLOWS[wf]["writer"]
-    size = n if n is not None else max(min_items(wf), len(template.get("sample_ids") or []))
-    gate = [it["sample_id"] for it in items
-            if it.get("writer") == writer and not it.get("trap") and it.get("eval_split") == "gate"]
+    rule_n = int((template.get("sample") or {}).get("n") or 0) if isinstance(template.get("sample"), dict) else 0
+    size = n if n is not None else max(min_items(wf), len(template.get("sample_ids") or []), rule_n)
+    gate = gate_ids(items, writer)
     picked = pick_sample(gate, size, seed=template["id"])
     out = json.loads(json.dumps(template))
+    out.pop("sample", None)                      # a draft lists its sample (S283: a rule file prints its draw here)
     out["golden_set"] = {**(out.get("golden_set") or {}), "version": golden_version}
     out["sample_ids"] = picked
     out["noise_sample_ids"] = pick_sample(picked, noise, seed=f"{template['id']}:noise") if noise else []
@@ -449,6 +517,7 @@ def draft(template: dict, *, items: list[dict], golden_version: str, n: Optional
 
 
 __all__ = ["COMPUTED_METRICS", "FORMAT", "LOCK_FILE", "PAIRED_METRICS", "PREREG_DIR", "Prereg", "PreregRefused",
+           "SAMPLE_RULES", "gate_ids", "resolve",
            "TOTAL_CAP_SETTING", "min_items", "read_lock", "registered_files", "registered_lock_problem",
            "total_cap", "workflow_cap",
            "WORKFLOWS", "canonical", "draft", "from_doc", "load", "lock_problem", "path_for", "pick_sample",

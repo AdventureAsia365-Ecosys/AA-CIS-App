@@ -1,4 +1,6 @@
 {
   "note": "AA-1051: the sha256 of every registered W5 pre-registration (prereg.py). Add an entry in the PR that registers a file; never edit or remove one (a new attempt is a new id).",
-  "registered": {}
+  "registered": {
+    "w5-null-t9-blog-v7": "86300d4ffb4a93503d2823a82c67344e0e0572cd4079b195197eae008a0dd41e"
+  }
 }

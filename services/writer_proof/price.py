@@ -21,6 +21,21 @@ writer estimate (the ledger median of past
 candidate items, R2's `item_estimate`). Every figure here is an ESTIMATE; the measured cost comes from the ledger after
 the run (cost_report.py).
 
+A claim instrument judge (AA-1051 S283, prereg judge.instrument: R1 fire -> two-step v7, instrument.py) is priced per
+judged OUTPUT instead of per call (`instrument_check`): for each output of the sample (the frozen labelled output of
+each fixed sample item, read through eval_judge.evidence_view as the run reads it)
+  fire calls   fields x votes                    (one extraction call per field per vote)
+  step calls   claims x fire share x votes x 2   (step 2 priced as if every fired claim reached it)
+each priced at the MEAN measured cost of that step's prompt tag on the pinned model (shared.llm_call_log, stage
+adhoc_aa1048 and adhoc_aa1051, quality_signal.prompt_version: the AA-1048 runs and every earlier W5 run), x R2's
+margin. The mean, not the p90: an output is hundreds of calls, so their sum is near its mean and a p90 per call would
+price every call at its worst tail at once. A step with fewer than R2_MIN_COST_SAMPLES measured calls is priced by
+r1's model estimate (expected reply plus reasoning: far above the measured cost, flagged `model`). The fire share is
+instrument.FIRE_SHARE (measured on the v7 fresh pool fire; 1.0 for a writer without a measurement). One judged output
+costs the mean of the sample's outputs; the B output, not written yet, is assumed to be as long as its control. Each arm
+then re-prices with `arm_estimate` (judge calls = judged outputs). The run itself is held by the instrument's per-call
+cap, whatever the plan said.
+
 The check refuses (a `blocking` line, never an exception) when the pinned judge has no catalog row, no input or
 output price, is disabled or blocked, or when the pinned connection has no enabled deployment of it (the gateway would
 answer from another connection and eval_judge would refuse the paid reply).
@@ -65,6 +80,16 @@ JUDGE_TOKENS_SQL = """
      ORDER BY l.created_at DESC, l.id DESC
      LIMIT $3
 """
+# AA-1051 S283: the measured cost per call of each step tag of a claim instrument on its pinned model.
+# $1 stages, $2 = log_models(model_key), $3 the step prompt tags.
+INSTRUMENT_CALLS_SQL = """
+    SELECT l.quality_signal->>'prompt_version' AS tag, count(*)::int AS calls, avg(l.cost_usd)::float AS mean_usd
+      FROM shared.llm_call_log l
+     WHERE l.stage = ANY($1::text[]) AND l.model = ANY($2::text[]) AND coalesce(l.status, 'ok') = 'ok'
+       AND l.cost_usd IS NOT NULL AND l.cost_usd > 0 AND l.quality_signal->>'prompt_version' = ANY($3::text[])
+     GROUP BY 1
+"""
+INSTRUMENT_STAGES = ("adhoc_aa1048", "adhoc_aa1051")     # the AA-1048 runs and the W5 runs (cfg.W5_STAGE)
 PROFILE_ROWS = 200           # technical-constant: how many recent judge calls the token profile reads
 CHARS_PER_TOKEN = 3.0        # technical-constant: = ground_truth.r1 (conservative; English is about 4)
 PRICED_BASES = ("catalog", "override")
@@ -199,6 +224,84 @@ def arm_estimate(r2_estimate: dict, judge_call_usd: float) -> dict:
             "calls_missing": False}
 
 
+def step_costs(p: Any, insts: dict, measured: dict[str, dict], *, min_samples: int,
+               sample_user: dict[str, str]) -> dict[str, dict]:
+    """step -> {usd, calls, source}: the mean measured cost per call of the step's prompt tag (`measured`: tag ->
+    {calls, mean_usd}), else r1's model estimate of one call of `sample_user[step]` (source `model`). Pure."""
+    from services.ground_truth import r1
+    out = {}
+    for step, inst in insts.items():
+        m = measured.get(p.tags[step]) or {}
+        mean = _num(m.get("mean_usd"))
+        if int(m.get("calls") or 0) >= max(1, int(min_samples)) and mean is not None and mean > 0:
+            out[step] = {"usd": round(mean, 6), "calls": int(m["calls"]), "source": "ledger_mean"}
+        else:
+            usd = r1.call_cost(inst, sample_user.get(step, ""), r1.expected_out(inst))
+            out[step] = {"usd": round(usd, 6), "calls": int(m.get("calls") or 0), "source": "model"}
+    return out
+
+
+def output_cost(shape: dict, costs: dict[str, dict], *, votes: int, fire_share: float, margin: float) -> float:
+    """The planned USD of one judged output of `shape` ({fields, claims}). Pure."""
+    fire = shape["fields"] * votes * costs["fire"]["usd"]
+    steps = shape["claims"] * fire_share * votes * (costs["classify"]["usd"] + costs["judge"]["usd"])
+    return round((fire + steps) * margin, 6)
+
+
+def instrument_output(p: Any, insts: dict, writer: str, outputs: list[str], measured: dict[str, dict], *,
+                      min_samples: int, margin: float) -> dict:
+    """{usd, outputs, mean_fields, mean_claims, fire_share, steps}: the planned cost of one judged output, the mean
+    over `outputs` (labelled OUTPUT texts). Pure."""
+    from services.ground_truth import r1
+    from services.ground_truth import two_step as ts
+    from services.writer_proof import instrument as wi
+    shapes = [wi.output_shape(writer, o) for o in outputs]
+    item = r1.Item("0" * 64, writer, "", "", "w5", "0" * 64, "content_text", "x" * 200, "x" * 4000, "x" * 4000)
+    users = {"fire": insts["fire"].prompt_version.extraction_user([item]),
+             "classify": ts.step1_user(item, insts["classify"].prompt), "judge": ts.step2_user(item, [])}
+    costs = step_costs(p, insts, measured, min_samples=min_samples, sample_user=users)
+    share = float(wi.FIRE_SHARE.get(p.id, {}).get(writer, 1.0))
+    usd = [output_cost(s, costs, votes=p.votes, fire_share=share, margin=margin) for s in shapes]
+    n = len(shapes)
+    return {"usd": round(sum(usd) / n, 6) if n else None, "outputs": n,
+            "mean_fields": round(sum(s["fields"] for s in shapes) / n, 2) if n else None,
+            "mean_claims": round(sum(s["claims"] for s in shapes) / n, 2) if n else None,
+            "max_output_usd": max(usd) if usd else None, "fire_share": share,
+            "fire_share_source": wi.FIRE_SHARE_SOURCE if p.id in wi.FIRE_SHARE else "none: every claim planned",
+            "votes": p.votes, "steps": costs, "pricing": "ledger_mean" if all(
+                c["source"] == "ledger_mean" for c in costs.values()) else "model_estimate"}
+
+
+async def instrument_check(pool, *, instrument: str, writer: str, outputs: list[str], arms: dict[str, dict]) -> dict:
+    """The price check of a plan whose judge is a claim instrument: {judge, arms: {arm: arm_estimate}, blocking}, the
+    same shape as `check`, with judge.call = one judged output (READ ONLY)."""
+    from services.writer_proof import instrument as wi
+    from services.writing_memory import config as cfg
+    p = wi.pinned(instrument)
+    insts = wi.instruments(p)
+    async with pool.acquire() as conn:
+        cat = await conn.fetchrow(CATALOG_SQL, p.model_key)
+        dep = await conn.fetchrow(DEPLOYMENT_SQL, p.model_key, p.connection)
+        rows = await conn.fetch(INSTRUMENT_CALLS_SQL, list(INSTRUMENT_STAGES), log_models(p.model_key),
+                                sorted(set(p.tags.values())))
+    blocking = catalog_problems(p.model_key, p.connection, dict(cat) if cat else None, dict(dep) if dep else None)
+    measured = {r["tag"]: {"calls": r["calls"], "mean_usd": r["mean_usd"]} for r in rows}
+    call = instrument_output(p, insts, writer, outputs, measured, min_samples=cfg.R2_MIN_COST_SAMPLES,
+                             margin=cfg.R2_ESTIMATE_MARGIN)
+    out: dict[str, Any] = {"judge": {"model_key": p.model_key, "connection": p.connection, "instrument": p.id,
+                                     "advisory": wi.ADVISORY.get(p.id), "call": call,
+                                     "r2_constant_usd": cfg.JUDGE_CALL_ESTIMATE_USD}, "arms": {}, "blocking": blocking}
+    if call["usd"] is None:
+        blocking.append(f"instrument {p.id}: no output of the sample to price (no frozen control output)")
+        return out
+    for arm, est in arms.items():
+        out["arms"][arm] = arm_estimate(est, call["usd"])
+        if out["arms"][arm]["calls_missing"]:
+            blocking.append(f"{arm}: the R2 estimate gives no call counts (plan / calibration_judged_items), the "
+                            "instrument price check cannot run")
+    return out
+
+
 async def read(conn, *, model_key: str, connection: Optional[str], writer: str, stages: tuple[str, ...]) -> dict:
     """The catalog row, the pinned deployment row and the pinned model's judge-call rows of the writer (READ ONLY)."""
     cat = await conn.fetchrow(CATALOG_SQL, model_key)
@@ -232,6 +335,7 @@ async def check(pool, *, model_key: str, connection: Optional[str], writer: str,
     return out
 
 
-__all__ = ["CATALOG_SQL", "CHARS_PER_TOKEN", "DEPLOYMENT_SQL", "JUDGE_TOKENS_SQL", "PROFILE_ROWS", "arm_estimate",
-           "bound_tokens", "call_quote", "calls_of", "catalog_problems", "check", "judge_call", "log_models", "read",
-           "token_profile"]
+__all__ = ["CATALOG_SQL", "CHARS_PER_TOKEN", "DEPLOYMENT_SQL", "INSTRUMENT_CALLS_SQL", "INSTRUMENT_STAGES",
+           "JUDGE_TOKENS_SQL", "PROFILE_ROWS", "arm_estimate", "bound_tokens", "call_quote", "calls_of",
+           "catalog_problems", "check", "instrument_check", "instrument_output", "judge_call", "log_models",
+           "output_cost", "read", "step_costs", "token_profile"]
