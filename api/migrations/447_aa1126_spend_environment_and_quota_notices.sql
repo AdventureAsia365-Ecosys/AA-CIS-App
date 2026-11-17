@@ -1,0 +1,149 @@
+-- Migration 447: AA-1126 (S283, tech lead AI spend policy of 17/11/2026) — the spend environment settings of CIS and
+-- TripPlanner, and the tenant-facing "AI allowance used up" notices (Content studio and TripPlanner).
+--
+-- Why. The policy keeps hard caps on Dev and, on prod, lets only a tenant's plan quota stop its AI (the reason told
+-- to the agency, with an upgrade path); app-wide fixed caps become alerts and a budget that cannot be read degrades
+-- with a warning instead of blocking. One code path for every environment: going to prod is a settings change, not new
+-- code (tech lead S279: a policy value is a setting on Platform › Settings, never a code literal or an env var alone).
+-- Today a Content studio tenant whose AI budget is used up sees "Writing failed" and nothing tells the agency why, and
+-- a TripPlanner agency whose monthly AI sessions are used up is told nothing at all (root
+-- docs/audits/2026-11-17-S283-session/ai-caps-gap.md, slices G3 and L1-L4).
+--
+-- What.
+--   1. Two rows in shared.setting_definition (seed block below, read by scripts/settings/gen_compiled_defaults.py into
+--      shared/settings/compiled_defaults.json in this PR), area "spend", enum dev | prod, default dev (today's hard
+--      behaviour), platform scope, impact high, maker-checker, no env override, enforced:
+--        cis.spend.environment          read by shared/llm_client/tenant_budget.py (AA-CIS-App code PR): prod = a
+--                                       tenant AI budget that cannot be read degrades with a warning (log + admin
+--                                       bell) and the call goes on; dev = it fails closed as today (AA-642 A8).
+--        tripplanner.spend.environment  read by AA-TripPlanner-Web through catalog.v_app_settings_v1 (CIS 415): prod =
+--                                       the app-wide daily cap and the chat's app monthly cap only alert, and an
+--                                       unreadable spend / quota degrades with a warning; dev = all of them block as
+--                                       today. A tenant's own plan quota and AI budget stay hard in both.
+--      Each seed row carries its plain label and its EN + VI operator guide (CIS 416 rule).
+--   2. The tenant-facing AI allowance notices in shared.notifications (target_roles {tenant}, read by the Content
+--      studio bell, GET /v1/notifications):
+--        a. a partial UNIQUE index notifications_ai_allowance_once_uq on (tenant_id, event_type, entity_id) for the two
+--           event types ai.allowance_used (written by CIS when a tenant's AI budget stops its Content studio writing)
+--           and tripplanner.ai_allowance_used (written by TripPlanner when an agency's AI sessions quota or AI budget
+--           stops new AI sessions). entity_id is '<kind>:<YYYY-MM>', so a notice is written at most once per tenant,
+--           kind and month: CIS writes INSERT ... ON CONFLICT DO NOTHING; TripPlanner, which may not read the table,
+--           writes a plain INSERT and treats the unique violation as "already noticed". Today's table has no row of
+--           either type.
+--        b. GRANT INSERT on shared.notifications and USAGE on its id sequence to tripplanner, and the RLS policy
+--           notifications_tripplanner_insert (PERMISSIVE INSERT TO tripplanner) WITH CHECK the row is exactly a
+--           system, tenant-only tripplanner.ai_allowance_used notice of the tripplanner_ai entity type. TripPlanner gets
+--           no SELECT, UPDATE or DELETE (the same one-way pattern as its ledger rows, CIS 173): it cannot read or change
+--           any notification, and it can write no other kind.
+--   3. The CRM agency AI budget comes from the plan (slice L3): a feature crm.ai_budget_usd_monthly (product crm, limit,
+--      usd_month) in shared.entitlement_feature, so it is a limit on the Plans page (PlanDrawer) and a per-tenant
+--      override in Tenant 360 like crm.seats, and one plan_feature row on each live crm plan (crm.core, crm.pro) at
+--      today's flat CRM default, 2 USD (crm.ai.budget_default_usd, crm-064): no agency's budget changes on apply. The
+--      CRM projects it from the tenant.entitlements.v1 snapshot (AA-Partner crm_entitlement_pull) into its agency
+--      budget and ceiling. The plan values are commercial: the tech lead sets them on the Plans page.
+--   4. Register 447.
+--
+-- Behaviour on apply. None for running code: no value row is seeded (both keys read dev, today's behaviour), nothing
+-- on main writes the two notice types, and the CRM plan rows equal the CRM default (2 USD) the CRM enforces today.
+-- The code PRs (AA-CIS-App, AA-TripPlanner-Web, AA-Partner) start using them.
+--
+-- Class: CONTRACT (root ADR 0017 decision 3; no migrate directive line): config rows INSERTed into an existing table,
+-- an index, a grant and a policy on an existing table. MIG-4: a migration-only PR, applied on Dev by Infra Migration
+-- Apply when the job tables are idle (ADR 0017a), then the code PRs. DM-6.1: no personal data (the payload carries the
+-- kind and the month only). DM-7.1: no new table. MIG-6: no SECURITY DEFINER routine.
+--
+-- Number. 445 is the newest CIS migration on main (17/11/2026) and lane l15 of this wave (AA-1126 gateway spend
+-- controls) holds 446: this file ships with it in ONE migration-only PR (batch cis 446-447). If the owner main max + 1
+-- differs at merge, renumber (git grep '447_' and '447' here, in tests/integration/test_aa1126_migration_447.py,
+-- compiled_defaults.json and docs/implementation-notes/AA-1126-l16-quota-ux.md).
+--
+-- Locks. INSERT of two definition rows; CREATE UNIQUE INDEX (not CONCURRENTLY: one transaction; shared.notifications
+-- holds a few hundred rows, a SHARE lock for milliseconds); one GRANT and one policy (ACCESS EXCLUSIVE, milliseconds).
+-- lock_timeout 5s.
+--
+-- Rollback (a new forward migration, after the code PRs are reverted): DROP POLICY notifications_tripplanner_insert;
+-- REVOKE INSERT and the sequence USAGE from tripplanner; DROP INDEX notifications_ai_allowance_once_uq; DELETE the two
+-- keys' value rows, then the keys.
+
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+
+-- settings-seed:begin (scripts/settings/gen_compiled_defaults.py reads the JSON array of the dollar-quoted seed)
+INSERT INTO shared.setting_definition
+    (key, app, area, label, description, value_type, unit, min_value, max_value, allowed_values, default_value,
+     scope_kind, impact, approval, evidence_required, env_override, cache_s, enforced, guide)
+SELECT s.key, s.app, s.area, s.label, s.description, s.value_type, s.unit, s.min_value, s.max_value, s.allowed_values,
+       s.default_value, s.scope_kind, s.impact, s.approval, s.evidence_required, s.env_override, s.cache_s, s.enforced,
+       s.guide
+  FROM jsonb_to_recordset($seed$
+[
+{"key": "cis.spend.environment", "app": "cis", "area": "spend", "label": "AI spend rules: environment", "description": "Which AI spend rules CIS follows (tech lead policy S283). dev = hard caps everywhere: a tenant AI budget that cannot be read stops the tenant's Content studio writing until it can (AA-642 A8). prod = pay per use: only a tenant's plan allowance stops its AI; a budget that cannot be read degrades with a warning (log + admin bell) and the call goes on. Read by shared/llm_client/tenant_budget.py.", "value_type": "enum", "unit": null, "min_value": null, "max_value": null, "allowed_values": ["dev", "prod"], "default_value": "dev", "scope_kind": "platform", "impact": "high", "approval": "maker_checker", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": true, "guide": {"en": {"what": "Which AI spend rules CIS follows. dev keeps every hard stop. prod follows the pay-per-use rules: only a tenant's own plan allowance stops its AI writing, and when a tenant's AI budget cannot be read the writing goes on with a warning to staff instead of stopping.", "raise": "prod (the looser choice): no tenant is stopped because a budget could not be read; staff get a bell instead.", "lower": "dev (the stricter choice): a budget that cannot be read stops that tenant's writing until it can be read.", "when": "Set prod on the production environment; keep dev on Dev and test environments. To check the prod behaviour on Dev, set prod, test, then set dev again.", "example": "With the default dev: the budget database read fails, so a tenant's rewrite waits and retries. With prod: the rewrite runs and an admin bell says the budget could not be read."}, "vi": {"what": "CIS áp dụng quy tắc chi tiêu AI nào. dev giữ mọi điểm chặn cứng. prod theo quy tắc trả theo mức dùng: chỉ hạn mức AI trong gói của chính tenant mới dừng việc viết bằng AI, và khi không đọc được ngân sách AI của tenant thì việc viết vẫn chạy kèm cảnh báo cho staff thay vì dừng.", "raise": "prod (lựa chọn nới hơn): không tenant nào bị dừng chỉ vì không đọc được ngân sách; staff nhận chuông cảnh báo.", "lower": "dev (lựa chọn chặt hơn): không đọc được ngân sách thì việc viết của tenant đó dừng tới khi đọc được.", "when": "Đặt prod trên môi trường production; giữ dev trên Dev và môi trường test. Muốn xem hành vi prod trên Dev thì đặt prod, kiểm thử, rồi đặt lại dev.", "example": "Với mặc định dev: đọc ngân sách lỗi thì bản viết lại của tenant chờ và chạy lại sau. Với prod: bản viết lại vẫn chạy và chuông admin báo không đọc được ngân sách."}}},
+{"key": "tripplanner.spend.environment", "app": "tripplanner", "area": "spend", "label": "TripPlanner AI spend rules: environment", "description": "Which AI spend rules TripPlanner follows (tech lead policy S283). dev = hard caps everywhere: the app's daily AI cap (AI gateway > App profiles) and the planning chat's monthly app cap stop the AI of every agency, and a spend or quota that cannot be read stops it too. prod = pay per use: those app-wide caps only alert, a spend or quota that cannot be read degrades with a warning and the call goes on; an agency's own AI sessions quota and AI budget stay hard. Read by AA-TripPlanner-Web through catalog.v_app_settings_v1.", "value_type": "enum", "unit": null, "min_value": null, "max_value": null, "allowed_values": ["dev", "prod"], "default_value": "dev", "scope_kind": "platform", "impact": "high", "approval": "maker_checker", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": true, "guide": {"en": {"what": "Which AI spend rules TripPlanner follows. dev keeps every hard stop, including the app-wide daily AI cap and the planning chat's monthly cap for the whole app. prod follows the pay-per-use rules: those app-wide caps only raise an alert, and a spend or quota that cannot be read lets the AI go on with a warning. Each agency's own AI sessions and AI budget from its plan always stop at their limit.", "raise": "prod (the looser choice): one busy agency can no longer use up the AI of every other agency; staff get alerts instead.", "lower": "dev (the stricter choice): the app-wide caps stop the AI of every agency once reached.", "when": "Set prod on the production environment; keep dev on Dev and test environments. To check the prod behaviour on Dev, set prod, test, then set dev again.", "example": "With the default dev: once the app's daily cap is reached, every planner shows places without AI-written days until the next day. With prod: the planners keep their AI and an alert is raised."}, "vi": {"what": "TripPlanner áp dụng quy tắc chi tiêu AI nào. dev giữ mọi điểm chặn cứng, kể cả trần AI theo ngày của cả app và trần theo tháng của chat lập kế hoạch cho cả app. prod theo quy tắc trả theo mức dùng: các trần cấp app đó chỉ cảnh báo, và khi không đọc được chi tiêu hay hạn mức thì AI vẫn chạy kèm cảnh báo. Số phiên AI và ngân sách AI theo gói của từng đại lý luôn dừng khi chạm hạn.", "raise": "prod (lựa chọn nới hơn): một đại lý đông khách không còn làm cạn AI của mọi đại lý khác; staff nhận cảnh báo.", "lower": "dev (lựa chọn chặt hơn): chạm trần cấp app là AI của mọi đại lý dừng.", "when": "Đặt prod trên môi trường production; giữ dev trên Dev và môi trường test. Muốn xem hành vi prod trên Dev thì đặt prod, kiểm thử, rồi đặt lại dev.", "example": "Với mặc định dev: chạm trần ngày của app thì mọi trang lập kế hoạch chỉ hiện địa điểm, không có ngày viết bằng AI, tới hôm sau. Với prod: các trang vẫn có AI và hệ thống phát cảnh báo."}}}
+]
+$seed$::jsonb) AS s (key text, app text, area text, label text, description text, value_type text, unit text,
+                      min_value numeric, max_value numeric, allowed_values jsonb, default_value jsonb, scope_kind text,
+                      impact text, approval text, evidence_required boolean, env_override text, cache_s integer,
+                      enforced boolean, guide jsonb)
+ON CONFLICT (key) DO NOTHING;
+-- settings-seed:end
+
+-- 2a. At most one AI allowance notice per tenant, kind and month (entity_id '<kind>:<YYYY-MM>').
+CREATE UNIQUE INDEX IF NOT EXISTS notifications_ai_allowance_once_uq
+    ON shared.notifications (tenant_id, event_type, entity_id)
+ WHERE event_type IN ('ai.allowance_used', 'tripplanner.ai_allowance_used');
+
+-- 2b. TripPlanner writes its own notice, and nothing else (no read, no update, no delete).
+GRANT INSERT ON shared.notifications TO tripplanner;
+DO $$
+DECLARE
+    seq text := pg_get_serial_sequence('shared.notifications', 'id');
+BEGIN
+    IF seq IS NULL THEN
+        RAISE EXCEPTION 'migration 447: shared.notifications.id has no sequence';
+    END IF;
+    EXECUTE format('GRANT USAGE ON SEQUENCE %s TO tripplanner', seq);
+END $$;
+
+DROP POLICY IF EXISTS notifications_tripplanner_insert ON shared.notifications;
+CREATE POLICY notifications_tripplanner_insert ON shared.notifications
+    AS PERMISSIVE FOR INSERT TO tripplanner
+    WITH CHECK (event_type = 'tripplanner.ai_allowance_used'
+                AND entity_type = 'tripplanner_ai'
+                AND actor_type = 'system'
+                AND target_roles = ARRAY['tenant']::text[]
+                AND is_read = false);
+
+-- 3. The CRM agency AI budget per plan (L3).
+INSERT INTO shared.entitlement_feature (feature_key, product, value_kind, unit, description)
+VALUES ('crm.ai_budget_usd_monthly', 'crm', 'limit', 'usd_month',
+        'USD a month of CRM AI drafting this plan gives the agency (the CRM agency AI budget and its ceiling; '
+        'AA-Partner crm_entitlement_pull projects it, AA-1126 L3, CIS 447). No limit = the CRM platform settings.')
+ON CONFLICT (feature_key) DO NOTHING;
+
+INSERT INTO shared.plan_feature (plan_key, feature_key, limit_value, updated_by)
+SELECT p.plan_key, 'crm.ai_budget_usd_monthly', 2, 'migration:447'
+  FROM shared.plan p
+ WHERE p.product = 'crm' AND p.retired_at IS NULL
+ON CONFLICT (plan_key, feature_key) DO NOTHING;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM shared.entitlement_feature WHERE feature_key = 'crm.ai_budget_usd_monthly') THEN
+        RAISE EXCEPTION 'migration 447: crm.ai_budget_usd_monthly is not in the feature catalogue';
+    END IF;
+    IF (SELECT count(*) FROM shared.setting_definition
+         WHERE key IN ('cis.spend.environment', 'tripplanner.spend.environment')) <> 2 THEN
+        RAISE EXCEPTION 'migration 447: the two spend environment keys are not registered';
+    END IF;
+    IF has_table_privilege('tripplanner', 'shared.notifications', 'SELECT')
+       OR has_table_privilege('tripplanner', 'shared.notifications', 'UPDATE')
+       OR has_table_privilege('tripplanner', 'shared.notifications', 'DELETE') THEN
+        RAISE EXCEPTION 'migration 447: tripplanner must only INSERT into shared.notifications';
+    END IF;
+END $$;
+
+INSERT INTO shared.schema_versions (version, applied_at, description)
+VALUES ('447', now(), 'AA-1126: spend environment settings (CIS, TripPlanner) and the tenant AI allowance notices')
+ON CONFLICT (version) DO NOTHING;
+
+COMMIT;
