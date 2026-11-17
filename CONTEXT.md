@@ -3088,6 +3088,11 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   `GET /v1/account/add-ons` (admin and customer_success only, `ROUTE_CAPS`; never the POST). At most one pending request per tenant and product; audited
   (`tenant.addon_requested`, `tenant.addon_request_approved` / `_declined`); a new request rings the staff bell
   (`tenant.addon.requested`, admin + customer_success). Rules: `services/tenant_account/addon_requests.py`.
+  AA-1115 (ADR 0019 d10): on the studio list (not the CRM relay `tenant.addons.v1`), an ACTIVE tripplanner entry
+  carries `planner` {url, domains, launcher}: the hosted `<TripPlanner origin>/<slug>/plan` (origin from
+  `TRIPPLANNER_REVALIDATE_URL`, else the Dev host; only when in service and `tp.hosted` resolves, else null), the ACTIVE
+  `shared.tenant_tripplanner_domain` hosts, and the `tp.launcher` flag. The Content studio's Add-ons page (AA-Partner)
+  shows the launcher snippet from it. Code: `services/tenant_account/planner_site.py`.
 
 - CIS 356 (slice 2, review fixes): a non-plan candidate of a platform key (an override, the legacy AI budget) needs a
   live **content** subscription (an offboarded tenant keeps no `ai.budget_usd_monthly`); `shared.tenants.rate_limit_rpm`

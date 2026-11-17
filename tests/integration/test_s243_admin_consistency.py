@@ -23,7 +23,6 @@ from api.services import platform_cost  # noqa: E402
 from services import staff_reconcile as sr  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-NOW = datetime.now(timezone.utc)
 
 
 @pytest_asyncio.fixture
@@ -36,21 +35,24 @@ async def pool():
 @pytest.mark.asyncio
 async def test_ai_spend_by_provider_matches_cost_by_app(pool):
     tag = f"s243-{uuid.uuid4().hex[:8]}"
-    before = await platform_cost.ai_spend_by_provider(pool, now=NOW)
+    # One clock for the reads AND the rows (S283): a module-level now() let a nightly run that crossed 00:00 UTC
+    # write rows dated the next day, outside the window the reads used.
+    now = datetime.now(timezone.utc)
+    before = await platform_cost.ai_spend_by_provider(pool, now=now)
     rows = [("bedrock-satellite", "acc3", 1.25), ("bedrock", "acc2", 0.5), ("openai", None, 0.25),
             ("typesafe", None, 0.125)]
     try:
         for provider, account, cost in rows:
             await pool.execute(
                 "INSERT INTO shared.llm_call_log (stage, role, model, provider, account, cost_usd, quality_signal, "
-                "created_at) VALUES ('adhoc_s243', 'writer', 'm', $1, $2, $3, $4::jsonb, now())",
-                provider, account, cost, f'{{"app": "cis", "test": "{tag}"}}')
-        after = await platform_cost.ai_spend_by_provider(pool, now=NOW)
+                "created_at) VALUES ('adhoc_s243', 'writer', 'm', $1, $2, $3, $4::jsonb, $5)",
+                provider, account, cost, f'{{"app": "cis", "test": "{tag}"}}', now)
+        after = await platform_cost.ai_spend_by_provider(pool, now=now)
         delta = {k: round(after["by_provider"].get(k, 0) - before["by_provider"].get(k, 0), 4)
                  for k in ("bedrock", "openai", "jev", "other")}
         # Jev is logged as provider "typesafe": it is the Jev row, not "other".
         assert delta == {"bedrock": 1.75, "openai": 0.25, "jev": 0.125, "other": 0.0}
-        full = await platform_cost.cost_by_app(pool, None, redis=None, now=NOW)
+        full = await platform_cost.cost_by_app(pool, None, redis=None, now=now)
         assert abs(full["totals"]["ai_usd"] - after["total_usd"]) <= 0.001     # rounding per row vs per family
         cis = next(r for r in full["apps"] if r["app"] == "cis")
         assert cis["ai_outside_aws_usd"] == round(cis["ai_usd"] - cis["ai_in_aws_acc2_usd"], 4)

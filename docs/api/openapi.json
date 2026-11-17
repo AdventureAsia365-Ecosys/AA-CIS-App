@@ -7468,6 +7468,36 @@
         "title": "PlanRetireIn",
         "type": "object"
       },
+      "PlannerSite": {
+        "description": "AA-1115: the agency's hosted Trip planner (an active tripplanner add-on whose plan includes tp.hosted).",
+        "properties": {
+          "domains": {
+            "description": "The agency's active custom planner hosts, sorted",
+            "items": {
+              "type": "string"
+            },
+            "title": "Domains",
+            "type": "array"
+          },
+          "launcher": {
+            "description": "The plan includes the launcher snippet (entitlement tp.launcher)",
+            "title": "Launcher",
+            "type": "boolean"
+          },
+          "url": {
+            "description": "The hosted planner, <TripPlanner origin>/<slug>/plan",
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "domains",
+          "launcher"
+        ],
+        "title": "PlannerSite",
+        "type": "object"
+      },
       "PostActivationBody": {
         "additionalProperties": false,
         "properties": {
@@ -10637,6 +10667,95 @@
           "reason"
         ],
         "title": "StartBody",
+        "type": "object"
+      },
+      "StudioAddOnList": {
+        "properties": {
+          "add_ons": {
+            "items": {
+              "$ref": "#/components/schemas/StudioAddOnState"
+            },
+            "title": "Add Ons",
+            "type": "array"
+          },
+          "in_service": {
+            "title": "In Service",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "in_service",
+          "add_ons"
+        ],
+        "title": "StudioAddOnList",
+        "type": "object"
+      },
+      "StudioAddOnState": {
+        "properties": {
+          "last_decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AddOnRequestOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "planner": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlannerSite"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "product": {
+            "enum": [
+              "crm",
+              "tripplanner"
+            ],
+            "title": "Product",
+            "type": "string"
+          },
+          "request": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AddOnRequestOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "enum": [
+              "active",
+              "requested",
+              "available"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "subscription_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subscription Status"
+          }
+        },
+        "required": [
+          "product",
+          "state"
+        ],
+        "title": "StudioAddOnState",
         "type": "object"
       },
       "SubscriptionTermsIn": {
@@ -59094,7 +59213,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AddOnList"
+                  "$ref": "#/components/schemas/StudioAddOnList"
                 }
               }
             },

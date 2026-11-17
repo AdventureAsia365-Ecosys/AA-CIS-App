@@ -4,7 +4,8 @@ Generators (catalog.yaml `generator: cis`):
   EX-04  Executive KPI scorecard: the latest snapshot values of shared.kpi_daily for the period's last day, delta vs
          the day before and the median of the 7 days before, coloured by the kpis.yaml `alert` bounds. The KPIs EX-04
          lists come first, then every other KPI the snapshot measures; KPIs nothing measures yet are named.
-  EX-06  Report register: every catalog report with its schedule, priority, last run and due state.
+  EX-06  Report register: every catalog report with its schedule, priority, last run and due state, and (R7) the
+         catalogue status of every report the engine does not render, retired ones included, with its trigger.
   OPS-12 Daily platform health digest (R2, services/reports/digest.py; e-mailed to its opt-in list).
   TP-03  Inquiry handoff reconciliation, TripPlanner to Booking: retired on 2026-11-03 with the B2B-only model
          (R0 hotfix, services/reports/b2b_only.py); past runs stay readable, nothing renders it any more.
@@ -234,7 +235,14 @@ def register_rows(reg: Registry, last: dict[str, dict], now: datetime) -> list[d
 
 
 _REGISTER_KEYS = ("id", "name_en", "priority", "schedule", "automation", "status", "generator", "covered_to",
-                  "failed_7d")
+                  "failed_7d", "trigger")
+# Catalogue statuses in the order EX-06 counts them (root catalog.yaml `status`; AA-1003 R7).
+CATALOG_STATUSES = ("exists", "partial", "planned", "missing", "retired")
+
+
+def _cell(text: Optional[str]) -> str:
+    """One Markdown table cell: no pipe or line break from catalogue text."""
+    return " ".join(str(text).replace("|", "/").split()) if text else "—"
 
 
 def _register_entry(row: dict, self_id: str) -> dict:
@@ -249,6 +257,13 @@ def render_register(reg: Registry, report: Report, day: date, rows: list[dict], 
         by_state[r["due"]["state"]] = by_state.get(r["due"]["state"], 0) + 1
     automated = [r for r in rows if r["runnable"]]
     retired = [r for r in rows if r["due"]["state"] == "retired"]
+    # every report the engine does not render, retired ones included, with its catalogue status (R7: EX-06 lists the
+    # catalogue status of every report, and what starts building the ones still to come)
+    not_generated = [r for r in rows if not r["runnable"]]
+    catalog_status = {s: sum(1 for r in rows if r["status"] == s) for s in CATALOG_STATUSES}
+    for r in rows:      # a status the lint does not know yet still shows up, never silently dropped
+        if r["status"] not in catalog_status:
+            catalog_status[r["status"]] = catalog_status.get(r["status"], 0) + 1
     # a retired report's last failures are history, not work (R0 hotfix: TP-03)
     attention = [r for r in rows if r["due"]["state"] in ("due", "overdue")
                  or (r["failed_7d"] and r["due"]["state"] != "retired")]
@@ -257,6 +272,7 @@ def render_register(reg: Registry, report: Report, day: date, rows: list[dict], 
         "generated_at": generated_at.isoformat(), "generated_by": GENERATED_BY,
         "registry": {"reports": len(rows), "automated": len(automated), "imported_from": reg.imported_from},
         "states": by_state, "attention": [r["id"] for r in attention], "retired": [r["id"] for r in retired],
+        "catalog_status": catalog_status, "not_generated": [r["id"] for r in not_generated],
         "reports": [_register_entry(r, report.id) for r in rows],
     }
     summary = (f"{report.id} {day.isoformat()}: {len(rows)} reports, {len(automated)} generated here, "
@@ -278,6 +294,13 @@ def render_register(reg: Registry, report: Report, day: date, rows: list[dict], 
         md += ["", "## Retired", "", "| Report | Retired on | Last run |", "|---|---|---|"]
         md += [f"| {r['id']} {r['name_en']} | {r.get('retired_on') or '—'} | "
                f"{(r['last_run'] or {}).get('status') or 'never'} |" for r in retired]
+    md += ["", "## Catalogue status", "",
+           "Every report of the catalogue: " + ", ".join(f"{n} {s}" for s, n in catalog_status.items() if n) + ".", "",
+           "### Not generated here", "",
+           "| Report | Status | Priority | Schedule | Starts when |", "|---|---|---|---|---|"]
+    for r in not_generated:
+        starts = f"retired on {r.get('retired_on') or '—'}" if r["status"] == "retired" else _cell(r.get("trigger"))
+        md.append(f"| {r['id']} {_cell(r['name_en'])} | {r['status']} | {r['priority']} | {r['schedule']} | {starts} |")
     md += ["", "## Catalogue by priority (retired reports left out)", "", "| Priority | Reports | Generated here |",
            "|---|---|---|"]
     for p in ("P0", "P1", "P2", "P3"):

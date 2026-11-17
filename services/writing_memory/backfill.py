@@ -34,6 +34,7 @@ import structlog
 
 from services.quality import registry as qr
 from services.writing_memory import signals as wm
+from shared.repository.jsonb_sql import json_array  # AA-922: AND does not order evaluation, CASE does
 
 logger = structlog.get_logger()
 
@@ -62,11 +63,11 @@ _T2_SQL = """
      WHERE c.edit_source = 'tenant_edit'
      ORDER BY c.created_at, c.id
 """
-_T9_SQL = """
+_T9_SQL = f"""
     SELECT piece_id::text AS piece_id, tenant_id::text AS tenant_id, channel, repair_log, discarded_attempts,
            created_at
       FROM acp_shared.content_piece
-     WHERE jsonb_typeof(repair_log) = 'array' AND jsonb_array_length(repair_log) > 0
+     WHERE jsonb_array_length({json_array("repair_log")}) > 0
      ORDER BY created_at, piece_id
 """
 _LESSON_SQL = """

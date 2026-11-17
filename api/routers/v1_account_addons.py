@@ -3,7 +3,10 @@
 
   GET  /v1/account/add-ons            per add-on (crm, tripplanner): active | requested | available, the pending
                                       request and the last decision (a decline shows its reason; an approval its
-                                      setup: in_progress | done | failed); a "view as tenant" session reads it too
+                                      setup: in_progress | done | failed); a "view as tenant" session reads it too.
+                                      AA-1115: an active tripplanner entry carries ``planner`` {url, domains,
+                                      launcher} (services/tenant_account/planner_site.py), what the launcher snippet
+                                      of the Add-ons page needs; the CRM relay (tenant.addons.v1) does not carry it
   POST /v1/account/add-on-requests    {"product": "crm" | "tripplanner", "note": optional, <= 500 characters}
                                       -> 201 the new request, 200 the request already pending (no second one);
                                       409 already_subscribed / tenant_not_in_service, 429 too_many_requests
@@ -28,6 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from api.routers.v1_tours import get_tenant
 from services.tenant_account import addon_requests as ar
+from services.tenant_account import planner_site
 from services.tenant_account.plans import PlanError
 
 logger = structlog.get_logger()
@@ -68,6 +72,23 @@ class AddOnList(BaseModel):
     add_ons: list[AddOnState]
 
 
+class PlannerSite(BaseModel):
+    """AA-1115: the agency's hosted Trip planner (an active tripplanner add-on whose plan includes tp.hosted)."""
+    url: str = Field(description="The hosted planner, <TripPlanner origin>/<slug>/plan")
+    domains: list[str] = Field(description="The agency's active custom planner hosts, sorted")
+    launcher: bool = Field(description="The plan includes the launcher snippet (entitlement tp.launcher)")
+
+
+class StudioAddOnState(AddOnState):
+    # Only on the tripplanner entry while it is active and hosted; null otherwise. Not part of tenant.addons.v1.
+    planner: Optional[PlannerSite] = None
+
+
+class StudioAddOnList(BaseModel):
+    in_service: bool
+    add_ons: list[StudioAddOnState]
+
+
 class AddOnRequestCreated(BaseModel):
     created: bool
     request: AddOnRequestOut
@@ -97,12 +118,21 @@ def _refuse(e: PlanError) -> HTTPException:
                          headers={"X-Error-Code": e.code})
 
 
-@router.get("/add-ons", response_model=AddOnList, summary="The agency's add-ons: active, requested or available")
+async def _with_planner(conn, tenant_id: str, view: dict) -> dict:
+    """AA-1115: the active tripplanner entry gets its planner addresses (the launcher snippet's targets)."""
+    for add_on in view["add_ons"]:
+        if add_on["product"] == "tripplanner" and add_on["state"] == "active":
+            add_on["planner"] = await planner_site.read(conn, tenant_id, in_service=view["in_service"])
+    return view
+
+
+@router.get("/add-ons", response_model=StudioAddOnList,
+            summary="The agency's add-ons: active, requested or available")
 async def list_add_ons(request: Request, tenant=Depends(get_tenant)):
     tenant_id = _tenant_id(tenant)
     try:
         async with request.app.state.pool.acquire() as conn:
-            return await ar.tenant_view(conn, tenant_id)
+            return await _with_planner(conn, tenant_id, await ar.tenant_view(conn, tenant_id))
     except asyncpg.UndefinedTableError as exc:
         logger.error("tenant_add_ons_unavailable", reason=type(exc).__name__)
         raise HTTPException(status_code=503, detail=UNAVAILABLE) from exc
