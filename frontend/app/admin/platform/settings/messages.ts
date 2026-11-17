@@ -443,7 +443,7 @@ const UNITS_VI: Record<string, string> = {
   "score (0-10)": "điểm (0-10)", score: "điểm", reminders: "lần nhắc", "checks/min": "lần kiểm/phút",
   "requests/min": "yêu cầu/phút", "calls/min": "lượt gọi/phút", "writes/min": "lượt ghi/phút",
   "submissions/hour": "lượt gửi/giờ", "base currency": "tiền tệ gốc", "deploys/week": "lần deploy/tuần",
-  minutes: "phút", events: "sự kiện",
+  minutes: "phút", events: "sự kiện", "USD/day": "USD/ngày", x: "lần",
 };
 
 export function unitName(unit: string, lang: string): string {

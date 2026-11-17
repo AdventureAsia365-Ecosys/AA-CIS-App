@@ -37,6 +37,7 @@ import { NEW_BUDGET_DRAFT, newCentralDraft } from "@/lib/capTighten";
 import { connectionName } from "@/lib/llmConnections";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import { BUDGETS, BUDGET_STATE, CENTRAL } from "./budgets.messages";
+import SpendControlsSection, { RunCapCell, RunCapEditorNote, useAtCapText, useRunCapRule } from "./SpendControlsSection";
 import { usePageAccess } from "./usePageAccess";
 import { LevelsCell, UsedOfCap } from "./tenantBudgetParts";
 import { tenantBudgetInForce } from "@/lib/tenantBudgetInForce";
@@ -240,6 +241,7 @@ function SpendBudgetTable({ id, rows, loading, onEdit }: {
 
 function ConnectionBudgetTable({ rows, loading }: { rows: ConnectionBudgetRow[]; loading: boolean }) {
   const t = useT(BUDGETS);
+  const atCapText = useAtCapText();    // AA-1126 G1: follows the environment's connection cap mode
   const dir = useAwsAccounts();
   const accountText = useAccountText();
   const columns = useMemo<ColumnDef<ConnectionBudgetRow, unknown>[]>(() => [
@@ -277,9 +279,9 @@ function ConnectionBudgetTable({ rows, loading }: { rows: ConnectionBudgetRow[];
       // F6: a connection without a budget has nothing to stop at or alert on.
       cell: (c) => c.row.original.monthly_budget_usd == null
         ? <span style={small}>{t("noCapSet")}</span>
-        : <span style={small}>{c.row.original.hard_stop ? t("stopsAtCap") : t("alertOnly")} · {c.row.original.alert_pct} %</span> },
+        : <span style={small}>{atCapText(c.row.original.hard_stop)} · {c.row.original.alert_pct} %</span> },
     { id: "state", header: t("colState"), accessorKey: "state", cell: (c) => <StateBadge state={c.row.original.state} /> },
-  ], [t, dir, accountText]);
+  ], [t, dir, accountText, atCapText]);
   return (
     <DataTable<ConnectionBudgetRow>
       tableId="ai-gateway-budgets-connections" data={rows} columns={columns} getRowId={(r) => r.connection_key}
@@ -471,9 +473,11 @@ function CentralEditor({ row, existing, sites, tightenOnly, onClose }: {
   const set = (p: Partial<CentralDraft>) => setDraft((d) => ({ ...d, ...p }));
   const target = useCentralTarget(draft, error === "scope", duplicate, sites);
   const otherErr = error !== "scope" && changed && errText(error);
+  // AA-1126 (review S283): job:s1_rewrite / eval / adhoc take their per-run cap from Platform › Settings only.
+  const run = useRunCapRule(name, draft.kind, body);
   // S280: no Remove and no softening for a tighten-only role (settings_registry.loosened).
   const { worse, stopLocked } = tightenState(tightenOnly, row, body);
-  const blocked = anyOf(!body, duplicate, !changed, worse.length, busy);
+  const blocked = anyOf(!body, duplicate, !changed, worse.length, busy, run.error);
 
   return (
     <Drawer open onClose={onClose} title={row ? tc("editTitle", row.scope) : tc("addTitle")} width={520}
@@ -497,7 +501,8 @@ function CentralEditor({ row, existing, sites, tightenOnly, onClose }: {
         <TightenNote show={tightenOnly} />
         {!row && <CentralTargetFields draft={draft} target={target} busy={busy} onChange={set} />}
         <div style={grid}>
-          {draft.kind === "job" && (
+          <RunCapEditorNote setting={run.setting} />
+          {run.perRunField && (
             <CapField label={tc("fieldPerRun")} hint={tc("fieldPerRunHint")} now={row?.per_run_usd}
               tightenOnly={tightenOnly} value={draft.per_run} disabled={busy} onChange={(v) => set({ per_run: v })} />
           )}
@@ -512,7 +517,7 @@ function CentralEditor({ row, existing, sites, tightenOnly, onClose }: {
           <AlertPctField value={draft.alert_pct} now={row?.alert_pct} tightenOnly={tightenOnly} disabled={busy}
             onChange={(v) => set({ alert_pct: v })} />
         </div>
-        <AlertLines lines={[otherErr, worse.length > 0 && tt.worseText(worse), apiError]} />
+        <AlertLines lines={[otherErr, run.error, worse.length > 0 && tt.worseText(worse), apiError]} />
       </div>
       <ConfirmModal open={confirming === "save"} onClose={() => setConfirming(null)} onConfirm={() => save.mutate()}
         title={t("confirmTitle", name)} body={tc("confirmBody")} confirmLabel={t("save")} busy={save.isPending}
@@ -581,7 +586,7 @@ function CentralTable({ rows, loading, onEdit }: {
         </Lines>
       ) },
     { id: "per_run", header: t("colPerRun"), accessorFn: (r) => r.per_run_usd ?? -1, meta: { align: "right" },
-      cell: (c) => <Money value={c.row.original.per_run_usd} /> },
+      cell: (c) => <RunCapCell scope={c.row.original.scope} otherwise={<Money value={c.row.original.per_run_usd} />} /> },
     { id: "per_day", header: t("colPerDay"), accessorFn: (r) => r.per_day_usd ?? -1, meta: { align: "right" },
       cell: (c) => <Money value={c.row.original.per_day_usd} /> },
     { id: "per_month", header: tc("colPerMonth"), accessorFn: (r) => r.per_month_usd ?? -1, meta: { align: "right" },
@@ -734,6 +739,7 @@ export default function BudgetsTab({ onOpenConnections }: { onOpenConnections: (
       {data && data.errors.length > 0 && (
         <div role="status" style={{ ...small, color: K.danger }}>{t("sourceErrors")}</div>
       )}
+      <SpendControlsSection />
       <Section title={t("groupProvider")} description={t("groupProviderHelp")} padded={false}
         actions={canEdit ? (
           <Button size="sm" variant="secondary" disabled={!data} onClick={() => setEditing({ row: null })}

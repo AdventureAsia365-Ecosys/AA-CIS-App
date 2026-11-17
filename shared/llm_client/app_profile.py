@@ -22,6 +22,10 @@ row = on): a database blip must not stop every AI call. ``LLM_APP_PROFILE=off`` 
 check.
 
 Admin writes: ``update`` (``PATCH /admin/ai-gateway/app-profiles/{app}``, audited in ``acp_shared.audit_log``).
+
+AA-1126 G2 (CIS 446): ``anomaly_reset_at`` / ``anomaly_reset_by`` are the last admin reset of the app's AI anomaly
+breaker (``anomaly_breaker``), written by ``reset_anomaly`` (``POST /admin/ai-gateway/anomaly-breaker/{app}/reset``,
+audited ``llm_anomaly_breaker_reset``); before 446 the row has no such columns and they read None.
 """
 from __future__ import annotations
 
@@ -77,6 +81,8 @@ class AppProfile:
     disabled_reason: Optional[str] = None
     updated_at: Optional[str] = None
     updated_by: Optional[str] = None
+    anomaly_reset_at: Optional[str] = None
+    anomaly_reset_by: Optional[str] = None
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -97,13 +103,16 @@ def profile_of(raw: Any) -> Optional[AppProfile]:
     except (TypeError, ValueError):
         budget = None
     updated = raw.get("updated_at")
+    reset = raw.get("anomaly_reset_at")
     return AppProfile(
         app=raw["app"], ai_enabled=raw.get("ai_enabled") is not False, bulk_paused=raw.get("bulk_paused") is True,
         default_daily_budget_usd=budget,
         degrade_mode=raw.get("degrade_mode") if raw.get("degrade_mode") in DEGRADE_MODES else "queue_retry",
         disabled_reason=raw.get("disabled_reason") or None,
         updated_at=updated.isoformat() if isinstance(updated, datetime) else (str(updated) if updated else None),
-        updated_by=raw.get("updated_by") or None)
+        updated_by=raw.get("updated_by") or None,
+        anomaly_reset_at=reset.isoformat() if isinstance(reset, datetime) else (str(reset) if reset else None),
+        anomaly_reset_by=raw.get("anomaly_reset_by") or None)
 
 
 class LLMAppDisabled(LLMStageDisabled):
@@ -282,7 +291,8 @@ def merged(before: AppProfile, fields: dict) -> AppProfile:
         raise ValueError(f"reason must be at most {REASON_MAX} characters")
     return AppProfile(app=before.app, ai_enabled=bool(d["ai_enabled"]), bulk_paused=bool(d["bulk_paused"]),
                       default_daily_budget_usd=budget, degrade_mode=d["degrade_mode"], disabled_reason=reason,
-                      updated_at=before.updated_at, updated_by=before.updated_by)
+                      updated_at=before.updated_at, updated_by=before.updated_by,
+                      anomaly_reset_at=before.anomaly_reset_at, anomaly_reset_by=before.anomaly_reset_by)
 
 
 def audit_action(before: AppProfile, after: AppProfile) -> str:
@@ -322,3 +332,40 @@ async def update(pool, app: str, fields: dict, *, actor: str) -> dict:
         invalidate()
     logger.info("llm_app_profile_updated", app=app, actor=actor[:64], ai_enabled=after.ai_enabled)
     return out.as_dict() if out is not None else after.as_dict()
+
+
+# ── AA-1126 G2: the anomaly breaker reset ──────────────────────────────────────────────────────────────────────────
+
+_RESET_SQL = """
+    UPDATE shared.llm_app_profile
+       SET anomaly_reset_at = now(), anomaly_reset_by = $2
+     WHERE app = $1
+ RETURNING to_jsonb(llm_app_profile) AS row
+"""
+
+
+async def reset_anomaly(pool, app: str, *, actor: str, details: Optional[dict] = None) -> dict:
+    """Reset the app's anomaly breaker: from now on the breaker counts the app's spend from this moment (the rest of the
+    UTC day gets a fresh allowance). Audited (``llm_anomaly_breaker_reset``, ``details`` = the verdict it cleared) in
+    the same transaction. Returns the saved profile. Raises LookupError (unknown app / no row) and
+    AppProfileUnavailable (no table, or no reset columns before CIS 446)."""
+    import asyncpg
+    if app not in APPS:
+        raise LookupError(f"unknown app: {app!r}")
+    try:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(_RESET_SQL, app, actor[:128])
+                if row is None:
+                    raise LookupError(f"no profile row for app {app!r}")
+                await conn.execute(_AUDIT_SQL, actor[:64], "llm_anomaly_breaker_reset", app,
+                                   json.dumps({"cleared": details or {}}, default=str))
+    except asyncpg.exceptions.UndefinedTableError as e:
+        raise AppProfileUnavailable("the app profile needs migration 345") from e
+    except asyncpg.exceptions.UndefinedColumnError as e:
+        raise AppProfileUnavailable("the anomaly breaker reset needs migration 446") from e
+    finally:
+        invalidate()
+    out = profile_of(row["row"])
+    logger.info("llm_anomaly_breaker_reset", app=app, actor=actor[:64])
+    return out.as_dict() if out is not None else {"app": app}
