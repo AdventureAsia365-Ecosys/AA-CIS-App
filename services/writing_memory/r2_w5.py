@@ -1,0 +1,89 @@
+"""AA-1051 — the W5 (writer proof) helpers of the R2 runner (services/writing_memory/r2.py), kept out of r2.py so it
+stays within its code-health size: the null-run check, kappa per eval side, and (S283) the claim instrument of a
+pre-registered run and its tune step. r2.py re-exports every public name here, so callers keep `r2.<name>`."""
+from __future__ import annotations
+
+from typing import Any, Optional
+
+from services.writing_memory import eval_checks as ec
+
+PREREG_FULL_SAMPLE = "prereg_full_sample"     # AA-1051 S283: tune_step of a pre-registered run
+
+
+def _instrument_check(conf: Any) -> None:
+    """AA-1051 S283: a claim instrument (services/writer_proof/instrument.py) judges a pre-registered run only, pinned
+    to the instrument's own model and connection; an unknown or closed instrument is refused at $0."""
+    if conf.judge_instrument is None:
+        return
+    from services.writer_proof import instrument as wi
+    from services.writing_memory.r2 import R2Refused
+    if not conf.prereg_id:
+        raise R2Refused("a claim instrument judges pre-registered W5 runs only (services/writer_proof)")
+    try:
+        p = wi.pinned(str(conf.judge_instrument))
+    except wi.InstrumentRefused as e:
+        raise R2Refused(str(e)) from e
+    if (conf.judge_model, conf.judge_connection) != (p.model_key, p.connection):
+        raise R2Refused(f"the instrument {p.id} runs on {p.candidate}: pin judge_model / judge_connection to it")
+
+
+def _instrument_version(instrument: Optional[str]) -> Optional[str]:
+    from services.writer_proof import instrument as wi
+    return wi.pinned(instrument).judge_version if instrument else None
+
+
+def _max_claims(v) -> int:
+    """8 quoted claims (eval_judge's MAX_CLAIMS), or every flagged claim of a claim instrument (its max_claims)."""
+    n = getattr(v, "max_claims", None)
+    return max(8, n) if isinstance(n, int) and not isinstance(n, bool) else 8
+
+
+def tune_step(conf: Any, stats: dict, goal: str, counts: bool) -> str:
+    """The decision after tune. AA-1051 S283: a pre-registered run always goes on (PREREG_FULL_SAMPLE): its decision
+    reads the whole fixed sample (writer_proof.decision, paired_all), so a sequential stop would pay for tune and leave
+    that decision invalid. R2's own verdict of such a run stays informative (_finish)."""
+    return PREREG_FULL_SAMPLE if conf.prereg_id else ec.tune_decision(stats, goal=goal, counts=counts)
+
+
+def null_config_problems(control_fp: Optional[dict], now_fp: Optional[dict]) -> list[str]:
+    """AA-1051: why a W5 null run (prereg workflow NULL_WORKFLOW) would not be null by construction, [] when it is.
+    The null run regenerates with today's writers (B) against the control's stored outputs (A): B == A only when the
+    control was written under the same configuration (the audit: "A = stored finals at matching config_fp"). Stricter
+    than `releases.reverify_reasons`: a control without a config_fp (a baseline import of frozen text, a run before
+    W0), or a component missing / unavailable on either side, is a problem, never "no change". mode_flags is compared
+    the reverify way (only by the worker against a worker record: an exec session does not know the worker env).
+    Pure."""
+    from services.writing_memory import config_fp as cf
+    if not isinstance(control_fp, dict) or not isinstance(control_fp.get("config_fp"), dict):
+        return ["the control run records no writer configuration (config_fp): a baseline import of frozen text or a "
+                "run from before W0. A null run needs controls written under the current configuration: run a "
+                "reverify of the writer's active release on this golden set version first"]
+    now_fp = now_fp or {}
+    out = [f"{k} differs from the control's" for k in ("golden_set", "writer_route", "gate_taxonomy")
+           if control_fp.get(k) != now_fp.get(k)]
+    old = control_fp["config_fp"].get("parts") or {}
+    new = (now_fp.get("config_fp") or {}).get("parts") or {}
+    for c in cf.COMPONENTS:
+        if c == "mode_flags":
+            continue
+        if c not in old or c not in new or cf.UNAVAILABLE in (old[c], new[c]):
+            out.append(f"config_fp {c} cannot be compared (missing or unavailable)")
+        elif old[c] != new[c]:
+            out.append(f"config_fp {c} differs from the control's")
+    if "mode_flags" in cf.reverify_components(control_fp, now_fp):
+        out.append("config_fp mode_flags differs from the control's")
+    return out
+
+
+def kappa_by_side(records: list[dict], side: Optional[str]) -> Optional[dict]:
+    """AA-1051: kappa of the CAL pairs and of the planned side's pairs (records carry `eval_split`), and their gap
+    (audit target: GATE within 0.1 of CAL). None without a side."""
+    if not side:
+        return None
+    out: dict[str, Any] = {}
+    for name in sorted({"cal", side}):
+        pairs = [(r["label"], r["judge"]) for r in records if r.get("eval_split") == name]
+        out[name] = {"pairs": len(pairs), "kappa": ec.cohen_kappa(pairs)}
+    k_cal, k_side = out["cal"]["kappa"], out[side]["kappa"]
+    out["gap"] = round(abs(k_cal - k_side), 3) if (k_cal is not None and k_side is not None) else None
+    return out

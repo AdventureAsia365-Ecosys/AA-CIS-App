@@ -116,6 +116,9 @@ import structlog
 
 from services.writing_memory import config as cfg
 from services.writing_memory import eval_checks as ec
+from services.writing_memory.r2_w5 import (  # noqa: F401 — re-exported (AA-1051): callers and tests use r2.<name>
+    PREREG_FULL_SAMPLE, _instrument_check, _instrument_version, _max_claims, kappa_by_side, null_config_problems,
+    tune_step)
 from shared import settings
 from shared.llm_client import family_rule
 
@@ -195,6 +198,7 @@ class R2Config:
     prereg_sha256: Optional[str] = None
     prereg_workflow: Optional[str] = None
     prereg_arm: Optional[str] = None
+    judge_instrument: Optional[str] = None  # AA-1051 S283: a pinned claim instrument judges (writer_proof.instrument)
 
     def validate(self) -> None:
         if self.writer not in ("a1", "t2", "t9_blog", "t9_social"):
@@ -234,7 +238,8 @@ class R2Config:
         self._validate_w5()
 
     def _validate_w5(self) -> None:
-        """AA-1051: the split, the fixed sample and the pre-registration fields."""
+        """AA-1051: the split, the fixed sample and the pre-registration fields (and S283: the claim instrument)."""
+        _instrument_check(self)
         if self.eval_split is not None and self.eval_split not in EVAL_SPLITS:
             raise R2Refused(f"eval_split must be one of {EVAL_SPLITS}")
         if self.sample_ids is not None:
@@ -337,9 +342,11 @@ def control_text(src: Optional[dict], item: dict) -> tuple[Optional[dict], bool]
     return item.get("control_output"), True
 
 
-def calibration_items(items: list[dict]) -> list[dict]:
+def calibration_items(items: list[dict], instrument: Optional[str] = None) -> list[dict]:
     """The items whose FROZEN output calibrates the judge: labelled pass / fail, not a trap, not human-edited
-    (post_edit), with a frozen output."""
+    (post_edit), with a frozen output. None for a claim instrument (S283: its calibration is its AA-1048 record)."""
+    if instrument:
+        return []
     return [it for it in items if not it.get("trap") and not it.get("post_edit")
             and it.get("label_verdict") in ("pass", "fail") and it.get("control_output") is not None]
 
@@ -403,50 +410,6 @@ def prereg_refusal(conf: "R2Config", prior: list[dict]) -> Optional[str]:
     return None
 
 
-def null_config_problems(control_fp: Optional[dict], now_fp: Optional[dict]) -> list[str]:
-    """AA-1051: why a W5 null run (prereg workflow NULL_WORKFLOW) would not be null by construction, [] when it is.
-    The null run regenerates with today's writers (B) against the control's stored outputs (A): B == A only when the
-    control was written under the same configuration (the audit: "A = stored finals at matching config_fp"). Stricter
-    than `releases.reverify_reasons`: a control without a config_fp (a baseline import of frozen text, a run before
-    W0), or a component missing / unavailable on either side, is a problem, never "no change". mode_flags is compared
-    the reverify way (only by the worker against a worker record: an exec session does not know the worker env).
-    Pure."""
-    from services.writing_memory import config_fp as cf
-    if not isinstance(control_fp, dict) or not isinstance(control_fp.get("config_fp"), dict):
-        return ["the control run records no writer configuration (config_fp): a baseline import of frozen text or a "
-                "run from before W0. A null run needs controls written under the current configuration: run a "
-                "reverify of the writer's active release on this golden set version first"]
-    now_fp = now_fp or {}
-    out = [f"{k} differs from the control's" for k in ("golden_set", "writer_route", "gate_taxonomy")
-           if control_fp.get(k) != now_fp.get(k)]
-    old = control_fp["config_fp"].get("parts") or {}
-    new = (now_fp.get("config_fp") or {}).get("parts") or {}
-    for c in cf.COMPONENTS:
-        if c == "mode_flags":
-            continue
-        if c not in old or c not in new or cf.UNAVAILABLE in (old[c], new[c]):
-            out.append(f"config_fp {c} cannot be compared (missing or unavailable)")
-        elif old[c] != new[c]:
-            out.append(f"config_fp {c} differs from the control's")
-    if "mode_flags" in cf.reverify_components(control_fp, now_fp):
-        out.append("config_fp mode_flags differs from the control's")
-    return out
-
-
-def kappa_by_side(records: list[dict], side: Optional[str]) -> Optional[dict]:
-    """AA-1051: kappa of the CAL pairs and of the planned side's pairs (records carry `eval_split`), and their gap
-    (audit target: GATE within 0.1 of CAL). None without a side."""
-    if not side:
-        return None
-    out: dict[str, Any] = {}
-    for name in sorted({"cal", side}):
-        pairs = [(r["label"], r["judge"]) for r in records if r.get("eval_split") == name]
-        out[name] = {"pairs": len(pairs), "kappa": ec.cohen_kappa(pairs)}
-    k_cal, k_side = out["cal"]["kappa"], out[side]["kappa"]
-    out["gap"] = round(abs(k_cal - k_side), 3) if (k_cal is not None and k_side is not None) else None
-    return out
-
-
 def _release_prompt(release: Optional[dict]) -> Optional[str]:
     """The release's prompt register (`fingerprint.prompt_sha256`, recorded by an R0 replay), when known."""
     fp = (release or {}).get("fingerprint")
@@ -458,15 +421,17 @@ def _release_prompt(release: Optional[dict]) -> Optional[str]:
     return fp.get("prompt_sha256") if isinstance(fp, dict) else None
 
 
-def prompt_version(writer: str, writer_prompt: Optional[str], judge_model: Optional[str] = None) -> str:
+def prompt_version(writer: str, writer_prompt: Optional[str], judge_model: Optional[str] = None,
+                   instrument: Optional[str] = None) -> str:
     """`prompt_eval_runs.prompt_version` of an R2 run: the writer prompt register when the release names one, else
     the eval judge's version (`<writer>:judge-<12 hex>`, S271: `@<pinned model>` when the judge is pinned, so two runs
     of one prompt on two judges never share a version): a writer's system prompt is built per input (brand, channel,
-    tour) and is measured by the R0 replay, not here."""
+    tour) and is measured by the R0 replay, not here. AA-1051 S283: a claim instrument names its own version."""
     if writer_prompt:
         return str(writer_prompt)[:64]
     from services.writing_memory.eval_judge import judge_version
-    return (f"{writer}:judge-{judge_version()}" + (f"@{judge_model}" if judge_model else ""))[:64]
+    jv = _instrument_version(instrument) or f"judge-{judge_version()}"
+    return (f"{writer}:{jv}" + (f"@{judge_model}" if judge_model else ""))[:64]
 
 
 def row_judge_version(judge, pin: Optional[str]) -> Optional[str]:
@@ -526,12 +491,13 @@ def control_plan(planned: list[dict], sources: dict[str, dict], *, control_kind:
             "missing": [it.get("sample_id") or it["item_id"] for it in need if it["item_id"] not in set(found)][:20]}
 
 
-def calibration_ready(calib: list[dict], frozen_src: dict) -> dict:
-    """Whether calibration can be measured at all ($0): the labelled frozen items with a baseline row, by label."""
+def calibration_ready(calib: list[dict], frozen_src: dict, instrument: Optional[str] = None) -> dict:
+    """Whether calibration can be measured at all ($0): the labelled frozen items with a baseline row, by label. A claim
+    instrument (AA-1051 S283) brings its AA-1048 record instead: no kappa block, never judge_counts (advisory)."""
     ready = [it for it in calib if it["item_id"] in frozen_src]
     labels = {v: sum(1 for it in ready if it["label_verdict"] == v) for v in ("pass", "fail")}
     ok = len(ready) >= cfg.MIN_KAPPA_PAIRS and min(labels.values()) >= cfg.MIN_KAPPA_PER_LABEL
-    return {"pairs": len(ready), "labels": labels, "possible": ok}
+    return {"pairs": len(ready), "labels": labels, "possible": ok or bool(instrument), "instrument": instrument}
 
 
 def item_estimate(writer: str, samples: list[float]) -> dict:
@@ -575,7 +541,7 @@ async def _controls(store: Store, gs: dict, active: dict, baseline: Optional[str
 
 def _claims_of(v) -> dict:
     """{"judge_claims": [...]} when the verdict quotes the phrases behind its classes (eval_judge, S256), else {}."""
-    claims = list(getattr(v, "claims", None) or [])[:8]
+    claims = list(getattr(v, "claims", None) or [])[:_max_claims(v)]
     return {"judge_claims": claims} if claims else {}
 
 
@@ -651,12 +617,13 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
                                    await store.fingerprint(writer))
         if why:
             raise R2Refused("the null run is not null by construction: " + "; ".join(why))
-    calib_all, counting_ids = calibration_split(calibration_items(items), planned, conf.eval_split)
+    calib_all, counting_ids = calibration_split(calibration_items(items, conf.judge_instrument), planned,
+                                                conf.eval_split)
     calib = [it for it in calib_all if it["item_id"] in counting_ids]
     frozen_src = (await store.calibration_sources(baseline, [it["item_id"] for it in calib_all])
                   if baseline else {})
     calib_ids = {it["item_id"] for it in calib_all}
-    cal_ready = calibration_ready(calib, frozen_src)
+    cal_ready = calibration_ready(calib, frozen_src, conf.judge_instrument)
     # S271 W0: refused at $0 (nothing stored) when the result could not count
     if (conf.require_calibrated or conf.calibrate_only) and not cal_ready["possible"]:
         raise R2Refused(f"calibration cannot be measured ({cal_ready['pairs']} labelled frozen items with a baseline "
@@ -698,7 +665,7 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
         "control_run_stale": ctl["stale"], "calibrate_only": conf.calibrate_only,
         "require_calibrated": conf.require_calibrated, "estimate": estimate_item,
         "judge": {"model_key": conf.judge_model, "connection": conf.judge_connection,
-                  "pinned": bool(conf.judge_model)}}
+                  "pinned": bool(conf.judge_model), "instrument": conf.judge_instrument}}
     if conf.eval_split or conf.sample_ids:              # AA-1051
         details["eval_split"] = conf.eval_split
         details["sample_ids"] = len(conf.sample_ids or [])
@@ -707,7 +674,7 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
         details["prereg"] = {"id": conf.prereg_id, "sha256": conf.prereg_sha256, "workflow": conf.prereg_workflow,
                              "arm": conf.prereg_arm}
     run_id = await store.create_run({
-        "prompt_version": prompt_version(writer, writer_prompt, conf.judge_model),
+        "prompt_version": prompt_version(writer, writer_prompt, conf.judge_model, conf.judge_instrument),
         "triggered_by": conf.triggered_by[:128], "run_kind": conf.run_kind, "writer": writer,
         "release_id": conf.release_id, "golden_set_id": gs["set_id"], "tiers": sorted(tiers) if tiers else [],
         "cost_cap_usd": conf.cap_usd, "fingerprint": fp, "details": details})
@@ -875,12 +842,12 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
             if conf.calibrate_only:
                 details["calibration_gate"] = "calibrate_only"
                 raise _Stop("completed", "calibrate")
-            if conf.require_calibrated and not out.judge_counts:
+            if conf.require_calibrated and not out.judge_counts and not conf.judge_instrument:
                 details["calibration_gate"] = "judge_not_calibrated"
                 raise _Stop("completed", "calibrate")
 
             for phase in ("probe", "tune", "holdout"):
-                if phase == "holdout" and tune_result != "pass":
+                if phase == "holdout" and tune_result not in ("pass", PREREG_FULL_SAMPLE):
                     break
                 for it in plan[phase]:
                     await reserve(estimate_item["reserve_usd"], phase)
@@ -916,7 +883,7 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
                     raise _Stop("error", phase)
                 if phase == "tune":
                     stats = ec.paired_stats(compared["tune"])
-                    tune_result = ec.tune_decision(stats, goal=goal, counts=out.judge_counts)
+                    tune_result = tune_step(conf, stats, goal, out.judge_counts)
                     details["tune"] = {**stats, "decision": tune_result}
                     if tune_result == "futility":
                         raise _Stop("futility", "tune")
@@ -1338,6 +1305,9 @@ def judge_fn_for(conf: R2Config):
     """The judge call of a run: eval_judge.judge_output, bound to the pinned model / connection when the run pins
     one (a partial, so the runner's keyword call shape stays the same for every judge)."""
     from services.writing_memory.eval_judge import judge_output
+    if conf.judge_instrument:                   # AA-1051 S283: the pinned claim instrument (R2Refused at $0 else)
+        from services.writer_proof.instrument import judge_fn
+        return judge_fn(conf)
     if not conf.judge_model:
         return judge_output
     return functools.partial(judge_output, model_key=conf.judge_model, connection=conf.judge_connection)
@@ -1374,7 +1344,7 @@ async def estimate(pool, conf: R2Config) -> dict:
     if conf.seed_fault:
         plan["probe"] = [it for it in plan["probe"] if it.get("split") != "trap"]
     n = {k: len(v) for k, v in plan.items()}
-    calib_all, counting_ids = calibration_split(calibration_items(items),
+    calib_all, counting_ids = calibration_split(calibration_items(items, conf.judge_instrument),
                                                 plan["probe"] + plan["tune"] + plan["holdout"], conf.eval_split)
     calib = [it for it in calib_all if it["item_id"] in counting_ids]
     calib_labels = {v: sum(1 for it in calib if it["label_verdict"] == v) for v in ("pass", "fail")}
@@ -1384,7 +1354,7 @@ async def estimate(pool, conf: R2Config) -> dict:
     planned = plan["probe"] + plan["tune"] + plan["holdout"]
     ctl = await _controls(store, gs, await store.active_parts(conf.writer, owner), baseline, planned, ctl_mode)
     frozen_src = await store.calibration_sources(baseline, [it["item_id"] for it in calib]) if baseline else {}
-    cal_ready = calibration_ready(calib, frozen_src)
+    cal_ready = calibration_ready(calib, frozen_src, conf.judge_instrument)
     est = item_estimate(conf.writer, await store.item_cost_samples(conf.writer))
     refusals = list(split_problems)                      # AA-1051: the side and the fixed sample
     prereg_prior: list[dict] = []
@@ -1428,7 +1398,8 @@ async def estimate(pool, conf: R2Config) -> dict:
             "controls": {**ctl["plan"], "cross_set": ctl["cross_set"], "paired_on": "sample_id+input_sha256"},
             "calibrate_only": conf.calibrate_only, "require_calibrated": conf.require_calibrated,
             "judge_model": conf.judge_model, "judge_connection": conf.judge_connection,
-            "item_estimate": est, "estimated_usd_max": est_max, "cap_usd": conf.cap_usd,
+            "judge_instrument": conf.judge_instrument, "item_estimate": est, "estimated_usd_max": est_max,
+            "cap_usd": conf.cap_usd,
             "log_stage": conf.log_stage, "month_spend_usd": round(month, 4), "month_cap_usd": cfg.month_cap_usd(),
             "month_after_cap_ok": month + conf.cap_usd <= cfg.month_cap_usd(),
             "judge_family_check": family_check, "would_refuse": refusals,

@@ -185,10 +185,12 @@ def test_same_instrument_compares_judge_and_golden_version():
 def test_campaign_plans_every_proof_in_the_d12_order_and_sums_the_estimates(fakes):
     out = asyncio.run(runner.campaign(_Pool()))
     assert out["order"] == list(runner.CAMPAIGN_ORDER) and [r["prereg"] for r in out["proofs"]] == out["order"]
-    assert all(not r["ready_for_live"] for r in out["proofs"])                       # the shipped files are drafts
+    assert all(not r["ready_for_live"] for r in out["proofs"])          # drafts, and the null run has no power check
     assert all(r["stage"] == cfg.W5_STAGE for r in out["proofs"])
     assert out["d12_total_cap_usd"] == pr.total_cap() == 33.0 and out["fits_d12_total"]
-    assert not fakes["estimates"]                                                   # drafts: nothing estimated
+    # S283: only the registered null run (sample rule, claim instrument judge) is estimated; the drafts are not
+    assert {c.prereg_id for c in fakes["estimates"]} == {"w5-null-t9-blog-v7"}
+    assert out["proofs"][0]["judge"].startswith("aa1048-two-step-v7 (")
 
 
 def test_campaign_reports_a_file_that_does_not_load(fakes):

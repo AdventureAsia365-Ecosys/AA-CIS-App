@@ -1,0 +1,78 @@
+{
+  "format": 1,
+  "id": "w5-null-t9-blog-v7",
+  "workflow": "null",
+  "status": "registered",
+  "registered_by": "tech_lead",
+  "registered_on": "2026-11-17",
+  "golden_set": {
+    "name": "aa729",
+    "version": "1.4.0"
+  },
+  "eval_split": "gate",
+  "sample": {
+    "rule": "seeded_hash",
+    "n": 12,
+    "noise": 0
+  },
+  "sample_ids": [],
+  "noise_sample_ids": [],
+  "release_id": null,
+  "judge": {
+    "model_key": "gpt-6-luna-openai",
+    "connection": "openai-direct",
+    "instrument": "aa1048-two-step-v7",
+    "advisory": true
+  },
+  "metrics": [
+    {
+      "name": "fail_claims_per_item",
+      "kind": "computed",
+      "direction": "lower",
+      "primary": true
+    },
+    {
+      "name": "item_fail_rate",
+      "kind": "computed",
+      "direction": "lower"
+    },
+    {
+      "name": "hard_stops",
+      "kind": "computed",
+      "direction": "lower",
+      "target": {
+        "op": "<=",
+        "value": 0
+      }
+    },
+    {
+      "name": "cost_per_object_usd",
+      "kind": "computed",
+      "direction": "lower"
+    },
+    {
+      "name": "requests_per_object",
+      "kind": "computed",
+      "direction": "lower"
+    }
+  ],
+  "decision": {
+    "rule": "non_inferior",
+    "metric": "fail_claims_per_item",
+    "margin_abs": 4.0,
+    "alpha": 0.05,
+    "noise_se_k": 2.0
+  },
+  "requirements": {
+    "paired_all": true,
+    "max_mixed_judges": 0,
+    "max_hard_stop_1": 0
+  },
+  "power": {
+    "min_power": 0.8,
+    "writer_sd": 4.6,
+    "claims_per_item": 60
+  },
+  "cap_usd": 5.0,
+  "note": "Eval null run (root ADR 0020 W5 item 1; supersedes the unregistered draft w5-null-t9-blog): t9_blog with no candidate change (B == A by configuration) on 12 GATE items drawn by the sample rule from aa729@1.4.0. Judge: the pinned AA-1048 claim instrument v7 (R1 fire, then the two-step v7c / v7j, gpt-6-luna-openai@openai-direct, 3 votes), ADVISORY (tech lead S283: v7 was no_go by one stored violation, precision 0.73, recall 0.88). Primary metric: unsupported claims flagged per blog (fail_claims_per_item; item_fail_rate saturates near 1 on about 60 claims a blog and is reported only). Power: B is a fresh t9_blog draw and A the stored one, so d = B - A carries the writer's spread as well as the re-judge noise. Re-judge noise (power.chain_rates on the v7 fire 5b24602e and gated 46d645c4 runs): about 4.3 claims^2 per item, 8.6 per paired difference. Writer spread of d, writer_sd 4.6: Poisson spread of the flagged count within one input (variance = the mean, about 10.3 flagged claims per 60 t9_blog claims) for each of the two draws, sqrt(2 x 10.3) rounded up; above the independence floor of the same data (power.writer_sd_floor, 3.2) and below the spread between different blogs (about 7.2, which also carries input differences that pairing removes). Margin 4.0 claims per blog: the smallest half-claim step that reaches power 0.8 at that writer_sd on 12 items (power 0.81; 0.95 at writer_sd 3.0, 0.77 at 5.0, 0.67 at 6.0). The verdict's bound uses the observed spread of d, so it stays valid whatever the writer spread is; the assumption only sets the chance of passing. Must come out non_inferior with every item paired, one judge and no hard stop 1. Cap 5 USD."
+}

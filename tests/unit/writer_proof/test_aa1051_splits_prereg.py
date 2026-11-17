@@ -96,6 +96,7 @@ def _doc(**over) -> dict:
     d.update(status="registered", registered_by="tech_lead", registered_on="2026-11-20",
              golden_set={"name": "aa729", "version": "1.4.0"},
              sample_ids=sorted(f"zz-gate-{i:02d}" for i in range(12)), noise_sample_ids=[])
+    d["power"] = {**d["power"], "writer_sd": 0.1}                    # a registered file states the writer's spread
     d.update(over)
     return d
 

@@ -181,7 +181,11 @@ def test_only_the_r2_runner_imports_the_eval_judge():
                          "scripts/aa919/judge_compare.py", "scripts/aa729/labels.py",
                          "services/jobs/llm_contract_smoke_job.py", "services/ground_truth/review.py",
                          # AA-1051 (S280): the W5 plan reads the judge's token constants to price it; it never calls it.
-                         "services/writer_proof/price.py"}
+                         "services/writer_proof/price.py",
+                         # AA-1051 (S283): the W5 claim instrument reads the judge's OUTPUT labels, its evidence sha
+                         # and its identity error (it calls the AA-1048 instrument, never the eval judge); the runner
+                         # builds the sample's evidence view to count the claims it prices.
+                         "services/writer_proof/instrument.py", "services/writer_proof/runner.py"}
 
 
 def test_r2_judges_with_the_parity_source_and_stores_the_claims(monkeypatch):

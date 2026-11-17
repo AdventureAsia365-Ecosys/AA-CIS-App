@@ -15,6 +15,7 @@ from services.writing_memory import config as cfg
 from services.writing_memory import r2
 
 GATE = sorted(f"zz-gate-{i:02d}" for i in range(12))
+WRITER_SD = 0.1        # the stated writer spread of d of a registered fixture (item_fail_rate units: no data floor)
 
 
 def _pre(registered=True, noise=(), **over) -> pr.Prereg:
@@ -22,6 +23,7 @@ def _pre(registered=True, noise=(), **over) -> pr.Prereg:
     if registered:
         d.update(status="registered", registered_by="tech_lead", registered_on="2026-11-20",
                  golden_set={"name": "aa729", "version": "1.4.0"}, sample_ids=GATE, noise_sample_ids=sorted(noise))
+        d["power"] = {**d["power"], "writer_sd": WRITER_SD}       # a registered file states the writer's spread
     d.update(over)
     return pr.from_doc(d)
 
@@ -31,7 +33,7 @@ def _t9(**over) -> pr.Prereg:
     d = json.loads(pr.path_for("w5-t9").read_text())
     d.update(status="registered", registered_by="tech_lead", registered_on="2026-11-20",
              golden_set={"name": "aa729", "version": "1.4.0"}, sample_ids=GATE, noise_sample_ids=[])
-    d["power"] = {**d["power"], "effect_abs": 0.9}
+    d["power"] = {**d["power"], "effect_abs": 0.9, "writer_sd": WRITER_SD}
     d.update(over)
     return pr.from_doc(d)
 
@@ -63,6 +65,7 @@ class _Conn:
         self.catalog = {"gpt-6-luna-openai": CATALOG} if catalog is None else catalog
         self.deployment = {("gpt-6-luna-openai", "openai-direct"): DEPLOYMENT} if deployment is None else deployment
         self.token_rows = TOKEN_ROWS if token_rows is None else token_rows
+        self.instrument_rows: list[dict] = []
 
     async def fetchrow(self, sql, *args):
         if sql == price.CATALOG_SQL:
@@ -90,6 +93,9 @@ class _Conn:
             return [{"arm": a, "jobs": n} for a, n in counts.items()]
         if sql == r2.PREREG_RUNS_SQL:
             return list(self.prior)
+        if sql == price.INSTRUMENT_CALLS_SQL:     # S283: the measured step costs of a claim instrument judge
+            assert tuple(args[0]) == price.INSTRUMENT_STAGES
+            return [r for r in self.instrument_rows if r["tag"] in args[2]]
         raise AssertionError(sql)
 
 
