@@ -525,6 +525,27 @@ export interface CrmOnboarding { tenant_id: string | null; status: "done" | "par
 export interface ProvisionJob { job_id: string; status: string; steps: string[]; error: string | null;
                                 result: Record<string, unknown> | null; crm_onboarding?: CrmOnboarding | null }
 
+/** The add-on drawer's seats: empty, or a whole number 1-500. True when the text is neither. Pure. */
+export function seatsInvalid(value: string): boolean {
+  const v = value.trim();
+  return v !== "" && (!/^\d{1,3}$/.test(v) || Number(v) < 1 || Number(v) > 500);
+}
+
+/** AA-1116: the owner address of a NEW crm add-on (asked only then); bad = typed but not one address. Pure. */
+export function crmOwnerField(product: string, isNew: boolean, value: string): { ask: boolean; owner: string; bad: boolean } {
+  const ask = product === "crm" && isNew;
+  const owner = ask ? value.trim() : "";
+  return { ask, owner, bad: owner !== "" && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(owner) };
+}
+
+/** The add-on saga body (the owner address only when one was typed). Pure. */
+export function addOnBody(requestKey: string, product: string, planKey: string, seats: string, owner: string) {
+  return {
+    request_key: requestKey, add_ons: [{ product, plan_key: planKey, seats: seats.trim() ? Number(seats) : null }],
+    ...(owner ? { crm_owner_email: owner } : {}),
+  };
+}
+
 /** The CRM onboarding needs a look from staff (not done, or done without the owner invited). Pure. */
 export function crmOnboardingNote(c: CrmOnboarding | null | undefined): "done" | "noInvite" | "attention" | null {
   if (!c) return null;

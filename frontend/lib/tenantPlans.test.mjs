@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import {
   INT4_MAX, RATE_LIMIT_RPM_MAX, defaultOverrideMode, featuresFor, limitText, lockedLimitKeys, overrideBody,
   overrideDraftOf, overrideFeatures, overrideModes, planBody, planDraftOf, refusalOf, runSaga, tierChoices, money,
-  crmOnboardingNote,
+  crmOnboardingNote, crmOwnerField, addOnBody, seatsInvalid,
   termText, PRODUCTS, PRICE_UNITS,
   addOnDecisionPath, addOnRequestPath, approveBody, requestShown, requestTone, sortAddOnRequests,
   END_PILOT_REASON_MAX, endPilotPath,
@@ -232,6 +232,22 @@ test("AA-1116: the polled job keeps the CRM onboarding the POST answered, and it
   assert.equal(crmOnboardingNote({ ...crm, status: "skipped" }), "attention");
   assert.equal(crmOnboardingNote(null), null);
   assert.equal(crmOnboardingNote(undefined), null);
+});
+
+test("AA-1116: the owner address is asked for a new crm add-on only and sent only when typed", () => {
+  assert.deepEqual(crmOwnerField("crm", true, " owner@quillmoor.example.test "),
+                   { ask: true, owner: "owner@quillmoor.example.test", bad: false });
+  assert.deepEqual(crmOwnerField("crm", true, "not-an-address"), { ask: true, owner: "not-an-address", bad: true });
+  assert.deepEqual(crmOwnerField("crm", false, "owner@quillmoor.example.test"), { ask: false, owner: "", bad: false });
+  assert.deepEqual(crmOwnerField("tripplanner", true, "owner@quillmoor.example.test"),
+                   { ask: false, owner: "", bad: false });
+  assert.deepEqual(addOnBody("k1", "crm", "crm.core", " 3 ", "owner@quillmoor.example.test"),
+                   { request_key: "k1", add_ons: [{ product: "crm", plan_key: "crm.core", seats: 3 }],
+                     crm_owner_email: "owner@quillmoor.example.test" });
+  assert.deepEqual(addOnBody("k1", "tripplanner", "tripplanner.hosted", "", ""),
+                   { request_key: "k1", add_ons: [{ product: "tripplanner", plan_key: "tripplanner.hosted", seats: null }] });
+  for (const ok of ["", " ", "1", "3", "500"]) assert.equal(seatsInvalid(ok), false, ok);
+  for (const bad of ["0", "501", "2.5", "x", "1000", "-1"]) assert.equal(seatsInvalid(bad), true, bad);
 });
 
 test("override rules: no 'off' for a limit, no override of the request rate, a number for the rewrite quota", () => {
