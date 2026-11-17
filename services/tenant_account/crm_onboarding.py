@@ -71,7 +71,7 @@ class OnboardingError(ValueError):
     """A request refused before any CRM call; ``status`` is the HTTP status the route answers."""
 
     def __init__(self, code: str, message: str, status: int = 409):
-        super().__init__(code, message)
+        super().__init__(code, message, status)
         self.code = code
         self.message = message
         self.status = status
@@ -108,6 +108,64 @@ def _outcome(tenant_id: str, steps: list[str], error: Optional[dict] = None) -> 
     return {"tenant_id": tenant_id, "status": status, "steps": steps, "error": error}
 
 
+async def _check(pool, tid: str) -> Any:
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(TENANT_SQL, tid)
+    if row is None:
+        raise OnboardingError("tenant_not_found", "No tenant with this id.", 404)
+    if row["account_status"] in ("offboarding", "closed"):
+        raise OnboardingError("tenant_offboarded", "Restore the tenant first.")
+    if row["crm_status"] not in LIVE:
+        raise OnboardingError("no_crm_subscription", "This tenant has no live CRM add-on.")
+    return row
+
+
+async def _ensure_agency(call: CrmCall, row, authorization: Optional[str], ref: str, steps: list[str],
+                         codes: dict[str, int]) -> tuple[bool, Optional[dict]]:
+    """Step 2: (created, error). The agency exists afterwards when error is None."""
+    tid = row["tenant_id"]
+    status, body = await call("GET", f"/tenants/{tid}", authorization)
+    codes["agency_read"] = status
+    if status == 200:
+        steps.append("crm_agency_exists")
+        return False, None
+    if status != 404:
+        return False, {"step": "agency_read", "http_status": status, "code": _code(body)}
+    status, body = await call("POST", "/tenants", authorization, json={
+        "tenant_id": tid, "agency_name": str(row["name"]).strip()[:AGENCY_NAME_MAX] or tid,
+        "is_synthetic": dev_guard.on_dev(), "ticket_ref": ref})
+    codes["agency_create"] = status
+    if status == 201:
+        steps.append("crm_agency_created")
+        return True, None
+    if status == 409 and _code(body) == "tenant_exists":
+        steps.append("crm_agency_exists")
+        return False, None
+    return False, {"step": "agency_create", "http_status": status, "code": _code(body)}
+
+
+_INVITE_DONE = {"owner_invite_pending": "crm_owner_invite_pending", "owner_exists": "crm_owner_present"}
+
+
+async def _invite(call: CrmCall, tid: str, address: Optional[str], authorization: Optional[str], ref: str,
+                  steps: list[str], codes: dict[str, int]) -> Optional[dict]:
+    """Step 3: the error, or None (invited, already pending, owner present, or no address given)."""
+    if address is None:
+        steps.append("crm_owner_not_invited")
+        return None
+    status, body = await call("POST", f"/tenants/{tid}/owner-invite", authorization,
+                              json={"owner_email": address, "ticket_ref": ref})
+    codes["owner_invite"] = status
+    code = _code(body)
+    if status == 202:
+        steps.append("crm_owner_invited")
+    elif status == 409 and code in _INVITE_DONE:
+        steps.append(_INVITE_DONE[code])
+    else:
+        return {"step": "owner_invite", "http_status": status, "code": code}
+    return None
+
+
 async def onboard(pool, tenant_id: str, *, owner_email: Optional[str], authorization: Optional[str], actor: str,
                   ticket: Optional[str] = None, request_key: Optional[str] = None,
                   call: Optional[CrmCall] = None) -> dict[str, Any]:
@@ -120,56 +178,12 @@ async def onboard(pool, tenant_id: str, *, owner_email: Optional[str], authoriza
         raise OnboardingError("tenant_not_found", "No tenant with this id.", 404) from None
     address = clean_email(owner_email) if owner_email is not None else None
     ref = ticket_ref(ticket)
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(TENANT_SQL, tid)
-    if row is None:
-        raise OnboardingError("tenant_not_found", "No tenant with this id.", 404)
-    if row["account_status"] in ("offboarding", "closed"):
-        raise OnboardingError("tenant_offboarded", "Restore the tenant first.")
-    if row["crm_status"] not in LIVE:
-        raise OnboardingError("no_crm_subscription", "This tenant has no live CRM add-on.")
-
+    row = await _check(pool, tid)
     steps: list[str] = []
     codes: dict[str, int] = {}
-    path = f"/tenants/{tid}"
-    status, body = await call("GET", path, authorization)
-    codes["agency_read"] = status
-    created = False
-    if status == 200:
-        steps.append("crm_agency_exists")
-    elif status == 404:
-        status, body = await call("POST", "/tenants", authorization, json={
-            "tenant_id": tid, "agency_name": str(row["name"]).strip()[:AGENCY_NAME_MAX] or tid,
-            "is_synthetic": dev_guard.on_dev(), "ticket_ref": ref})
-        codes["agency_create"] = status
-        if status == 201:
-            created = True
-            steps.append("crm_agency_created")
-        elif status == 409 and _code(body) == "tenant_exists":
-            steps.append("crm_agency_exists")
-        else:
-            return await _finish(pool, row, steps, codes, created, ref, address, actor, request_key,
-                                 {"step": "agency_create", "http_status": status, "code": _code(body)})
-    else:
-        return await _finish(pool, row, steps, codes, created, ref, address, actor, request_key,
-                             {"step": "agency_read", "http_status": status, "code": _code(body)})
-
-    error = None
-    if address is None:
-        steps.append("crm_owner_not_invited")
-    else:
-        status, body = await call("POST", f"{path}/owner-invite", authorization,
-                                  json={"owner_email": address, "ticket_ref": ref})
-        codes["owner_invite"] = status
-        code = _code(body)
-        if status == 202:
-            steps.append("crm_owner_invited")
-        elif status == 409 and code == "owner_invite_pending":
-            steps.append("crm_owner_invite_pending")
-        elif status == 409 and code == "owner_exists":
-            steps.append("crm_owner_present")
-        else:
-            error = {"step": "owner_invite", "http_status": status, "code": code}
+    created, error = await _ensure_agency(call, row, authorization, ref, steps, codes)
+    if error is None:
+        error = await _invite(call, tid, address, authorization, ref, steps, codes)
     return await _finish(pool, row, steps, codes, created, ref, address, actor, request_key, error)
 
 
