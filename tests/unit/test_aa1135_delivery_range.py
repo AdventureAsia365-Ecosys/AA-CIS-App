@@ -409,7 +409,7 @@ def test_custom_range_queue_lists_no_entry_after_its_last_day(client):
     assert res.status_code == 200, res.text
     q = res.json()["apps"][0]["queue"]
     assert q["window"]["end"] == "2026-03-16T00:00:00Z"
-    assert raw[0]["recent"], "the engine lists the later entries: the test would not bite without them"
+    assert raw[0]["recent"] == [], "the engine bounds the list at the window end (S284), clip_recent is a guard"
     assert q["recent"] == []
     # a range that covers 16/03 keeps them, in the engine's order
     dmx.reset_cache()
@@ -421,3 +421,30 @@ def test_preset_queue_recent_is_clipped_too(client):
     res, _ = _get(client, params={"range": "7d", "section": "queue"})
     d7 = SUMMARY["apps"][0]["ranges"]["d7"]["queue"]
     assert res.json()["apps"][0]["queue"]["recent"] == dr.clip_recent(d7)["recent"]
+
+
+def _timeline(pr: int, enqueued: str, left: str | None) -> dict:
+    """An invented merge-queue timeline event in the store format: merged by the queue at `left`, or still queued."""
+    events = [["added", enqueued, "agent"]]
+    if left:
+        events += [["merged", left, "agent"], ["removed", left, "queue"]]
+    return {"id": f"demo-app/queue/{pr}", "event": "aa.merge_queue.timeline", "time": left or enqueued,
+            "attributes": {"vcs.change.id": pr, "vcs.repository.name": "demo-app", "aa.queue.events": events,
+                           "aa.queue.settled": bool(left)}}
+
+
+def test_engine_recent_keeps_the_window_entries_when_later_ones_exceed_the_list_cap():
+    """S284 review: more later entries than list_cap filled the engine's list before any bound, so a past range
+    listed none of its own entries. The engine now bounds the list at both ends before the cap."""
+    cfg = {**SUMMARY["config"], "org": "example-org", "list_cap": 3}
+    app = {"id": "demo", "repo": "demo-app"}
+    store = engine.Store()
+    store.put(_timeline(1, "2026-03-10T09:00:00Z", "2026-03-10T09:10:00Z"))
+    store.put(_timeline(2, "2026-03-11T09:00:00Z", "2026-03-11T09:10:00Z"))
+    for pr in range(3, 9):   # six entries that left after the window end: twice the cap
+        store.put(_timeline(pr, f"2026-03-1{pr - 1}T09:00:00Z", f"2026-03-1{pr - 1}T09:10:00Z"))
+    store.put(_timeline(9, "2026-03-11T20:00:00Z", None))   # still queued, entered inside the window
+    a, b = engine.ts("2026-03-10T00:00:00Z"), engine.ts("2026-03-12T00:00:00Z")
+    q = engine.queue_summary(cfg, app, store, [], {}, [], a, b)
+    assert [(e["pr"], e["outcome"]) for e in q["recent"]] == [(9, "queued"), (2, "merged"), (1, "merged")]
+    assert dr.clip_recent(q)["recent"] == q["recent"]   # the API guard has nothing left to remove

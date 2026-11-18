@@ -870,6 +870,14 @@ def entry_row(e: dict) -> dict:
     }
 
 
+def recent_in_window(e: dict, a: datetime, b: datetime) -> bool:
+    """A merge-queue entry of the window [a, b) in the recent list: it left the queue inside the window, or it is still
+    queued and entered the queue before the window end (it was in the queue at the end of the range)."""
+    if e["left"]:
+        return in_range(e["left"], a, b)
+    return e["outcome"] == "queued" and (e["enqueued"] is None or e["enqueued"] < b)
+
+
 def wait_bins(cfg: dict) -> list[float]:
     """The upper edges (hours) of the merge-queue wait histogram (apps.json queue_wait_bins_h)."""
     return sorted(float(x) for x in cfg.get("queue_wait_bins_h") or (0.25, 0.5, 1, 2, 4, 8, 24))
@@ -998,10 +1006,11 @@ def queue_summary(
             "workflows": sorted(by_wf.values(), key=lambda w: (-w["minutes"], w["name"]))[: cfg["list_cap"]],
         },
         "throughput": list(per_day.values()),
+        # S284: bounded at both ends BEFORE the list cap: entries that left after a past range's end took every place
         "recent": [
             entry_row(e)
             for e in sorted(entries, key=lambda e: e["left"] or b + timedelta(days=1), reverse=True)
-            if e["outcome"] == "queued" or (e["left"] and e["left"] >= a)
+            if recent_in_window(e, a, b)
         ][: cfg["list_cap"]],
         "flaky_entries": [entry_row(e) for e in sorted(flaky, key=lambda e: e["left"], reverse=True)][
             : cfg["list_cap"]
