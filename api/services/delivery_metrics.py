@@ -319,6 +319,16 @@ async def _custom_max_days(required: bool) -> Optional[int]:
         return None
 
 
+async def _bundle(refresh: bool, range_: str) -> dict:
+    """The summary a request is served from. A custom range of a summary that is not prepared re-reads it first: the
+    day files on storage belong to the newest summary. A prepared summary needs no day file (its snapshot was checked
+    against it), so a custom range is served from the cached summary like the presets."""
+    bundle = await load(refresh=refresh)
+    if range_ == delivery_range.CUSTOM and not delivery_range.prepared(bundle["generated_at"]):
+        bundle = await load(refresh=True)
+    return bundle
+
+
 async def view(refresh: bool = False, section: str = "dora", range_: str = "28d", start: Optional[str] = None,
                end: Optional[str] = None) -> dict:
     """The summary with each app's colours and the thresholds in force (what GET /admin/platform/delivery serves).
@@ -329,11 +339,7 @@ async def view(refresh: bool = False, section: str = "dora", range_: str = "28d"
     if section not in SECTIONS:
         raise ValueError(f"unknown section {section!r}")
     delivery_range.asked(range_, start, end)
-    bundle = await load(refresh=refresh)
-    if range_ == delivery_range.CUSTOM and not delivery_range.prepared(bundle["generated_at"]):
-        # the day files on storage belong to the newest summary: compute from them with that summary. A prepared
-        # summary needs no day file (its snapshot was checked against it), so it serves the range as it serves presets
-        bundle = await load(refresh=True)
+    bundle = await _bundle(refresh, range_)
     meta: dict[str, Any] = {"key": range_, **delivery_range.bounds(bundle)}
     if range_ == delivery_range.CUSTOM:
         got = await delivery_range.compute(bundle, start, end)
