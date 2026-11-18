@@ -38,9 +38,11 @@
 --
 -- Class: CONTRACT (root ADR 0017 decision 3; no migrate directive line): ACL changes on existing tables and schema and
 -- an existing view replaced. MIG-4: migration-only PR (451 + 452), the byte copy in AA-CIS-Infra db/migrations/cis/,
--- Infra Migration Apply with every job table idle (root ADR 0017a). Consumers: TripPlanner reads the two columns by
--- name (SQLSTATE 42703 before the apply keeps its 350 read). Nothing in CIS reads either view, and the CRM reads
--- neither.
+-- Infra Migration Apply with every job table idle (root ADR 0017a). Consumers: none yet. TripPlanner's gateway does not
+-- read the two columns or the cap view today, so TripPlanner's calls are NOT bounded by the cap until its follow-up
+-- (read over_cap_connections by name, SQLSTATE 42703 before the apply keeping its 350 read; leave those deployments
+-- out, refuse with budget when every rung is over cap under hard_stop). Nothing in CIS reads either view, and the CRM
+-- reads neither.
 -- DM-7.1: no new table.
 --
 -- Cost of a read. The cap view sums this UTC month's ledger rows of the capped connections (four on Dev) through
