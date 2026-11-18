@@ -826,8 +826,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   TripPlanner reads the views only (fail closed) and keeps INSERT on `llm_call_log`. 450 (AA-1113) appends
   `free_text` (the stage's scrub mark) and `over_cap_connections` (the connections of the model's deployments this
   gateway leaves out for their monthly cap), and adds `catalog.v_llm_connection_cap_v1` (each capped connection's
-  month-to-date ledger spend, `over_cap`, `stops`; SELECT to `tripplanner` and `crm_app`, the CRM's only catalog read):
-  one connection cap for every caller.
+  month-to-date ledger spend, `over_cap`, `stops`; SELECT to `tripplanner`; 451, once the tech lead accepts the root
+  ADR 0008a amendment, grants it to `crm_app`, the CRM's only catalog read): one connection cap for every caller.
 - **acc2 candidate models** (migration 324, contract class, AA-1017 w4a): Amazon Nova Lite, Nova 2 Lite, Meta Llama 4
   Maverick, Llama 4 Scout and Moonshot Kimi K3 as catalog rows with prices from the AWS price list and one enabled acc2
   deployment each (priority 20); no role config or alias names them, and the file refuses one that does. They answer
