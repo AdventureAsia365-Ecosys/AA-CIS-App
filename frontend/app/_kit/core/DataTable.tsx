@@ -25,10 +25,7 @@
 // column's label row label in phone card mode (an actions column: the button says what it does). `paginate={false}` shows every row and no pager,
 // for a page that loads more rows itself (keyset "load older") — one paging mechanism, not two.
 //
-// AA-1131 (S283 UI audit, batch K1): with `onRowClick` a row is a keyboard target too: Tab reaches it (tabIndex 0),
-// Enter or Space on the row itself opens it (a key on a button, link or field inside the row stays that control's), and
-// it shows the kit focus ring on :focus-visible (DATATABLE_CSS, hoisted once). The page-size select is named
-// ("Rows per page", kit message `rowsPerPage`) and carries `data-kit-page-size`, so a check can find it.
+// AA-1131: with `onRowClick` a row is a keyboard target (dataTableRows.tsx); the page-size select is named.
 //
 // S280 (AA-1096): `searchText` (row → extra text the search matches: a slug, an id), `searchLabel` (the box's accessible
 // name) and `initialSearch` (the box's text on mount); dataTableSearch.ts.
@@ -62,6 +59,7 @@ import { KIT_MESSAGES } from "./kit.messages";
 import { useT } from "./useI18n";
 import { deleteView, listViews, saveView, type SavedView } from "./savedViews";
 import { searchBoxText, searchFilterState, searchOptions, searchQueryOf } from "./dataTableSearch";
+import { DataTableStyles, rowOpenProps } from "./dataTableRows";
 
 type PersistedState = {
   sorting: SortingState;
@@ -153,21 +151,6 @@ export type DataTableProps<T> = {
    * an actions cell) won't trigger it. */
   onRowClick?: (row: T) => void;
 };
-
-/** AA-1131 — true when a key on a clickable row should open it: Enter or Space pressed on the row element itself (the
- *  target is the row), so a key on a control inside the row (a checkbox, a link, a row menu) stays that control's. */
-export function rowKeyOpens(key: string, targetIsRow: boolean): boolean {
-  return targetIsRow && (key === "Enter" || key === " " || key === "Spacebar");
-}
-
-// The focus ring of a clickable row: inset (a table row has no room outside, the scroll box would clip it), accent-deep
-// like every kit focus ring (3:1 on card, lib/tokensContrast.test.mjs).
-export const DATATABLE_CSS =
-  `[data-kit-row-open]:focus-visible{outline:2px solid ${K.accentDeep};outline-offset:-2px}`;
-
-function DataTableStyles() {
-  return <style href="aa-kit-datatable" precedence="default">{DATATABLE_CSS}</style>;
-}
 
 const toolbarBtn: React.CSSProperties = {
   display: "inline-flex",
@@ -421,20 +404,9 @@ export function DataTable<T>(props: DataTableProps<T>) {
   const effPageSize = sp ? sp.pageSize : pageSizeState;
   const padX = compact ? 10 : 16;
 
-  // AA-1131 — the keyboard half of a clickable row (see rowKeyOpens).
-  const rowKeys = (original: T) => (e: React.KeyboardEvent<HTMLElement>) => {
-    if (!onRowClick || !rowKeyOpens(e.key, e.target === e.currentTarget)) return;
-    e.preventDefault();
-    onRowClick(original);
-  };
-  const rowOpenProps = (original: T) =>
-    onRowClick
-      ? { tabIndex: 0, "data-kit-row-open": "", onClick: () => onRowClick(original), onKeyDown: rowKeys(original) }
-      : {};
-
   return (
     <div style={{ fontFamily: sans, position: "relative" }}>
-      {onRowClick && <DataTableStyles />}
+      <DataTableStyles />
       {/* Toolbar */}
       <div
         style={{
@@ -634,7 +606,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                 key={row.id}
                 data-testid={rowTestId ? rowTestId(row.original) : "kit-datatable-row"}
                 data-kit-row=""
-                {...rowOpenProps(row.original)}
+                {...rowOpenProps(onRowClick, row.original)}
                 style={{
                   border: `1px solid ${row.getIsSelected() ? K.accentBorder : K.line}`,
                   borderRadius: RADIUS.lg,
@@ -764,7 +736,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                   key={row.id}
                   data-testid={rowTestId ? rowTestId(row.original) : "kit-datatable-row"}
                   data-kit-row=""
-                  {...rowOpenProps(row.original)}
+                  {...rowOpenProps(onRowClick, row.original)}
                   style={{
                     background: row.getIsSelected() ? K.accentTint : "transparent",
                     cursor: onRowClick ? "pointer" : undefined,
@@ -821,21 +793,13 @@ export function DataTable<T>(props: DataTableProps<T>) {
               )}
             </span>
             <select
-              aria-label={t("rowsPerPage")}
-              data-kit-page-size=""
+              aria-label={t("rowsPerPage")} data-kit-page-size=""
               value={effPageSize}
               onChange={(e) =>
                 sp ? sp.onChange(0, Number(e.target.value)) : setPageSizeState(Number(e.target.value))
               }
-              style={{
-                padding: "4px 8px",
-                borderRadius: RADIUS.sm,
-                border: `1px solid ${K.line}`,
-                fontSize: 12,
-                fontFamily: sans,
-                color: K.ink3,
-                cursor: "pointer",
-              }}
+              style={{ padding: "4px 8px", borderRadius: RADIUS.sm, border: `1px solid ${K.line}`, fontSize: 12,
+                fontFamily: sans, color: K.ink3, cursor: "pointer" }}
             >
               {pageSizeOptions.map((n) => (
                 <option key={n} value={n}>

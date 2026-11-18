@@ -22,6 +22,7 @@ import { K, RADIUS, sans } from "./tokens";
 import { ButtonStyles, BUTTON_CLASS, rovingTarget } from "./Buttons";
 import { KIT_MESSAGES } from "./kit.messages";
 import { useT } from "./useI18n";
+import { PageHeaderStyles } from "./PageHeaderStyles";
 
 // ── Breadcrumb (AA-831) ───────────────────────────────────────────────────────
 // One-line "<root> / <title>" crumb for a shell top bar. The root and separator never shrink; the
@@ -408,25 +409,6 @@ export function ErrorState({
 }
 
 // ── PageHeader ────────────────────────────────────────────────────────────────
-// AA-1131 (S283 UI audit, batch K1): the header's layout rules are the kit's own hoisted stylesheet (they used to be
-// copied into each app's CSS: CIS globals.css, Booking ui/local/shell.css, the studio css). A header with a description
-// AND actions gives its text a 420 px basis (it was 240 px): with a long action row that just fitted beside a 240 px
-// text, the description was squeezed into a 7-line column (CIS Writing memory at 1440 px); now the actions wrap under
-// the text instead. Below 768 px such a header stacks (text, then the actions on their own row, left aligned). The
-// selectors match the app copies' specificity and come in the same order, so an app copy left in place changes nothing.
-export const PAGE_HEADER_CSS =
-  `.aa-page-header-text{flex:1 1 240px}` +
-  `.aa-page-header-actions{justify-content:flex-end;max-width:100%}` +
-  `.aa-page-header--stack>.aa-page-header-text{flex:1 1 420px}` +
-  `@media (max-width: 767px){` +
-  `.aa-page-header--stack>.aa-page-header-text{flex-basis:100%}` +
-  `.aa-page-header--stack>.aa-page-header-actions{justify-content:flex-start;flex-basis:100%;min-width:0}` +
-  `}`;
-
-export function PageHeaderStyles() {
-  return <style href="aa-kit-page-header" precedence="default">{PAGE_HEADER_CSS}</style>;
-}
-
 export function PageHeader({
   title,
   breadcrumbs,
@@ -438,12 +420,8 @@ export function PageHeader({
   description?: React.ReactNode;
   actions?: React.ReactNode;
 }) {
-  // On a phone a header with a description puts its actions on their own row under the text, left
-  // aligned (S241 UI verify: on /admin/platform/staff the description was squeezed into ~250px
-  // beside Refresh). Without a description the actions still sit beside a short title. The switch
-  // is the `aa-page-header--stack` rule of PAGE_HEADER_CSS (< 768px), not a JS media query, so the
-  // server HTML already has the phone layout (no shift on hydration). The text block's `flex` and
-  // the actions' `justify-content` live in those classes because an inline style would win over them.
+  // Description AND actions = the "stack" kind (its actions get their own row on a phone, S241). Layout: CSS classes
+  // (PageHeaderStyles.tsx, AA-1131), so the server HTML is right on a phone and an inline style never wins over it.
   const stack = !!description && !!actions;
   return (
     <>

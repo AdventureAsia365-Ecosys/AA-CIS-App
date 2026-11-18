@@ -4,7 +4,7 @@
 // browser half (Tab to a row, Enter, the trap, Escape and the focus return) is the visual job's keyboard check on the
 // kit gallery (tests/e2e/visual/a11y.spec.ts).
 // Checks:
-//   1. DataTable: the page-size select is named ("Rows per page", EN + VI) and marked data-kit-page-size; rows are
+//   1. DataTable (+ dataTableRows.tsx): the page-size select is named ("Rows per page", EN + VI) and marked data-kit-page-size; rows are
 //      keyboard targets (tabindex 0, data-kit-row-open) only when the table has onRowClick; the focus ring rule;
 //      rowKeyOpens (Enter / Space on the row itself, never a key on a control inside the row);
 //   2. Drawer: named by its title (aria-labelledby = the title's id), else ariaLabel, else "Dialog"; focusable as a
@@ -28,6 +28,8 @@ const ts = require("typescript");
 
 let dir;
 let D; // DataTable
+let R; // dataTableRows (the keyboard half of a clickable row)
+let H; // PageHeaderStyles
 let Dr; // Drawer
 let F; // PageFrame
 let P; // primitives
@@ -51,6 +53,8 @@ before(async () => {
   }
   const load = (n) => import(pathToFileURL(join(dir, n)).href);
   D = await load("DataTable.mjs");
+  R = await load("dataTableRows.mjs");
+  H = await load("PageHeaderStyles.mjs");
   Dr = await load("Drawer.mjs");
   F = await load("PageFrame.mjs");
   P = await load("primitives.mjs");
@@ -89,7 +93,7 @@ test("the page-size name is translated (kit messages, VI)", () => {
 
 test("rows are keyboard targets only when the table opens them (onRowClick)", () => {
   const off = table();
-  assert.doesNotMatch(off, /data-kit-row-open/);
+  assert.doesNotMatch(off, /<tr[^>]*data-kit-row-open/);
   assert.doesNotMatch(off, /<tr[^>]*tabindex/i);
   const on = table({ onRowClick: () => {} });
   const rows = on.match(/<tr[^>]*data-kit-row=""[^>]*>/g) ?? [];
@@ -103,16 +107,34 @@ test("rows are keyboard targets only when the table opens them (onRowClick)", ()
 });
 
 test("a clickable row shows the kit focus ring on :focus-visible (inset, accent-deep)", () => {
-  assert.match(D.DATATABLE_CSS, /\[data-kit-row-open\]:focus-visible\{outline:2px solid var\(--aa-accent-deep\);outline-offset:-2px\}/);
+  assert.match(R.DATATABLE_CSS, /\[data-kit-row-open\]:focus-visible\{outline:2px solid var\(--aa-accent-deep\);outline-offset:-2px\}/);
+});
+
+test("rowOpenProps: nothing without onRowClick; with it a tab stop, the ring hook, click and keys", () => {
+  assert.deepEqual(R.rowOpenProps(undefined, { id: 1 }), {});
+  const opened = [];
+  const props = R.rowOpenProps((r) => opened.push(r.id), { id: 7 });
+  assert.equal(props.tabIndex, 0);
+  assert.equal(props["data-kit-row-open"], "");
+  props.onClick();
+  const row = {};
+  let prevented = 0;
+  const key = (k, target = row) => props.onKeyDown({ key: k, target, currentTarget: row, preventDefault: () => { prevented += 1; } });
+  key("Enter");
+  key(" ");
+  key("Enter", {}); // a control inside the row
+  key("Tab");
+  assert.deepEqual(opened, [7, 7, 7]);
+  assert.equal(prevented, 2);
 });
 
 test("rowKeyOpens: Enter or Space on the row itself; a key inside the row stays that control's", () => {
-  assert.equal(D.rowKeyOpens("Enter", true), true);
-  assert.equal(D.rowKeyOpens(" ", true), true);
-  assert.equal(D.rowKeyOpens("Spacebar", true), true);
-  assert.equal(D.rowKeyOpens("Enter", false), false); // a button, link or checkbox in the row
-  assert.equal(D.rowKeyOpens(" ", false), false);
-  for (const key of ["Tab", "Escape", "ArrowDown", "a"]) assert.equal(D.rowKeyOpens(key, true), false, key);
+  assert.equal(R.rowKeyOpens("Enter", true), true);
+  assert.equal(R.rowKeyOpens(" ", true), true);
+  assert.equal(R.rowKeyOpens("Spacebar", true), true);
+  assert.equal(R.rowKeyOpens("Enter", false), false); // a button, link or checkbox in the row
+  assert.equal(R.rowKeyOpens(" ", false), false);
+  for (const key of ["Tab", "Escape", "ArrowDown", "a"]) assert.equal(R.rowKeyOpens(key, true), false, key);
 });
 
 // ── 2. Drawer ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -188,7 +210,7 @@ test("the PageFrame <main> is the containing block of absolutely positioned chil
 // ── 4. PageHeader ────────────────────────────────────────────────────────────────────────────────────────────────
 
 test("the PageHeader layout CSS is the kit's: a 420 px text basis beside actions, a stack below 768 px", () => {
-  const css = P.PAGE_HEADER_CSS;
+  const css = H.PAGE_HEADER_CSS;
   assert.ok(css.includes(".aa-page-header-text{flex:1 1 240px}"));
   assert.ok(css.includes(".aa-page-header--stack>.aa-page-header-text{flex:1 1 420px}"));
   const phone = css.slice(css.indexOf("@media (max-width: 767px)"));

@@ -191,6 +191,12 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     **AA-1040:** variant `narration` (a traveller reading what the AI wrote when they asked for it: TripPlanner trip
     narration, EU AI Act Art. 50(1)) and `form="badge"`: the short "AI-assisted" pill (`aiBadgeText`) for cards and
     rows, a `<span role="note">` whose accessible name and tooltip are the variant's sentence (Content studio).
+    **AA-1131 (S283 UI audit K1):** `dataTableRows.tsx` (a DataTable row with `onRowClick` is a tab stop that opens on
+    Enter / Space, with the kit focus ring; the page-size select is named "Rows per page"), `Drawer` is a named modal
+    dialog (title or `ariaLabel`) with initial focus (`initialFocusRef`), a focus trap and focus return,
+    `PageHeaderStyles.tsx` (the PageHeader layout rules, no longer copied into each app's CSS), and the PageFrame
+    `<main>` is `position: relative`. The visual job checks accessible names (`tests/e2e/helpers/a11yNames.ts`: kit
+    controls on every page, every control on the gallery) and drives the gallery's table + drawer from the keyboard.
     `check-kit-copy.mjs`, **`eslint-kit.mjs`** (AA-994 S1c, see "Kit lint" below), `MANIFEST.json` and **`tokens.css`** (AA-994 S1b: the one `--aa-*` token set of every
     frontend — light and dark palettes, `--aa-scrim` / `--aa-hero-bg`, shadows, `--aa-font-*` as
     `var(--font-*, "<family>")`, and the type / radius / space / z / motion scales from TripPlanner AA-995;

@@ -28,7 +28,7 @@
       "sha256": "c75447387b3598f64c6c89ee8045fe2b4e410de0d2140f3c74cb052ec3e7f7fc"
     },
     "DataTable.tsx": {
-      "sha256": "abf7b1b4dbde47eb3d45a46e7cb51edff1d3c7b8512e129275925a5b61d55417"
+      "sha256": "73301be1842a65fbb6242a7d3ec79d30a0a6aeca227b21e02320783951186e01"
     },
     "DateField.tsx": {
       "sha256": "89fb1df19fd09b1fe1f1348d506b714aee238c17fb7e05590a254ac82a9369e3"
@@ -72,6 +72,9 @@
     "PageFrame.tsx": {
       "sha256": "77cc2e2a3aff5284b95276216dab409932f96e0b416a8849a7b4deda3c8f0411"
     },
+    "PageHeaderStyles.tsx": {
+      "sha256": "12621644a3073b02238ecb02f0b7f507af67e902884d929f035d404279c16a02"
+    },
     "Providers.tsx": {
       "sha256": "bbcd0aea4a7b76cad7098c1f6329fd8f137a25281767e75fc8c3d3c39887cfb2"
     },
@@ -105,6 +108,9 @@
     "csv.ts": {
       "sha256": "3609313353164f3d0089b9e5675248d6a825c8826808b2f6b968ddb750c5189f"
     },
+    "dataTableRows.tsx": {
+      "sha256": "2bded570afa39815f38117967aee5d43d4261b2133a5c0f4a68e21732d608a01"
+    },
     "dataTableSearch.ts": {
       "sha256": "6f78eb3a60a81ac4a6c59e7ed52ce8d4006f0e10eb4dc16bccec92450e050c85"
     },
@@ -127,7 +133,7 @@
       "sha256": "7cde99066423d69077b4f2460fd6f09292ee123967518929adb2af79f61b47ee"
     },
     "primitives.tsx": {
-      "sha256": "f2e3ef25cec04b3bf95d822feb6b6c8111bda516b2dc1c5f8a4ffbae48a2a354"
+      "sha256": "3e6ee3ee5ce249f8d4751af92357a22d06ee2a6cbc5ab8ab9e9136d1ba03010e"
     },
     "savedViews.ts": {
       "sha256": "902e4502baa8e95134d6ef20773bf624fbc07ac044063824e3a424de33c5eb24"
