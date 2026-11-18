@@ -124,7 +124,9 @@ export const PAGE_RULES: PageRule[] = [
   { prefix: "/admin/lab", roles: WRITING_LAB },
   { prefix: "/admin/api-docs", roles: ["admin"] },          // AA-577 follow-up — OpenAPI reader
   { prefix: "/admin/data-model", roles: ["admin"] },        // AA-894 — live ERD from the nightly schema dump
-  { prefix: "/admin/docs", roles: ["admin"] },              // AA-898 — docs catalog reader (synced by root CI)
+  // AA-898 — docs catalog reader (synced by root CI). AA-1133 B7 (tech lead S283: "all staff after fix"): every staff
+  // role reads it (backend docs.read); owner-only pages stay filtered by the backend, the feedback view stays admin.
+  { prefix: "/admin/docs", roles: EVERY_STAFF },
   // AA-883 — Platform pages (staff directory first). Matches /admin/platform and /admin/platform/…
   // only, never a sibling such as /admin/platform-x (pageRule compares prefix or prefix + "/").
   { prefix: "/admin/platform", roles: ["admin"] },
@@ -250,8 +252,9 @@ export const API_READ_RULES: { prefix: string; roles: StaffRole[] }[] = [
   // the backend (staff_policy, capability ops.read).
   { prefix: "data-model", roles: ["admin"] },
   // AA-898 — backend /admin/docs/* (the docs catalog reader; owner-only pages filtered by the backend on the verified
-  // owner flag): admin only, re-checked by the backend (staff_policy, capability ops.read).
-  { prefix: "docs", roles: ["admin"] },
+  // owner flag). AA-1133 B7: every staff role, re-checked by the backend (staff_policy, docs.read; GET docs/feedback,
+  // the admin view, is ops.read there; the viewer's feedback POST is refused as a write).
+  { prefix: "docs", roles: EVERY_STAFF },
   // AA-992 — backend /admin/data-coverage (counts of every stage, CRM included): admin only, re-checked by the backend
   // (staff_policy, capability ops.read).
   { prefix: "data-coverage", roles: ["admin"] },
@@ -330,6 +333,7 @@ export type Capability =
   | "reference_price.read" | "reference_price.write"
   // S279 thresholds L1 — Platform › Settings: propose a new value (settings.write), approve / reject (settings.approve)
   | "settings.write" | "settings.approve"
+  | "docs.read"                   // AA-1133 B7: the docs reader (every role, owner pages stay filtered server side)
   // AA-1105 — AA Academy: draft modules visible on the academy host (read by the learning API, not an admin page)
   | "learn.preview";
 
@@ -342,31 +346,34 @@ export const ROLE_PERMS: Record<StaffRole, readonly Capability[]> = {
     "tenant.member.write", "tenant.assign", "billing.read", "billing.write", "wave.run", "lab.read",
     "tenant.member.resend", "tenant.book.write", "tenant.view_as", "notifications.read",
     "reference_price.read", "reference_price.write", "settings.write", "settings.approve", "learn.preview",
+    "docs.read",
   ],
   content_lead: [
     "content.read", "content.write", "review.act", "master.admin", "atoms.write", "photos.write",
     "a4.unpublish", "quality.write", "content.settings.write", "catalog.read", "tenant_content.read",
     "lab.read", "wave.run", "notifications.read", "reference_price.read", "reference_price.write", "learn.preview",
+    "docs.read",
   ],
   content: [
     "content.read", "content.write", "review.act", "catalog.read", "notifications.read", "reference_price.read",
+    "docs.read",
   ],
   tenant_qa: [
     "content.read", "catalog.read", "tenant_content.read", "quality.write", "a4.unpublish", "lab.read",
-    "notifications.read",
+    "notifications.read", "docs.read",
   ],
   customer_success: [
     "tenant.book.read", "tenant.book.account.read", "tenant.book.write", "tenant.member.write", "tenant.member.resend",
     "tenant.view_as", "notifications.read", "tenant_content.book.read", "reference_price.read",
-    "reference_price.write",
+    "reference_price.write", "docs.read",
   ],
-  support: ["tenant.book.read", "tenant.member.resend", "tenant.view_as", "notifications.read"],
-  finance: ["billing.read", "billing.write", "spend.read", "notifications.read", "reference_price.read"],
+  support: ["tenant.book.read", "tenant.member.resend", "tenant.view_as", "notifications.read", "docs.read"],
+  finance: ["billing.read", "billing.write", "spend.read", "notifications.read", "reference_price.read", "docs.read"],
   ai_ops: [
     "content.read", "catalog.read", "ai.admin", "spend.read", "spend.write", "lab.read", "lab.tenant_text.read",
-    "notifications.read",
+    "notifications.read", "docs.read",
   ],
-  viewer: ["content.read", "notifications.read"],
+  viewer: ["content.read", "notifications.read", "docs.read"],
 };
 
 /** May `role` use `capability`? (UI hint from the display role; the backend re-checks every call.) */

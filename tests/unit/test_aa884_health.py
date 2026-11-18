@@ -165,7 +165,10 @@ def test_required_keys_run_from_the_baseline_to_the_required_schema():
 # AA-1105 (S281): 420 (schema learn, the AA Academy learning API) too.
 # AA-1090 (S281): 428 (shared.tenant_tripplanner_domain, the TripPlanner custom-domain editor and job) too.
 # AA-1116 (S282): 435 and 439 (the option B price columns, v_tenant_monthly_usage.plan_key) too; Dev after that batch.
-DEV_KEYS_WITHOUT_336 = [k for k in range(readiness.LEGACY_CIS_BASELINE + 1, 444) if k != 336]  # AA-1116: 443
+# AA-1133 (S284): 454 (acp_shared.docs_feedback, the docs reader page feedback) too; the bound follows the gap list.
+DEV_KEYS_WITHOUT_336 = [
+    k for k in range(readiness.LEGACY_CIS_BASELINE + 1, max(readiness.REQUIRED_CIS_ABOVE_GAP) + 1) if k != 336
+]
 
 
 def test_the_time_gated_336_is_not_required_while_the_r2_keys_are():

@@ -66,6 +66,9 @@ export const SHELL_MESSAGES = defineMessages(
     notPublished: "Not published in the docs reader",
     openFullSize: "Open full size",
     imagePlaceholder: (alt: string) => (alt ? `[image: ${alt}]` : "[image]"),
+    copyCode: "Copy",
+    copiedCode: "Copied",
+    copyCodeAria: (lang: string) => (lang ? `Copy the ${lang} code` : "Copy the code"),
     drawingDiagram: "Drawing diagram…",
     diagram: "Diagram",
     diagramSource: (why: "tooBig" | "failed") =>
@@ -127,6 +130,9 @@ export const SHELL_MESSAGES = defineMessages(
     notPublished: "Chưa xuất bản trong trình đọc tài liệu",
     openFullSize: "Mở kích thước đầy đủ",
     imagePlaceholder: (alt: string) => (alt ? `[ảnh: ${alt}]` : "[ảnh]"),
+    copyCode: "Sao chép",
+    copiedCode: "Đã chép",
+    copyCodeAria: (lang: string) => (lang ? `Sao chép đoạn mã ${lang}` : "Sao chép đoạn mã"),
     drawingDiagram: "Đang vẽ sơ đồ…",
     diagram: "Sơ đồ",
     diagramSource: (why: "tooBig" | "failed") =>

@@ -4814,6 +4814,53 @@
         "title": "FactPatch",
         "type": "object"
       },
+      "FeedbackIn": {
+        "additionalProperties": false,
+        "properties": {
+          "comment": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "helpful": {
+            "title": "Helpful",
+            "type": "boolean"
+          },
+          "lang": {
+            "default": "en",
+            "pattern": "^[a-z]{2}$",
+            "title": "Lang",
+            "type": "string"
+          },
+          "path": {
+            "maxLength": 300,
+            "minLength": 4,
+            "title": "Path",
+            "type": "string"
+          },
+          "repo": {
+            "default": "AA-Ecosys",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._-]+$",
+            "title": "Repo",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "helpful"
+        ],
+        "title": "FeedbackIn",
+        "type": "object"
+      },
       "FsrsCard": {
         "additionalProperties": false,
         "properties": {
@@ -25827,6 +25874,140 @@
         ]
       }
     },
+    "/admin/docs/feedback": {
+      "get": {
+        "operationId": "get_feedback_admin_docs_feedback_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Page feedback per page (most 'not helpful' first), admin only",
+        "tags": [
+          "admin-docs"
+        ]
+      },
+      "post": {
+        "operationId": "post_feedback_admin_docs_feedback_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Was this page helpful? (one answer per staff member and page, the last one counts)",
+        "tags": [
+          "admin-docs"
+        ]
+      }
+    },
     "/admin/docs/manifest": {
       "get": {
         "operationId": "get_manifest_admin_docs_manifest_get",
@@ -25985,6 +26166,96 @@
           }
         },
         "summary": "One published page (redacted Markdown) by repo and path",
+        "tags": [
+          "admin-docs"
+        ]
+      }
+    },
+    "/admin/docs/search": {
+      "get": {
+        "operationId": "search_docs_admin_docs_search_get",
+        "parameters": [
+          {
+            "description": "words to find (all required, prefix match)",
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "description": "words to find (all required, prefix match)",
+              "maxLength": 200,
+              "minLength": 2,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "description": "pages returned",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "description": "pages returned",
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Full-text search of the published docs this caller may read",
         "tags": [
           "admin-docs"
         ]

@@ -173,9 +173,10 @@ def _owner_refused(res) -> bool:
 # ── 1. support / customer_success vs the owner seat ──────────────────────────────────────────────────────────────
 
 def test_support_holds_resend_only():
-    # slice 2 adds the read-only view-as and the bell, no write of a tenant
+    # slice 2 adds the read-only view-as and the bell, no write of a tenant; AA-1133 B7 the docs reader
     assert staff_authz.ROLE_PERMS["support"] == {staff_authz.TENANT_BOOK_READ, staff_authz.TENANT_MEMBER_RESEND,
-                                                 staff_authz.TENANT_VIEW_AS, staff_authz.NOTIFICATIONS_READ}
+                                                 staff_authz.TENANT_VIEW_AS, staff_authz.NOTIFICATIONS_READ,
+                                                 staff_authz.DOCS_READ}
     assert staff_authz.TENANT_MEMBER_RESEND in staff_authz.ROLE_PERMS["customer_success"]
 
 

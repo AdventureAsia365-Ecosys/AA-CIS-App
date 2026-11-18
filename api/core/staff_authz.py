@@ -150,6 +150,7 @@ REFERENCE_PRICE_WRITE = "reference_price.write"
 # the delegated pages (finance billing, ai_ops gateway) keep their own capabilities.
 SETTINGS_WRITE = "settings.write"
 SETTINGS_APPROVE = "settings.approve"
+DOCS_READ = "docs.read"  # AA-1133 B7 (tech lead S283 "all staff after fix"): /admin/docs, every role (ROLE_PERMS)
 LEARN_PREVIEW = "learn.preview"  # AA-1105: AA Academy draft modules (/learn/v1 reads it; admin and content_lead)
 
 _CONTENT_WORK = frozenset({CONTENT_READ, CONTENT_WRITE, REVIEW_ACT})
@@ -206,6 +207,7 @@ ROLE_PERMS: dict[str, frozenset[str]] = {
     # assignable from the Staff page (api/services/staff_directory.py CIS_ROLES) and no Booking token.
     "viewer": frozenset({CONTENT_READ, NOTIFICATIONS_READ}),
 }
+ROLE_PERMS = {role: perms | {DOCS_READ} for role, perms in ROLE_PERMS.items()}   # AA-1133 B7: the docs, every role
 
 # AA-1035: the capability an unlisted GET needs (deny by default for a role without it).
 OPEN_READ = CONTENT_READ
@@ -244,9 +246,8 @@ def policy_label(entry: Any) -> Optional[str]:
     caps = policy_capabilities(entry)
     return "|".join(caps) if caps else None
 
-# AA-898 — read the owner-only docs pages of /admin/docs (access "owner": privacy / legal, infrastructure maps). Not a
-# role capability and not a POLICY entry: the docs routes need ops.read and then filter their entries by
-# can_read_owner_docs(). Kept out of CAPABILITIES so no route can be keyed on it by mistake.
+# AA-898 — read the owner-only docs pages of /admin/docs (privacy / legal, infrastructure maps). Not a role capability
+# nor a POLICY entry: the docs routes need docs.read, then filter by can_read_owner_docs(); kept out of CAPABILITIES.
 DOCS_OWNER_READ = "docs.owner_read"
 
 STAFF_ROLES: tuple[str, ...] = tuple(ROLE_PERMS)
@@ -808,11 +809,10 @@ POLICY: dict[tuple[str, str], Any] = {
     # (every schema of the shared RDS, PII tags included), admin only.
     ("GET", "/admin/data-model"): OPS_READ,
 
-    # ── admin_docs (AA-898) — Developer › Docs: the docs catalog reader synced from the root repo by CI, admin only;
-    # owner-only pages (N-3) are filtered in the route by the verified owner flag.
-    ("GET", "/admin/docs/manifest"): OPS_READ,
-    ("GET", "/admin/docs/page"): OPS_READ,
-    ("GET", "/admin/docs/asset"): OPS_READ,   # AA-697 — SVG diagrams of the docs bundle
+    # ── admin_docs (AA-898) — Developer › Docs: every role reads (AA-1133); owner pages (N-3) filtered in the route.
+    ("GET", "/admin/docs/manifest"): DOCS_READ, ("GET", "/admin/docs/page"): DOCS_READ,
+    ("GET", "/admin/docs/asset"): DOCS_READ, ("GET", "/admin/docs/search"): DOCS_READ,   # AA-697 images; AA-1133
+    ("POST", "/admin/docs/feedback"): DOCS_READ, ("GET", "/admin/docs/feedback"): OPS_READ,   # AA-1133 page feedback
 
     # ── admin_supply_content (AA-835) — the review of the customer content of Booking hotels / services. An edit or
     # a (paid) regenerate is content work; publish, reject and unpublish are review actions. Reads: every staff role.

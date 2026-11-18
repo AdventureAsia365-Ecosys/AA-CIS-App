@@ -49,6 +49,18 @@ and its published translations), for a page that shows one fixed document outsid
 tab, ARCH-01-ai-gateway). The entry is found in the manifest by id and read by the key the manifest names, never by a
 caller path; an entry the manifest marks owner (or anything but staff) raises ``DocsRestricted`` and is not read.
 
+AA-1133 (reader v2, root build_docs_reader.py rules 11-12): an entry may also carry ``nav`` (sidebar group, one of
+NAV_GROUPS), ``nav_order`` (0-999), ``nav_derived`` (the group came from the folder), ``known_issue`` (a banner note,
+at most KNOWN_ISSUE_CHARS, 12-digit runs masked like a page) and ``last_changed`` ({sha, date} of the file's last
+commit); ``source.github`` ("<org>/<repo>", only while the repo is public) lets the reader link Source / History /
+Edit. A value of the wrong shape becomes null (an older builder sends none of them). The manifest may name the search
+index (``search``: key ``search/index.sqlite``, format 1, bytes, sha256), which api/services/docs_search.py loads.
+
+AA-1132 (page history, root build_docs_reader.py rule 13; the docs sync engine): an entry may also carry ``history``
+(the newest commits that touched the file, [{sha, date, subject, pr}], sha and pr optional), ``needs_review`` (a mapped
+code dependency changed after the page's last change) and ``needs_review_reason``; api/services/docs_page_history.py
+checks their shape ([] / null when absent).
+
 This repo is public: it ships the reader only, no page content.
 
 load_manifest() is cached in process for CACHE_TTL_S; load_page() caches each body for CACHE_TTL_S too (bounded).
@@ -71,6 +83,8 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
 import structlog
+
+from api.services.docs_page_history import clean_history, clean_review
 
 logger = structlog.get_logger()
 
@@ -107,7 +121,20 @@ ACCOUNT_ID_MARKER = "[redacted-account-id]"
 
 # Fields copied from a manifest entry into the API response (anything else in the object is dropped).
 _ENTRY_FIELDS = ("repo", "path", "id", "title", "description", "type", "status", "audience", "owner",
-                 "last_reviewed", "generated", "access", "bytes", "lang", "translation_of", "translations")
+                 "last_reviewed", "generated", "access", "bytes", "lang", "translation_of", "translations",
+                 "nav", "nav_order", "nav_derived", "known_issue", "last_changed", "history", "needs_review",
+                 "needs_review_reason")
+
+# AA-1133: the sidebar groups the builder emits (root frontmatter.schema.json `nav`), and the other v2 field shapes.
+NAV_GROUPS = ("start", "guides", "operations", "architecture", "reference", "legal-security")
+NAV_ORDER_TOP = 999                # technical-constant: the schema's nav_order range (0-999)
+KNOWN_ISSUE_CHARS = 300            # technical-constant: the schema's known_issue length
+_GIT_SHA = re.compile(r"^[0-9a-f]{7,40}$")
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}(?:T[0-9:.+-]{1,30}Z?)?$")
+_GITHUB_REPO = re.compile(r"^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$")
+SEARCH_KEY = "search/index.sqlite"
+SEARCH_FORMAT = 1
+MAX_SEARCH_BYTES = 64 * 1024 * 1024   # technical-constant: refuse an absurd index (today about 6 MB)
 
 # Rule 9 re-check of an SVG asset (the builder's svg_problems, kept in step by tests on both sides).
 _INLINE_PNG = re.compile(r"data:image/png;base64,[A-Za-z0-9+/=\s]*")
@@ -398,7 +425,47 @@ def _clean_entry(raw: Any) -> Optional[dict]:
     entry["translation_of"] = (of if entry["lang"] != DEFAULT_LANG and _valid_path(of) and of != path else None)
     is_english = entry["lang"] == DEFAULT_LANG
     entry["translations"] = _clean_translations(raw.get("translations"), repo, path) if is_english else []
+    _clean_v2(entry, raw)
     return entry
+
+
+def _clean_v2(entry: dict, raw: dict) -> None:
+    """AA-1133: the reader v2 fields of an entry, in place; a wrong shape becomes null (older builder: all null)."""
+    nav = raw.get("nav")
+    entry["nav"] = nav if nav in NAV_GROUPS else None
+    order = raw.get("nav_order")
+    entry["nav_order"] = (order if isinstance(order, int) and not isinstance(order, bool)
+                          and 0 <= order <= NAV_ORDER_TOP else None)
+    entry["nav_derived"] = bool(raw.get("nav_derived")) if entry["nav"] else None
+    note = raw.get("known_issue")
+    entry["known_issue"] = (_ACCOUNT_ID.sub(ACCOUNT_ID_MARKER, " ".join(note.split()))[:KNOWN_ISSUE_CHARS]
+                            if isinstance(note, str) and note.strip() else None)
+    lc = raw.get("last_changed")
+    entry["last_changed"] = ({"sha": lc["sha"], "date": lc["date"]}
+                             if isinstance(lc, dict) and isinstance(lc.get("sha"), str) and _GIT_SHA.match(lc["sha"])
+                             and isinstance(lc.get("date"), str) and _ISO_DATE.match(lc["date"]) else None)
+    entry["history"] = clean_history(raw.get("history"))                       # AA-1132
+    entry["needs_review"], entry["needs_review_reason"] = clean_review(raw)
+
+
+def _clean_search(raw: Any) -> Optional[dict]:
+    """AA-1133: the manifest's search index reference, or None when absent or not in the expected shape."""
+    if not isinstance(raw, dict) or raw.get("key") != SEARCH_KEY or raw.get("format") != SEARCH_FORMAT:
+        return None
+    sha, size = raw.get("sha256"), raw.get("bytes")
+    if not (isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{64}", sha)):
+        return None
+    if not (isinstance(size, int) and not isinstance(size, bool) and 0 < size <= MAX_SEARCH_BYTES):
+        return None
+    return {"key": SEARCH_KEY, "sha256": sha, "bytes": size}
+
+
+def _clean_source(raw: Any) -> dict:
+    source = raw if isinstance(raw, dict) else {}
+    out = {k: source.get(k) for k in ("repo", "sha", "ref")}
+    github = source.get("github")
+    out["github"] = github if isinstance(github, str) and _GITHUB_REPO.match(github) else None
+    return out
 
 
 def _clean_translations(raw: Any, repo: str, path: str) -> list[dict]:
@@ -504,13 +571,13 @@ def _build_manifest(client_factory: Callable[[], Any]) -> dict:
         assets.append(asset)
     if len(assets) != len(raw_assets):
         logger.warning("docs_reader_manifest_assets_dropped", dropped=len(raw_assets) - len(assets))
-    source = data.get("source") if isinstance(data.get("source"), dict) else {}
     return {
         "generated_at": data.get("generated_at"),
         "rule": data.get("rule"),
-        "source": {k: source.get(k) for k in ("repo", "sha", "ref")},
+        "source": _clean_source(data.get("source")),
         "entries": entries,
         "assets": assets,
+        "search": _clean_search(data.get("search")),
         "loaded_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -537,6 +604,16 @@ def _public(entry: dict, visible_paths: set[tuple[str, str]]) -> dict:
     return out
 
 
+def visible_entries(m: dict, owner_read: bool) -> list[dict]:
+    """AA-1133: the cleaned entries of a loaded manifest this caller may see (search and feedback filter by it)."""
+    return _visible(m["entries"], owner_read)
+
+
+async def cached_manifest(client_factory: Optional[Callable[[], Any]] = None) -> dict:
+    """AA-1133: the cached manifest (internal shape, keys included) for the search and feedback routes."""
+    return await _manifest(False, client_factory)
+
+
 def _visible(entries: list[dict], owner_read: bool) -> list[dict]:
     return [e for e in entries if e["access"] == ACCESS_STAFF or owner_read]
 
@@ -559,6 +636,7 @@ async def load_manifest(owner_read: bool, refresh: bool = False,
         "source": m["source"],
         "pages": pages,
         "assets": [{"repo": a["repo"], "path": a["path"]} for a in _visible(m.get("assets", []), owner_read)],
+        "search": {"available": m.get("search") is not None},
         "counts": {"shown": len(pages), "owner_only_shown": sum(1 for p in pages if p["access"] == ACCESS_OWNER),
                    "hidden_owner_only": hidden},
         "is_owner": owner_read if is_owner is None else is_owner,

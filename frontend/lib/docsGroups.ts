@@ -1,6 +1,7 @@
 // frontend/lib/docsGroups.ts — AA-1104: numbered, collapsible groups of the docs reader list (/admin/docs).
 //
-// The list groups the catalog by folder (groupBySection). Each group gets a display number (1, 2, 3…) and each page
+// The list groups the catalog by sidebar group (AA-1133: the bundle's `nav`, groupByNav), or by folder
+// (groupBySection) for an older bundle without it. Each group gets a display number (1, 2, 3…) and each page
 // in it a sub-number (1.1, 1.2…), counted over the whole catalog in the order the list already uses, so a search or
 // a filter hides rows without renumbering the rest. Numbers are display only: the catalog id stays the page's id.
 //
@@ -9,7 +10,7 @@
 // typed, every group with a match opens on its own and shows only the matching pages; a group the viewer folds
 // during that search stays folded until the query changes. Pure functions only: the page holds the state.
 
-import { groupBySection, type DocEntry } from "./docsReader.ts";
+import { groupByNav, groupBySection, type DocEntry } from "./docsReader.ts";
 
 export const DOC_GROUPS_STORAGE_KEY = "aa_docs_open_groups";
 
@@ -18,7 +19,7 @@ export type NumberedGroup = { section: string; number: number; pages: NumberedDo
 
 /** The catalog in list order, numbered: group n, page n.m. */
 export function numberGroups(pages: DocEntry[]): NumberedGroup[] {
-  return groupBySection(pages).map((g, gi) => ({
+  return (groupByNav(pages) ?? groupBySection(pages)).map((g, gi) => ({
     section: g.section,
     number: gi + 1,
     pages: g.pages.map((doc, pi) => ({ doc, number: `${gi + 1}.${pi + 1}` })),

@@ -54,14 +54,18 @@ _WRITE_KEYS = sorted(k for k in POLICY if k[0] != "GET")
 # AA-1035 slice 2: the bell reads (notifications.read, every role) are POLICY GETs the viewer passes too.
 _VIEWER_POLICY_GETS = {("GET", "/admin/tenants/{tenant_id}/details"), ("GET", "/admin/notifications"),
                        ("GET", "/admin/notifications/count"),
-                       ("GET", "/admin/quality/thresholds")}   # S279 L2: the score views' bands (content.read among them)
+                       ("GET", "/admin/quality/thresholds"),   # S279 L2: the score views' bands (content.read among them)
+                       # AA-1133 B7: the docs reader (docs.read, every role); its feedback POST stays refused (a write)
+                       ("GET", "/admin/docs/manifest"), ("GET", "/admin/docs/page"), ("GET", "/admin/docs/asset"),
+                       ("GET", "/admin/docs/search")}
 _ADMIN_GET_KEYS = sorted(k for k in POLICY if k[0] == "GET" and k not in _VIEWER_POLICY_GETS)
 
 
 # ── Capability map ───────────────────────────────────────────────────────────────────────────────
 
 def test_viewer_holds_content_read_only():
-    assert ROLE_PERMS[VIEWER] == frozenset({CONTENT_READ, staff_authz.NOTIFICATIONS_READ})   # + the bell (AA-1035 s2)
+    # + the bell (AA-1035 s2) and the docs reader (AA-1133 B7)
+    assert ROLE_PERMS[VIEWER] == frozenset({CONTENT_READ, staff_authz.NOTIFICATIONS_READ, staff_authz.DOCS_READ})
     assert VIEWER in STAFF_ROLES
     assert READ_ONLY_ROLES == frozenset({VIEWER})
     # AA-911: no role gets a Booking token from CIS any more (the bridge is retired; Booking reads booking-* groups)

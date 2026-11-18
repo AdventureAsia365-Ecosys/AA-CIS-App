@@ -108,19 +108,20 @@ def _as_owner(owner: bool = True):
 
 # ── auth ────────────────────────────────────────────────────────────────────────────────────────────
 
-def test_policy_is_admin_only():
+def test_policy_is_every_staff_role():
+    # AA-1133 B7 (tech lead S283: "all staff after fix"): docs.read, held by every staff role.
     for path in (MANIFEST, PAGE):
-        assert staff_authz.POLICY[("GET", path)] == staff_authz.OPS_READ
-    for role in ("viewer", "content", "content"):
-        assert not staff_authz.has_perm(role, staff_authz.OPS_READ), role
+        assert staff_authz.POLICY[("GET", path)] == staff_authz.DOCS_READ
+    for role in staff_authz.ROLE_PERMS:
+        assert staff_authz.has_perm(role, staff_authz.DOCS_READ), role
 
 
 @pytest.mark.parametrize("path", [MANIFEST, f"{PAGE}?path=docs/ops/runbook.md"])
-def test_missing_secret_and_non_admin_roles_403_without_storage_reads(client, path):
+def test_missing_secret_and_unknown_roles_403_without_storage_reads(client, path):
     fake = FakeS3(_objects())
     with _use(fake):
         assert client.get(path, headers={"x-admin-role": "admin"}).status_code == 403
-        for role in ("viewer", "content", "tenant"):
+        for role in ("tenant", "nobody"):
             assert client.get(path, headers={"X-Admin-Secret": SECRET, "x-admin-role": role}).status_code == 403
         assert client.get(path, headers={"X-Admin-Secret": SECRET}).status_code == 403   # machine
     assert fake.calls == []

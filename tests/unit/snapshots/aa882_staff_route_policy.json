@@ -372,15 +372,23 @@
     "module": "api.routers.admin_llm_ops"
   },
   "GET /admin/docs/asset": {
+    "capability": "docs.read",
+    "module": "api.routers.admin_docs"
+  },
+  "GET /admin/docs/feedback": {
     "capability": "ops.read",
     "module": "api.routers.admin_docs"
   },
   "GET /admin/docs/manifest": {
-    "capability": "ops.read",
+    "capability": "docs.read",
     "module": "api.routers.admin_docs"
   },
   "GET /admin/docs/page": {
-    "capability": "ops.read",
+    "capability": "docs.read",
+    "module": "api.routers.admin_docs"
+  },
+  "GET /admin/docs/search": {
+    "capability": "docs.read",
     "module": "api.routers.admin_docs"
   },
   "GET /admin/export-audit": {
@@ -1350,6 +1358,10 @@
   "POST /admin/dfs-balance/check": {
     "capability": "ops.write",
     "module": "api.routers.admin_llm_ops"
+  },
+  "POST /admin/docs/feedback": {
+    "capability": "docs.read",
+    "module": "api.routers.admin_docs"
   },
   "POST /admin/facts": {
     "capability": "quality.write",

@@ -58,8 +58,10 @@ def test_role_perms_match_the_s241_matrix():
     assert set(ROLE_PERMS) == set(_STAFF_ROLES) | {"viewer"} | set(_R2_ROLES)
     # AA-878 read-only role (tests/unit/test_aa878_viewer_role.py); AA-1035 slice 2: every role holds the bell
     # AA-1091: + the Reference prices page (read; writes: admin, content_lead, customer_success)
-    assert ROLE_PERMS["viewer"] == {"content.read", "notifications.read"}
-    assert ROLE_PERMS["content"] == content_work | {"catalog.read", "notifications.read", "reference_price.read"}
+    # AA-1133 B7: + docs.read (the docs reader, every role)
+    assert ROLE_PERMS["viewer"] == {"content.read", "notifications.read", "docs.read"}
+    assert ROLE_PERMS["content"] == content_work | {"catalog.read", "notifications.read", "reference_price.read",
+                                                    "docs.read"}
     assert ROLE_PERMS["admin"] == content_work | {
         "master.admin", "atoms.write", "photos.write", "a4.unpublish", "quality.write",
         "content.settings.write",
@@ -73,6 +75,7 @@ def test_role_perms_match_the_s241_matrix():
         "reference_price.read", "reference_price.write",   # AA-1091
         "settings.write", "settings.approve",              # S279 thresholds L1 (Platform › Settings, admin only)
         "learn.preview",                                   # AA-1105 AA Academy drafts (admin, content_lead)
+        "docs.read",                                       # AA-1133 B7 the docs reader (every role)
     }
     # admin holds every role capability but the Lab-only logged read of ai_ops and the book-scoped Tenant QA read of
     # customer_success (admin reads tenant text in its own right: tenant_content.read)
@@ -121,6 +124,9 @@ def test_policy_reads_are_admin_only_and_the_s1_reads_stay_open():
         ("GET", "/admin/reference-prices/{source_key}/history"),
         # S279 thresholds L2: the pass line and score / SEO bands the score views colour by (no secret, no tenant data)
         ("GET", "/admin/quality/thresholds"),
+        # AA-1133 B7: the docs reader is every staff role's (docs.read); the feedback view stays ops.read
+        ("GET", "/admin/docs/manifest"), ("GET", "/admin/docs/page"), ("GET", "/admin/docs/asset"),
+        ("GET", "/admin/docs/search"),
     }
     for open_read in ["/admin/llm-config", "/admin/job-runner/jobs/{job_id}", "/admin/review-queue",
                       "/admin/search"]:
@@ -196,6 +202,8 @@ def test_content_work_routes_are_the_every_staff_pages():
         "/admin/notifications", "/admin/notifications/count",           # AA-1035 slice 2: notifications.read
         "/admin/aa-content", "/admin/aa-content/{content_id}/draft",      # AA-977: drafts are content work
         "/admin/quality/thresholds",                                      # S279 L2: the score views' bands
+        "/admin/docs/manifest", "/admin/docs/page", "/admin/docs/asset",  # AA-1133 B7: docs.read (every role)
+        "/admin/docs/search", "/admin/docs/feedback",                     # (GET feedback is ops.read: POST here)
         "/v1/pipeline/review-queue/{review_id}/approve",
         "/v1/pipeline/review-queue/{review_id}/reject",
         # AA-835 — the supply content review (edit, regenerate, publish, reject, unpublish)
