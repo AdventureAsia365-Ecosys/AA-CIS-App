@@ -30,6 +30,13 @@ AA-1125 (S283): two more sections per app in the same summary, served by the sam
   section=git             the git activity of every app (commits a day over 90 days, author kinds, churn by directory
                           and file over 30 / 90 days, merges by branch prefix, the last commits for a graph); no colour
 
+AA-1135 (S284): one time range for every section, `range` = 7d | 28d (default) | 90d | custom (+ from, to). A preset
+reads the app's `ranges.d<N>` block from the summary (the collector computes it; a summary without it serves the 28-day
+headline for 28d and refuses the others); a custom range is recomputed from the collector's day files with the byte
+copy of its engine (api/services/delivery_range.py). The chosen block replaces the windowed keys of each app (DORA, CI,
+deploys, changes, merge queue, the git window), so the page renders every range with the same code. The summary's
+`config` and the apps' `ranges` are never served.
+
 DeliveryMissing -> 404 (nothing published yet), DeliveryUnavailable -> 503 (storage or format).
 """
 from __future__ import annotations
@@ -43,7 +50,7 @@ from typing import Any, Callable, Optional
 
 import structlog
 
-from api.services import docs_reader
+from api.services import delivery_range, docs_reader
 from services.reports import delivery_settings as ds
 from shared import settings
 
@@ -59,6 +66,10 @@ SECTIONS = ("dora", "queue", "git")
 # AA-1125: the keys every section keeps from an app summary (the rest of the app belongs to its own section)
 _APP_HEAD = ("id", "name", "repo", "environment", "window", "complete_since")
 _HEAVY = ("queue", "git")
+# AA-1135: the keys of a range block that replace the app's 28-day keys in the dora section, and what is never served
+_RANGE_DORA = ("window", "dora", "lead_time_segments", "ci", "merge_queue", "flaky", "verify", "deploys",
+               "failed_deploys", "changes")
+_PRIVATE = ("ranges",)
 
 
 class DeliveryMissing(Exception):
@@ -131,6 +142,8 @@ def _build(client_factory: Callable[[], Any]) -> dict:
     source = data.get("source") if isinstance(data.get("source"), dict) else {}
     out["source"] = {k: source.get(k) for k in ("repo", "sha", "run_id")}
     out["apps"] = apps
+    # AA-1135: the collection parameters the summary was computed with; the custom range recomputes with them
+    out["config"] = data.get("config") if isinstance(data.get("config"), dict) else None
     hits = [0]
     out = _mask(out, hits)
     if hits[0]:
@@ -266,25 +279,74 @@ def _head(app: dict) -> dict:
     return {k: app.get(k) for k in _APP_HEAD}
 
 
-async def view(refresh: bool = False, section: str = "dora") -> dict:
+def _blocks(bundle: dict, range_: str) -> Optional[dict[str, dict]]:
+    """app id -> the preset's range block; None for the 28-day headline of a summary without presets."""
+    key = delivery_range.preset_key(range_)
+    out = {a["id"]: a["ranges"][key] for a in bundle["apps"]
+           if isinstance(a.get("ranges"), dict) and isinstance(a["ranges"].get(key), dict)}
+    if out:
+        return out
+    if range_ == "28d":
+        return None
+    raise delivery_range.RangeRefused(409, "not_published", f"The {range_} preset is not published yet; 28d works")
+
+
+def _range_view(app: dict, block: Optional[dict], section: str) -> dict:
+    """The app with the chosen range block in place of its 28-day keys (section dora), or the block's queue / git."""
+    if block is None:
+        return app
+    if section == "queue":
+        return {**app, "window": block.get("window"), "queue": block.get("queue")}
+    if section == "git":
+        git = app.get("git") if isinstance(app.get("git"), dict) else {}
+        return {**app, "window": block.get("window"), "git": {**git, "range": block.get("git")}}
+    return {**app, **{k: block[k] for k in _RANGE_DORA if k in block}}
+
+
+async def view(refresh: bool = False, section: str = "dora", range_: str = "28d", start: Optional[str] = None,
+               end: Optional[str] = None) -> dict:
     """The summary with each app's colours and the thresholds in force (what GET /admin/platform/delivery serves).
 
-    `section` (AA-1125): dora (the AA-1108 view, without the queue and git sections), queue or git."""
+    `section` (AA-1125): dora (the AA-1108 view, without the queue and git sections), queue or git.
+    `range_` (AA-1135): a preset (7d, 28d, 90d) or custom with `start` / `end` (YYYY-MM-DD, both included);
+    delivery_range.RangeRefused when it cannot be served, RangeFailed when the computation failed."""
     if section not in SECTIONS:
         raise ValueError(f"unknown section {section!r}")
-    bundle = await load(refresh=refresh)
-    base = {**bundle, "section": section, "cache_ttl_s": docs_reader.CACHE_TTL_S}
+    delivery_range.asked(range_, start, end)
+    bundle = await load(refresh=refresh or range_ == delivery_range.CUSTOM)
+    meta: dict[str, Any] = {"key": range_, **delivery_range.bounds(bundle)}
+    if range_ == delivery_range.CUSTOM:
+        got = await delivery_range.compute(bundle, start, end)
+        blocks: Optional[dict[str, dict]] = got["apps"]
+        meta.update({k: got[k] for k in ("start", "end", "from", "to", "cached")})
+    else:
+        blocks = _blocks(bundle, range_)
+    meta["max_days"] = await settings.aget(ds.CUSTOM_RANGE_MAX_DAYS)
+    served = {k: v for k, v in bundle.items() if k != "config"}
+    base = {**served, "section": section, "cache_ttl_s": docs_reader.CACHE_TTL_S, "range": meta}
+
+    def ranged() -> list[dict]:
+        """Each app in the chosen range; an app the range has no block for is left out, never shown as 28 days."""
+        out = []
+        for a in bundle["apps"]:
+            if blocks is not None and a["id"] not in blocks:
+                continue
+            a = {k: v for k, v in a.items() if k not in _PRIVATE}
+            out.append(_range_view(a, None if blocks is None else blocks[a["id"]], section))
+        return out
+
     if section == "queue":
         th = await queue_thresholds()
         apps = []
-        for a in bundle["apps"]:
+        for a in ranged():
             q = a.get("queue")
             if isinstance(q, dict):
                 apps.append({**_head(a), "queue": q, "queue_status": grade_queue(q, th)})
         return {**base, "apps": apps, "thresholds": th}
     if section == "git":
-        apps = [{**_head(a), "git": a["git"]} for a in bundle["apps"] if isinstance(a.get("git"), dict)]
+        apps = [{**_head(a), "git": a["git"]} for a in ranged() if isinstance(a.get("git"), dict)]
         return {**base, "apps": apps, "thresholds": {}}
     th = await thresholds()
-    apps = [{**{k: v for k, v in a.items() if k not in _HEAVY}, "status": grade(a, th)} for a in bundle["apps"]]
+    apps = [{**{k: v for k, v in a.items() if k not in _HEAVY}, "status": grade(a, th)}
+            for a in ranged()]
     return {**base, "apps": apps, "thresholds": th}
