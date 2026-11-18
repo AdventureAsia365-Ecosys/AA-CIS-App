@@ -73,6 +73,18 @@ export function rangeWhen(c: RangeChoice): RangeWhen {
  *  here (info / purple, info / slate in dark) still differs clearly. Never two of the orange / amber tokens. */
 export const SERIES_VARS = ["--aa-accent", "--aa-info", "--aa-purple", "--aa-green", "--aa-red", "--aa-slate"] as const;
 
+/** AA-1135 follow-up: the numeric Y axis of every Platform › Delivery bar / line chart (S284 live check: a -16 px left
+ *  margin with a 36 px axis cut the histogram's "180" to "80"). Recharts ends a tick label at
+ *  margin.left + width - 8 (tick line 6 px + gap 2 px) and draws nothing left of the chart, so the left margin stays
+ *  0 and the axis width holds a five-character label. */
+export const Y_AXIS = { width: 40, marginLeft: 0, fontSize: 10 } as const;
+export type YAxisRoom = { width: number; marginLeft: number; fontSize: number };
+
+/** The pixels left of a tick label on that axis (digits and "." about 0.6 em wide): below 0 the label is cut. */
+export function yTickSlack(label: string, axis: YAxisRoom = Y_AXIS): number {
+  return axis.marginLeft + axis.width - 8 - label.length * axis.fontSize * 0.6;
+}
+
 /** Days from `from` to `to`, both included. */
 export function dayCount(from: string, to: string): number {
   return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;

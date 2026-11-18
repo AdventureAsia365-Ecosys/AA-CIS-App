@@ -29,7 +29,7 @@ import {
   type QueueEntry, type QueueMetric, type QueueReason, type QueueResp, type QueueWorkflow,
 } from "@/lib/deliveryActivity";
 import { fmtHours, fmtNum, fmtRatio, fmtSeconds, repoUrl, safeGithubUrl, shortSha, statusTone } from "@/lib/deliveryMetrics";
-import { parseRange, rangeQuery, sortCards, statusRank, withRange } from "@/lib/deliveryRange";
+import { Y_AXIS, parseRange, rangeQuery, sortCards, statusRank, withRange } from "@/lib/deliveryRange";
 import { ACTIVITY } from "./activity.messages";
 import { ChurnTreemap, QueueCharts, SortPicker, WindowLabel, useCardSort, useRangeWhen } from "./RangeCharts";
 
@@ -126,9 +126,9 @@ function ThroughputChart({ app, t }: { app: QueueApp; t: AT }) {
     <Section title={t("secThroughput")} description={t("secThroughputDesc")} testId="queue-throughput">
       <div style={{ width: "100%", height: 200 }}>
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={rows} margin={{ top: 4, right: 8, bottom: 4, left: -16 }}>
+          <BarChart data={rows} margin={{ top: 4, right: 8, bottom: 4, left: Y_AXIS.marginLeft }}>
             <XAxis dataKey="label" tick={{ fontSize: 10, fill: c.axis }} interval="preserveStartEnd" minTickGap={12} />
-            <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: c.axis }} width={36} />
+            <YAxis allowDecimals={false} tick={{ fontSize: Y_AXIS.fontSize, fill: c.axis }} width={Y_AXIS.width} />
             <Tooltip {...CHART_TOOLTIP} />
             <Legend wrapperStyle={{ fontSize: 11 }} />
             {QUEUE_OUTCOMES.map((o) => <Bar key={o} dataKey={o} name={t(`outcome${o}` as Key)} stackId="q"
@@ -475,9 +475,9 @@ function WeeklyChart({ app, t }: { app: GitApp; t: AT }) {
   return (
     <div style={{ width: "100%", height: 140 }} data-testid="git-weekly">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={rows} margin={{ top: 4, right: 8, bottom: 4, left: -16 }}>
+        <BarChart data={rows} margin={{ top: 4, right: 8, bottom: 4, left: Y_AXIS.marginLeft }}>
           <XAxis dataKey="label" tick={{ fontSize: 10, fill: c.axis }} interval="preserveStartEnd" minTickGap={12} />
-          <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: c.axis }} width={36} />
+          <YAxis allowDecimals={false} tick={{ fontSize: Y_AXIS.fontSize, fill: c.axis }} width={Y_AXIS.width} />
           <Tooltip {...CHART_TOOLTIP} />
           <Bar dataKey="n" name={t("commitsPerWeek")} fill={c.bar} isAnimationActive={false} />
         </BarChart>

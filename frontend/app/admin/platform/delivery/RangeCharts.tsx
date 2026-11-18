@@ -18,8 +18,9 @@ import { useChartColors } from "../../../_kit/useTheme";
 import { fmtHours, type DeliveryApp } from "@/lib/deliveryMetrics";
 import type { ChurnRow, GitWindow, QueueReason, QueueSection } from "@/lib/deliveryActivity";
 import {
-  FLOW_POINTS, PRESETS, SERIES_VARS, TREND_METRICS, appTrendRows, customProblem, flowSteps, histRows, parseRange,
-  rangeParams, rangeWhen, squarify, trendRows, weeklyRows, windowNote, type RangeMeta, type RangeProblem, type RangeWindow, type TrendMetric,
+  FLOW_POINTS, PRESETS, SERIES_VARS, TREND_METRICS, Y_AXIS, appTrendRows, customProblem, flowSteps, histRows,
+  parseRange, rangeParams, rangeWhen, squarify, trendRows, weeklyRows, windowNote, type RangeMeta, type RangeProblem,
+  type RangeWindow, type TrendMetric,
 } from "@/lib/deliveryRange";
 import { RANGE } from "./range.messages";
 
@@ -179,9 +180,9 @@ function TrendChart({ rows, series, height = 220 }: {
   return (
     <div style={{ width: "100%", height }} aria-hidden>
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={rows} margin={{ top: 6, right: 10, bottom: 4, left: -12 }}>
+        <LineChart data={rows} margin={{ top: 6, right: 10, bottom: 4, left: Y_AXIS.marginLeft }}>
           <XAxis dataKey="label" tick={{ fontSize: 10, fill: axis }} interval="preserveStartEnd" minTickGap={10} />
-          <YAxis tick={{ fontSize: 10, fill: axis }} width={40} />
+          <YAxis tick={{ fontSize: Y_AXIS.fontSize, fill: axis }} width={Y_AXIS.width} />
           <Tooltip {...CHART_TOOLTIP} />
           {series.length > 1 && <Legend wrapperStyle={{ fontSize: 11 }} />}
           {series.map((s, i) => <Line key={s.key} type="monotone" dataKey={s.key} name={s.name} stroke={colors[i]}
@@ -314,10 +315,10 @@ function SmallBars({ rows, dataKey, name, color, height = 180, vertical }: {
             <Bar dataKey={dataKey} name={name} fill={color} isAnimationActive={false} />
           </BarChart>
         ) : (
-          <BarChart data={rows} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
+          <BarChart data={rows} margin={{ top: 4, right: 8, bottom: 4, left: Y_AXIS.marginLeft }}>
             <XAxis dataKey="label" tick={{ fontSize: 10, fill: axis }} interval={0} angle={-20} textAnchor="end"
               height={42} />
-            <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: axis }} width={40} />
+            <YAxis allowDecimals={false} tick={{ fontSize: Y_AXIS.fontSize, fill: axis }} width={Y_AXIS.width} />
             <Tooltip {...CHART_TOOLTIP} />
             <Bar dataKey={dataKey} name={name} fill={color} isAnimationActive={false} />
           </BarChart>

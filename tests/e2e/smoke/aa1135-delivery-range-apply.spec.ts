@@ -8,7 +8,9 @@
 // reads the range from the API. Every wait is bounded. Checks, at 1440 x 900:
 //   (a) after "Custom" is picked, each date box lies inside its own wrapper and ends before the next control;
 //   (b) the point at the centre of Apply belongs to the Apply button (nothing drawn over it);
-//   (c) a click on Apply puts range=custom with both days in the URL.
+//   (c) a click on Apply puts range=custom with both days in the URL;
+//   (d) on the Merge queue tab, every Y tick label of the wait histogram and the throughput chart lies inside its
+//       chart (S284: a -16 px left margin cut "180" to "80"; lib/deliveryRange.test.mjs is the unit guard).
 import { test, expect } from '@playwright/test';
 import { ADMIN_STATE, baseUrl, installBypassRoute, isAdminRun } from './smoke-helpers';
 
@@ -66,6 +68,39 @@ test.describe('AA-1135 — delivery custom range Apply', { tag: '@staff' }, () =
         // the default days are refused (custom ranges paused, or a store shorter than the default 14 days): (a) and
         // (b) above already prove nothing covers the button
         test.info().annotations.push({ type: 'note', description: 'Apply disabled by the range checks; URL not set' });
+      }
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('(d) the Y tick labels of the merge-queue charts are not cut at the chart edge', async ({ browser }) => {
+    const context = await browser.newContext({
+      baseURL: baseUrl(), storageState: ADMIN_STATE, viewport: { width: 1440, height: 900 },
+    });
+    await installBypassRoute(context);
+    const page = await context.newPage();
+    try {
+      await page.goto('/admin/platform/delivery?app=merge-queue&range=90d', { waitUntil: 'domcontentloaded' });
+      const hist = page.getByTestId('queue-histogram').first();
+      await expect(hist).toBeVisible({ timeout: 30000 });
+      const charts = page.locator('[data-testid="queue-histogram"] svg.recharts-surface, '
+        + '[data-testid="queue-throughput"] svg.recharts-surface');
+      if (await charts.count() === 0) {
+        test.info().annotations.push({ type: 'note', description: 'no merge-queue chart drawn (no entries in range)' });
+        return;
+      }
+      await expect(charts.first().locator('.recharts-yAxis text').first()).toBeVisible({ timeout: 10000 });
+      const ticks = await charts.evaluateAll((svgs) => svgs.flatMap((svg) => {
+        const box = svg.getBoundingClientRect();
+        return [...svg.querySelectorAll('.recharts-yAxis text')].map((t) => {
+          const r = t.getBoundingClientRect();
+          return { text: t.textContent ?? '', left: r.left, svgLeft: box.left };
+        });
+      }));
+      expect(ticks.length, 'the charts draw Y ticks').toBeGreaterThan(0);
+      for (const tk of ticks) {
+        expect(tk.left, `Y tick "${tk.text}" starts inside its chart`).toBeGreaterThanOrEqual(tk.svgLeft - 0.5);
       }
     } finally {
       await context.close();
