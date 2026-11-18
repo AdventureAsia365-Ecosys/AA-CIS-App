@@ -17,6 +17,7 @@ The reads, all $0 (database only; no provider is called):
   Every row also carries its provider-wide daily cap (``shared.spend_budget``, scope ``global``) with today's spend
   against it. Each source is read on its own: a source that fails gives its rows ``status = unknown`` and an
   ``error`` text, the other rows still show.
+  AA-1127 C2: ``totals.llm_month_*`` is platform_cost.ai_spend_by_provider, the Overview's AI month (no DFS/geo/CRM).
 - ``trace_job(pool, job_id)`` — ``GET /admin/ai-gateway/trace?job_id=``: every logged paid call of one job, in time
   order, from the four ledgers that carry a job id: ``shared.llm_call_log`` (index ``llm_call_log_job_idx``),
   ``shared.dfs_call_log`` (``idx_dfs_call_log_job``), ``shared.decision_log`` (``decision_log_job_idx``, migration
@@ -73,6 +74,7 @@ import asyncpg
 import structlog
 
 from api.core.error_ref import log_exception_ref, public_error
+from api.services import platform_cost
 from shared.llm_client.expected_refusal import EXPECTED_SQL
 
 logger = structlog.get_logger()
@@ -796,6 +798,7 @@ async def read_providers(pool, *, now: Optional[datetime] = None, crm_usage_rows
     crm.ops.v1 GET /llm/usage read bound to the caller's token (None: the CRM rows say it was not asked)."""
     now = now or datetime.now(timezone.utc)
     day, month = day_and_month_start(now)
+    d24, d7 = now - timedelta(hours=24), now - timedelta(days=7)
     results = await asyncio.gather(
         _guard("LLM connections", lambda: _read_connections(pool, now)),
         _guard("LLM ledger", lambda: _fetch(pool, LEDGER_SQL, day, month, now)),
@@ -805,22 +808,21 @@ async def read_providers(pool, *, now: Optional[datetime] = None, crm_usage_rows
                                                     _fetchrow(pool, DFS_SPEND_SQL, day, month, now))),
         _guard("Geoapify", lambda: _fetchrow(pool, GEO_SQL, day, month, now, "geoapify")),
         _guard("LLM call stats", lambda: _read_llm_stats(pool, now)),
-        _guard("DataForSEO call stats", lambda: _fetchrow(pool, DFS_STATS_SQL, now - timedelta(hours=24),
-                                                          now - timedelta(days=7), now)),
-        _guard("Geoapify call stats", lambda: _fetchrow(pool, GEO_STATS_SQL, now - timedelta(hours=24),
-                                                        now - timedelta(days=7), now, "geoapify")),
+        _guard("DataForSEO call stats", lambda: _fetchrow(pool, DFS_STATS_SQL, d24, d7, now)),
+        _guard("Geoapify call stats", lambda: _fetchrow(pool, GEO_STATS_SQL, d24, d7, now, "geoapify")),
         _guard("CRM", lambda: _read_crm(now, crm_usage_rows)),
         _guard("Provider circuits", lambda: _read_circuits(pool, now)),
         _guard("Provider credit", lambda: _read_credit(pool)),
+        _guard("AI spend", lambda: platform_cost.ai_spend_by_provider(pool, None, now)),
     )
     (conns, conns_err), (ledger, ledger_err), (budgets, budgets_err), (jev, jev_err), (dfs, dfs_err), \
         (geo, geo_err), (llm_stats, llm_stats_err), (dfs_stats, dfs_stats_err), (geo_stats, geo_stats_err), \
-        (crm, crm_err), (circuits, circuits_err), (credit, credit_err) = results
+        (crm, crm_err), (circuits, circuits_err), (credit, credit_err), (ai_spend, ai_spend_err) = results
     errors = [{"source": s, "error": e} for s, e in (
         ("llm_connections", conns_err), ("llm_ledger", ledger_err), ("spend_budgets", budgets_err),
         ("jev", jev_err), ("dataforseo", dfs_err), ("geoapify", geo_err), ("llm_stats", llm_stats_err),
         ("dataforseo_stats", dfs_stats_err), ("geoapify_stats", geo_stats_err), ("crm", crm_err),
-        ("provider_circuits", circuits_err), ("provider_credit", credit_err)) if e]
+        ("provider_circuits", circuits_err), ("provider_credit", credit_err), ("ai_spend", ai_spend_err)) if e]
 
     ledger = ledger or []
     by_account = ledger_by_account(ledger)
@@ -843,8 +845,7 @@ async def read_providers(pool, *, now: Optional[datetime] = None, crm_usage_rows
                               conns["monthly"], budgets, spent_today)
         if ledger_err:
             for r in providers:
-                r["spend"] = None
-                r["error"] = ledger_err
+                r["spend"], r["error"] = None, ledger_err
         providers = [stats_of(r, llm_stats.get(r["connection_key"]), llm_stats_err) for r in providers]
         providers = [with_credit(r, (credit or {}).get(r["connection_key"])) for r in providers]
     else:
@@ -871,10 +872,8 @@ async def read_providers(pool, *, now: Optional[datetime] = None, crm_usage_rows
 
     # CRM (partner app): its AI path joins the LLM section, its guardrail gets its own row (AA-1025 C1).
     crm_llm, crm_guard = crm_rows(crm or {"problem": {"status": "error"}}, now, registry_rows.get("bedrock-guardrails"))
-    providers.append(crm_llm)
-    providers += [stats_of(jev_out, llm_stats.get(jev_out.get("connection_key") or "typesafe"), llm_stats_err),
-                  stats_of(dfs_out, dfs_stats, dfs_stats_err),
-                  stats_of(geo_out, geo_stats, geo_stats_err),
+    providers += [crm_llm, stats_of(jev_out, llm_stats.get(jev_out.get("connection_key") or "typesafe"), llm_stats_err),
+                  stats_of(dfs_out, dfs_stats, dfs_stats_err), stats_of(geo_out, geo_stats, geo_stats_err),
                   mapbox_row(), crm_guard]
 
     # LLM spend whose account names no connection (older rows from before the S6 connection keys, an unknown key):
@@ -889,10 +888,11 @@ async def read_providers(pool, *, now: Optional[datetime] = None, crm_usage_rows
     spends = [p["spend"] for p in providers if p.get("spend")] + ([unattributed] if unattributed else [])
     return {
         "generated_at": now.isoformat(), "day_start": day.isoformat(), "month_start": month.isoformat(),
-        "providers": providers,
-        "unattributed_llm": unattributed,
+        "providers": providers, "unattributed_llm": unattributed,
         "totals": {"today_usd": round(sum(s["today_usd"] for s in spends), 4),
-                   "month_usd": round(sum(s["month_usd"] for s in spends), 4)},
+                   "month_usd": round(sum(s["month_usd"] for s in spends), 4),
+                   "llm_month_usd": ai_spend["total_usd"] if ai_spend else None,
+                   "llm_month_by_family": ai_spend["by_provider"] if ai_spend else None},
         "errors": errors,
     }
 

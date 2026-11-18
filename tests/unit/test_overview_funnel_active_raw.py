@@ -20,3 +20,13 @@ def test_every_later_stage_filters_on_active_raw():
         body = _cte(name)
         assert "JOIN silver_aa_internal.raw_tours rt" in body, name
         assert "rt.source_status = 'active' AND rt.deleted_at IS NULL" in body, name
+
+
+def test_in_review_counts_the_same_queue_as_the_review_page():
+    """AA-1127 (C1): the funnel's In review and the Review Queue (and its nav badge) read one queue: aa_internal's."""
+    import inspect
+
+    from api.routers.admin_pipeline import review
+    body = _cte("rev_c")
+    assert f"rq.tenant_id = '{admin_overview._AA_INTERNAL}'::uuid" in body
+    assert f'tenant_id = "{admin_overview._AA_INTERNAL}"' in inspect.getsource(review)
