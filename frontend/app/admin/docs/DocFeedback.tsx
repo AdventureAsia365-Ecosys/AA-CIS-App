@@ -3,7 +3,8 @@
 // the answers (tech lead S283 c-s283-docs-feedback: stored in a CIS table, acp_shared.docs_feedback, CIS 454).
 //
 // The widget posts {repo, path, lang, helpful, comment?} to POST /api/admin/docs/feedback (BFF → backend admin_docs.py,
-// docs.read; the read-only viewer is refused there, so the widget is not shown to it). One answer per person and page:
+// docs.read; the read-only viewer and the read-only Dev E2E session are refused there, so the widget is not shown to
+// them: the manifest's `can_feedback`, lib/docsFeedback.ts feedbackAllowed). One answer per person and page:
 // answering again replaces the first one. "No" asks for an optional note. The path is the original page; lang says
 // which language was read. The admin view (GET /api/admin/docs/feedback, ops.read) lists the pages with the most
 // "No" first and their latest notes; pages the admin cannot open are counted, never named.
@@ -16,6 +17,7 @@ import {
   useFormat, useT,
 } from "../../_kit";
 import { M } from "./messages";
+import { feedbackRefusal } from "@/lib/docsFeedback";
 
 const COMMENT_CHARS = 1000;   // the API's limit (acp_shared.docs_feedback comment check, CIS 454)
 
@@ -34,7 +36,10 @@ export function DocFeedback({ repo, path, lang, show = true }: { repo: string; p
     onSuccess: (_d, v) => setSent({ helpful: v.helpful }),
   });
 
-  if (!show) return null;   // the read-only viewer: the API refuses its answer
+  if (!show) return null;   // a read-only session (viewer, Dev E2E): the API refuses its answer
+  // A refusal in words (never the API's code); after a read-only one (an older manifest) the vote stays off.
+  const refusal = send.error ? feedbackRefusal(send.error) : null;
+  const busy = send.isPending || refusal === "feedbackErrReadOnly";
   const answer = (helpful: boolean) => {
     setChoice(helpful);
     if (helpful) send.mutate({ helpful, comment: null });
@@ -56,11 +61,11 @@ export function DocFeedback({ repo, path, lang, show = true }: { repo: string; p
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
         <span style={{ fontSize: 13, fontWeight: 600, color: K.ink }}>{t("helpfulQuestion")}</span>
         <Button size="sm" variant={choice === true ? "primary" : "secondary"} onClick={() => answer(true)}
-                disabled={send.isPending} testId="docs-feedback-yes">
+                disabled={busy} testId="docs-feedback-yes">
           <ThumbsUp size={12} /> {t("helpfulYes")}
         </Button>
         <Button size="sm" variant={choice === false ? "primary" : "secondary"} onClick={() => answer(false)}
-                disabled={send.isPending} testId="docs-feedback-no">
+                disabled={busy} testId="docs-feedback-no">
           <ThumbsDown size={12} /> {t("helpfulNo")}
         </Button>
       </div>
@@ -77,16 +82,16 @@ export function DocFeedback({ repo, path, lang, show = true }: { repo: string; p
             />
           </Field>
           <div style={{ display: "flex", gap: 8 }}>
-            <Button size="sm" variant="primary" disabled={send.isPending} testId="docs-feedback-send"
+            <Button size="sm" variant="primary" disabled={busy} testId="docs-feedback-send"
                     onClick={() => send.mutate({ helpful: false, comment: note.trim() || null })}>
               {t("feedbackSend")}
             </Button>
           </div>
         </div>
       )}
-      {send.error && (
-        <div role="alert" style={{ marginTop: 8, fontSize: 12, color: K.danger }}>
-          {t("feedbackFailed", (send.error as Error).message)}
+      {refusal && (
+        <div role="alert" data-testid="docs-feedback-error" style={{ marginTop: 8, fontSize: 12, color: K.danger }}>
+          {t(refusal)}
         </div>
       )}
     </section>

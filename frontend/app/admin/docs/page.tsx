@@ -25,6 +25,9 @@
 // language label and Copy (MarkdownView), the table of contents as a sticky scroll-spy column when the reader itself
 // is wide enough (DocToc; lib/docsReader.ts tocColumnFits, measured on the reader, not the viewport), and "Was this page helpful?" at the end (DocFeedback; not for the read-only viewer). Admins open the
 // answers with the Feedback button (?view=feedback).
+// AA-1133 follow-up (S284 live check): the feedback question shows only when the manifest says this session may
+// answer (`can_feedback`: not for the viewer nor the read-only Dev E2E session); opening a page at a heading (a search
+// hit, a link) puts #doc-<slug> in the address, so the place can be shared.
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, BookMarked, RefreshCw, Search, X } from "lucide-react";
@@ -53,7 +56,7 @@ import {
   useAdminIdentity,
   IconButton, Input, Select,
 } from "../../_kit";
-import { isReadOnlyRole } from "@/lib/rbac";
+import { feedbackAllowed } from "@/lib/docsFeedback";
 import { DocHeader } from "./DocHeader";
 import { DocToc } from "./DocToc";
 import { DocFeedback, FeedbackToggle, FeedbackView } from "./DocFeedback";
@@ -61,7 +64,8 @@ import { SearchFallbackNote, useDocsSearchPanel } from "./DocSearchResults";
 import { M } from "./messages";
 import { DocsList } from "./DocsList";
 import { DOC_AUDIENCE_MESSAGES, DOC_LANG_MESSAGES, DOC_TYPE_MESSAGES } from "@/lib/docsReader.messages";
-import { MarkdownView, scrollToHeading, type MarkdownLink } from "../../_kit/MarkdownView";
+import { HEADING_ID_PREFIX, MarkdownView, scrollToHeading, type MarkdownLink } from "../../_kit/MarkdownView";
+import { headingHash } from "@/lib/docsToc";
 import {
   type LangChoice,
   ALL,
@@ -169,6 +173,7 @@ function Reader({
   assets,
   onOpen,
   pendingHash,
+  canFeedback,
 }: {
   repo: string;
   original: DocEntry | undefined;
@@ -179,6 +184,8 @@ function Reader({
   assets: Set<string>;
   onOpen: (path: string, hash: string) => void;
   pendingHash: string;
+  /** May this session answer "Was this page helpful?" (lib/docsFeedback.ts feedbackAllowed). */
+  canFeedback: boolean;
 }) {
   const t = useT(M);
   const langName = useT(DOC_LANG_MESSAGES);
@@ -288,7 +295,7 @@ function Reader({
             }}
           >
             <DocFeedback key={`${repo}/${pagePath}`} repo={repo} path={pagePath} lang={choice.lang}
-                         show={!isReadOnlyRole(role)} />
+                         show={canFeedback} />
             <div style={{ fontSize: 12, color: K.muted, overflowWrap: "anywhere" }}>
               {t("source")} {data.source.repo ?? p.repo}@<span style={{ fontFamily: mono }}>{shortSha(data.source.sha) || t("unknown")}</span>
               {data.generated_at ? t("publishedAt", formatDateTime(data.generated_at)) : ""}{t("readOnlyFooter")}
@@ -416,6 +423,7 @@ function DocsReaderPage() {
   const pathname = usePathname();
   const params = useSearchParams();
   const feedbackView = view.feedback;
+  const identityRole = useAdminIdentity().role;
   const selectedPath = view.path;
   const selectedRepo = params.get("repo") || DEFAULT_REPO;
 
@@ -461,13 +469,14 @@ function DocsReaderPage() {
       setPendingHash(hash);
       const qs = new URLSearchParams();
       qs.set("path", path);
-      router.push(`${pathname}?${qs.toString()}`, { scroll: false });
+      router.push(`${pathname}?${qs.toString()}${headingHash(hash, HEADING_ID_PREFIX)}`, { scroll: false });
     },
     [router, pathname, setPendingHash],
   );
   const back = () => router.push(pathname, { scroll: false });
   // AA-1133: the server full-text search while the bundle has an index; the title filter otherwise (or on an error).
-  const search = useDocsSearchPanel(query, data, open);
+  // AA-1133 follow-up: hits in the reader's language list first (its page language, else the admin UI language).
+  const search = useDocsSearchPanel(query, data, open, lang);
 
   // A link straight to a translation (?path=x.vi.md): show it through its original with that language chosen, so the
   // switch and the list highlight work and a shared link keeps one address per page.
@@ -574,6 +583,7 @@ function DocsReaderPage() {
       assets={assets}
       onOpen={open}
       pendingHash={pendingHash}
+      canFeedback={feedbackAllowed(data, identityRole)}
     />
   ) : (
     <NoPageOpen feedback={feedbackView} onOpen={open} />

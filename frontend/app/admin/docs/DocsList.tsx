@@ -302,8 +302,10 @@ export function DocsList({
       {filters}
       <div
         style={{
-          display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 8,
-          padding: "8px 14px", fontSize: 12, color: K.muted,
+          // AA-1133 follow-up: while search hits show, the hits carry their own count; the page count and the fold
+          // buttons speak of the groups, which are not shown then.
+          display: searchPanel ? "none" : "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between",
+          gap: 8, padding: "8px 14px", fontSize: 12, color: K.muted,
         }}
       >
         <span>{t("countOf", shownCount, pages.length)}</span>

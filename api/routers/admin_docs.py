@@ -10,6 +10,10 @@
                                                 listed page (acp_shared.docs_feedback, CIS 454; not the viewer)
   GET /admin/docs/feedback                      AA-1133: the per-page feedback view                 ops.read (admin)
 
+The manifest also says whether this caller may answer "Was this page helpful?" (``can_feedback``: staff_authz.
+denial_reason on POST /admin/docs/feedback, so a read-only viewer AND a read-only Dev E2E session, whose role cookie
+says "admin", both get False and the page shows no vote it would refuse; UI hint only, the POST keeps its own 403).
+
 The bundle comes from the root repo "Docs sync" workflow through S3 (api/services/docs_reader.py), cached in this
 process. Only the feedback routes touch the database (503 ``unavailable`` before CIS 454). AA-1133 B7 (tech lead S283:
 "all staff after fix"): every staff role reads (POLICY docs.read; the BFF's API_READ_RULES "docs" lists every role);
@@ -35,7 +39,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
-from api.core.staff_authz import StaffPrincipal, docs_owner_read_via, staff_policy
+from api.core.staff_authz import StaffPrincipal, denial_reason, docs_owner_read_via, staff_policy
 from api.services import docs_feedback, docs_reader, docs_search
 
 logger = structlog.get_logger()
@@ -68,6 +72,15 @@ def _is_owner(principal: StaffPrincipal) -> bool:
     return bool(principal.is_owner and principal.auth == "cognito")
 
 
+# The feedback write the reader's widget calls; its answer for this caller rides on the manifest (UI hint only).
+FEEDBACK_ROUTE = ("POST", "/admin/docs/feedback")
+
+
+def can_feedback(principal: StaffPrincipal) -> bool:
+    """May this caller post page feedback? The route's own decision (role, read-only viewer, read-only E2E session)."""
+    return denial_reason(principal, *FEEDBACK_ROUTE) is None
+
+
 @router.get("/manifest", summary="The published docs catalog (owner-only pages for owners only)")
 async def get_manifest(
     refresh: bool = Query(False, description="re-read storage (at most every 30 s)"),
@@ -80,7 +93,7 @@ async def get_manifest(
         raise HTTPException(status_code=404, detail=str(e))
     except docs_reader.DocsUnavailable as e:
         raise HTTPException(status_code=503, detail=str(e))
-    return JSONResponse(view, headers=_NO_STORE)
+    return JSONResponse({**view, "can_feedback": can_feedback(principal)}, headers=_NO_STORE)
 
 
 @router.get("/page", summary="One published page (redacted Markdown) by repo and path")
