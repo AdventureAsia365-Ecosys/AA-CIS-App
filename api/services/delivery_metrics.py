@@ -303,6 +303,21 @@ def _range_view(app: dict, block: Optional[dict], section: str) -> dict:
     return {**app, **{k: block[k] for k in _RANGE_DORA if k in block}}
 
 
+async def _custom_max_days(required: bool) -> Optional[int]:
+    """The longest custom range (setting cis.delivery.custom_range_max_days, CIS 448), for the page's picker.
+
+    A preset request never depends on that key: when this build runs before the settings registry knows it (the code
+    deployed ahead of its settings rows) a preset still answers, with max_days null (the picker then leaves the check
+    to the API). A custom range needs it, so there the KeyError stands (delivery_range.compute reads it too)."""
+    try:
+        return int(await settings.aget(ds.CUSTOM_RANGE_MAX_DAYS))
+    except KeyError:
+        if required:
+            raise
+        logger.warning("delivery_range_max_days_unregistered", key=ds.CUSTOM_RANGE_MAX_DAYS)
+        return None
+
+
 async def view(refresh: bool = False, section: str = "dora", range_: str = "28d", start: Optional[str] = None,
                end: Optional[str] = None) -> dict:
     """The summary with each app's colours and the thresholds in force (what GET /admin/platform/delivery serves).
@@ -321,7 +336,7 @@ async def view(refresh: bool = False, section: str = "dora", range_: str = "28d"
         meta.update({k: got[k] for k in ("start", "end", "from", "to", "cached")})
     else:
         blocks = _blocks(bundle, range_)
-    meta["max_days"] = await settings.aget(ds.CUSTOM_RANGE_MAX_DAYS)
+    meta["max_days"] = await _custom_max_days(required=range_ == delivery_range.CUSTOM)
     served = {k: v for k, v in bundle.items() if k != "config"}
     base = {**served, "section": section, "cache_ttl_s": docs_reader.CACHE_TTL_S, "range": meta}
 

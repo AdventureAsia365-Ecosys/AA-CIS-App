@@ -179,6 +179,25 @@ def test_preset_replaces_the_windowed_keys(client):
     assert set(app["status"]) >= {"deployment_frequency", "main"}
 
 
+def test_a_preset_does_not_need_the_custom_range_setting(client):
+    """Code deployed before the settings registry knows the key: presets still answer (max_days null), custom 500s
+    only for the custom range, never the whole page."""
+    real = dmx.settings.aget
+
+    async def aget(key, tenant_id=None):
+        if key == ds.CUSTOM_RANGE_MAX_DAYS:
+            raise KeyError(f"unknown setting {key!r} (not in the compiled defaults)")
+        return await real(key, tenant_id) if tenant_id else await real(key)
+
+    with patch.object(dmx.settings, "aget", aget):
+        for params in ({}, {"range": "7d"}, {"range": "90d", "section": "queue"}):
+            res, _ = _get(client, params=params)
+            assert res.status_code == 200, res.text
+            assert res.json()["range"]["max_days"] is None
+        with pytest.raises(KeyError):
+            asyncio.run(dmx._custom_max_days(required=True))
+
+
 def test_preset_of_the_queue_and_git_sections(client):
     res, _ = _get(client, params={"range": "90d", "section": "queue"})
     app = res.json()["apps"][0]
