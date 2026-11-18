@@ -117,8 +117,8 @@ import structlog
 from services.writing_memory import config as cfg
 from services.writing_memory import eval_checks as ec
 from services.writing_memory.r2_w5 import (  # noqa: F401 — re-exported (AA-1051): callers and tests use r2.<name>
-    PREREG_FULL_SAMPLE, _instrument_check, _instrument_version, _max_claims, kappa_by_side, null_config_problems,
-    tune_step)
+    PREREG_FULL_SAMPLE, _instrument_check, _instrument_version, _max_claims, full_sample, kappa_by_side, null_control,
+    null_config_problems, tune_step, writes_per_item)
 from shared import settings
 from shared.llm_client import family_rule
 
@@ -126,6 +126,14 @@ logger = structlog.get_logger()
 
 GOLDEN_SET = "aa729"
 RUN_KINDS = ("r2", "reverify")
+# Which stored row of a control run is an item's control text, by the run's kind (best first). The baseline import:
+# the frozen fixture text. A reverify (AA-1051 S284, a null run's control): the regenerated control, written with the
+# active view. Any other run (r2): its candidate output.
+CONTROL_RANKS: dict[Optional[str], dict[tuple[str, str], int]] = {
+    "baseline_import": {("control", "score_only"): 0, ("control", "regenerate"): 1},
+    "reverify": {("control", "regenerate"): 0, ("candidate", "regenerate"): 1},
+    None: {("candidate", "regenerate"): 0, ("control", "regenerate"): 1, ("control", "score_only"): 2},
+}
 GOALS = ("non_inferior", "improve")
 EVAL_SPLITS = ("dev", "cal", "gate")          # AA-1051: shared.eval_golden_split (CIS 400)
 PREREG_ARMS = ("B", "A_prime")                # AA-1051: the arms a pre-registered run may be
@@ -170,6 +178,8 @@ class Store(Protocol):
     # async def prereg_runs(self, prereg_id: str) -> list[dict]: [{run_id, sha256, arm, results}]
     # ... and only for a null run (prereg_workflow NULL_WORKFLOW): the stored fingerprint of the control run
     # async def run_fingerprint(self, run_id: str) -> Optional[dict]
+    # ... and (S284) the newest finished reverify run of the writer on the golden set version (r2_w5.null_control)
+    # async def reverify_control_run(self, set_id: str, writer: str) -> Optional[str]
 
 
 @dataclass
@@ -500,27 +510,34 @@ def calibration_ready(calib: list[dict], frozen_src: dict, instrument: Optional[
     return {"pairs": len(ready), "labels": labels, "possible": ok or bool(instrument), "instrument": instrument}
 
 
-def item_estimate(writer: str, samples: list[float]) -> dict:
+def item_estimate(writer: str, samples: list[float], writes: int = 1) -> dict:
     """The per-item reservation (F8): the median of the logged candidate item costs x R2_ESTIMATE_MARGIN when there
-    are >= R2_MIN_COST_SAMPLES, else the config constant. Plus the two judge calls of an item."""
+    are >= R2_MIN_COST_SAMPLES, else the config constant, x `writes` (AA-1051 S284: 2 for a reverify,
+    r2_w5.writes_per_item). Plus the two judge calls of an item."""
     vals = [float(x) for x in samples if x is not None and float(x) > 0][:cfg.R2_COST_SAMPLES]
     if len(vals) >= cfg.R2_MIN_COST_SAMPLES:
         item, source = statistics.median(vals) * cfg.R2_ESTIMATE_MARGIN, "ledger"
     else:
         item, source = cfg.R2_ITEM_ESTIMATE_USD[writer], "config"
-    return {"item_usd": round(item, 6), "source": source, "samples": len(vals),
+    item *= max(1, int(writes))
+    return {"item_usd": round(item, 6), "source": source, "samples": len(vals), "writes": max(1, int(writes)),
             "reserve_usd": round(item + 2 * cfg.JUDGE_CALL_ESTIMATE_USD, 6)}
 
 
 async def _controls(store: Store, gs: dict, active: dict, baseline: Optional[str], planned: list[dict],
-                    ctl_mode: str) -> dict:
+                    ctl_mode: str, null_writer: Optional[str] = None) -> dict:
     """The run's controls, read before any spend: {control_run, stale, sources (current item id -> stored source),
-    cross_set (sample ids whose only stored output belongs to another version's item), plan (control_plan)}."""
+    cross_set (sample ids whose only stored output belongs to another version's item), plan (control_plan)}.
+    `null_writer` (AA-1051 S284, a null run): the newest finished reverify run of that writer on this version is the
+    control when there is one (r2_w5.null_control)."""
     eval_run = next((p["eval_run_id"] for p in (active.get("tenant"), active.get("platform"))
                      if p and p.get("eval_run_id")), None)
     info = await store.run_info(eval_run) if eval_run else None
     control_run, _part, stale = resolve_control_run(active, baseline, gs["set_id"], info)
     kind = "baseline_import" if control_run and control_run == baseline else (info or {}).get("run_kind")
+    reverify = await null_control(store, gs["set_id"], null_writer) if null_writer else None
+    if reverify:
+        control_run, stale, kind = reverify, None, "reverify"
     sources: dict[str, dict] = {}
     cross: list[str] = []
     if control_run and ctl_mode == "rejudge":
@@ -608,7 +625,8 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
         plan["probe"] = [it for it in plan["probe"] if it.get("split") != "trap"]
     planned = plan["probe"] + plan["tune"] + plan["holdout"]
     planned_ids = {it["item_id"] for it in planned}
-    ctl = await _controls(store, gs, active, baseline, planned, ctl_mode)
+    ctl = await _controls(store, gs, active, baseline, planned, ctl_mode,
+                          writer if conf.prereg_workflow == NULL_WORKFLOW else None)
     control_run, sources = ctl["control_run"], ctl["sources"]
     if ctl_mode == "rejudge" and control_run is None:
         raise R2Refused("no control run (no active release with an eval run, no baseline import)")
@@ -636,7 +654,7 @@ async def run_r2(store: Store, conf: R2Config, *, writer_fn: WriterFn, judge_fn:
         raise R2Refused(f"controls found for {ctl['plan']['found']} of {ctl['plan']['planned']} planned items "
                         f"(paired on sample_id + input_sha256; missing {ctl['plan']['missing']}, other version "
                         f"{ctl['cross_set']}): no candidate could be compared.{hint}")
-    estimate_item = item_estimate(writer, await store.item_cost_samples(writer))
+    estimate_item = item_estimate(writer, await store.item_cost_samples(writer), writes_per_item(conf.run_kind))
     rule_texts = await store.rule_texts(list((release or {}).get("rule_ids") or []))
     # AA-921: the candidate's pinned examples (attached with its items), for the carry-over check
     exemplar_texts = [(str(e["exemplar_id"]), e.get("masked_text") or "")
@@ -1135,10 +1153,7 @@ class PgStore:
                     WHERE r.run_id = $1::uuid AND g.sample_id = ANY($2::text[]) AND r.verdict <> 'error'
                       AND r.mode IN ('score_only', 'regenerate')""",
                 run_id, sorted({k[0] for k in want}))
-        if kind == "baseline_import":
-            rank = {("control", "score_only"): 0, ("control", "regenerate"): 1}
-        else:
-            rank = {("candidate", "regenerate"): 0, ("control", "regenerate"): 1, ("control", "score_only"): 2}
+        rank = CONTROL_RANKS.get(kind, CONTROL_RANKS[None])
         out: dict[str, dict] = {}
         for r in sorted(rows, key=lambda r: rank.get((r["arm"], r["mode"]), 9)):
             iid = want.get((r["sample_id"], r["input_sha256"]))
@@ -1239,6 +1254,12 @@ class PgStore:
         async with self.pool.acquire() as conn:
             v = await conn.fetchval("SELECT fingerprint FROM shared.prompt_eval_runs WHERE id = $1::uuid", run_id)
         return _j(v)
+
+    async def reverify_control_run(self, set_id, writer):
+        """AA-1051 S284: the newest finished reverify run of the writer on the golden set version, or None."""
+        from services.writing_memory.r2_w5 import REVERIFY_CONTROL_SQL
+        async with self.pool.acquire() as conn:
+            return await conn.fetchval(REVERIFY_CONTROL_SQL, writer, set_id)
 
     async def item_cost_samples(self, writer):
         """S271 W0 (F8): the logged cost of the writer's last candidate items (finished r2 / reverify runs, no seeded
@@ -1352,10 +1373,11 @@ async def estimate(pool, conf: R2Config) -> dict:
     ctl_mode = ec.control_mode(conf.run_kind)
     baseline = await store.baseline_run(gs["set_id"], conf.writer)
     planned = plan["probe"] + plan["tune"] + plan["holdout"]
-    ctl = await _controls(store, gs, await store.active_parts(conf.writer, owner), baseline, planned, ctl_mode)
+    ctl = await _controls(store, gs, await store.active_parts(conf.writer, owner), baseline, planned, ctl_mode,
+                          conf.writer if conf.prereg_workflow == NULL_WORKFLOW else None)
     frozen_src = await store.calibration_sources(baseline, [it["item_id"] for it in calib]) if baseline else {}
     cal_ready = calibration_ready(calib, frozen_src, conf.judge_instrument)
-    est = item_estimate(conf.writer, await store.item_cost_samples(conf.writer))
+    est = item_estimate(conf.writer, await store.item_cost_samples(conf.writer), writes_per_item(conf.run_kind))
     refusals = list(split_problems)                      # AA-1051: the side and the fixed sample
     prereg_prior: list[dict] = []
     if conf.prereg_id:

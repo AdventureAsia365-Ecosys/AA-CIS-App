@@ -260,7 +260,7 @@ def test_the_registered_v7_null_run_loads_from_the_lock():
     assert pre.doc["sample"] == {"rule": "seeded_hash", "n": 12, "noise": 0} and pre.doc["sample_ids"] == []
     assert pre.doc["decision"]["metric"] == "fail_claims_per_item" and pre.doc["cap_usd"] <= pr.workflow_cap("null")
     assert pre.doc["power"]["writer_sd"] is not None                  # S283 review: never a judge-only upper bound
-    assert runner.CAMPAIGN_ORDER[0] == pre.id
+    assert pre.id not in runner.CAMPAIGN_ORDER                     # S284: superseded by w5-null-t9-blog-v7-g150
 
 
 def _rule_doc(**over):

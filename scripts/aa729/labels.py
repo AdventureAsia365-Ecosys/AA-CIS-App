@@ -8,6 +8,8 @@ Local, $0 (the panel is Claude Code agents reading the pack, not a gateway call)
       --out fixture-1.2.0.json      # a calibration review of panel labels (S256, AA-919)
   python3 -m scripts.aa729.labels merge fixture-1.2.0.json addendum-labelled.json --approved-by <who> \
       --out fixture-1.3.0.json      # add a labelled addendum (select_samples --ids) as the next version (S258)
+  python3 -m scripts.aa729.labels merge fixture-1.4.0.json addendum-labelled.json --approved-by <who> --rebase \
+      --out fixture-1.5.0.json      # an addendum frozen against an EARLIER version of this lineage (AA-1051, S284)
   python3 -m scripts.aa729.labels revoke fixture-1.3.0.json --approved-by <who> --reason "<why>" \
       --out fixture-1.4.0.json      # drop test-stub labels (t9b-002), list every label that flips (AA-1048)
 
@@ -216,11 +218,34 @@ def _pack_digest(pack) -> str:
     return hashlib.sha256(json.dumps(pack, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
 
 
-def merge(base: dict, addendum: dict, *, approved_by: str, drop_unlabelled: bool = False) -> tuple[dict, dict]:
+def lineage(fixture: dict) -> set[str]:
+    """Every version this fixture descends from (its own, and each from / to version of its label_history)."""
+    out = {str(fixture.get("fixture_version"))}
+    for h in fixture.get("label_history") or []:
+        out |= {str(h[k]) for k in ("from_version", "to_version") if h.get(k)}
+    return out
+
+
+def _base_check(base: dict, addendum: dict, rebase: bool) -> tuple[Optional[str], Optional[str]]:
+    """(the earlier version a rebased addendum names, or None; the refusal, or None) of an addendum against a base."""
+    named, version = addendum.get("addendum_of"), base.get("fixture_version")
+    if named == version:
+        return None, None
+    if rebase and str(named) in lineage(base):
+        return str(named), None
+    hint = "" if rebase else " (--rebase merges an addendum of an earlier version of this lineage)"
+    return None, f"the addendum extends {named!r}, the base is {version!r}{hint}"
+
+
+def merge(base: dict, addendum: dict, *, approved_by: str, drop_unlabelled: bool = False,
+          rebase: bool = False) -> tuple[dict, dict]:
     """The next fixture version (minor bump of `base`): base + the labelled samples of an addendum made by
     `select_samples --ids` against that base version. Nothing is half-applied: a problem refuses the merge.
 
-    - the addendum must name this base (`addendum_of`) and share its schema;
+    - the addendum must name this base (`addendum_of`) and share its schema; with `rebase` (AA-1051, S284) it may
+      name an EARLIER version of the base's lineage (`lineage`: a version the base was bumped from, e.g. an addendum
+      frozen on 1.3.0 merged into 1.4.0, which only added labels). The output-identity check below still refuses an
+      output the base already holds, so a sample added after the addendum was frozen cannot come in twice;
     - every addendum sample needs an importable label (MERGE_SOURCES, verdict pass / fail); with `drop_unlabelled`
       a needs_panel / disputed one is left out and reported instead of refusing;
     - an output the base already holds (piece / version id; an S1 tour) is refused;
@@ -236,9 +261,8 @@ def merge(base: dict, addendum: dict, *, approved_by: str, drop_unlabelled: bool
     problems = []
     if addendum.get("schema") != base.get("schema"):
         problems.append(f"schema {addendum.get('schema')!r} is not the base's {base.get('schema')!r}")
-    if addendum.get("addendum_of") != base.get("fixture_version"):
-        problems.append(f"the addendum extends {addendum.get('addendum_of')!r}, the base is "
-                        f"{base.get('fixture_version')!r}")
+    rebased_from, base_problem = _base_check(base, addendum, rebase)
+    problems += [base_problem] if base_problem else []
     taken = {k for s in base["samples"] for k in _ref_keys(s)}
     keep, dropped = [], []
     for s in addendum.get("samples") or []:
@@ -296,17 +320,42 @@ def merge(base: dict, addendum: dict, *, approved_by: str, drop_unlabelled: bool
     out["fixture_version"] = bump_minor(old_version)
     out.setdefault("selection", {}).setdefault("addenda", []).append({
         "addendum_created_at": addendum.get("created_at"), "selection": addendum.get("selection"),
-        "added": added, "dropped_unlabelled": dropped})
+        "added": added, "dropped_unlabelled": dropped, **({"rebased_from": rebased_from} if rebased_from else {})})
     out.setdefault("label_history", []).append({
         "from_version": old_version, "to_version": out["fixture_version"], "source": "addendum",
         "approved_by": approved_by, "applied": len(added), "added": added,
         "addendum_label_history": addendum.get("label_history") or [],
         "packs_renamed": {k: v for k, v in renamed.items() if v}, "packs_inlined_on": inlined,
+        **({"rebased_from": rebased_from} if rebased_from else {}),
         "at": datetime.now(timezone.utc).isoformat()})
+    from services.writer_proof import splits as eval_splits
+
     return out, {"added": added, "dropped_unlabelled": dropped, "fixture_version": out["fixture_version"],
+                 "rebased_from": rebased_from,
+                 # AA-1051: the frozen DEV / CAL / GATE side each new id takes (a hash of the id, splits.py)
+                 "eval_split": {sid: eval_splits.split_of(sid) for sid in added},
+                 "gate_by_writer": eval_gate_counts(out["samples"]),
                  "by_stratum_label": dict(sorted(Counter(
                      f"{s['stratum']}:{(s.get('label') or {}).get('verdict')}"
                      for s in out["samples"] if s["sample_id"] in set(added)).items()))}
+
+
+def eval_gate_counts(samples: list[dict]) -> dict[str, int]:
+    """AA-1051: the non-trap GATE items per writer of a fixture's samples (what a W5 sample rule draws from)."""
+    from services.golden_set.derive import FixtureError, writer_and_channel
+    from services.writer_proof import splits as eval_splits
+
+    out: Counter = Counter()
+    for s in samples:
+        if str(s.get("kind", "")).startswith("injection_"):
+            continue
+        try:
+            writer, _ = writer_and_channel(s)
+        except FixtureError:
+            continue
+        if eval_splits.split_of(s["sample_id"]) == "gate":
+            out[writer] += 1
+    return dict(sorted(out.items()))
 
 
 # AA-1048 (W2): a label written as a test of the labelling UI, not as a judgement ("ZZ S239 test label" on t9b-002).
@@ -400,6 +449,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     m.add_argument("--approved-by", required=True)
     m.add_argument("--out", required=True)
     m.add_argument("--drop-unlabelled", action="store_true")
+    m.add_argument("--rebase", action="store_true",
+                   help="the addendum names an earlier version of this fixture's lineage (AA-1051)")
     v = sub.add_parser("revoke")
     v.add_argument("fixture")
     v.add_argument("--approved-by", required=True)
@@ -419,7 +470,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     if a.cmd == "merge":
         with open(a.addendum, encoding="utf-8") as f:
             addendum = json.load(f)
-        new, info = merge(fixture, addendum, approved_by=a.approved_by, drop_unlabelled=a.drop_unlabelled)
+        new, info = merge(fixture, addendum, approved_by=a.approved_by, drop_unlabelled=a.drop_unlabelled,
+                          rebase=a.rebase)
         leaks = find_pii(new)
         if leaks:
             print(f"PII check failed: {leaks[:10]}")

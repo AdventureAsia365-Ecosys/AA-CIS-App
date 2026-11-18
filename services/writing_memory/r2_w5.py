@@ -38,11 +38,44 @@ def _max_claims(v) -> int:
     return max(8, n) if isinstance(n, int) and not isinstance(n, bool) else 8
 
 
+def full_sample(conf: Any) -> bool:
+    """AA-1051: the run must reach every planned item. A pre-registered run (S283: its decision reads the whole fixed
+    sample, writer_proof.decision paired_all), and (S284) a reverify of a fixed sample: it writes the controls a later
+    null run pairs on, so a sequential stop after tune would leave the holdout items without a control."""
+    return bool(conf.prereg_id) or (conf.run_kind == "reverify" and bool(conf.sample_ids))
+
+
 def tune_step(conf: Any, stats: dict, goal: str, counts: bool) -> str:
-    """The decision after tune. AA-1051 S283: a pre-registered run always goes on (PREREG_FULL_SAMPLE): its decision
-    reads the whole fixed sample (writer_proof.decision, paired_all), so a sequential stop would pay for tune and leave
-    that decision invalid. R2's own verdict of such a run stays informative (_finish)."""
-    return PREREG_FULL_SAMPLE if conf.prereg_id else ec.tune_decision(stats, goal=goal, counts=counts)
+    """The decision after tune. AA-1051 S283: a full-sample run (`full_sample`) always goes on (PREREG_FULL_SAMPLE):
+    a sequential stop would pay for tune and leave its purpose unmet. R2's own verdict of such a run stays informative
+    (_finish). Hard stops, the cap and the error share still stop it."""
+    return PREREG_FULL_SAMPLE if full_sample(conf) else ec.tune_decision(stats, goal=goal, counts=counts)
+
+
+def writes_per_item(run_kind: str) -> int:
+    """AA-1051 S284: writer calls one planned item costs. A reverify regenerates the control (_control_regenerate) and
+    then the candidate, so its estimate and its per-item reservation count two writes (they counted one, so a
+    reverify's estimate was about half its spend and the cap stopped it part way)."""
+    return 2 if run_kind == "reverify" else 1
+
+
+# AA-1051 S284: the newest finished reverify run of a writer on one golden set version: the control of a null run
+REVERIFY_CONTROL_SQL = """
+    SELECT id::text AS run_id FROM shared.prompt_eval_runs
+     WHERE pipeline = 'writing_memory' AND run_kind = 'reverify' AND writer = $1 AND golden_set_id = $2::uuid
+       AND finished_at IS NOT NULL
+     ORDER BY finished_at DESC, id DESC
+     LIMIT 1
+"""
+
+
+async def null_control(store: Any, set_id: str, writer: str) -> Optional[str]:
+    """AA-1051 S284: the control run of a null run, the newest finished reverify run of the writer on this golden set
+    version (it regenerated the controls under the configuration of its day; `null_config_problems` then requires that
+    configuration to be today's). None when there is none: the release / baseline control applies, and the null check
+    refuses a baseline import at $0 as before. A reverify that does not hold every planned item is caught by the
+    control plan (`controls found < planned`), never paid for."""
+    return await store.reverify_control_run(set_id, writer)
 
 
 def null_config_problems(control_fp: Optional[dict], now_fp: Optional[dict]) -> list[str]:
