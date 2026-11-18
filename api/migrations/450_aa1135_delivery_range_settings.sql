@@ -1,4 +1,4 @@
--- Migration 448: AA-1135 (S284) — the two limits of the custom date range of Platform › Delivery in the platform
+-- Migration 450: AA-1135 (S284) — the two limits of the custom date range of Platform › Delivery in the platform
 -- settings registry (CIS 407; tech lead S279: a threshold, limit, cap or policy value is a setting on Platform ›
 -- Settings, never a code literal or an env var alone). Same area and pattern as CIS 433 and CIS 445 (AA-1108, AA-1125).
 --
@@ -15,7 +15,7 @@
 --        cis.delivery.custom_range_max_days       int days 1-400, default 90  (the longest preset)
 --        cis.delivery.custom_range_cache_entries  int ranges 1-200, default 20
 --      Each seed row carries its plain label and its EN + VI operator guide (CIS 416 rule).
---   2. Register 448.
+--   2. Register 450.
 --
 -- Behaviour on apply. None for running code: no value row is seeded and nothing on main reads these keys; after the code
 -- PR the custom range reads the defaults until an administrator changes a value.
@@ -25,8 +25,9 @@
 -- code PR (no readiness raise: a reader falls back to the compiled defaults). DM-6.1: no personal data. DM-7.1: no new
 -- table.
 --
--- Number. 447 is the newest CIS migration on main (18/11/2026). If the owner main max + 1 differs at merge, renumber
--- (git grep '448_' and '448' here, in tests/integration/test_aa1135_migration_448.py, compiled_defaults.json and
+-- Number. 447 is the newest CIS migration on main (18/11/2026); 448 and 449 are taken by a parallel lane (AA-1127). If the
+-- owner main max + 1 differs at merge, renumber
+-- (git grep '450_' and '450' here, in tests/integration/test_aa1135_migration_450.py, compiled_defaults.json and
 -- docs/implementation-notes/AA-1135.md).
 --
 -- Locks. One INSERT of two rows (the definition guard trigger allows the file's role, cis_owner). lock_timeout 5s.
@@ -56,7 +57,7 @@ ON CONFLICT (key) DO NOTHING;
 -- settings-seed:end
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('448', now(), 'AA-1135: the Platform › Delivery custom date range limits in the settings registry')
+VALUES ('450', now(), 'AA-1135: the Platform › Delivery custom date range limits in the settings registry')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

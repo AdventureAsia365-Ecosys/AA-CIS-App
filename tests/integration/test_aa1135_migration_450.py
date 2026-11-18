@@ -1,4 +1,4 @@
-"""AA-1135 (S284) — CIS 448: the two custom-date-range limits of Platform › Delivery in shared.setting_definition
+"""AA-1135 (S284) — CIS 450: the two custom-date-range limits of Platform › Delivery in shared.setting_definition
 (conftest replays every migration). Registered; each row equals the compiled default the reader serves; values within
 their bounds only; platform scope, single approval, no evidence, enforced; each key carries its label and a complete
 guide; a re-run changes nothing. Runs in a transaction that is rolled back; invented values only."""
@@ -17,8 +17,8 @@ from services.reports import delivery_settings as ds  # noqa: E402
 from shared import settings  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-M448 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
-                    "448_aa1135_delivery_range_settings.sql")
+M450 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
+                    "450_aa1135_delivery_range_settings.sql")
 INS = ("INSERT INTO shared.setting_value (key, value, version, proposed_by, reason, evidence_ref) "
        "VALUES ($1, $2::jsonb, 1, 'admin:zz-a', 'zz test: a reason of at least twenty characters', NULL) RETURNING id")
 EXPECTED = {
@@ -46,8 +46,8 @@ async def _refused(c, *args):
 
 
 @pytest.mark.asyncio
-async def test_448_registered_and_each_row_is_the_compiled_default(conn):
-    assert await conn.fetchval("SELECT version AS ok FROM shared.schema_versions WHERE version = '448'") == "448"
+async def test_450_registered_and_each_row_is_the_compiled_default(conn):
+    assert await conn.fetchval("SELECT version AS ok FROM shared.schema_versions WHERE version = '450'") == "450"
     assert set(EXPECTED) == set(ds.RANGE_ALL)
     assert not set(ds.RANGE_ALL) & (set(ds.ALL) | set(ds.QUEUE_ALL))
     for key, (default, lo, hi, unit) in EXPECTED.items():
@@ -76,7 +76,7 @@ async def test_a_value_must_stay_within_its_bounds(conn):
 
 @pytest.mark.asyncio
 async def test_rerun_changes_nothing(conn):
-    body = open(M448, encoding="utf-8").read().replace("BEGIN;", "", 1).rsplit("COMMIT;", 1)[0]
+    body = open(M450, encoding="utf-8").read().replace("BEGIN;", "", 1).rsplit("COMMIT;", 1)[0]
     before = await conn.fetchval("SELECT count(*) AS n FROM shared.setting_definition")
     await conn.execute(body)
     assert await conn.fetchval("SELECT count(*) AS n FROM shared.setting_definition") == before
