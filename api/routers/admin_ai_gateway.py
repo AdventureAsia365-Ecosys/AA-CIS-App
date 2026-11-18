@@ -14,6 +14,10 @@
                                            (shared.spend_budget), LLM connection monthly budgets, the tenant tier
                                            (shared.tenant_ai_budget, AA-1016), today's spend and a coverage
                                            list.                                                             spend.read
+  GET /admin/ai-gateway/connection-split   (AA-1113, S284) per LLM connection: the provider budget (CIS setting, CIS
+                                           453), the CIS share (its monthly budget), the CRM share (the CRM setting
+                                           crm.ai.connection_monthly_cap_usd through crm.ops.v1 GET /settings with
+                                           the staff member's own token) and the over-allocation flag.       spend.read
   GET /admin/ai-gateway/calls              the Calls tab: every logged paid call newest first across the CIS ledgers
                                            and the CRM ledger (crm.ops.v1 GET /llm/calls with the staff member's
                                            own token), filtered by job / tour / app / provider / status / stage /
@@ -99,7 +103,7 @@ from api.core.tenant_scope import TENANT_SCOPED
 from api.routers.admin import verify_admin_secret
 from api.routers.admin_docs import asset_response
 from api.services import (ai_gateway, ai_gateway_batches, ai_gateway_calls, ai_gateway_experiments, ai_gateway_guide,
-                          crm_console, docs_reader, platform_apps, settings_registry, spend_rules_view,
+                          ai_gateway_split, crm_console, docs_reader, platform_apps, settings_registry, spend_rules_view,
                           tenant_ai_budget)
 from services.acp_shared.audit_log import write_audit_log
 from shared import provider_credit
@@ -147,6 +151,13 @@ async def get_trace(request: Request, job_id: Optional[str] = Query(None, min_le
 @router.get("/budgets", summary="Every spending cap by tier with today's spend (read-only, $0)")
 async def get_budgets(request: Request) -> dict:
     return await ai_gateway.read_budgets(request.app.state.pool)
+
+
+@router.get("/connection-split",
+            summary="Each LLM connection's provider budget split between the CIS share and the CRM share ($0)")
+async def get_connection_split(request: Request) -> dict:
+    return await ai_gateway_split.read_connection_split(request.app.state.pool,
+                                                        platform_apps.relay_authorization(request))
 
 
 @router.get("/calls", summary="Every logged paid call, newest first, across the CIS and CRM ledgers (read-only, $0)")
