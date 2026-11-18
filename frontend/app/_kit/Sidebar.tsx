@@ -137,6 +137,8 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
 
       <div data-testid="sidebar-scroll" style={{
         flex: "1 1 auto", minHeight: 0, overflowY: "auto", overflowX: "hidden",
+        // A thin, dark-surface scrollbar (the page's global light track would be a white strip on the sidebar).
+        scrollbarWidth: "thin", scrollbarColor: "rgba(255,255,255,0.18) transparent",
         display: "flex", flexDirection: "column", gap: 24,
       }}>
         {/* Nav — AA-1039: the seven groups of lib/adminIa.ts */}
