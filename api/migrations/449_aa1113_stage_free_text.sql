@@ -4,10 +4,14 @@
 -- Why. The gateway's free-text PII scrub (shared/llm_client/free_text_scrub.py, CIS #1559) chose its stages by a
 -- name rule in code (every tenant stage "t<n>_...") plus an empty code deny-list. Decision 10 says the data class of a
 -- stage is data ("a scope change happens only by migration"), and a stage that carries free text but is not named
--- "t<n>_" (TripPlanner's planning chat once it has a row, a CRM or Booking stage routed through the shared gateway)
--- could not be marked at all. This column is that registry: the gateway scrubs a stage whose row says free_text (and
--- every "t<n>_" stage, as a fail-safe floor that a row cannot lower), and refuses the call when the scrub cannot run.
--- TripPlanner reads the flag through catalog.v_llm_gateway_config_v1 (CIS 450, same PR).
+-- "t<n>_" (a CRM or Booking stage routed through the shared gateway) could not be marked at all. This column is that
+-- registry: the gateway scrubs a stage whose row says free_text (and every "t<n>_" stage, as a fail-safe floor that a
+-- row cannot lower), and refuses the call when the scrub cannot run. catalog.v_llm_gateway_config_v1 publishes the
+-- mark (CIS 450, same PR).
+-- Not covered by this file (review S284): TripPlanner's planning chat (tp_plan_chat) carries traveller free text but
+-- has no row (it borrows tp_compose, left false here) and runs in TripPlanner's own gateway, which does not read the
+-- mark yet. A follow-up seeds its row with free_text = true together with the TripPlanner change that refuses an
+-- unscrubbed call on a marked stage; until then its call-site scrub is TripPlanner's own.
 --
 -- What.
 --   1. ADD COLUMN free_text boolean NOT NULL DEFAULT false (PostgreSQL 11+: a constant default, no table rewrite).
