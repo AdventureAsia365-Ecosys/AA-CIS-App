@@ -29,6 +29,13 @@ the main note of the issue is `AA-1133.md`. The page history lane (another PR, `
 - **The address carries the heading.** A table of contents click replaces the hash (`history.replaceState`, no new
   history entry); opening a page at a heading (search hit, a link to another page's heading) pushes
   `?path=…#doc-<slug>`, so the place can be shared.
+- **A fresh load of a shared heading address jumps to it (review fix).** The jump used to come only from in-app
+  clicks (`open` set it), and the browser's own fragment scroll runs before the page text exists, so a shared
+  `?path=…#doc-<slug>` link opened at the top. The page now seeds the jump from the address once
+  (`lib/docsToc.ts addressHeading`, lazy `useState`; "" on the server, so no hydration difference: the value is not
+  rendered). The jump itself moved from `Reader` into `ReaderColumns` and waits until the reader is measured: the first
+  render puts the table of contents above the text, and a jump made then would land too low once it moves to the side.
+  A measured reader also means the jump no longer repeats when the same page's data is refetched.
 - **Search list polish.** While hits show, the "N of M pages" bar (and its Expand / Collapse all) is hidden: the hits
   have their own count and the groups are not shown. Hits are reordered only inside a page / translation pair (the pair
   keeps its best server rank; the copy in the reader's language first, nothing dropped: `lib/docsSearchView.ts
@@ -63,6 +70,10 @@ the main note of the issue is `AA-1133.md`. The page history lane (another PR, `
 
 - The 96 px line, the 8 px pin slack and the one-frame throttle are layout constants (`technical-constant`), not
   policy thresholds, so no admin setting.
+- Shared heading link: the smoke spec `tests/e2e/smoke/aa1133-docs-shared-heading.spec.ts` (@staff, runs after the
+  Dev deploy) opens the catalog page at a later heading and checks it is on screen and marked. A page whose Mermaid
+  diagrams above the heading finish drawing after the jump can still shift it down; the pin keeps the mark while the
+  heading stays on screen.
 - `scrollend` is missing in older Safari; the per-frame scroll pick covers it (the last frame of a scroll is its end).
 - Live check: sign in as the Dev E2E admin, open a docs page: no "Was this page helpful?" section; the manifest JSON has
   `"can_feedback": false`. As a real staff role it is `true` and the widget shows.

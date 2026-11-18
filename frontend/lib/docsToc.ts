@@ -47,3 +47,10 @@ export function slugFromHash(hash: string, prefix: string): string {
 export function headingHash(slug: string, prefix: string): string {
   return slug ? `#${prefix}${encodeURIComponent(slug)}` : "";
 }
+
+/** The heading a fresh page load asks for: the slug its `#doc-<slug>` address names; "" without a location (server
+ *  render) or when the hash names no heading. Seeds the reader's jump, since the browser's own fragment scroll runs
+ *  before the page text is loaded. */
+export function addressHeading(loc: { hash: string } | null | undefined, prefix: string): string {
+  return loc ? slugFromHash(loc.hash, prefix) : "";
+}

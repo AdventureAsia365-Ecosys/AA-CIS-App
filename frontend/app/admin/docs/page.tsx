@@ -65,7 +65,7 @@ import { M } from "./messages";
 import { DocsList } from "./DocsList";
 import { DOC_AUDIENCE_MESSAGES, DOC_LANG_MESSAGES, DOC_TYPE_MESSAGES } from "@/lib/docsReader.messages";
 import { HEADING_ID_PREFIX, MarkdownView, scrollToHeading, type MarkdownLink } from "../../_kit/MarkdownView";
-import { headingHash } from "@/lib/docsToc";
+import { addressHeading, headingHash } from "@/lib/docsToc";
 import {
   type LangChoice,
   ALL,
@@ -236,11 +236,6 @@ function Reader({
     [path, repo, assets],
   );
 
-  // After the page renders, jump to the heading a link asked for (no state change, only a scroll).
-  useEffect(() => {
-    if (data && pendingHash) scrollToHeading(pendingHash);
-  }, [data, pendingHash]);
-
   if (isLoading) return <TableSkeleton rows={10} cols={1} />;
   if (error instanceof ApiError && error.status === 404) {
     return (
@@ -278,7 +273,7 @@ function Reader({
         hasVietnamese={choice.available.includes("vi") && choice.lang !== "vi"}
         github={data.source.github}
       />
-      <ReaderColumns toc={toc}>
+      <ReaderColumns toc={toc} scrollTo={pendingHash}>
           <MarkdownView
             markdown={body}
             resolveHref={resolveHref}
@@ -323,10 +318,18 @@ function useElementWidth(): [(el: HTMLDivElement | null) => void, number] {
  * AA-1133: the text and, when the reader itself has room (tocColumnFits on its measured width), a sticky table of
  * contents beside it; the disclosure above the text otherwise. One grid in both cases, so switching never remounts
  * the text (diagrams are not drawn again on a resize).
+ *
+ * `scrollTo` is the heading a link, a search hit or the page address asked for. The jump waits until the reader is
+ * measured: the first render lays the table of contents out above the text, and a jump made then would land too low
+ * once it moves to the side (AA-1133 follow-up). Only a scroll, no state change.
  */
-function ReaderColumns({ toc, children }: { toc: Heading[]; children: React.ReactNode }) {
+function ReaderColumns({ toc, scrollTo, children }: { toc: Heading[]; scrollTo: string; children: React.ReactNode }) {
   const [ref, width] = useElementWidth();
   const side = tocColumnFits(width);
+  const measured = width > 0 || typeof ResizeObserver === "undefined";
+  useEffect(() => {
+    if (measured && scrollTo) scrollToHeading(scrollTo);
+  }, [measured, scrollTo]);
   return (
     <div
       ref={ref}
@@ -444,7 +447,11 @@ function DocsReaderPage() {
   const [query, setQuery] = useState("");
   const [type, setType] = useState(ALL);
   const [audience, setAudience] = useState(ALL);
-  const [pendingHash, setPendingHash] = useState("");
+  // The heading to open at: a search hit or a link sets it (open); a fresh load of a shared ?path=…#doc-<slug> address
+  // starts from the address (AA-1133 follow-up: the browser's own fragment scroll runs before the page text exists).
+  const [pendingHash, setPendingHash] = useState(() =>
+    addressHeading(typeof window !== "undefined" ? window.location : undefined, HEADING_ID_PREFIX),
+  );
   // Page language: the viewer's last choice remembered in this browser (best effort); without one, the admin UI
   // language (English by default).
   const lang = useSyncExternalStore(subscribeDocLang, readDocLang, () => null) ?? uiLang;

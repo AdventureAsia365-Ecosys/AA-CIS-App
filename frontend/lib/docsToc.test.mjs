@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { ACTIVE_LINE_PX, PIN_SLACK_PX, headingHash, pickActiveIndex, slugFromHash } from "./docsToc.ts";
+import { ACTIVE_LINE_PX, PIN_SLACK_PX, addressHeading, headingHash, pickActiveIndex, slugFromHash } from "./docsToc.ts";
 
 const VIEWPORT = 900;
 const INF = Number.POSITIVE_INFINITY;
@@ -68,4 +68,14 @@ test("headingHash: the shareable form, round-trips through slugFromHash", () => 
   for (const slug of ["lantern-stalls", "đèn-lồng", "a&b"]) {
     assert.equal(slugFromHash(headingHash(slug, "doc-"), "doc-"), slug);
   }
+});
+
+test("addressHeading: a shared ?path=…#doc-<slug> address seeds the jump; no location or another hash does not", () => {
+  // The review finding: a fresh load of a shared link stayed at the top (the jump only came from in-app clicks).
+  assert.equal(addressHeading({ hash: "#doc-river-crossing" }, "doc-"), "river-crossing");
+  assert.equal(addressHeading({ hash: headingHash("lantern café", "doc-") }, "doc-"), "lantern café");
+  assert.equal(addressHeading({ hash: "" }, "doc-"), "");
+  assert.equal(addressHeading({ hash: "#top" }, "doc-"), "");
+  assert.equal(addressHeading(undefined, "doc-"), "");
+  assert.equal(addressHeading(null, "doc-"), "");
 });
