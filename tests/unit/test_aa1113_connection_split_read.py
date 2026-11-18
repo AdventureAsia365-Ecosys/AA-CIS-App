@@ -85,3 +85,14 @@ async def test_a_broken_provider_budget_is_reported_and_checks_nothing(world):
 
 def test_the_route_is_spend_read():
     assert POLICY[("GET", "/admin/ai-gateway/connection-split")] == SPEND_READ
+
+
+@pytest.mark.asyncio
+async def test_the_route_passes_the_pool_and_the_staff_token(world, monkeypatch):
+    from types import SimpleNamespace
+
+    from api.services import platform_apps
+    monkeypatch.setattr(platform_apps, "relay_authorization", lambda request: "Bearer zz-staff")
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(pool=_Pool())))
+    out = await ai_gateway_split.read_for(request)
+    assert world["calls"][0][2] == "Bearer zz-staff" and out["crm_cap_key"] == split.CRM_CAP_KEY

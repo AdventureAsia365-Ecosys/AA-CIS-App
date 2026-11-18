@@ -70,3 +70,10 @@ async def read_connection_split(pool: Any, authorization: Optional[str]) -> dict
         row.update(label=c.label, kind=c.kind, enabled=c.enabled)
     return {**out, "crm_error": crm_error, "errors": errors,
             "provider_budget_key": split.PROVIDER_BUDGET_KEY, "crm_cap_key": split.CRM_CAP_KEY}
+
+
+async def read_for(request: Any) -> dict:
+    """The route's call: the app pool and the staff member's own token (the CRM relay)."""
+    from api.services.platform_apps import relay_authorization
+
+    return await read_connection_split(request.app.state.pool, relay_authorization(request))

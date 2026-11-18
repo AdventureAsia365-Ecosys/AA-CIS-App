@@ -14,10 +14,7 @@
                                            (shared.spend_budget), LLM connection monthly budgets, the tenant tier
                                            (shared.tenant_ai_budget, AA-1016), today's spend and a coverage
                                            list.                                                             spend.read
-  GET /admin/ai-gateway/connection-split   (AA-1113, S284) per LLM connection: the provider budget (CIS setting, CIS
-                                           453), the CIS share (its monthly budget), the CRM share (the CRM setting
-                                           crm.ai.connection_monthly_cap_usd through crm.ops.v1 GET /settings with
-                                           the staff member's own token) and the over-allocation flag.       spend.read
+  GET /admin/ai-gateway/connection-split   (AA-1113) each connection's provider budget vs CIS + CRM shares. spend.read
   GET /admin/ai-gateway/calls              the Calls tab: every logged paid call newest first across the CIS ledgers
                                            and the CRM ledger (crm.ops.v1 GET /llm/calls with the staff member's
                                            own token), filtered by job / tour / app / provider / status / stage /
@@ -153,11 +150,9 @@ async def get_budgets(request: Request) -> dict:
     return await ai_gateway.read_budgets(request.app.state.pool)
 
 
-@router.get("/connection-split",
-            summary="Each LLM connection's provider budget split between the CIS share and the CRM share ($0)")
+@router.get("/connection-split", summary="Each LLM connection's provider budget split between CIS and CRM ($0)")
 async def get_connection_split(request: Request) -> dict:
-    return await ai_gateway_split.read_connection_split(request.app.state.pool,
-                                                        platform_apps.relay_authorization(request))
+    return await ai_gateway_split.read_for(request)
 
 
 @router.get("/calls", summary="Every logged paid call, newest first, across the CIS and CRM ledgers (read-only, $0)")
