@@ -333,7 +333,7 @@ export type Capability =
   | "reference_price.read" | "reference_price.write"
   // S279 thresholds L1 — Platform › Settings: propose a new value (settings.write), approve / reject (settings.approve)
   | "settings.write" | "settings.approve"
-  | "docs.read"                   // AA-1133 B7: the docs reader (every role; owner pages stay filtered server side)
+  | "docs.read"                   // AA-1133 B7: the docs reader (every role, owner pages stay filtered server side)
   // AA-1105 — AA Academy: draft modules visible on the academy host (read by the learning API, not an admin page)
   | "learn.preview";
 
