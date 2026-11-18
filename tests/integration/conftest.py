@@ -510,6 +510,10 @@ def _apply_schema(conn):
         # test_aa1094_migration_404 applies 253 ... 359 + 379 + 404 the DB Migrate way in a rolled-back transaction.
         # S279: 410/415; S281: 429 (needs 379, 390); S282: 432 (test_aa1107_*); 438 / S283 444: test_aa1116_* (377-438).
         and not f.startswith(('404', '410', '415', '429', '432', '438', '444'))
+        # AA-1113 (S284): 449 replaces 350's catalog.v_llm_gateway_config_v1 (two more appended columns) and creates
+        # catalog.v_llm_connection_cap_v1 through the catalog recipe; needs 323 + 341 + 350 (skipped above).
+        # test_aa1113_migration_449 applies 323 + 341 + 350 + 449 the DB Migrate way and undoes them at teardown.
+        and not f.startswith('449')
     ])
 
     for mf in migration_files:
