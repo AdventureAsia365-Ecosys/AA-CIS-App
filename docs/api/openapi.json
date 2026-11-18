@@ -15960,7 +15960,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Each LLM connection's provider budget split between the CIS share and the CRM share ($0)",
+        "summary": "Each LLM connection's provider budget split between CIS and CRM ($0)",
         "tags": [
           "admin-ai-gateway"
         ]
