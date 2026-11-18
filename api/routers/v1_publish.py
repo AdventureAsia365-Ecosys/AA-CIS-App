@@ -275,6 +275,24 @@ async def unpublish(publish_id: UUID, request: Request, tenant=Depends(get_tenan
     }
 
 
+# AA-1127 (S1, S283 UI audit): another piece of the same request already has a live (or in-flight) post on this piece's
+# channel. My Content shows such a request as published (the S251 rule: the newest text is not publishable and is not
+# written again), but the Publish page listed its newest piece and one click put a SECOND post online, because the
+# filters below looked only at the piece's own publish_log rows. Read with `cp` (content_piece) and `agr`
+# (angle_gate_request) in scope. A post taken down (status unpublished / failed) does not count: the newest piece may
+# then publish. Another channel does not count either (a request's channel can be changed before a re-write).
+REQUEST_LIVE_SQL = """EXISTS (
+          SELECT 1 FROM acp_shared.content_piece op
+          JOIN acp_shared.publish_log other ON other.piece_id = op.piece_id AND other.tenant_id = op.tenant_id
+          WHERE op.angle_gate_request_id = cp.angle_gate_request_id AND op.tenant_id = cp.tenant_id
+            AND op.piece_id <> cp.piece_id
+            AND other.channel = COALESCE(cp.channel, agr.channel)
+            AND other.status IN ('published', 'requested')
+      )"""
+PUBLISH_REQUEST_LIVE = ("This content is already live from an earlier version. Take that post down first, or keep the "
+                        "live one.")
+
+
 # AA-802 (S238 scope) — the latest-piece rule My Content already applies (AA-497,
 # services/acp_content_writing/service.py::_TENANT_REVIEWS_QUERY): a request can hold several
 # content_piece rows (reopen / re-write / earlier attempts), and only the LATEST one by created_at
@@ -304,6 +322,7 @@ _PENDING_SQL = """
           SELECT 1 FROM acp_shared.publish_log pl
           WHERE pl.piece_id = cp.piece_id AND pl.status IN ('published', 'requested')
       )
+      AND NOT """ + REQUEST_LIVE_SQL + """
     ORDER BY cp.created_at DESC
 """
 
@@ -406,7 +425,8 @@ _PUBLISH_PIECE_SQL = """
                    EXISTS (SELECT 1 FROM acp_shared.content_piece newer
                            WHERE newer.angle_gate_request_id = cp.angle_gate_request_id
                              AND newer.tenant_id = cp.tenant_id
-                             AND newer.created_at > cp.created_at) AS superseded
+                             AND newer.created_at > cp.created_at) AS superseded,
+                   """ + REQUEST_LIVE_SQL + """ AS request_live
             FROM acp_shared.content_piece cp
             JOIN acp_shared.angle_gate_request agr ON agr.request_id = cp.angle_gate_request_id
             LEFT JOIN acp_shared.angle_gate_option ago
@@ -448,6 +468,10 @@ def _publishable_channel(piece) -> str:
             status_code=409,
             detail="A newer version of this content exists — reload and publish that one.",
         )
+    # AA-1127 (S1): one live post per request and channel; the newest piece of a request already online elsewhere is
+    # refused (409) even from a stale Publish page, so one click cannot put a second post of the same content online.
+    if piece.get("request_live"):
+        raise HTTPException(status_code=409, detail=PUBLISH_REQUEST_LIVE)
     channel = piece["channel"]
     if channel not in SUPPORTED_CHANNELS:
         raise HTTPException(status_code=404, detail=f"Publishing to '{channel}' is not yet supported")

@@ -66,10 +66,16 @@ AWS_BUDGET_ENV = "COST_OPS_AWS_BUDGETS_USD"
 PROVIDER_LABELS = {
     "bedrock": "Amazon Bedrock (all accounts)",
     "openai": "OpenAI API",
+    "anthropic": "Anthropic API",
     "jev": "Jev (TypeSafe)",
     "dfs": "DataForSEO",
     "other": "Other LLM providers",
 }
+# AA-1127 (C2): the forecast's provider rows, in order; one per provider family of platform_cost.provider_family (the
+# ledger's families: the Overview, the AI gateway spend and this forecast read one mapping) + DataForSEO. The optional
+# ones appear only with spend or a budget.
+FORECAST_PROVIDERS = ("bedrock", "openai", "anthropic", "jev", "dfs", "other")
+OPTIONAL_FORECAST_PROVIDERS = ("anthropic", "other")
 # Display order of the Bedrock split and the AWS rows; the retired account only appears when it has data.
 _BEDROCK_ACCOUNT_ORDER = ("acc3", "acc2", ce.RETIRED_ACCOUNT_KEY)
 _AWS_ACCOUNTS = ("acc2", "acc3")
@@ -491,9 +497,10 @@ async def cost_forecast(pool: Any, month: Optional[str] = None, *, now: Optional
 
     budgets = {r["provider"]: (r["per_day_usd"], r["alert_pct"]) for r in budget_rows}
     providers = []
-    for key in ("bedrock", "openai", "jev", "dfs", "other"):
+    for key in FORECAST_PROVIDERS:
         series = families.get(key, {})
-        if key == "other" and not series:
+        # AA-1127 (C2): a family shown only when it has spend in the window or a budget on the Budgets tab
+        if key in OPTIONAL_FORECAST_PROVIDERS and not series and key not in budgets:
             continue
         row = {"key": key, "label": PROVIDER_LABELS[key],
                **project(series, start, month_end, complete_until)}

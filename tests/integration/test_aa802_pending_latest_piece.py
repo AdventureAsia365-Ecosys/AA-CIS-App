@@ -139,14 +139,44 @@ async def test_older_approved_piece_never_stands_in_for_an_unwritten_latest(ctx,
 
 
 @pytest.mark.asyncio
-async def test_older_published_piece_does_not_hide_a_newer_version(ctx):
-    """A re-write after a publish is new content: the newer piece is publishable (the older post
-    stays live on the channel; the admin sees the tenant's older copy via AA-802 tenant_copy)."""
+@pytest.mark.parametrize("log_status", ["published", "requested"])
+async def test_a_request_already_live_from_an_older_piece_is_not_offered_again(ctx, log_status):
+    """AA-1127 (S1, S283 UI audit): a re-write after a publish leaves the earlier post live. My Content reads the request
+    as published (the S251 rule, below); the Publish page used to offer the newer piece, and one click put a second
+    post of the same content online. AA-802 first allowed that (the newer piece was "new content"); the S251 rule and
+    the audit replace it: the newer piece is offered only once the live post is taken down."""
     p, tid = ctx
     req, opt = await _request_row(p, tid)
     old = await _piece(p, tid, req, opt, status="approved", minutes=0)
-    await _log(p, tid, old, "published")
+    await _log(p, tid, old, log_status)
     new = await _piece(p, tid, req, opt, status="approved", minutes=10)
+    assert await _pending_ids(p, tid) == []
+    with pytest.raises(HTTPException) as exc_info:
+        await pub_mod.publish(new, _request(p), tenant={"sub": str(tid)})
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == pub_mod.PUBLISH_REQUEST_LIVE
+    assert await p.fetchval("SELECT count(*) FROM acp_shared.publish_log WHERE piece_id = $1", new) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_newer_piece_publishes_once_the_older_post_is_taken_down(ctx):
+    p, tid = ctx
+    req, opt = await _request_row(p, tid)
+    old = await _piece(p, tid, req, opt, status="approved", minutes=0)
+    await _log(p, tid, old, "unpublished")
+    await _log(p, tid, old, "failed")
+    new = await _piece(p, tid, req, opt, status="approved", minutes=10)
+    assert await _pending_ids(p, tid) == [str(new)]
+
+
+@pytest.mark.asyncio
+async def test_a_live_post_on_another_channel_does_not_block(ctx):
+    """The request's channel may change before a re-write: a live blog post does not hold back a Facebook piece."""
+    p, tid = ctx
+    req, opt = await _request_row(p, tid)
+    old = await _piece(p, tid, req, opt, status="approved", minutes=0)
+    await _log(p, tid, old, "published")                      # channel 'blog'
+    new = await _piece(p, tid, req, opt, status="approved", minutes=10, channel="facebook")
     assert await _pending_ids(p, tid) == [str(new)]
 
 

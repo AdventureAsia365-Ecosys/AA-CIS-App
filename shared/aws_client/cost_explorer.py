@@ -48,8 +48,8 @@ ACC3_EXTERNAL_ID = "aa623-satellite-cost-explorer-acc3"
 
 # The accounts a Cost Explorer check fetches (AA-998: acc2 + acc3 only).
 FETCH_ACCOUNTS = ("acc2", "acc3")
-# account_key() of a stored row whose account is neither acc2 nor acc3: the only such rows are the
-# history of the LLM fallback account retired in AA-998, still shown on the admin cost pages.
+# account_key() of a stored row whose account is neither acc2, acc3 nor a live Bedrock satellite of the registry
+# (AA-1127): the history of the LLM fallback account retired in AA-998, still shown on the admin cost pages.
 RETIRED_ACCOUNT_KEY = "retired"
 
 
@@ -59,16 +59,32 @@ def acc2_account_id() -> str:
 
 
 def account_key(account_id: str) -> Optional[str]:
-    """'acc2' | 'acc3' for a stored account_id; RETIRED_ACCOUNT_KEY for any other stored account (only
-    the AA-998 retired fallback account's history); None when acc2 cannot be resolved. The admin page
-    labels Cost Explorer rows with this key, so the frontend needs no account ID (AA-902)."""
+    """'acc2' | 'acc3' for a stored account_id; the registry key of a live Bedrock satellite (AA-1127 C2: the account
+    that serves Bedrock since AA-1095, matched by its connection's resolved account ID, the same rule
+    shared/aws_client/accounts.account_name uses, so the AWS bill tab and the Overview name it alike);
+    RETIRED_ACCOUNT_KEY for any other stored account; None when acc2 cannot be resolved. The admin page labels Cost
+    Explorer rows with this key, so the frontend needs no account ID (AA-902)."""
     if ACC3_ACCOUNT_ID and account_id == ACC3_ACCOUNT_ID:
         return "acc3"
     try:
-        return "acc2" if account_id == acc2_account_id() else RETIRED_ACCOUNT_KEY
+        if account_id == acc2_account_id():
+            return "acc2"
     except (BotoCoreError, ClientError) as e:  # a label must never fail the read
         logger.warning("cost_explorer_account_key_unresolved", error=str(e)[:200])
         return None
+    return satellite_key(account_id) or RETIRED_ACCOUNT_KEY
+
+
+def satellite_key(account_id: str) -> Optional[str]:
+    """AA-1127 (C2): the registry key of the live Bedrock satellite whose account this is, else None. Never raises."""
+    from shared.aws_client import accounts   # late: accounts imports the LLM connection registry
+    try:
+        for key, conn in accounts.satellite_connections().items():
+            if account_id and conn.resolved_account_id() == account_id:
+                return key
+    except Exception as e:  # noqa: BLE001 — a label must never fail the read
+        logger.warning("cost_explorer_satellite_key_unresolved", error=str(e)[:200])
+    return None
 
 
 # Cost Explorer is a global (non-regional) API endpoint, but the SDK client still needs a

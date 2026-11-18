@@ -73,7 +73,9 @@ rev_c AS (
     SELECT rt.country, count(DISTINCT rq.tour_id) AS in_review
     FROM silver_aa_internal.review_queue rq
     JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = rq.tour_id
-    WHERE rq.review_status = 'pending' AND {_ACTIVE_RAW}
+    -- AA-1127 (C1): Master Content's queue only, like the Review Queue and its nav badge (admin_pipeline/review.py
+    -- rq.tenant_id = aa_internal); an agency's T2 review rows (same table) made the funnel read 75 against the queue's 73
+    WHERE rq.review_status = 'pending' AND rq.tenant_id = '{_AA_INTERNAL}'::uuid AND {_ACTIVE_RAW}
     GROUP BY rt.country
 ),
 pub_c AS (

@@ -418,6 +418,13 @@ async def _get_tenant_plan_limit(conn, tenant_id: str) -> tuple:
     return str(row["plan"]), int(row["quota"])
 
 
+# AA-1127 (S1, S283 UI audit): ONE ledger for rewrites. The month's rewrite count is the counter below
+# (shared.tenant_rewrite_usage, incremented only by _check_and_consume_rewrite_quota in trigger_rewrite): GET /v1/quota
+# reads it, and since CIS 447 shared.v_tenant_monthly_usage.tours_rewritten (GET /v1/billing, the admin tenant list,
+# Tenant 360, the billed overage) reads the same row. A tenant's own inline edit (edit_source 'tenant_edit') is not a
+# rewrite: the dashboard's per-day rewrite line counts only the versions a rewrite made.
+REWRITE_EDIT_SOURCES = ("ai_generated", "re_rewrite")
+REWRITE_EDIT_SOURCES_SQL = "(" + ", ".join(f"'{s}'" for s in REWRITE_EDIT_SOURCES) + ")"
 OVER_QUOTA_SETTING = "cis.billing.rewrite_over_quota_mode"   # S279 thresholds L1: soft (default) | hard
 
 
@@ -549,6 +556,7 @@ async def get_my_billing(request: Request, tenant=Depends(get_tenant)):
                 SELECT date_trunc('day', created_at) AS day, COUNT(*) AS n
                 FROM gold_aa_internal.tenant_tour_versions
                 WHERE tenant_id = $1::uuid AND created_at >= date_trunc('month', now())
+                  AND edit_source IN """ + REWRITE_EDIT_SOURCES_SQL + """
                 GROUP BY 1
             )
             SELECT days.day::date AS day, COALESCE(api.n, 0) AS api_calls, COALESCE(rw.n, 0) AS rewrites

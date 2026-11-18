@@ -894,6 +894,10 @@ async def get_tenant_audit(
     } for r in rows]}
 
 
+# AA-1127 (C1): how many of the newest pipeline runs Tenant 360 lists (a display window, not a count).
+PIPELINE_RUNS_SHOWN = 20
+
+
 # ── GET /admin/tenants/{id}/details — 4-tab detail view ─────────────────────
 
 
@@ -904,7 +908,7 @@ async def get_tenant_details(
     x_admin_secret: str = Header(None),
     # AA-718 — server-side paging/sort/filter for the internal Master Content catalog. All optional;
     # omitting them keeps the legacy behaviour (first page, published_at desc). The tenant (B2B)
-    # branch ignores these and is unchanged.
+    # branch honours page / page_size since AA-1127 (newest versions first) and ignores the rest.
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=200),
     sort: str = Query("created_at"),
@@ -1075,16 +1079,20 @@ async def get_tenant_details(
                 LIMIT {page_size} OFFSET {offset}
             """, *params)
         else:
+            # AA-1127 (C1, S283 UI audit): the tenant's versions are paged on the server like the internal catalog
+            # (page / page_size), and every version the total counts is listed (LEFT JOIN): the tab used to show the
+            # first 50 under a label that read the page length while the header said the total.
             tours = await conn.fetch("""
                 SELECT ttv.id, NULL::uuid AS tour_id, pt.aa_name, rt.country,
                        ttv.quality_score, ttv.version_number, ttv.status,
                        'active'::text AS master_status, ttv.created_at
                 FROM gold_aa_internal.tenant_tour_versions ttv
-                JOIN gold_aa_internal.published_tours pt ON pt.id = ttv.published_tour_id
+                LEFT JOIN gold_aa_internal.published_tours pt ON pt.id = ttv.published_tour_id
                 LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
                 WHERE ttv.tenant_id = $1
-                ORDER BY ttv.created_at DESC LIMIT 50
-            """, tenant_id)
+                ORDER BY ttv.created_at DESC, ttv.id
+                LIMIT $2 OFFSET $3
+            """, tenant_id, page_size, (page - 1) * page_size)
 
         # UNION: direct tenant runs + runs containing this tenant's tours (covers B2B tenants
         # whose tours were processed under aa_internal pipeline)
@@ -1103,8 +1111,8 @@ async def get_tenant_details(
                 JOIN gold_aa_internal.tenant_tour_versions ttv ON ttv.published_tour_id = pt.id
                 WHERE ttv.tenant_id = $1
             ) _combined
-            ORDER BY started_at DESC LIMIT 20
-        """, tenant_id)
+            ORDER BY started_at DESC LIMIT $2
+        """, tenant_id, PIPELINE_RUNS_SHOWN)
 
         brand_rows = [] if header_only else await conn.fetch("""
             SELECT
@@ -1171,6 +1179,8 @@ async def get_tenant_details(
             "member_since":         tenant["created_at"].isoformat()[:10],
             "tours_view":           "published" if is_internal else "rewrites",
             "pipeline_note":        None if is_internal else "Showing pipeline runs for tours in your catalog",
+            # AA-1127 (C1): the runs list is the newest N, not a count; the tab says "latest N" from this value
+            "pipeline_runs_shown":  PIPELINE_RUNS_SHOWN,
         },
         # AA-718 bug 4: server-side pagination metadata so the UI shows true totals, not a 200 cap.
         "pagination": {

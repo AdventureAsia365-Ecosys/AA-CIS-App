@@ -52,6 +52,9 @@ PROVIDERS = (  # FI-02 section 2 order: key, label, source
     ("bedrock_acc3", "Bedrock on the LLM account (gateway estimate)", "LLM ledger"),
     ("bedrock_acc2", "Bedrock on the main account (gateway estimate)", "LLM ledger"),
     ("openai", "OpenAI API", "LLM ledger"),
+    # AA-1127 (C2): the Anthropic API is its own provider family (platform_cost.provider_family); it was "other" and
+    # missing from the lines and the week total
+    ("anthropic", "Anthropic API", "LLM ledger"),
     ("jev", "Jev (TypeSafe)", "LLM ledger"),
     ("dfs", "DataForSEO", "shared.dfs_call_log"),
     ("geocoder", "Geocoder (Geoapify and others)", "geo.geocode_call"),
@@ -114,7 +117,8 @@ def in_window(day: Any, first: date, last: date) -> bool:
 
 
 def source_of(provider: Optional[str], account: Optional[str]) -> str:
-    """LLM ledger row -> FI-02 provider key (bedrock_acc3 / bedrock_acc2 / bedrock_retired, openai, jev, other)."""
+    """LLM ledger row -> FI-02 provider key (bedrock_acc3 / bedrock_acc2 / bedrock_retired, openai, anthropic, jev,
+    other)."""
     from api.services.platform_cost import provider_family
 
     fam = provider_family(provider)
@@ -196,7 +200,7 @@ def provider_spend(facts: dict, first: date, last: date) -> dict[str, dict]:
     llm = facts.get("llm")
     sums = {} if failed(llm) or llm is None else ledger_sum(llm, first, last,
                                                            key=lambda r: source_of(r["provider"], r["account"]))
-    for key in ("bedrock_acc3", "bedrock_acc2", "openai", "jev"):
+    for key in ("bedrock_acc3", "bedrock_acc2", "openai", "anthropic", "jev"):
         out[key] = {"usd": None if failed(llm) else round(sums.get(key, {}).get("cost_usd", 0.0), 4)}
     out["dfs"] = {"usd": daily_sum(facts.get("dfs"), first, last)}
     out["geocoder"] = {"usd": daily_sum(facts.get("geo"), first, last)}
@@ -364,7 +368,8 @@ def week_compute(facts: dict, first: date, last: date) -> dict:
     acc3_full = (this["aws_acc3"].get("days_present") or 0) >= 7
 
     def total(spend: dict) -> Optional[float]:
-        keys = ["aws_acc2", "openai", "jev", "dfs", "geocoder", "aws_acc3" if acc3_full else "bedrock_acc3"]
+        keys = ["aws_acc2", "openai", "anthropic", "jev", "dfs", "geocoder",
+                "aws_acc3" if acc3_full else "bedrock_acc3"]
         vals = [spend[k]["usd"] for k in keys]
         return round(sum(v for v in vals if v is not None), 4) if any(v is not None for v in vals) else None
     return {"lines": lines, "total_usd": total(this), "prev_total_usd": total(prev),
@@ -922,6 +927,8 @@ def vendors(facts: dict) -> dict:
         {"vendor": "Amazon Bedrock (LLM account, gateway estimate)", "usd": llm_src(first, last, "bedrock_acc3"),
          "prev_usd": llm_src(pf, pl, "bedrock_acc3"), "usage": None},
         {"vendor": "OpenAI API", "usd": llm_src(first, last, "openai"), "prev_usd": llm_src(pf, pl, "openai"),
+         "usage": None},
+        {"vendor": "Anthropic API", "usd": llm_src(first, last, "anthropic"), "prev_usd": llm_src(pf, pl, "anthropic"),
          "usage": None},
         {"vendor": "Jev (TypeSafe), decision log", "usd": daily_sum(facts.get("jev"), first, last),
          "prev_usd": daily_sum(facts.get("jev"), pf, pl),

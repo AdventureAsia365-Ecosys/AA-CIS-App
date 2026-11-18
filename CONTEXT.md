@@ -1672,7 +1672,10 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
 - **Plans and quota (AA-640, AA-1028 R1 slice 3)**: the tour-rewrite quota is the tenant's resolved entitlement
   `content.rewrite` (starter 50 / growth 200 / business 500, edited on Tenants › Plans & add-ons), with the old
   `shared.membership_plans` read only as the fallback for a tenant with no numeric key. Over-quota rewrites are
-  allowed, logged as `rewrite_over_quota` and billed as overage. There is no `PLAN_LIMITS` any more: a tier's
+  allowed, logged as `rewrite_over_quota` and billed as overage. **One rewrite ledger (AA-1127, CIS 447):** the month's
+  count is `shared.tenant_rewrite_usage` (incremented only by `trigger_rewrite`); `GET /v1/quota`, the usage view's
+  `tours_rewritten` (`GET /v1/billing`, the admin tenant list, Tenant 360) and the billed overage all read it. A
+  tenant's own inline edit (`tenant_edit`) is not a rewrite. There is no `PLAN_LIMITS` any more: a tier's
   default RPM is its live content plan's `content.rate_limit_rpm`; an admin can override one tenant's RPM
   (`PATCH /admin/tenants/{id} {"rate_limit_rpm": n}`, AA-766, audited as `tenant.rate_limit_changed`).
 - **Billing (AA-798, migration 223)**: `shared.v_tenant_monthly_usage.llm_cost_usd` = month-to-date
@@ -1684,6 +1687,10 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   months and raw rows for the rest.
   No plan attached → plan fields are null (no invented Starter defaults). Tenants never see cost
   (`/v1/billing` has no `llm_cost_usd`, AA-796).
+- **One live post per content request and channel (AA-1127)**: `GET /v1/publish-log/pending` does not offer, and
+  `POST /v1/publish-log/{piece_id}/publish` refuses (409), the newest piece of a request whose earlier piece is live or
+  in flight on the same channel (`REQUEST_LIVE_SQL`, `api/routers/v1_publish.py`), the rule My Content reads (S251).
+  Taking the live post down makes the newest piece publishable again.
 - **Tenant Account pages (AA-761)**: `GET /v1/account/activity` (the tenant's own `acp_shared.audit_log` rows,
   newest first, `category` / `action` / `since` / `until` filters, offset paging with a total, `page_size` ≤ 100),
   and `GET /v1/account/activity/export` (the same filtered set as CSV, at most 50 000 rows, a cut file says so).
