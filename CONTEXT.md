@@ -563,7 +563,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   (`quality_signal.pii_scrub`: refusals, failed attempts) and the log line `llm_free_text_scrubbed`; the call site's
   success row is unchanged. Other stages get the same request object back. $0 live check:
   `scripts/llm_ops/aa1113_scrub_probe.py` (a planted e-mail and phone, a model key the catalog lacks, the row's hash).
-  AI gateway › Routing › Routing by data class lists the free-text stages.
+  AI gateway › Routing › Routing by data class lists the free-text stages. A marked stage never batches (the batch
+  lane sends prompts as built). Not covered yet: TripPlanner's planning chat (`tp_plan_chat`, no row, its own gateway).
 - **Cost parity** (AA-1002 slice S6, migration 312 contract): `pricing.quote(model, Usage, deployment)` prices one
   billed request from its full usage (uncached input, output, cache reads, 5-minute writes 1.25x, 1-hour writes 2x,
   Message Batches 50% off every token, Anthropic `inference_geo: "us"` 1.1x, Claude Haiku 5.5 x5 above 100K prompt
