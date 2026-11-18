@@ -157,14 +157,14 @@ def test_a_vendor_or_task_role_row_is_never_a_live_aws_account(monkeypatch):
 
 def test_the_spend_split_keeps_the_payer_bucket(registry):
     from api.services import cost_ops
-    assert cost_ops._account_of("bedrock", "acc1") == "acc1"
-    assert cost_ops._account_of("bedrock", "acc3") == "acc3"
-    assert cost_ops._account_of("bedrock", "acc9") == "retired"
+    assert cost_ops.ledger_account("bedrock", "acc1") == "acc1"
+    assert cost_ops.ledger_account("bedrock", "acc3") == "acc3"
+    assert cost_ops.ledger_account("bedrock", "acc9") == "retired"
 
 
 def test_the_spend_split_without_the_registry_is_the_retired_bucket():
     from api.services import cost_ops
-    assert cost_ops._account_of("bedrock", "acc1") == "retired"
+    assert cost_ops.ledger_account("bedrock", "acc1") == "retired"
 
 
 @pytest.mark.asyncio

@@ -37,6 +37,8 @@ from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from api.middleware.security_headers import SECURITY_HEADERS
+
 HEADER = "X-Request-ID"
 _HEADER_RAW = HEADER.lower().encode("latin-1")
 _VALID = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
@@ -119,6 +121,9 @@ class RequestIdMiddleware:
 
 async def unhandled_error_handler(request: Request, exc: Exception) -> Response:
     """The unhandled-500 answer, with the request id. Same body as Starlette's default; Starlette re-raises the
-    exception afterwards, so uvicorn and Sentry still see it."""
-    headers = {HEADER: rid} if (rid := request_id_of(request)) else None
+    exception afterwards, so uvicorn and Sentry still see it. AA-1111: it is answered outside every user middleware, so
+    it adds the security headers itself."""
+    headers = dict(SECURITY_HEADERS)
+    if rid := request_id_of(request):
+        headers[HEADER] = rid
     return PlainTextResponse("Internal Server Error", status_code=500, headers=headers)

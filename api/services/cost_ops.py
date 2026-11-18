@@ -50,7 +50,7 @@ import structlog
 from api.services.cost_incidents import CostIncident, incident_view, incidents_overlapping
 from api.services.platform_cost import month_window, provider_family
 from shared.aws_client import cost_explorer as ce
-from shared.aws_client.accounts import account_label, is_live
+from shared.aws_client.accounts import account_label, is_live, live_account_keys
 
 logger = structlog.get_logger()
 
@@ -66,13 +66,32 @@ AWS_BUDGET_ENV = "COST_OPS_AWS_BUDGETS_USD"
 PROVIDER_LABELS = {
     "bedrock": "Amazon Bedrock (all accounts)",
     "openai": "OpenAI API",
+    "anthropic": "Anthropic API",
     "jev": "Jev (TypeSafe)",
     "dfs": "DataForSEO",
     "other": "Other LLM providers",
 }
-# Display order of the Bedrock split and the AWS rows; the retired account only appears when it has data.
-_BEDROCK_ACCOUNT_ORDER = ("acc3", "acc2", ce.RETIRED_ACCOUNT_KEY)
+# AA-1127 (C2): the forecast's provider rows, in order; one per provider family of platform_cost.provider_family (the
+# ledger's families: the Overview, the AI gateway spend and this forecast read one mapping) + DataForSEO. The optional
+# ones appear only with spend or a budget.
+FORECAST_PROVIDERS = ("bedrock", "openai", "anthropic", "jev", "dfs", "other")
+OPTIONAL_FORECAST_PROVIDERS = ("anthropic", "other")
+# The AWS rows always shown; a live satellite and the retired account only appear when they have data
+# (_bedrock_account_rank orders the Bedrock split).
 _AWS_ACCOUNTS = ("acc2", "acc3")
+
+
+def _satellite_keys() -> tuple[str, ...]:
+    """AA-1127 (C2): the registry's live Bedrock satellites (accounts.live_account_keys() but acc2 / acc3), in key
+    order; empty when the registry cannot be read (live_account_keys never raises)."""
+    return tuple(k for k in live_account_keys() if k not in _AWS_ACCOUNTS)
+
+
+def _bedrock_account_rank(key: str, satellites: tuple[str, ...]) -> int:
+    """Bedrock split order: acc3, the live satellites (by key), acc2, the retired account, anything else last."""
+    if key in satellites:
+        return 1
+    return {"acc3": 0, "acc2": 2, ce.RETIRED_ACCOUNT_KEY: 3}.get(key, 9)
 
 # ── C2: DataForSEO spend by job ─────────────────────────────────────────────────────────────────────────────────────
 
@@ -434,7 +453,10 @@ def _with_budget(row: dict[str, Any], budget: Optional[float], alert_pct: Option
     return row
 
 
-def _account_of(provider: Optional[str], account: Optional[str]) -> str:
+def ledger_account(provider: Optional[str], account: Optional[str]) -> str:
+    """The account key of an LLM ledger row: a Bedrock row's acc2 / acc3 / live satellite key, else
+    RETIRED_ACCOUNT_KEY; any other provider's account as logged ("none" when empty). AA-1127 (C2): the FI-02 weekly
+    report (services/reports/money.source_of) reads this rule too, so the forecast and the report split alike."""
     if (provider or "").startswith("bedrock"):
         acc = account or "acc2"           # an older Bedrock row without account ran on acc2 (platform_cost rule)
         # AA-998: any other account is the retired fallback account's history. AA-1095: unless the registry names it
@@ -485,15 +507,17 @@ async def cost_forecast(pool: Any, month: Optional[str] = None, *, now: Optional
         fam = provider_family(r["provider"])
         _add(families, fam, r["day"], amount)
         if fam == "bedrock":
-            _add(accounts, _account_of(r["provider"], r["account"]), r["day"], amount)
+            _add(accounts, ledger_account(r["provider"], r["account"]), r["day"], amount)
     for r in dfs_rows:
         _add(families, "dfs", r["day"], float(r["cost_usd"] or 0.0))
 
     budgets = {r["provider"]: (r["per_day_usd"], r["alert_pct"]) for r in budget_rows}
+    satellites = _satellite_keys()
     providers = []
-    for key in ("bedrock", "openai", "jev", "dfs", "other"):
+    for key in FORECAST_PROVIDERS:
         series = families.get(key, {})
-        if key == "other" and not series:
+        # AA-1127 (C2): a family shown only when it has spend in the window or a budget on the Budgets tab
+        if key in OPTIONAL_FORECAST_PROVIDERS and not series and key not in budgets:
             continue
         row = {"key": key, "label": PROVIDER_LABELS[key],
                **project(series, start, month_end, complete_until)}
@@ -504,15 +528,17 @@ async def cost_forecast(pool: Any, month: Optional[str] = None, *, now: Optional
         if key == "bedrock":
             row["accounts"] = [{"account": acc, "label": account_label(acc) or acc,
                                 **project(accounts[acc], start, month_end, complete_until)}
-                               for acc in sorted(accounts, key=lambda a: _BEDROCK_ACCOUNT_ORDER.index(a)
-                                                 if a in _BEDROCK_ACCOUNT_ORDER else 9)]
+                               for acc in sorted(accounts, key=lambda a: (_bedrock_account_rank(a, satellites), a))]
         providers.append(row)
 
     aws_budget = aws_budgets()
     ce_series = _ce_series(ce_rows, ce_app_rows)
     aws = []
-    retired = ce.RETIRED_ACCOUNT_KEY
-    shown = _AWS_ACCOUNTS + ((retired,) if any(start <= d < month_end for d in ce_series.get(retired, {})) else ())
+    # AA-1127 (C2): ce.account_key() names a live Bedrock satellite's Cost Explorer rows by its registry key (the
+    # account serving Bedrock since AA-1095), so the forecast shows that account as its own row like the AWS bill tab;
+    # the satellite and the retired account appear only when they have data this month.
+    optional = (*satellites, ce.RETIRED_ACCOUNT_KEY)
+    shown = _AWS_ACCOUNTS + tuple(k for k in optional if any(start <= d < month_end for d in ce_series.get(k, {})))
     for acc in shown:
         days = {d: v for d, v in ce_series.get(acc, {}).items() if d < q_end}
         row: dict[str, Any] = {"account": acc, "label": account_label(acc), "covered_from": None,

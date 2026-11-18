@@ -44,13 +44,14 @@ import re
 import threading
 import time
 import uuid
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 import structlog
 
-from shared import cost_guard
+from shared import cost_guard, tenant_ai_notices
 
-from . import connections
+from . import connections, spend_environment
 
 logger = structlog.get_logger()
 
@@ -126,6 +127,36 @@ def approval_required(budget: cost_guard.TenantAIBudget) -> TenantBudgetApproval
     return exc
 
 
+# AA-1126 (CIS 447): the spend rules in force, ``cis.spend.environment`` (shared/llm_client/spend_environment.py). dev
+# keeps today's fail-closed read (AA-642 A8); prod degrades with a warning (L4).
+# In-process pace of the best-effort "budget unreadable" bell (the bell itself is also de-duplicated in the database,
+# one unread bell per tenant per 24 h, tenant_ai_notices.maybe_alert_tenant_unreadable).
+UNREADABLE_BELL_EVERY_SECONDS = 600.0  # technical-constant: in-process de-dup of a best-effort bell write
+_bell_at: dict[str, float] = {}
+
+
+async def _alert_unreadable(tenant_id: str) -> None:
+    conn = await connections._connect()
+    try:
+        await tenant_ai_notices.maybe_alert_tenant_unreadable(conn, tenant_id)
+    finally:
+        await conn.close()
+
+
+def _bell_unreadable(tenant_id: str) -> None:
+    """One admin bell that ``tenant_id``'s AI budget could not be read and its calls go on (prod rules). Best effort,
+    at most once per tenant per UNREADABLE_BELL_EVERY_SECONDS in this process; never raises."""
+    now = time.monotonic()
+    last = _bell_at.get(tenant_id)
+    if last is not None and now - last < UNREADABLE_BELL_EVERY_SECONDS:
+        return
+    _bell_at[tenant_id] = now
+    try:
+        alerter_unreadable(tenant_id)
+    except Exception as e:  # noqa: BLE001 — the database may be the reason the budget was unreadable
+        logger.warning("tenant_ai_budget_unreadable_bell_failed", tenant_id=tenant_id, error=str(e)[:200])
+
+
 def enabled() -> bool:
     return (os.environ.get(SWITCH_ENV) or "on").strip().lower() not in ("off", "false", "0", "no")
 
@@ -139,9 +170,38 @@ def is_tenant_spend_stage(stage: Optional[str]) -> bool:
     return is_t_stage(stage) or (bool(stage) and stage.startswith(ADHOC_STAGE_PREFIX))
 
 
-# What the tenant's live progress view says while a job waits for staff approval (plain words: no budget figures,
-# no stage names; the tenant sees content, the bell tells staff why).
-ON_HOLD_MESSAGE = "Writing is on hold and will continue automatically. No need to try again."
+# What the tenant's live progress view says while a job waits for more AI allowance (plain words: no budget figures,
+# no stage names; the tenant sees content, the bell tells staff why). AA-1126 L1: the real reason, since the agency
+# can act on it (upgrade); the hourly tenant_account_tick re-queues the held jobs once the tenant no longer needs
+# approval (a new month, an upgrade or a staff override: services/tenant_account/lifecycle.resume_allowance_holds).
+ON_HOLD_MESSAGE = ("Your plan's AI writing allowance for this month is used up. Writing continues on its own when the "
+                   "allowance resets or after an upgrade. No need to try again.")
+
+# AA-1126 L1: the code the tenant API (/v1/*) answers for "the plan's AI allowance is used up": on a version or piece
+# whose job is held by its tenant's AI budget (``job_stop_code``), and as the error code of a request that would start
+# new AI writing (HTTP 402). The Content studio shows the reason, an Upgrade link and no Retry until it resets.
+QUOTA_STOP_CODE = "ai_quota_exhausted"
+QUOTA_STOP_MESSAGE = "Your plan's AI writing allowance for this month is used up."
+
+
+def job_stop_code_sql(alias: str = "") -> str:
+    """The SQL expression of a job row's tenant-facing stop code (``QUOTA_STOP_CODE`` for an approval stop, else NULL).
+    ``alias``: the shared.job alias (``"j"``), or empty for the bare columns."""
+    a = f"{alias}." if alias else ""
+    return (f"CASE WHEN {a}status = 'stopped_budget' AND {a}error LIKE '{APPROVAL_REASON}%' "
+            f"THEN '{QUOTA_STOP_CODE}' END")
+
+
+def allowance_resets_at(now: Optional[datetime] = None) -> date:
+    """The day a monthly AI allowance resets: the first day of the next UTC month (budgets count UTC months)."""
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    return (now.replace(day=1) + timedelta(days=32)).replace(day=1).date()
+
+
+def quota_refusal(now: Optional[datetime] = None) -> dict:
+    """The body (FastAPI ``detail``) of a tenant request refused because its plan's AI allowance is used up."""
+    return {"code": QUOTA_STOP_CODE, "message": QUOTA_STOP_MESSAGE,
+            "resets_at": allowance_resets_at(now).isoformat()}
 
 
 def approval_stop_in(exc: Optional[BaseException]) -> Optional[TenantBudgetApprovalRequired]:
@@ -201,6 +261,9 @@ async def _load_state(tenant_id: str) -> Optional[cost_guard.TenantAIBudget]:
         budget = await cost_guard.tenant_budget_check(conn, tenant_id)
         if budget is not None and (budget.alerting or budget.needs_approval):
             await cost_guard.maybe_alert_tenant(conn, budget)
+        if budget is not None and budget.needs_approval:
+            # AA-1126 L1: the agency is told too (Content studio bell), once per month
+            await tenant_ai_notices.notify_tenant_allowance_used(conn, budget.tenant_id)
         return budget
     finally:
         await conn.close()
@@ -280,6 +343,12 @@ def check(stage: Optional[str]) -> Optional[cost_guard.TenantAIBudget]:
         logger.warning("tenant_ai_budget_check_failed", stage=stage, error=str(e)[:200])
         return None
     if unreadable and is_tenant_spend_stage(stage):
+        if spend_environment.is_prod():
+            # AA-1126 L4: the prod spend rules never block a tenant on a read error: warn (log + one admin bell) and
+            # let the call go on without the budget check.
+            logger.warning("tenant_ai_budget_unreadable_degraded", stage=stage, tenant_id=tenant_id)
+            _bell_unreadable(tenant_id)
+            return None
         logger.warning("tenant_ai_budget_unreadable_fail_closed", stage=stage, tenant_id=tenant_id)
         raise counter_unavailable(tenant_id)
     if budget is not None and budget.needs_approval and is_tenant_spend_stage(stage):
@@ -296,9 +365,14 @@ def _load_state_sync(tenant_id: str) -> Optional[cost_guard.TenantAIBudget]:
     return connections.run_sync(lambda: _load_state(tenant_id))
 
 
+def _alert_unreadable_sync(tenant_id: str) -> None:
+    connections.run_sync(lambda: _alert_unreadable(tenant_id))
+
+
 # Tests replace them (conftest: no database in unit tests).
 loader_tenants = _load_tenants_sync
 loader_state = _load_state_sync
+alerter_unreadable = _alert_unreadable_sync
 
 
 def invalidate() -> None:
@@ -306,3 +380,4 @@ def invalidate() -> None:
     _tenants, _tenants_at, _tenants_failed_at = None, 0.0, 0.0
     _state.clear()
     _failed_at.clear()
+    _bell_at.clear()

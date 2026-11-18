@@ -114,8 +114,11 @@ ROW_HINTS = {
 
 # Provider families of the AI spend (the provider column of llm_call_log / llm_call_daily -> the spend_budget
 # provider the legacy overview cost table shows). Jev decisions are logged with provider "typesafe" (the vendor,
-# shared/llm_client/decide.py), so "typesafe" is the Jev family. Anything else is "other".
-PROVIDER_FAMILY_ALIASES = {"openai": "openai", "jev": "jev", "typesafe": "jev"}
+# shared/llm_client/decide.py), so "typesafe" is the Jev family. AA-1127 (C2, S283 UI audit): the Anthropic API
+# (provider "anthropic", shared/llm_client/client.py) is a family of its own with its spend_budget provider
+# ("anthropic", shared/cost_guard.PROVIDERS); it used to fall under "other" with no budget while it was the largest
+# line. Anything else is "other".
+PROVIDER_FAMILY_ALIASES = {"openai": "openai", "jev": "jev", "typesafe": "jev", "anthropic": "anthropic"}
 
 
 def provider_family(provider: Optional[str]) -> str:
@@ -352,8 +355,8 @@ async def cost_by_app(pool: Any, month: Optional[str] = None, *, redis: Any = No
 
 
 async def ai_spend_by_provider(pool: Any, month: Optional[str] = None, now: Optional[datetime] = None) -> dict:
-    """This month's AI spend per provider family ({bedrock, openai, jev, other}) with the cost module's own query
-    (raw + rolled-up days, every app), so its total equals ``cost_by_app(...)["totals"]["ai_usd"]``. DB only."""
+    """This month's AI spend per provider family ({bedrock, openai, anthropic, jev, other}) with the cost module's own
+    query (raw + rolled-up days, every app), so its total equals ``cost_by_app(...)["totals"]["ai_usd"]``. DB only."""
     now = now or datetime.now(timezone.utc)
     start, end = month_window(month, now.date())
     rows = await pool.fetch(AI_SPEND_SQL, start, end)

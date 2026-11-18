@@ -50,10 +50,10 @@ PROVIDERS = (  # FI-02 section 2 order: key, label, source
     ("aws_acc2", "AWS main account (Cost Explorer)", "shared.cost_explorer_snapshot"),
     ("aws_acc3", "AWS LLM account, gross (Cost Explorer)", "shared.cost_explorer_snapshot"),
     ("bedrock_acc3", "Bedrock on the LLM account (gateway estimate)", "LLM ledger"),
+    ("bedrock_satellite", "Bedrock on the serving account (gateway estimate)", "LLM ledger"),   # AA-1127 C2
     ("bedrock_acc2", "Bedrock on the main account (gateway estimate)", "LLM ledger"),
-    ("openai", "OpenAI API", "LLM ledger"),
-    ("jev", "Jev (TypeSafe)", "LLM ledger"),
-    ("dfs", "DataForSEO", "shared.dfs_call_log"),
+    ("openai", "OpenAI API", "LLM ledger"), ("anthropic", "Anthropic API", "LLM ledger"),   # AA-1127 C2: own family
+    ("jev", "Jev (TypeSafe)", "LLM ledger"), ("dfs", "DataForSEO", "shared.dfs_call_log"),
     ("geocoder", "Geocoder (Geoapify and others)", "geo.geocode_call"),
 )
 
@@ -114,14 +114,15 @@ def in_window(day: Any, first: date, last: date) -> bool:
 
 
 def source_of(provider: Optional[str], account: Optional[str]) -> str:
-    """LLM ledger row -> FI-02 provider key (bedrock_acc3 / bedrock_acc2 / bedrock_retired, openai, jev, other)."""
+    """LLM ledger row -> FI-02 provider key; AA-1127 C2: Bedrock splits by cost_ops.ledger_account (forecast rule)."""
+    from api.services.cost_ops import ledger_account
     from api.services.platform_cost import provider_family
 
     fam = provider_family(provider)
-    if fam == "bedrock":
-        acc = account or "acc2"          # an older Bedrock row without account ran on acc2 (platform_cost rule)
-        return f"bedrock_{acc if acc in ('acc2', 'acc3') else 'retired'}"
-    return fam
+    if fam != "bedrock":
+        return fam
+    acc = ledger_account(provider, account)   # acc2 / acc3 / a live satellite's key / "retired"
+    return f"bedrock_{acc}" if acc in ("acc2", "acc3", "retired") else "bedrock_satellite"
 
 
 def ledger_sum(rows: Iterable[dict], first: date, last: date, key=lambda r: "all") -> dict[str, dict]:
@@ -196,7 +197,7 @@ def provider_spend(facts: dict, first: date, last: date) -> dict[str, dict]:
     llm = facts.get("llm")
     sums = {} if failed(llm) or llm is None else ledger_sum(llm, first, last,
                                                            key=lambda r: source_of(r["provider"], r["account"]))
-    for key in ("bedrock_acc3", "bedrock_acc2", "openai", "jev"):
+    for key in ("bedrock_acc3", "bedrock_satellite", "bedrock_acc2", "openai", "anthropic", "jev"):
         out[key] = {"usd": None if failed(llm) else round(sums.get(key, {}).get("cost_usd", 0.0), 4)}
     out["dfs"] = {"usd": daily_sum(facts.get("dfs"), first, last)}
     out["geocoder"] = {"usd": daily_sum(facts.get("geo"), first, last)}
@@ -360,11 +361,11 @@ def week_compute(facts: dict, first: date, last: date) -> dict:
         lines.append({"key": key, "label": label, "source": source, "usd": t, "prev_usd": p, "change": change(t, p),
                       "flag": wow_flag(t, p), "days_present": this[key].get("days_present")})
     # One week total without counting acc3 Bedrock twice: AWS acc3 (gross bill) replaces the gateway's estimate for
-    # the LLM account when Cost Explorer covers the whole week.
-    acc3_full = (this["aws_acc3"].get("days_present") or 0) >= 7
+    # the LLM account when Cost Explorer covers the whole week. AA-1127 C2: the satellite's estimate counts (no CE).
+    acc3 = "aws_acc3" if (this["aws_acc3"].get("days_present") or 0) >= 7 else "bedrock_acc3"
 
     def total(spend: dict) -> Optional[float]:
-        keys = ["aws_acc2", "openai", "jev", "dfs", "geocoder", "aws_acc3" if acc3_full else "bedrock_acc3"]
+        keys = ["aws_acc2", "bedrock_satellite", "openai", "anthropic", "jev", "dfs", "geocoder", acc3]
         vals = [spend[k]["usd"] for k in keys]
         return round(sum(v for v in vals if v is not None), 4) if any(v is not None for v in vals) else None
     return {"lines": lines, "total_usd": total(this), "prev_total_usd": total(prev),
@@ -912,17 +913,15 @@ def vendors(facts: dict) -> dict:
     llm_ok = llm is not None and not failed(llm)
 
     def llm_src(f, lst, key):
-        if not llm_ok:
-            return None
-        return round(ledger_sum(llm, f, lst, key=lambda r: source_of(r["provider"], r["account"])).get(
-            key, {}).get("cost_usd", 0.0), 4)
+        sums = ledger_sum(llm, f, lst, key=lambda r: source_of(r["provider"], r["account"])) if llm_ok else {}
+        return round(sums.get(key, {}).get("cost_usd", 0.0), 4) if llm_ok else None
     geo = facts.get("geo")
     geo_providers = sorted({r["provider"] for r in geo}) if geo and not failed(geo) else []
     rows = [
-        {"vendor": "Amazon Bedrock (LLM account, gateway estimate)", "usd": llm_src(first, last, "bedrock_acc3"),
-         "prev_usd": llm_src(pf, pl, "bedrock_acc3"), "usage": None},
-        {"vendor": "OpenAI API", "usd": llm_src(first, last, "openai"), "prev_usd": llm_src(pf, pl, "openai"),
-         "usage": None},
+        *({"vendor": name, "usd": llm_src(first, last, k), "prev_usd": llm_src(pf, pl, k), "usage": None}   # AA-1127 C2
+          for k, name in (("bedrock_acc3", "Amazon Bedrock (LLM account, gateway estimate)"),
+                          ("bedrock_satellite", "Amazon Bedrock (serving account, gateway estimate)"),
+                          ("openai", "OpenAI API"), ("anthropic", "Anthropic API"))),
         {"vendor": "Jev (TypeSafe), decision log", "usd": daily_sum(facts.get("jev"), first, last),
          "prev_usd": daily_sum(facts.get("jev"), pf, pl),
          "usage": f"{daily_sum(facts.get('jev'), first, last, 'uncached') or 0:,.0f} uncached decisions"},

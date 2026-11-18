@@ -397,6 +397,9 @@ function ProvidersOverview() {
     return groupRows(withFacts);
   }, [data, conns.data, avail.data]);
   const look = data ? needsLook(data.providers) : undefined;
+  // AA-1127: the AI (LLM) part of the month, the same figure as Overview and Spend (an older API sends none).
+  const monthHint = (since: string, llm: number | null | undefined) =>
+    llm == null ? t("tileMonthHint", since) : t("tileMonthLlmHint", since, usd(llm, 2));
 
   if (q.error) {
     return <ErrorState message={`${t("loadError")}: ${(q.error as Error).message}`} onRetry={() => q.refetch()} />;
@@ -408,7 +411,7 @@ function ProvidersOverview() {
       data-testid={data ? "ai-gateway-ready" : undefined}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(220px, 100%), 1fr))", gap: 12 }}>
         <KpiTile label={t("tileMonth")} value={data ? usd(data.totals.month_usd, 2) : undefined}
-          hint={data ? t("tileMonthHint", data.month_start.slice(0, 10)) : undefined} />
+          hint={data ? monthHint(data.month_start.slice(0, 10), data.totals.llm_month_usd) : undefined} />
         <KpiTile label={t("tileToday")} value={data ? usd(data.totals.today_usd, 2) : undefined}
           hint={t("tileTodayHint")} />
         <KpiTile label={t("tileLook")} value={look}

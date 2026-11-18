@@ -117,6 +117,7 @@ from api.middleware.sentry_context import sentry_context_middleware
 from api.middleware.staff_bearer import StaffBearerMiddleware  # AA-816 C3
 from api.middleware.staff_audit import StaffAuditMiddleware  # AA-884
 from api.middleware.request_id import RequestIdMiddleware, unhandled_error_handler  # AA-871
+from api.middleware.security_headers import SecurityHeadersMiddleware  # AA-1111 S284
 from api.core import readiness  # AA-884 — /health git_sha, /health/ready
 from api.version import __version__  # AA-891 — release version (release-please bumps it)
 from api.core import staff_identity  # AA-816 C3
@@ -458,6 +459,9 @@ app.add_exception_handler(CatalogProblem, catalog_problem_handler)
 # AA-1105 — a /learn/v1 sign-in refusal (router dependency) answers the learn.http.v1 Problem body.
 app.add_exception_handler(LearnProblem, learn_problem_handler)
 app.add_exception_handler(Exception, unhandled_error_handler)
+# AA-1111 (S284, ZAP baseline) — just inside the request id: nosniff + HSTS on every response, the 401/403/429 of the
+# middlewares above included (the unhandled 500 gets them from unhandled_error_handler).
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestIdMiddleware)
 
 def get_pool() -> asyncpg.Pool:

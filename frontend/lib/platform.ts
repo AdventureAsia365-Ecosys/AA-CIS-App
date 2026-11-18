@@ -142,14 +142,18 @@ export interface TpSpendToday {
   level: "ok" | "warn" | "cap_reached";
   since: string;
   stages: string[];
-  /** AA-1015: each online stage against its own daily cap (cap_usd null = no stage cap set in TripPlanner, only the
+  /** AA-1015: each online stage against its own daily cap (cap_usd null = no stage cap set on Platform › Settings, only the
    *  combined cap applies). Absent on a payload cached before the field existed. */
   stage_caps?: TpStageCap[];
-  /** true when any stage cap is set (mirrored TripPlanner env; unset today) */
+  /** true when any stage cap is set (settings tripplanner.spend.stage_cap_*_usd, CIS 447; 0 = none) */
   stage_caps_set?: boolean;
   /** TripPlanner's own rule: at near_cap_pct % of the combined cap or of a stage cap */
   near_cap?: boolean;
   near_cap_pct?: number;
+  /** AA-1126: TripPlanner's spend rules (tripplanner.spend.environment) and what a reached cap does under them
+   *  (lib/spendRules.ts); null / absent = not known. */
+  spend_environment?: "dev" | "prod" | null;
+  cap_rule?: "alert_only" | "stops_ai" | null;
 }
 
 export interface TpStageCap {
@@ -172,7 +176,7 @@ export interface TripPlannerCard extends CardHealth {
   spend_today?: TpSpendToday | null;
   /** AA-804: TripPlanner stops calling AI when its spend cannot be read (fail closed, root ADR 0009); the card says so
    *  when CIS's read of that spend fails. Absent on a payload cached before the field existed. */
-  ai?: { paused: boolean; reason: "spend_unreadable" | null };
+  ai?: { paused: boolean; reason: "spend_unreadable" | null; spend_environment?: "dev" | "prod" | null };
 }
 
 /** AA-936 — the partner CRM, probed like Booking (/crm/health, /crm/health/ready). */
