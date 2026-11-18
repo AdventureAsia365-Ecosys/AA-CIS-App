@@ -1,6 +1,6 @@
 {
  "about": "Byte copy of the root collector's delivery engine (AA-1135). Never edit the copy: change the root file, then run the root tools/delivery/sync_engine.py --cis <this repo>.",
  "source": "AA-Ecosys/tools/delivery/delivery_engine.py",
- "sha256": "c8283a18d2e78ae6debacab8a6bcee71d4aa46c014e2e014c46323220b2a81de",
+ "sha256": "e03e001c90bd624fab7a10fc55ffa3d7be551cb31bf2fbf5ac1f3aef14fc2edc",
  "definitions_version": "2026-11-18"
 }

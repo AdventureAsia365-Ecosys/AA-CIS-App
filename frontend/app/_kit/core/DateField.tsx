@@ -15,6 +15,9 @@
 //   - text that is not a day ("31/11/2026") is marked invalid while the field has focus; on blur it is dropped and
 //     the box shows the page's value again;
 //   - when the page's value changes from outside (Reset filters, a form reset), any pending text goes.
+// The text box may shrink to its wrapper (min-width 0, a page's `style` can still set one): a flex item keeps its
+// intrinsic width otherwise, so a field in a narrower wrapper drew over the controls next to it (AA-1135, the
+// Platform › Delivery custom range covered its Apply button).
 // The time field stays in Booking until the kit form controls (AA-994 S6a).
 
 import { useRef, useState, type CSSProperties } from "react";
@@ -134,7 +137,7 @@ export function DateField({
           }
         }}
         className={className}
-        style={{ ...style, paddingRight: 34, ...(invalid ? { borderColor: K.danger } : null) }}
+        style={{ minWidth: 0, ...style, paddingRight: 34, ...(invalid ? { borderColor: K.danger } : null) }}
       />
       <button
         type="button"

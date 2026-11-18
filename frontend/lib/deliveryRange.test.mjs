@@ -3,11 +3,13 @@
 // Run: npm run test:unit (node --test with --experimental-strip-types).
 
 import assert from "node:assert/strict";
+import { readFileSync, readdirSync } from "node:fs";
 import { test } from "node:test";
 
 import {
-  appTrendRows, customProblem, doraNumber, dayCount, edgeLabel, flowSteps, histRows, isDay, parseRange, pickSort, rangeParams,
-  rangeQuery, sortCards, squarify, statusRank, trendRows, trendValue, weeklyRows, windowNote, withRange,
+  SERIES_VARS, appTrendRows, customProblem, doraNumber, dayCount, edgeLabel, flowSteps, histRows, isDay, parseRange,
+  pickSort, rangeParams, rangeQuery, rangeWhen, sortCards, squarify, statusRank, trendRows, trendValue, weeklyRows,
+  windowNote, withRange, Y_AXIS, yTickSlack,
 } from "./deliveryRange.ts";
 import { gitWindow, kindRows } from "./deliveryActivity.ts";
 
@@ -194,4 +196,42 @@ test("windowNote says when the range starts before the complete history", () => 
   assert.deepEqual([g.clipped, g.coveredDays, g.startsOn, g.days], [true, 10, "2026-09-21", 30]);
   assert.equal(windowNote(git, true, "2026-08-01").clipped, false);
   assert.equal(windowNote(git, true, "not a day").clipped, false);
+});
+
+test("rangeWhen says the preset's days or the custom days (AA-1135 follow-up: never a fixed 4 weeks)", () => {
+  assert.deepEqual(rangeWhen(parseRange(getter(""))), { custom: false, days: 28 });
+  assert.deepEqual(rangeWhen(parseRange(getter("range=7d"))), { custom: false, days: 7 });
+  assert.deepEqual(rangeWhen(parseRange(getter("range=90d"))), { custom: false, days: 90 });
+  assert.deepEqual(rangeWhen(parseRange(getter("range=custom&from=2026-11-05&to=2026-11-12"))),
+    { custom: true, from: "2026-11-05", to: "2026-11-12" });
+});
+
+test("the series colours are distinct kit tokens with one orange only (CIS and TripPlanner looked alike)", () => {
+  assert.equal(new Set(SERIES_VARS).size, SERIES_VARS.length);
+  assert.ok(SERIES_VARS.length >= 6, "one colour per app of the summary");
+  const oranges = SERIES_VARS.filter((v) => /accent|gold|amber/.test(v));
+  assert.deepEqual(oranges, ["--aa-accent"]);
+  for (const v of SERIES_VARS) assert.match(v, /^--aa-[a-z-]+$/);
+});
+
+test("the delivery charts' numeric Y axis holds a five-character tick (S284: '180' was cut to '80')", () => {
+  assert.ok(yTickSlack("99999") >= 0, "five digits fit");
+  assert.ok(yTickSlack("12.75") >= 0, "a decimal fits");
+  assert.equal(Y_AXIS.marginLeft, 0, "Recharts draws nothing left of the chart: a negative left margin cuts the ticks");
+  // the old setting of the queue histogram and the activity charts: the guard bites on it
+  assert.ok(yTickSlack("180", { width: 36, marginLeft: -16, fontSize: 10 }) < 0);
+});
+
+test("every numeric Y axis of Platform › Delivery uses Y_AXIS, and no chart has a negative left margin", () => {
+  const dir = new URL("../app/admin/platform/delivery/", import.meta.url);
+  const files = readdirSync(dir).filter((f) => f.endsWith(".tsx"));
+  assert.ok(files.length >= 3);
+  for (const f of files) {
+    const src = readFileSync(new URL(f, dir), "utf8");
+    assert.doesNotMatch(src, /margin=\{\{[^}]*left:\s*-/, `${f}: a negative left margin cuts the Y tick labels`);
+    for (const m of src.matchAll(/<YAxis\b[^>]*\/>/gs)) {
+      if (/type="category"/.test(m[0])) continue;   // a label axis has its own width
+      assert.match(m[0], /width=\{Y_AXIS\.width\}/, `${f}: numeric YAxis without Y_AXIS.width: ${m[0]}`);
+    }
+  }
 });

@@ -29,9 +29,9 @@ import {
   type QueueEntry, type QueueMetric, type QueueReason, type QueueResp, type QueueWorkflow,
 } from "@/lib/deliveryActivity";
 import { fmtHours, fmtNum, fmtRatio, fmtSeconds, repoUrl, safeGithubUrl, shortSha, statusTone } from "@/lib/deliveryMetrics";
-import { parseRange, rangeQuery, sortCards, statusRank, withRange } from "@/lib/deliveryRange";
+import { Y_AXIS, parseRange, rangeQuery, sortCards, statusRank, withRange } from "@/lib/deliveryRange";
 import { ACTIVITY } from "./activity.messages";
-import { ChurnTreemap, QueueCharts, SortPicker, WindowLabel, useCardSort } from "./RangeCharts";
+import { ChurnTreemap, QueueCharts, SortPicker, WindowLabel, useCardSort, useRangeWhen } from "./RangeCharts";
 
 const small = { fontSize: 12, color: K.muted, lineHeight: 1.45 } as const;
 const linkStyle = { color: K.accentDeep, display: "inline-flex", gap: 4, alignItems: "center", fontSize: 12 } as const;
@@ -126,9 +126,9 @@ function ThroughputChart({ app, t }: { app: QueueApp; t: AT }) {
     <Section title={t("secThroughput")} description={t("secThroughputDesc")} testId="queue-throughput">
       <div style={{ width: "100%", height: 200 }}>
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={rows} margin={{ top: 4, right: 8, bottom: 4, left: -16 }}>
+          <BarChart data={rows} margin={{ top: 4, right: 8, bottom: 4, left: Y_AXIS.marginLeft }}>
             <XAxis dataKey="label" tick={{ fontSize: 10, fill: c.axis }} interval="preserveStartEnd" minTickGap={12} />
-            <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: c.axis }} width={36} />
+            <YAxis allowDecimals={false} tick={{ fontSize: Y_AXIS.fontSize, fill: c.axis }} width={Y_AXIS.width} />
             <Tooltip {...CHART_TOOLTIP} />
             <Legend wrapperStyle={{ fontSize: 11 }} />
             {QUEUE_OUTCOMES.map((o) => <Bar key={o} dataKey={o} name={t(`outcome${o}` as Key)} stackId="q"
@@ -213,9 +213,11 @@ function useEntryColumns(t: AT): ColumnDef<QueueEntry, unknown>[] {
 
 function EntriesSection({ app, t, flaky }: { app: QueueApp; t: AT; flaky?: boolean }) {
   const columns = useEntryColumns(t);
+  const when = useRangeWhen();
   const rows = flaky ? app.queue.flaky_entries : app.queue.recent;
   return (
-    <Section title={t(flaky ? "secFlakyEntries" : "secRecent")} description={t(flaky ? "secFlakyEntriesDesc" : "secRecentDesc")}
+    <Section title={t(flaky ? "secFlakyEntries" : "secRecent")}
+      description={flaky ? t("secFlakyEntriesDesc") : t("secRecentDesc", when)}
       testId={flaky ? "queue-flaky" : "queue-recent"}>
       <DataTable<QueueEntry> tableId={`queue-${flaky ? "flaky" : "recent"}-${app.id}`} data={rows} columns={columns}
         getRowId={(e) => `${e.pr}-${e.attempt}`} paginate={false} searchable={false} tableMinWidth={980}
@@ -252,6 +254,7 @@ function QueueRepo({ app, t }: { app: QueueApp; t: AT }) {
 
 export function MergeQueueTab() {
   const t = useActivityT();
+  const when = useRangeWhen();
   const { get, set } = useUrlFilters();
   const q = useSection<QueueResp>(QUEUE_PATH, "queue");
   const apps = q.data?.apps ?? [];
@@ -262,7 +265,7 @@ export function MergeQueueTab() {
     (a, m) => queueValue(a.queue, m as QueueMetric), () => false);
   return (
     <div style={grid} data-testid="delivery-queue-tab">
-      <span style={small}>{t("queueIntro")}</span>
+      <span style={small} data-testid="delivery-queue-intro">{t("queueIntro", when)}</span>
       <TabState q={q} empty={t("noQueueApps")} t={t} />
       {apps.length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
         <RepoPicker apps={apps} active={app?.id ?? "all"} t={t}
@@ -472,9 +475,9 @@ function WeeklyChart({ app, t }: { app: GitApp; t: AT }) {
   return (
     <div style={{ width: "100%", height: 140 }} data-testid="git-weekly">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={rows} margin={{ top: 4, right: 8, bottom: 4, left: -16 }}>
+        <BarChart data={rows} margin={{ top: 4, right: 8, bottom: 4, left: Y_AXIS.marginLeft }}>
           <XAxis dataKey="label" tick={{ fontSize: 10, fill: c.axis }} interval="preserveStartEnd" minTickGap={12} />
-          <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: c.axis }} width={36} />
+          <YAxis allowDecimals={false} tick={{ fontSize: Y_AXIS.fontSize, fill: c.axis }} width={Y_AXIS.width} />
           <Tooltip {...CHART_TOOLTIP} />
           <Bar dataKey="n" name={t("commitsPerWeek")} fill={c.bar} isAnimationActive={false} />
         </BarChart>
