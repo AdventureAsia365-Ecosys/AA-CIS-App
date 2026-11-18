@@ -479,7 +479,6 @@
   "frontend/app/admin/lab/writing-memory/WritingMemory.tsx::RuleDrawer": 24,
   "frontend/app/admin/lab/writing-memory/WritingMemory.tsx::SummaryBar": 11,
   "frontend/app/admin/lab/writing-memory/WritingMemory.tsx::WritingMemory": 12,
-  "frontend/app/admin/master-content/page.tsx::BrandAuditBadge": 13,
   "frontend/app/admin/master-content/page.tsx::DfsCompareSection": 11,
   "frontend/app/admin/master-content/page.tsx::DfsCompareSection.useMemo().sort()": 14,
   "frontend/app/admin/master-content/page.tsx::MasterContentPageInner": 66,
