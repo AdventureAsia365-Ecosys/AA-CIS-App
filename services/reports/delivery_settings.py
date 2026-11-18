@@ -1,5 +1,5 @@
-"""AA-1108 (CIS 433) and AA-1125 (CIS 445) — the settings registry keys of Platform › Delivery and of the DORA keys of
-DEV-01.
+"""AA-1108 (CIS 433), AA-1125 (CIS 445) and AA-1135 (CIS 448) — the settings registry keys of Platform › Delivery and
+of the DORA keys of DEV-01.
 
 Every colour threshold of the delivery metrics is a platform setting on Platform › Settings (area "delivery"; tech lead
 S279: a threshold is a setting, never a code literal; S282 decision 4: the starting values are the DORA "high" band).
@@ -61,3 +61,10 @@ QUEUE_BANDS: dict[str, tuple[str, str, bool]] = {
 
 QUEUE_ALL = (QUEUE_WAIT_GREEN_HOURS, QUEUE_WAIT_AMBER_HOURS, QUEUE_EJECTION_GREEN_PCT, QUEUE_EJECTION_AMBER_PCT,
              QUEUE_FLAKY_GREEN_PCT, QUEUE_FLAKY_AMBER_PCT)
+
+# AA-1135 (CIS 448): the custom date range of Platform › Delivery (api/services/delivery_range.py). The longest range
+# (days, from and to included) it computes, and how many computed ranges it keeps until the next collection.
+CUSTOM_RANGE_MAX_DAYS = "cis.delivery.custom_range_max_days"
+CUSTOM_RANGE_CACHE_ENTRIES = "cis.delivery.custom_range_cache_entries"
+
+RANGE_ALL = (CUSTOM_RANGE_MAX_DAYS, CUSTOM_RANGE_CACHE_ENTRIES)
