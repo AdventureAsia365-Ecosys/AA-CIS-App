@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 448_aa1127_gateway_idle_setting.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -2324,6 +2324,42 @@
      "lower": "hard_stop: kết nối vượt ngân sách không bao giờ được gọi; job không còn đường nào khác sẽ dừng vì ngân sách và chờ.",
      "when": "Giữ hard_stop ở Dev để tránh test quá tay. Dùng failover_continue ở prod, nơi khách trả theo mức dùng và không được bị chặn bởi trần của nền tảng.",
      "example": "Với mặc định hard_stop, job mà mọi kết nối đều ở 100 % ngân sách sẽ dừng. Với failover_continue lệnh gọi sang kết nối kế, và nếu tất cả đều 100 % thì vẫn tới kết nối khoẻ đầu tiên và chuông admin báo việc đó."
+    }
+   }
+  },
+  {
+   "key": "cis.llm.idle_after_hours",
+   "app": "cis",
+   "area": "ai",
+   "label": "AI gateway: hours without a call before a connection reads idle",
+   "description": "AI gateway > Providers (api/services/llm_availability.py): a connection or model with no failure since its newest answered call reads ok while that call is at most this many hours old, then unknown with no reason, shown as No recent calls. The Need a look tile leaves such an idle row out (frontend/lib/aiGateway.ts needsLook follows the row badge). A failure newer than the answered call still reads blocked or degraded at once, whatever this value.",
+   "value_type": "int",
+   "unit": "hours",
+   "min_value": 1,
+   "max_value": 168,
+   "allowed_values": null,
+   "default_value": 6,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How long a working AI connection keeps its green ok badge on AI gateway > Providers after its last answered call. After that it shows No recent calls and is not counted in Need a look.",
+     "raise": "A connection used only now and then stays green longer; a connection that silently stopped answering also looks fine for longer.",
+     "lower": "The page tells you sooner that a connection has not been used; quiet connections show No recent calls more often.",
+     "when": "Raise it when connections that are only used a few times a day keep showing No recent calls; lower it when you want to notice an unused connection sooner.",
+     "example": "With the default of 6 hours, a connection whose last answered call was 7 hours ago shows No recent calls and the Need a look tile does not count it."
+    },
+    "vi": {
+     "what": "Một kết nối AI đang chạy tốt giữ nhãn xanh ok trên AI gateway > Providers bao lâu sau lần gọi có trả lời gần nhất. Sau mốc đó nó hiện No recent calls và không được tính vào ô Need a look.",
+     "raise": "Kết nối chỉ thỉnh thoảng mới dùng giữ màu xanh lâu hơn; kết nối âm thầm ngừng trả lời cũng trông như bình thường lâu hơn.",
+     "lower": "Trang báo sớm hơn rằng một kết nối chưa được dùng; kết nối ít dùng hiện No recent calls thường hơn.",
+     "when": "Tăng khi các kết nối chỉ dùng vài lần mỗi ngày cứ hiện No recent calls; giảm khi muốn biết sớm hơn một kết nối không được dùng.",
+     "example": "Với mặc định 6 giờ, kết nối có lần gọi trả lời gần nhất cách đây 7 giờ hiện No recent calls và ô Need a look không tính nó."
     }
    }
   },
