@@ -55,10 +55,33 @@ def clean_history(raw: Any) -> list[dict]:
     return [i for i in items if i is not None][:HISTORY_ITEMS]
 
 
+def _review_object(obj: dict) -> tuple[Optional[bool], Optional[str]]:
+    """The root bundle's object form (rule 15, root tools/docs/docs_freshness.py): {since, count, changes: [{entry,
+    repo, sha, date, files}]}: flagged when it names at least one change; the reason names how many changes since
+    when and the doc-map entries (repos) they came through."""
+    raw_changes = obj.get("changes")
+    changes = [c for c in raw_changes if isinstance(c, dict)] if isinstance(raw_changes, list) else []
+    count = obj.get("count")
+    count = count if isinstance(count, int) and not isinstance(count, bool) and count >= 0 else len(changes)
+    if count == 0:
+        return False, None
+    since = obj.get("since") if isinstance(obj.get("since"), str) and _ISO_DATE.match(obj["since"]) else None
+    names = []
+    for c in changes:
+        name = _text(c.get("entry"), 60)
+        repo = _text(c.get("repo"), 40)
+        if name and f"{name} ({repo})" not in names:
+            names.append(f"{name} ({repo})" if repo else name)
+    head = f"{count} code change{'s' if count != 1 else ''}" + (f" since {since[:10]}" if since else "")
+    return True, _text(head + (": " + ", ".join(names) if names else ""), REASON_CHARS)
+
+
 def clean_review(raw: dict) -> tuple[Optional[bool], Optional[str]]:
-    """(``needs_review``, ``needs_review_reason``): the flag only when it is a boolean, the reason only on a flagged
-    page and only when it is non-empty text."""
+    """(``needs_review``, ``needs_review_reason``): a boolean flag with its optional reason text, or the root bundle's
+    object form (see :func:`_review_object`); any other shape is null. The reason only on a flagged page."""
     flag = raw.get("needs_review")
+    if isinstance(flag, dict):
+        return _review_object(flag)
     if not isinstance(flag, bool):
         return None, None
     reason = _text(raw.get("needs_review_reason"), REASON_CHARS) if flag else None
