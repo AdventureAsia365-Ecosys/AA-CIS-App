@@ -2113,7 +2113,7 @@ async def list_notifications(
         "provider_circuit_open":    "Provider paused",        # AA-1025 B3 (Jev / DataForSEO / Geoapify circuit)
         "platform.provider_credit.low": "Provider credit low",  # AA-1025 B5 (vendor API credit ledger)
         "llm_model_lifecycle":      "LLM model end of life",  # AA-1024 D2 (routed model EOL within 90 days)
-        "platform.tripplanner.spend_degraded": "TripPlanner spend check degraded",  # AA-1126 L4 (TripPlanner, CIS 447)
+        "platform.tripplanner.spend_degraded": "TripPlanner spend check degraded",  # AA-1126 L4 (tp-034 relay)
     }
 
     items = []
