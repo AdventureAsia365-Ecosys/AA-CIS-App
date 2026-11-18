@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -9432,6 +9432,42 @@
      "lower": "Tắt: một quản trị viên tự đổi được; nhanh hơn, chỉ có e-mail làm bước kiểm tra.",
      "when": "Bật khi ra mắt bản production đầu tiên hoặc có tenant trả phí đầu tiên.",
      "example": "Với mặc định tắt (off, giai đoạn phát triển)."
+    }
+   }
+  },
+  {
+   "key": "cis.spend.connection_provider_budget_usd",
+   "app": "cis",
+   "area": "spend",
+   "label": "LLM connections: provider budget per month (USD)",
+   "description": "The monthly budget each LLM connection has at its provider (the AWS Budget of the account, the vendor console's monthly limit), by connection key, for example {\"acc3\": 100}. The apps split it: the CIS share is the connection's monthly budget (AI gateway > Providers > Connections), the CRM share is the CRM setting crm.ai.connection_monthly_cap_usd. AI gateway > Budgets shows the split and flags a connection whose two shares add up to more than this budget. A connection left out has no provider budget declared and is not checked. Read by api/services/llm_connection_split.py; no gateway call reads it.",
+   "value_type": "json",
+   "unit": "USD/month",
+   "min_value": 0,
+   "max_value": 1000000,
+   "allowed_values": null,
+   "default_value": {},
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The monthly budget a model connection has at its provider, the ceiling that the apps' own monthly caps on that connection must fit under together.",
+     "raise": "More room for the apps' shares; set it only to what the provider budget really is, or the check stops meaning anything.",
+     "lower": "The Budgets tab flags the connection sooner when the CIS and CRM shares add up to more than the provider allows.",
+     "when": "Set it when a provider budget is created or changed (an AWS Budget in Terraform, a vendor console limit), on the same day.",
+     "example": "With {\"acc3\": 100}, a CIS share of 80 and a CRM share of 30 on acc3 add up to 110: the Budgets tab flags acc3 as over-allocated by 10 USD."
+    },
+    "vi": {
+     "what": "Ngân sách hằng tháng của một kết nối model tại nhà cung cấp, là mức trần mà hạn mức tháng riêng của các app trên kết nối đó cộng lại phải nằm dưới.",
+     "raise": "Thêm chỗ cho phần của các app; chỉ đặt đúng bằng ngân sách thật ở nhà cung cấp, nếu không phép kiểm không còn ý nghĩa.",
+     "lower": "Tab Budgets đánh dấu kết nối sớm hơn khi phần của CIS và CRM cộng lại vượt mức nhà cung cấp cho phép.",
+     "when": "Đặt ngay trong ngày khi tạo hoặc đổi ngân sách ở nhà cung cấp (AWS Budget trong Terraform, giới hạn trên console của vendor).",
+     "example": "Với {\"acc3\": 100}, phần CIS 80 và phần CRM 30 trên acc3 cộng lại 110: tab Budgets đánh dấu acc3 vượt phân bổ 10 USD."
     }
    }
   },

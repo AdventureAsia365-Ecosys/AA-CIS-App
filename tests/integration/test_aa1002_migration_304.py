@@ -96,6 +96,14 @@ NOT_LATER = {
     "366_llm_family_fallback_chains.sql": "on main before the G8 guard (S271); this module passes without it",
     "382_llm_gpt6_luna_min_output_tokens.sql": "on main before the G8 guard (S271); this module passes without it",
     "383_llm_w0_remove_uncalibrated_rungs.sql": "on main before the G8 guard (S271); this module passes without it",
+    # AA-1113 (S284): contract views only (catalog.v_llm_connection_cap_v1 + columns appended to
+    # v_llm_gateway_config_v1, like 323 / 341 / 350); this module never reads them.
+    "452_aa1113_connection_cap_views.sql": "catalog contract views only, like 323/341/350; this module passes "
+                                           "without it",
+    # AA-1113 (S284): one settings row (cis.spend.connection_provider_budget_usd); the connection table is only named
+    # in a comment.
+    "453_aa1113_connection_provider_budget_setting.sql": "a settings row only; the connection table is named in a "
+                                                         "comment",
 }
 # AA-1042 (S269): the Opus 4.6 / 4.5 candidates CIS 376 switches on for their Anthropic API row (acc3 rows stay off).
 API_ONLY_376 = {"opus-4-6": "claude-opus-4-6", "opus-4-5": "claude-opus-4-5-20251101"}

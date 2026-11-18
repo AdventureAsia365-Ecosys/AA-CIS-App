@@ -9,6 +9,9 @@
 //
 // API: GET /api/admin/platform/delivery?section=queue|git (admin only, lib/rbac.ts). Pure helpers:
 // lib/deliveryActivity.ts. Kit only; the repo, period and directory live in the URL (?repo=, ?period=, ?dir=).
+// AA-1135: both tabs follow the page's range picker (?range=, ?from=, ?to=; the API serves the range's queue section
+// and git window), the queue cards sort (?sort=), the queue repo view adds the wait histogram, ejection reason bars and
+// weekly ejection rate, and the git map adds the churn treemap (RangeCharts.tsx).
 
 import { useQuery } from "@tanstack/react-query";
 import { ExternalLink, GitCommitHorizontal } from "lucide-react";
@@ -21,12 +24,14 @@ import {
 import { useChartColors } from "../../../_kit/useTheme";
 import {
   COMMIT_KINDS, GIT_PATH, QUEUE_METRICS, QUEUE_OUTCOMES, QUEUE_PATH, attemptLabel, calendarWeeks, fmtLines,
-  kindRows, kindShares, outcomeTone, pickDir, queueN, queueValue, weeklyCommits, windowKeys, worstQueueStatus,
+  gitWindow, kindRows, kindShares, outcomeTone, pickDir, queueN, queueValue, weeklyCommits, windowKeys, worstQueueStatus,
   type ChurnRow, type CommitKind, type GitApp, type GitNode, type GitResp, type GitWindow, type QueueApp,
   type QueueEntry, type QueueMetric, type QueueReason, type QueueResp, type QueueWorkflow,
 } from "@/lib/deliveryActivity";
 import { fmtHours, fmtNum, fmtRatio, fmtSeconds, repoUrl, safeGithubUrl, shortSha, statusTone } from "@/lib/deliveryMetrics";
+import { parseRange, rangeQuery, sortCards, statusRank, withRange } from "@/lib/deliveryRange";
 import { ACTIVITY } from "./activity.messages";
+import { ChurnTreemap, QueueCharts, SortPicker, WindowLabel, useCardSort } from "./RangeCharts";
 
 const small = { fontSize: 12, color: K.muted, lineHeight: 1.45 } as const;
 const linkStyle = { color: K.accentDeep, display: "inline-flex", gap: 4, alignItems: "center", fontSize: 12 } as const;
@@ -62,7 +67,11 @@ function RepoPicker({ apps, active, t, onPick }: {
 }
 
 function useSection<T>(path: string, key: string) {
-  return useQuery({ queryKey: ["platform-delivery", key], queryFn: () => apiGet<T>(path), staleTime: 60_000 });
+  // AA-1135: the page's range applies to this section too (its own cache entry per range)
+  const { get } = useUrlFilters();
+  const choice = parseRange(get);
+  return useQuery({ queryKey: ["platform-delivery", key, rangeQuery(choice)], queryFn: () => apiGet<T>(withRange(path, choice)),
+    staleTime: 60_000, retry: false });
 }
 
 /** Error, loading or "nothing published yet" of a tab's section; null once there are apps to show. */
@@ -93,7 +102,8 @@ function QueueCard({ app, t, open }: { app: QueueApp; t: AT; open: (id: string) 
   const border = tone === "danger" ? K.danger : tone === "warning" ? K.amber : K.line;
   return (
     <Section testId={`queue-card-${app.id}`} style={{ borderColor: border }} title={app.name}
-      description={<span style={small}><Ext href={repoUrl(app.repo)}>{app.repo}</Ext></span>}
+      description={<span style={small}><Ext href={repoUrl(app.repo)}>{app.repo}</Ext>
+        <WindowLabel window={app.window} clipOnly testId={`queue-card-window-${app.id}`} /></span>}
       actions={<Button size="sm" variant="secondary" onClick={() => open(app.id)} testId={`queue-open-${app.id}`}>
         {t("details")}</Button>}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 140px), 1fr))", gap: 8 }}>
@@ -218,6 +228,8 @@ function QueueRepo({ app, t }: { app: QueueApp; t: AT }) {
   const q = app.queue;
   return (
     <div style={grid} data-testid={`queue-app-${app.id}`}>
+      <span style={small}><Ext href={repoUrl(app.repo)}>{app.repo}</Ext> · <WindowLabel window={app.window}
+        testId={`queue-window-${app.id}`} />{q.complete_since && <> · {t("historyFrom", q.complete_since)}</>}</span>
       <div style={tiles}>
         {QUEUE_METRICS.map((m) => <QueueMetricTile key={m} app={app} m={m} t={t} />)}
         <KpiTile size="sm" label={t("waitP50")} value={fmtHours(q.wait.p50_h)} hint={t("n", q.wait.n)} />
@@ -228,6 +240,7 @@ function QueueRepo({ app, t }: { app: QueueApp; t: AT }) {
         <KpiTile size="sm" label={t("entries")} value={fmtNum(q.entries)} hint={t("entriesHint", q.merged, q.ejected, q.removed)} />
         <KpiTile size="sm" label={t("inQueue")} value={fmtNum(q.in_queue)} />
       </div>
+      <QueueCharts queue={q} reasonLabel={(r) => t(`reason${r.reason}` as Key)} />
       <ThroughputChart app={app} t={t} />
       <ReasonsSection app={app} t={t} />
       <QueueCiSection app={app} t={t} />
@@ -244,14 +257,21 @@ export function MergeQueueTab() {
   const apps = q.data?.apps ?? [];
   const asked = get("repo");
   const app = apps.find((a) => a.id === asked);
+  const [sort, setSort] = useCardSort(QUEUE_METRICS);
+  const sorted = sortCards(apps, sort, (a) => statusRank(worstQueueStatus(a.queue_status)),
+    (a, m) => queueValue(a.queue, m as QueueMetric), () => false);
   return (
     <div style={grid} data-testid="delivery-queue-tab">
       <span style={small}>{t("queueIntro")}</span>
       <TabState q={q} empty={t("noQueueApps")} t={t} />
-      {apps.length > 0 && <RepoPicker apps={apps} active={app?.id ?? "all"} t={t}
-        onPick={(id) => set("repo", id === "all" ? null : id)} />}
+      {apps.length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+        <RepoPicker apps={apps} active={app?.id ?? "all"} t={t}
+          onPick={(id) => set("repo", id === "all" ? null : id)} />
+        {!app && <SortPicker value={sort} onChange={setSort}
+          metrics={QUEUE_METRICS.map((m) => ({ key: m, label: t(m) }))} />}
+      </div>}
       {app ? <QueueRepo app={app} t={t} /> : apps.length > 0 && (
-        <div style={cards}>{apps.map((a) => <QueueCard key={a.id} app={a} t={t} open={(id) => set("repo", id)} />)}</div>
+        <div style={cards}>{sorted.map((a) => <QueueCard key={a.id} app={a} t={t} open={(id) => set("repo", id)} />)}</div>
       )}
     </div>
   );
@@ -377,6 +397,8 @@ function HotspotSection({ app, win, t }: { app: GitApp; win: GitWindow | undefin
   const dirCols = useChurnColumns(t, true);
   const childCols = useChurnColumns(t, false);
   return (
+    <>
+    <ChurnTreemap win={win} dir={dir} onPick={(path) => set("dir", path)} />
     <Section title={dir ? t("inDir", dir.path) : t("secHotspots")} description={t("secHotspotsDesc")}
       testId="git-hotspots"
       actions={dir ? <Button size="sm" variant="secondary" onClick={() => set("dir", null)} testId="git-hotspots-back">
@@ -392,6 +414,7 @@ function HotspotSection({ app, win, t }: { app: GitApp; win: GitWindow | undefin
           emptyTitle={t("noCommits")} />
       )}
     </Section>
+    </>
   );
 }
 
@@ -484,11 +507,21 @@ function PrefixSection({ win, t }: { win: GitWindow | undefined; t: AT }) {
   );
 }
 
+/** Days of the window shown: the served range's, else the fixed window's (d30 / d90). */
+function windowDays(app: GitApp, period: string): number {
+  const r = app.git.range;
+  if (r?.start && r?.end) return Math.round((Date.parse(r.end) - Date.parse(r.start)) / 86_400_000);
+  return Number(period.slice(1)) || app.git.days;
+}
+
 function GitRepo({ app, period, t }: { app: GitApp; period: string; t: AT }) {
-  const win = app.git.windows?.[period];
+  const win = gitWindow(app.git, period);
   return (
     <div style={grid} data-testid={`git-app-${app.id}`}>
-      <GitTiles app={app} win={win} days={Number(period.slice(1)) || app.git.days} t={t} />
+      {app.git.range && <span style={small}><Ext href={repoUrl(app.repo)}>{app.repo}</Ext> · <WindowLabel
+        window={app.git.range} completeSince={app.git.range.complete_since} testId={`git-window-${app.id}`} />
+        {app.git.range.complete_since && <> · {t("historyFrom", app.git.range.complete_since)}</>}</span>}
+      <GitTiles app={app} win={win} days={windowDays(app, period)} t={t} />
       <Section title={t("secHeatmap")} description={t("secHeatmapDesc")} testId="git-heatmap">
         <div style={{ display: "grid", gap: 8 }}><Heatmap app={app} t={t} cell={13} /><HeatLegend t={t} />
           <WeeklyChart app={app} t={t} /></div>
@@ -509,11 +542,13 @@ function GitOverview({ apps, period, t, open }: { apps: GitApp[]; period: string
     <div style={grid}>
       <div style={cards}>
         {apps.map((a) => {
-          const win = a.git.windows?.[period];
+          const win = gitWindow(a.git, period);
           return (
             <Section key={a.id} testId={`git-card-${a.id}`} title={a.name}
               description={<span style={small}><Ext href={repoUrl(a.repo)}>{a.repo}</Ext>
-                {a.git.complete_since && <> · {t("historyFrom", a.git.complete_since)}</>}</span>}
+                {a.git.complete_since && <> · {t("historyFrom", a.git.complete_since)}</>}
+                {a.git.range && <WindowLabel window={a.git.range} completeSince={a.git.range.complete_since} clipOnly
+                  testId={`git-card-window-${a.id}`} />}</span>}
               actions={<Button size="sm" variant="secondary" onClick={() => open(a.id)} testId={`git-open-${a.id}`}>
                 {t("details")}</Button>}>
               <div style={{ display: "grid", gap: 10 }}>
@@ -541,7 +576,7 @@ function GitPickers({ apps, active, keys, period, t }: {
     <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
       <RepoPicker apps={apps} active={active} t={t}
         onPick={(id) => setMany({ repo: id === "all" ? null : id, dir: null })} />
-      {keys.length > 1 && <SegmentedControl<string> label={t("windowPicker")} size="sm" value={period}
+      {keys.length > 1 && !apps[0]?.git.range && <SegmentedControl<string> label={t("windowPicker")} size="sm" value={period}
         testId="git-period" onChange={(v) => set("period", v)}
         options={keys.map((k) => ({ value: k, label: t("lastDays", Number(k.slice(1))) }))} />}
     </div>

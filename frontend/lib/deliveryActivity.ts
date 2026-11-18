@@ -6,6 +6,7 @@
 // cis.delivery.queue_* (CIS 445). Definitions: root docs/guides/delivery-metrics.md.
 
 import type { MetricStatus } from "./deliveryMetrics";
+import type { HistBin, QueueWeek, RangeMeta } from "./deliveryRange";
 
 export const QUEUE_PATH = "/api/admin/platform/delivery?section=queue";
 export const GIT_PATH = "/api/admin/platform/delivery?section=git";
@@ -45,11 +46,15 @@ export interface QueueSection {
   throughput: { date: string; merged: number; ejected: number; removed: number }[];
   recent: QueueEntry[];
   flaky_entries: QueueEntry[];
+  /** AA-1135: collectors from 18/11/2026 on */
+  wait_histogram?: HistBin[];
+  weekly?: QueueWeek[];
 }
 
 export interface AppHead {
   id: string; name: string; repo: string; environment: string;
-  window: { start: string; end: string; days: number } | null; complete_since: string | null;
+  window: { start: string; end: string; days: number; covered_days?: number; requested_start?: string } | null;
+  complete_since: string | null;
 }
 
 export interface QueueApp extends AppHead { queue: QueueSection; queue_status: Record<QueueMetric, MetricStatus> }
@@ -59,6 +64,7 @@ export interface Band { green: number; amber: number; higher_is_better: boolean;
 export interface QueueResp {
   section: "queue"; generated_at: string | null; apps: QueueApp[];
   thresholds: Record<QueueMetric, Band> & { min_sample: number };
+  range?: RangeMeta;
 }
 
 export interface ChurnRow {
@@ -83,11 +89,14 @@ export interface GitSection {
   daily: { date: string; n: number }[];
   windows: Record<string, GitWindow>;
   graph: GitNode[];
+  /** AA-1135: the window of the chosen range (preset or custom) */
+  range?: GitWindow & { complete_since: string | null; files_coverage: number | null;
+    daily: { date: string; n: number }[] };
 }
 
 export interface GitApp extends AppHead { git: GitSection }
 
-export interface GitResp { section: "git"; generated_at: string | null; apps: GitApp[] }
+export interface GitResp { section: "git"; generated_at: string | null; apps: GitApp[]; range?: RangeMeta }
 
 /** The value of a merge-queue metric as shown (wait in hours or minutes, rates as whole percents). */
 export function queueValue(q: QueueSection, m: QueueMetric): number | null {
@@ -176,10 +185,15 @@ export function kindShares(byKind: Partial<Record<CommitKind, number>> | undefin
     .map((k) => ({ kind: k, n: byKind?.[k] ?? 0, share: total ? (byKind?.[k] ?? 0) / total : 0 }));
 }
 
+/** AA-1135: the git window shown — the chosen range when the API served one, else the summary's fixed window. */
+export function gitWindow(g: GitSection | undefined, windowKey: string): GitWindow | undefined {
+  return g?.range ?? g?.windows?.[windowKey];
+}
+
 /** One chart row per app: commits of each author kind in a window. */
 export function kindRows(apps: GitApp[], windowKey: string): ({ name: string } & Record<CommitKind, number>)[] {
   return apps.map((a) => {
-    const by = a.git.windows?.[windowKey]?.by_kind ?? {};
+    const by = gitWindow(a.git, windowKey)?.by_kind ?? {};
     const row = { name: a.name } as { name: string } & Record<CommitKind, number>;
     for (const k of COMMIT_KINDS) row[k] = by[k] ?? 0;
     return row;

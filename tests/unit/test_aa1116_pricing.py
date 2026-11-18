@@ -81,6 +81,40 @@ def test_locked_seat_price_follows_a_seat_increase():
     assert (line["quantity"], line["amount"]) == (3, "51.00")
 
 
+def test_seat_overage_on_a_per_seat_plan():
+    """AA-1116 S284: seats above the plan's included seats are extra seats, at the plan's extra-seat price when it has
+    one in the billing currency, else at the seat price (so a plan without one bills as before)."""
+    line = _q(subs=({**CRM, "seats": 5},))["lines"][0]
+    assert (line["quantity"], line["extra_seats"], line["extra_seat_price"], line["amount"]) == (5, 2, "19.00", "95.00")
+    priced = {**CRM, "seats": 5, "price_extra_seat_usd": "25", "price_extra_seat_vnd": "650000"}
+    line = _q(subs=(priced,))["lines"][0]
+    assert (line["unit_price"], line["extra_seats"], line["extra_seat_price"], line["amount"]) == \
+        ("19.00", 2, "25.00", "107.00")                                  # 3 x 19 + 2 x 25
+    vnd = _q({"billing_currency": "VND"}, subs=(priced,))["lines"][0]
+    assert (vnd["extra_seat_price"], vnd["amount"]) == ("650000", "2770000")   # 3 x 490,000 + 2 x 650,000
+    # no extra seats at or under the included seats; the discount covers the extra seats too
+    assert _q(subs=({**priced, "seats": 3},))["lines"][0]["extra_seats"] == 0
+    out = _q(subs=(GROWTH, priced, TP))
+    assert (out["subtotal"], out["discount"]) == ("505.00", "50.50")    # 349 + 107 + 49, combo 10 %
+    # an agreed (locked) seat price covers the extra seats as well
+    locked = {**priced, "agreed_price_monthly": "17", "agreed_currency": "USD", "agreed_until": "2027-12-31"}
+    line = _q(subs=(locked,))["lines"][0]
+    assert (line["extra_seats"], line["extra_seat_price"], line["amount"]) == (2, "17.00", "85.00")
+
+
+@pytest.mark.parametrize("seats,included,seats_min,want", [
+    (5, 3, 3, (3, 2)), (1, 3, 3, (3, 0)), (None, 3, 3, (3, 0)), (5, None, 3, (5, 0)), (8, 3, 5, (5, 3)),
+    (2, 3, None, (2, 0)), (None, None, None, (1, 0))])
+def test_seat_split(seats, included, seats_min, want):
+    assert qt.seat_split(seats, included, seats_min) == want
+
+
+def test_extra_seats_on_a_plan_fee_plan_are_listed():
+    plan_fee = {**TP, "seats": 4, "seats_included": 2, "price_extra_seat_usd": "10"}
+    line = _q(subs=(plan_fee,))["lines"][0]
+    assert (line["quantity"], line["extra_seats"], line["extra_seat_price"], line["amount"]) == (1, 2, "10.00", "69.00")
+
+
 def test_lock_stores_the_unit_price_not_the_line(monkeypatch):
     monkeypatch.setattr(bt.ps, "int_value", lambda key: {ps.PRICE_LOCK_MONTHS: 12}[key])
     sub = {**CRM, "seats": 3, "agreed_price_monthly": None, "agreed_currency": None, "agreed_until": None}
