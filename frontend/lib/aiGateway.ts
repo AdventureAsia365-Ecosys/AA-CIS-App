@@ -1519,10 +1519,8 @@ export type PiiClass = "content" | "pii";
 export interface DataClassSummary {
   content: string[];
   pii: string[];
-  /** Stages the API sent without a class while others have one. */
-  unclassified: string[];
-  /** AA-1113 (CIS 449): stages marked free text (scrubbed before any model call); null before the API sends the mark. */
-  freeText: string[] | null;
+  unclassified: string[]; // stages the API sent without a class while others have one
+  freeText: string[] | null; // AA-1113 (CIS 449): free-text stages (scrubbed first); null before the API sends the mark
 }
 
 /** Stages per data class, or null when no stage carries a `pii_class` (the empty state). Order kept from `rows`. */
@@ -1533,9 +1531,7 @@ export function stagesByDataClass(
   const marked = rows.some((r) => typeof r.free_text === "boolean");
   const out: DataClassSummary = { content: [], pii: [], unclassified: [], freeText: marked ? [] : null };
   for (const r of rows) {
-    if (r.pii_class === "content") out.content.push(r.stage);
-    else if (r.pii_class === "pii") out.pii.push(r.stage);
-    else out.unclassified.push(r.stage);
+    (r.pii_class === "content" ? out.content : r.pii_class === "pii" ? out.pii : out.unclassified).push(r.stage);
     if (out.freeText && r.free_text === true) out.freeText.push(r.stage);
   }
   return out;
