@@ -26,6 +26,8 @@ function expectSecurityHeaders(h: Record<string, string>, label: string) {
   const csp = h['content-security-policy'] ?? '';
   expect(csp, `${label}: CSP`).toContain("frame-ancestors 'none'");
   expect(csp, `${label}: CSP default-src`).toContain("default-src 'self'");
+  // The S0 upload PUTs to a presigned S3 URL: connect-src must allow the S3 hosts.
+  expect(csp, `${label}: CSP connect-src S3`).toContain('https://*.s3.us-west-1.amazonaws.com');
   const script = csp.split(';').map((d) => d.trim()).find((d) => d.startsWith('script-src ')) ?? '';
   expect(script, `${label}: script-src`).not.toBe('');
   expect(script, `${label}: script-src without unsafe-inline`).not.toContain("'unsafe-inline'");

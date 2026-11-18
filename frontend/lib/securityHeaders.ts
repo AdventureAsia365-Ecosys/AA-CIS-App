@@ -11,6 +11,9 @@
 //   style attributes). Moving them to classes is a kit-wide change, listed as a follow-up in AA-1111's notes.
 // - img-src allows any https: image (tour photos, partner logos and source images come from several hosts); every
 //   other fetch directive is 'self' plus the Google Fonts and Sentry origins the browser really talks to.
+// - connect-src also names the S3 hosts: the S0 upload page (app/admin/upload) PUTs the Excel file straight to a
+//   presigned put_object URL on the bronze bucket (api/routers/admin_pipeline/uploads.py). boto3 signs it on the
+//   virtual-hosted bucket host, global or regional; a host pattern, never the bucket name (this repo is public).
 //
 // Dependency-free (no imports) so lib/securityHeaders.test.mjs runs it under node --test.
 
@@ -30,6 +33,9 @@ export const STATIC_SECURITY_HEADERS: { key: string; value: string }[] = [
 
 const GOOGLE_FONTS_CSS = "https://fonts.googleapis.com";
 const GOOGLE_FONTS_FILES = "https://fonts.gstatic.com";
+
+/** The S3 hosts a presigned upload URL can point at (virtual-hosted bucket, global or the app's region). */
+export const S3_UPLOAD_ORIGINS = ["https://*.s3.amazonaws.com", "https://*.s3.us-west-1.amazonaws.com"];
 
 /** The origin of a Sentry DSN (where the browser SDK posts events), or null when there is no valid DSN. */
 export function sentryOrigin(dsn: string | undefined | null): string | null {
@@ -57,14 +63,14 @@ export interface CspOptions {
   nonce?: string;
   /** `next dev` needs eval for its refresh runtime; never set on a build. */
   dev?: boolean;
-  /** Extra connect-src origins (the Sentry ingest origin). */
+  /** Extra connect-src origins (the Sentry ingest origin); the S3 upload hosts are always there. */
   connectSrc?: (string | null | undefined)[];
 }
 
 export function contentSecurityPolicy(opts: CspOptions = {}): string {
   const script = opts.nonce ? ["'self'", `'nonce-${opts.nonce}'`, "'strict-dynamic'"] : ["'self'"];
   if (opts.dev) script.push("'unsafe-eval'");
-  const connect = ["'self'", ...(opts.connectSrc ?? []).filter((o): o is string => Boolean(o))];
+  const connect = ["'self'", ...S3_UPLOAD_ORIGINS, ...(opts.connectSrc ?? []).filter((o): o is string => Boolean(o))];
   const directives: [string, string[]][] = [
     ["default-src", ["'self'"]],
     ["script-src", script],

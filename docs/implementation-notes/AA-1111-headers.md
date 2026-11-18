@@ -12,8 +12,13 @@ Source: the S283 ZAP baseline triage (root `docs/audits/2026-11-17-S283-access-r
   style attributes. Dropping it is a kit-wide change (follow-up).
 - **img-src `'self' data: blob: https:`.** Tour photos, partner logos and source images come from several hosts; a
   fixed list would break pages for no real gain (images do not run code). Every other fetch directive is explicit.
-- **connect-src = self + the Sentry DSN origin**, derived from `NEXT_PUBLIC_SENTRY_DSN` at build time: the browser
-  only calls the same-origin BFF.
+- **connect-src = self + the S3 upload hosts + the Sentry DSN origin.** The Sentry origin is derived from
+  `NEXT_PUBLIC_SENTRY_DSN` at build time. The browser calls the same-origin BFF for everything except one call: the
+  S0 upload page (`app/admin/upload`) PUTs the Excel file straight to a presigned `put_object` URL on the bronze
+  bucket (`api/routers/admin_pipeline/uploads.py`), so `connect-src` names `https://*.s3.amazonaws.com` and
+  `https://*.s3.us-west-1.amazonaws.com` (`S3_UPLOAD_ORIGINS`). A host pattern, never the bucket name (it carries the
+  account ID and this repo is public). The first version of this slice missed it (review finding, fixed before
+  merge); `tests/unit/test_aa876_frontend_edge.py::test_admin_csp_lets_the_s0_upload_reach_s3` keeps it in CI.
 - **Proxy matcher** widened to every path but `/_next/static`, `/_next/image` and `/api/*`, so 404s, `/robots.txt`
   and `/sitemap.xml` get the nonce CSP. The staff gate still runs only on `/admin/*` and `/login` (`isGatedPath`, the
   old matcher). `/api/*` stays out: a running proxy clones the request body and cuts it at 10 MiB (uploads); those
@@ -39,6 +44,9 @@ Source: the S283 ZAP baseline triage (root `docs/audits/2026-11-17-S283-access-r
   no header at all (unchanged from before). Moving them into the proxy is a separate change.
 
 ## Should know
+
+- Live check after deploy: upload one small .xlsx on `/admin/upload` and look for a CSP violation in the console;
+  the header smoke alone does not run an upload.
 
 - Local check (next start, Chromium): every script tag on `/login` carries the nonce, the page hydrates, an injected
   inline event handler is refused by the policy; `/robots.txt`, `/sitemap.xml`, a 404 and `/api/healthz` carry the set.

@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  S3_UPLOAD_ORIGINS,
   STATIC_SECURITY_HEADERS,
   contentSecurityPolicy,
   newNonce,
@@ -50,8 +51,34 @@ test("every fetch directive is explicit and none is a bare wildcard", () => {
 
 test("connect-src adds the Sentry origin and skips empty entries", () => {
   const d = directives(contentSecurityPolicy({ nonce: "n", connectSrc: ["https://ingest.example.test", null, ""] }));
-  assert.deepEqual(d.get("connect-src"), ["'self'", "https://ingest.example.test"]);
+  assert.deepEqual(d.get("connect-src"), ["'self'", ...S3_UPLOAD_ORIGINS, "https://ingest.example.test"]);
 });
+
+// The S0 upload page PUTs the Excel file to a presigned S3 URL (a different origin): without the S3 hosts in
+// connect-src the browser refuses it and no catalog upload starts (S284 review of this change).
+// CSP host-source match for "https://*.<suffix>" (one or more labels before the suffix) and exact https hosts.
+function hostMatches(source, url) {
+  const u = new URL(url);
+  if (u.protocol !== "https:" || !source.startsWith("https://")) return false;
+  const host = source.slice("https://".length);
+  return host.startsWith("*.") ? u.hostname.endsWith(host.slice(1)) : u.hostname === host;
+}
+
+for (const nonce of ["n", undefined]) {
+  test(`connect-src lets the S0 upload PUT reach a presigned S3 URL (${nonce ? "proxy" : "static"} policy)`, () => {
+    const d = directives(contentSecurityPolicy(nonce ? { nonce } : {}));
+    const connect = d.get("connect-src");
+    for (const origin of S3_UPLOAD_ORIGINS) assert.ok(connect.includes(origin), `connect-src without ${origin}`);
+    for (const url of [
+      "https://example-bronze-bucket.s3.amazonaws.com/raw-inbox/t/file.xlsx?X-Amz-Signature=abc",
+      "https://example-bronze-bucket.s3.us-west-1.amazonaws.com/raw-inbox/t/file.xlsx?X-Amz-Signature=abc",
+    ]) {
+      assert.ok(connect.some((src) => hostMatches(src, url)), `no connect-src for ${url}`);
+    }
+    // a host pattern only: no bucket name, no account id in a public repo
+    assert.ok(!connect.some((src) => /\d{12}/.test(src)), "an account id in connect-src");
+  });
+}
 
 test("sentryOrigin keeps only the https origin of a DSN", () => {
   assert.equal(sentryOrigin("https://key@o1.ingest.example.test/42"), "https://o1.ingest.example.test");

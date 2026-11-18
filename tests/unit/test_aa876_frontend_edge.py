@@ -40,6 +40,18 @@ def test_admin_sets_security_headers():
     assert "withSentryConfig(nextConfig" in cfg
 
 
+def test_admin_csp_lets_the_s0_upload_reach_s3():
+    """The S0 upload page PUTs the Excel file to a presigned S3 URL (another origin): connect-src must name the S3
+    hosts (a host pattern, never the bucket or account, the repo is public), in the one builder both policies use."""
+    page = (FRONTEND / "app" / "admin" / "upload" / "page.tsx").read_text()
+    assert "fetch(urlData.upload_url" in page, "the upload page no longer PUTs to S3 itself: revisit S3_UPLOAD_ORIGINS"
+    lib = (FRONTEND / "lib" / "securityHeaders.ts").read_text()
+    assert (
+        'S3_UPLOAD_ORIGINS = ["https://*.s3.amazonaws.com", "https://*.s3.us-west-1.amazonaws.com"]' in lib
+    ), "connect-src without the S3 upload hosts"
+    assert "...S3_UPLOAD_ORIGINS" in lib[lib.index("export function contentSecurityPolicy"):]
+
+
 def test_admin_proxy_sends_the_nonce_csp_on_every_path():
     gate = (FRONTEND / "proxy.ts").read_text()
     assert 'response.headers.set("Content-Security-Policy", csp)' in gate
