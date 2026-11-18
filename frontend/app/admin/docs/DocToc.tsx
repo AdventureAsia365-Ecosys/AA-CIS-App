@@ -1,10 +1,11 @@
 "use client";
 // app/admin/docs/DocToc.tsx — AA-1133: the page's table of contents ("On this page").
 //
-// Wide screens (DocsReaderPage decides): a sticky column beside the text with scroll-spy (the heading nearest the top
-// of the viewport is marked, aria-current="location"), like market docs sites. Narrow screens: the disclosure above
-// the text, open by default when the page is long enough to need it. Only h2 / h3 headings are listed; the ids are the
-// ones MarkdownView gives the headings (lib/docsReader.ts outline), so a link and a search hit land on the same place.
+// A wide reader (ReaderColumns decides from the reader's own width, lib/docsReader.ts tocColumnFits): a sticky column
+// beside the text with scroll-spy (the heading nearest the top of the viewport is marked, aria-current="location"),
+// like market docs sites. A narrower reader: the disclosure above the text, open by default when the page is long
+// enough to need it. Only h2 / h3 headings are listed; the ids are the ones MarkdownView gives the headings
+// (lib/docsReader.ts outline), so a link and a search hit land on the same place.
 
 import { useEffect, useState } from "react";
 import { K, RADIUS, useT } from "../../_kit";

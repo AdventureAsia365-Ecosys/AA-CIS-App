@@ -22,8 +22,8 @@
 // topic sidebar (bundle `nav`); the search box runs the server full-text search (FTS5) and lists hits with snippets,
 // falling back to the title filter when the index is not there. A page opens with a header (DocHeader: breadcrumb,
 // title, lead, facts, GitHub Source / History for all, Edit for admins, known-issue banner), code blocks with a
-// language label and Copy (MarkdownView), the table of contents as a sticky scroll-spy column on wide screens
-// (DocToc), and "Was this page helpful?" at the end (DocFeedback; not for the read-only viewer). Admins open the
+// language label and Copy (MarkdownView), the table of contents as a sticky scroll-spy column when the reader itself
+// is wide enough (DocToc; lib/docsReader.ts tocColumnFits, measured on the reader, not the viewport), and "Was this page helpful?" at the end (DocFeedback; not for the read-only viewer). Admins open the
 // answers with the Feedback button (?view=feedback).
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -69,6 +69,8 @@ import {
   DOC_LANG_STORAGE_KEY,
   DOC_LANGS,
   DEFAULT_DOC_LANG,
+  DOC_TOC_COLUMN,
+  DOC_TOC_GAP,
   audienceOptions,
   githubLinks,
   splitLeadingH1,
@@ -80,6 +82,7 @@ import {
   resolveImage,
   resolveLink,
   shortSha,
+  tocColumnFits,
   typeOptions,
   type DocEntry,
   type DocLang,
@@ -88,7 +91,8 @@ import {
   type Heading,
 } from "@/lib/docsReader";
 
-// AA-1133: from this width the reader is three columns (docs list · text · sticky table of contents).
+// AA-1133: from this viewport width the reader card gets roomier padding. Whether the sticky table of contents sits
+// beside the text is decided by the reader's own width (ReaderColumns), never by this query.
 const WIDE_QUERY = "(min-width: 1280px)";
 
 const MANIFEST_PATH = "/api/admin/docs/manifest";
@@ -165,7 +169,6 @@ function Reader({
   assets,
   onOpen,
   pendingHash,
-  wide,
 }: {
   repo: string;
   original: DocEntry | undefined;
@@ -176,7 +179,6 @@ function Reader({
   assets: Set<string>;
   onOpen: (path: string, hash: string) => void;
   pendingHash: string;
-  wide: boolean;
 }) {
   const t = useT(M);
   const langName = useT(DOC_LANG_MESSAGES);
@@ -268,7 +270,7 @@ function Reader({
         links={githubLinks(data.source, pagePath, role === "admin")}
         hasVietnamese={choice.available.includes("vi") && choice.lang !== "vi"}
       />
-      <ReaderColumns wide={wide} toc={toc}>
+      <ReaderColumns toc={toc}>
           <MarkdownView
             markdown={body}
             resolveHref={resolveHref}
@@ -296,20 +298,42 @@ function Reader({
   );
 }
 
-/** AA-1133: the text and, from WIDE_QUERY, a sticky table of contents beside it; the disclosure above it otherwise. */
-function ReaderColumns({ wide, toc, children }: { wide: boolean; toc: Heading[]; children: React.ReactNode }) {
-  if (!wide) {
-    return (
-      <>
-        <DocToc items={toc} sticky={false} />
-        <div style={{ minWidth: 0 }}>{children}</div>
-      </>
-    );
-  }
+/** The content-box width of an element, kept current by a ResizeObserver; 0 until it is measured. */
+function useElementWidth(): [(el: HTMLDivElement | null) => void, number] {
+  const [el, setEl] = useState<HTMLDivElement | null>(null);
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((entries) => setWidth(entries[0]?.contentRect.width ?? 0));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [el]);
+  return [setEl, width];
+}
+
+/**
+ * AA-1133: the text and, when the reader itself has room (tocColumnFits on its measured width), a sticky table of
+ * contents beside it; the disclosure above the text otherwise. One grid in both cases, so switching never remounts
+ * the text (diagrams are not drawn again on a resize).
+ */
+function ReaderColumns({ toc, children }: { toc: Heading[]; children: React.ReactNode }) {
+  const [ref, width] = useElementWidth();
+  const side = tocColumnFits(width);
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 210px", gap: 28, alignItems: "start" }}>
-      <div style={{ minWidth: 0, maxWidth: 820 }}>{children}</div>
-      <DocToc items={toc} sticky />
+    <div
+      ref={ref}
+      data-testid="docs-reader-columns"
+      data-toc={side ? "side" : "top"}
+      style={{
+        display: "grid",
+        gridTemplateColumns: side ? `minmax(0, 1fr) ${DOC_TOC_COLUMN}px` : "minmax(0, 1fr)",
+        gap: side ? DOC_TOC_GAP : 0,
+        alignItems: "start",
+      }}
+    >
+      {!side && <DocToc items={toc} sticky={false} />}
+      <div style={{ minWidth: 0, maxWidth: side ? 820 : undefined }}>{children}</div>
+      {side && <DocToc items={toc} sticky />}
     </div>
   );
 }
@@ -549,7 +573,6 @@ function DocsReaderPage() {
       assets={assets}
       onOpen={open}
       pendingHash={pendingHash}
-      wide={wide}
     />
   ) : (
     <NoPageOpen feedback={feedbackView} onOpen={open} />

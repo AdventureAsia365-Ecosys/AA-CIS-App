@@ -412,6 +412,18 @@ export function tableOfContents(markdown: string): TocItem[] {
     .map((h) => ({ level: h.level as 2 | 3, text: h.text, slug: h.slug }));
 }
 
+// AA-1133 (S284 review): the sticky "On this page" column sits beside the text only when the reader itself has room
+// for it. The choice follows the reader's own width (the admin sidebar and the docs list take their share first), not
+// the viewport: market docs sites keep the text about 650-750px wide next to a right-hand table of contents.
+export const DOC_TOC_COLUMN = 210;
+export const DOC_TOC_GAP = 28;
+export const DOC_TEXT_MIN_WITH_TOC = 660;
+
+/** True when a reader `width` px wide keeps at least DOC_TEXT_MIN_WITH_TOC px of text beside the sticky contents. */
+export function tocColumnFits(width: number): boolean {
+  return Number.isFinite(width) && width - DOC_TOC_COLUMN - DOC_TOC_GAP >= DOC_TEXT_MIN_WITH_TOC;
+}
+
 /** "a1b2c3d4e5f6…" -> first 12 characters, "" when unknown. */
 export function shortSha(sha: string | null | undefined): string {
   return sha ? sha.slice(0, 12) : "";

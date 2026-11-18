@@ -17,6 +17,7 @@ import {
   readingMinutes,
   searchUrl,
   splitLeadingH1,
+  tocColumnFits,
 } from "./docsReader.ts";
 import { numberGroups } from "./docsGroups.ts";
 import { STAFF_ROLES, canReadAdminPath, canSeePage, canWriteAdminPath } from "./rbac.ts";
@@ -105,4 +106,15 @@ test("rbac: every staff role opens /admin/docs and reads its API; the viewer can
   assert.ok(!canWriteAdminPath("viewer", "POST", "docs/feedback"));
   assert.ok(canWriteAdminPath("support", "POST", "docs/feedback"));
   assert.ok(!canSeePage("tenant", "/admin/docs"));
+});
+
+test("tocColumnFits: the sticky contents need a reader wide enough to keep the text near 660px", () => {
+  // The reader's own width, not the viewport: 1280px with the admin sidebar and the docs list leaves about 540px.
+  assert.equal(tocColumnFits(540), false);
+  assert.equal(tocColumnFits(742), false);   // 1440px: the text keeps the whole reader instead
+  assert.equal(tocColumnFits(897), false);
+  assert.equal(tocColumnFits(898), true);    // 660 text + 28 gap + 210 contents
+  assert.equal(tocColumnFits(1222), true);   // 1920px
+  assert.equal(tocColumnFits(0), false);     // not measured yet: the contents stay above the text
+  assert.equal(tocColumnFits(Number.NaN), false);
 });
