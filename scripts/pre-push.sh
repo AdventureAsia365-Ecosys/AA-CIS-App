@@ -350,7 +350,7 @@ self_test() {
   # Uses the repo's own tests (grep only, nothing is run): a changed test file maps to itself, and the lint
   # module maps to its test file.
   got=$(MAX_TEST_FILES=1000 unit_targets tests/unit/test_aa926_lint.py services/quality/lint.py docs/x.md | tr '\n' ' ')
-  r=0; [[ $got == *"tests/unit/test_aa926_lint.py"* && $got != *docs* ]] || r=1; verdict "unit targets for a changed module" "$got" "$r"
+  r=0; [[ $got == *"tests/unit/test_aa926_lint.py"* && $got != *"docs/x.md"* ]] || r=1; verdict "unit targets for a changed module" "$got" "$r"
   got=$(MAX_TEST_FILES=0 unit_targets services/quality/lint.py | head -1)
   r=0; [[ $got == OVER* ]] || r=1; verdict "unit targets over the cap fall back to name matches" "$got" "$r"
   got=$(unit_targets tests/unit/conftest.py | tr '\n' ' ')

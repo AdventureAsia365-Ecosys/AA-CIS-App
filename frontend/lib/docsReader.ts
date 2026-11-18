@@ -374,7 +374,7 @@ export type TocItem = { level: 2 | 3; text: string; slug: string };
  * renderer looks the slug up by the heading node's start line, so the ids and the table of contents always agree. */
 export function outline(markdown: string, seed: string[] = []): Heading[] {
   const slugger = new Slugger();
-  // AA-1133: headings removed from the body (the H1 the page header shows) still take their slug first, so the ids
+  // Headings removed from the body (the H1 the page header shows) still take their slug first, so the ids
   // stay the ones the search index computed on the whole page (root tools/docs/docs_search_index.py).
   for (const text of seed) slugger.slug(text);
   const out: Heading[] = [];
