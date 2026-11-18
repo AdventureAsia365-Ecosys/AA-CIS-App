@@ -63,6 +63,10 @@ def bot(*args: str, env: dict | None = None) -> subprocess.CompletedProcess:
     full_env = {**os.environ, **(env or {})}
     full_env.pop("GITHUB_STEP_SUMMARY", None)
     full_env.pop("GITHUB_OUTPUT", None)
+    # A push through tools/github/as-app.sh puts the App token in GH_TOKEN / GITHUB_TOKEN; the bot under test must
+    # stay on its offline fakes whatever token the caller holds (S284: the pre-push run went live and failed).
+    full_env.pop("GH_TOKEN", None)
+    full_env.pop("GITHUB_TOKEN", None)
     full_env.update(env or {})
     return subprocess.run([sys.executable, str(BOT), *args], capture_output=True, text=True, env=full_env)
 
