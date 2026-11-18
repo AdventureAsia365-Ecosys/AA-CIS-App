@@ -60,12 +60,8 @@ TP_ONLINE_STAGES: tuple[str, ...] = ("tp_compose", "tp_search_embed")
 # The TripPlanner daily AI cap is not mirrored here any more (S279 thresholds L5, CIS 414): its one source is the app
 # profile row shared.llm_app_profile 'tripplanner' (default_daily_budget_usd, AI gateway › App profiles), which the
 # Apps board and the TP-01 report read (api/services/platform_apps.tp_profile_cap).
-# AA-1015: AA-TripPlanner-Web backend/config.py TP_DAILY_SPEND_CAP_COMPOSE_USD / TP_DAILY_SPEND_CAP_SEARCH_USD (the
-# per-stage daily caps; unset there = no stage cap, only the combined cap applies) and SPEND_NEAR_CAP_RATIO (the share
-# of a cap at which TP prints its "near cap" alert and budget_status says near_cap). Mirrored: both stage caps are
-# unset on Dev today (31/10/2026), so the card shows the combined cap. If Infra sets one, set it here too.
-TP_STAGE_CAPS_USD: dict[str, Optional[float]] = {"tp_compose": None, "tp_search_embed": None}
-TP_NEAR_CAP_RATIO = 0.8
+# AA-1015 stage caps and the near-cap share: settings since AA-1126 (CIS 447, tripplanner.spend.stage_cap_*_usd /
+# near_cap_pct), read by TripPlanner and by the Apps board (api/services/spend_rules_view.py); no mirror here any more.
 # The CIS API's public origin (API Gateway custom domain): the OPS-12 digest probes /health + /health/ready from the
 # worker the way an outside caller sees them (AA-1003 R2). The Dev default; PUBLIC_API_BASE (the variable
 # services/photos/sync.py already reads for the same origin) overrides it, so another environment needs no code change.

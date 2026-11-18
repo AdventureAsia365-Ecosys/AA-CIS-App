@@ -3,17 +3,22 @@
 // here via Google Fonts; globals.css sets Poppins as the body default. Inter is no longer used.
 
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import "./globals.css";
 import { Providers } from "./_kit/core/Providers";
 import { themeStore } from "./_kit/theme";
 import { langStore } from "./_kit/i18n";
+import { NONCE_HEADER } from "@/lib/securityHeaders";
 
 export const metadata: Metadata = {
   title: "AA-CIS",
   description: "Adventure Asia Content Intelligence System",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+// AA-1111 (S284): the CSP allows a script only with this request's nonce (proxy.ts); reading the request headers also
+// renders every page per request, so no prerendered page is served with an inline script the policy would refuse.
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const nonce = (await headers()).get(NONCE_HEADER) ?? undefined;
   return (
     // The head scripts set data-theme / data-sidebar / lang before paint, so <html> attributes may differ from the
     // server HTML on purpose.
@@ -24,16 +29,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             For 'system' we resolve via prefers-color-scheme; an explicit choice wins. The RESOLVED
             value ('light'|'dark') is written to <html data-theme>, which drives the --aa-* vars. The script is the
             kit core's (app/_kit/core/theme.ts createThemeStore, AA-994 S1a) for the CIS key (app/_kit/theme.ts). */}
-        <script dangerouslySetInnerHTML={{ __html: themeStore.restoreScript }} />
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: themeStore.restoreScript }} />
 
         {/* AA-994 — UI language restore: <html lang> from the `cis_lang` cookie (absent === English) before paint.
             The kit core's script (app/_kit/core/i18n.ts createLangStore) for the CIS cookie (app/_kit/i18n.ts). */}
-        <script dangerouslySetInnerHTML={{ __html: langStore.restoreScript }} />
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: langStore.restoreScript }} />
 
         {/* AA-752 — sidebar collapsed-state restore (runs before paint, no wrong-width flash).
             localStorage.cis_sidebar === 'collapsed' means the rail is collapsed; absent === expanded.
             Written to <html data-sidebar>, matching app/_kit/core/sidebarStore.ts. */}
-        <script dangerouslySetInnerHTML={{ __html: `
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: `
           (function() {
             try {
               var s = localStorage.getItem('cis_sidebar');

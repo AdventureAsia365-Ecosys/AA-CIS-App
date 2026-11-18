@@ -126,9 +126,17 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     - No CORS is needed for the portal: its BFF calls the API server to server. The API sends no CORS grant on a
       deployed task (AA-876, `cors_allow_origins()` in `api/main.py`: empty when `AWS_EXECUTION_ENV` is set, only
       `localhost:3000/3001` off ECS); a browser preflight from any origin gets no `Access-Control-Allow-Origin`.
-    - The admin app (`frontend/next.config.ts`) sends six security headers on every response (HSTS, `nosniff`,
-      `Referrer-Policy`, `X-Frame-Options: DENY`, a minimal CSP `frame-ancestors 'none'; base-uri 'self';
-      form-action 'self'; object-src 'none'`, `Permissions-Policy`), plus `poweredByHeader: false` (AA-876).
+    - The admin app sends security headers on every response (AA-876; AA-1111 S284 after the ZAP baseline): HSTS
+      (two years, sub-domains, no preload), `nosniff`, `Referrer-Policy`, `X-Frame-Options: DENY`,
+      `Permissions-Policy`, `Cross-Origin-Opener-Policy: same-origin` (list in `frontend/lib/securityHeaders.ts`,
+      sent by `next.config.ts`) and a full Content-Security-Policy: `default-src 'self'`, scripts only with a
+      per-response nonce (`'strict-dynamic'`, no `'unsafe-inline'` for scripts), `style-src` keeps `'unsafe-inline'`
+      (kit inline styles), images from any https host, `connect-src` = self + the Sentry DSN origin, `frame-ancestors
+      'none'`. `proxy.ts` sends it with the nonce on every path but `/_next/static`, `/_next/image` and `/api/*`
+      (the staff gate still runs only on `/admin/*` and `/login`); `app/layout.tsx` reads the nonce (`x-nonce`) for
+      its restore scripts, which also renders every page per request; `/api/*` and `/_next/*` get the policy without
+      a nonce from `next.config.ts`. `next.config.ts` redirects (`/upload`, `/portal`, ...) are answered before any
+      header rule and carry none. `poweredByHeader: false`.
     - **Cross-site writes (AA-911):** every admin BFF write route (any method but GET/HEAD/OPTIONS)
       first calls `lib/crossSiteGuard.ts` `refuseCrossSiteWrite()` and answers 403 when `Origin` (or, without it,
       `Sec-Fetch-Site`) is not this origin. `it.com` is a public suffix, so every `*.lumiguides.it.com` host (the
@@ -1672,7 +1680,10 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
 - **Plans and quota (AA-640, AA-1028 R1 slice 3)**: the tour-rewrite quota is the tenant's resolved entitlement
   `content.rewrite` (starter 50 / growth 200 / business 500, edited on Tenants › Plans & add-ons), with the old
   `shared.membership_plans` read only as the fallback for a tenant with no numeric key. Over-quota rewrites are
-  allowed, logged as `rewrite_over_quota` and billed as overage. There is no `PLAN_LIMITS` any more: a tier's
+  allowed, logged as `rewrite_over_quota` and billed as overage. **One rewrite ledger (AA-1127, CIS 448):** the month's
+  count is `shared.tenant_rewrite_usage` (incremented only by `trigger_rewrite`); `GET /v1/quota`, the usage view's
+  `tours_rewritten` (`GET /v1/billing`, the admin tenant list, Tenant 360) and the billed overage all read it. A
+  tenant's own inline edit (`tenant_edit`) is not a rewrite. There is no `PLAN_LIMITS` any more: a tier's
   default RPM is its live content plan's `content.rate_limit_rpm`; an admin can override one tenant's RPM
   (`PATCH /admin/tenants/{id} {"rate_limit_rpm": n}`, AA-766, audited as `tenant.rate_limit_changed`).
 - **Billing (AA-798, migration 223)**: `shared.v_tenant_monthly_usage.llm_cost_usd` = month-to-date
@@ -1684,6 +1695,10 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   months and raw rows for the rest.
   No plan attached → plan fields are null (no invented Starter defaults). Tenants never see cost
   (`/v1/billing` has no `llm_cost_usd`, AA-796).
+- **One live post per content request and channel (AA-1127)**: `GET /v1/publish-log/pending` does not offer, and
+  `POST /v1/publish-log/{piece_id}/publish` refuses (409), the newest piece of a request whose earlier piece is live or
+  in flight on the same channel (`REQUEST_LIVE_SQL`, `api/routers/v1_publish.py`), the rule My Content reads (S251).
+  Taking the live post down makes the newest piece publishable again.
 - **Tenant Account pages (AA-761)**: `GET /v1/account/activity` (the tenant's own `acp_shared.audit_log` rows,
   newest first, `category` / `action` / `since` / `until` filters, offset paging with a total, `page_size` ≤ 100),
   and `GET /v1/account/activity/export` (the same filtered set as CSV, at most 50 000 rows, a cut file says so).
@@ -2260,6 +2275,11 @@ reads, never the CIS tenant picker), the value and "In force now" of that agency
   `api-breaking` or a `type!:` title; `/admin/*` breaks are warnings. FastAPI and Pydantic are pinned in
   `requirements.txt` for that reason. Each release gets the document as an asset (`aa-cis-openapi-vX.Y.Z.json`).
   How-to: `docs/api/README.md`.
+- **API security headers (AA-1111, S284)**: `api/middleware/security_headers.py` (just inside the request id
+  middleware) adds `X-Content-Type-Options: nosniff` and HSTS (same value as the frontends) to every response that
+  does not set them itself; the unhandled 500 gets them from `unhandled_error_handler`. The image starts uvicorn with
+  `--no-server-header`. Responses API Gateway answers itself (missing route 403, throttling 429) get the same two
+  headers from its gateway responses (AA-CIS-Infra).
 - **Logs are JSON with request / job ids (AA-871)**: `shared/log_config.py` (called once by `api.main` and
   `python -m worker`, not under unit tests) renders structlog, stdlib and uvicorn lines as one JSON object each on
   `/ecs/aa-cis-dev` (`service` = `cis-api` | `cis-worker`, `git_sha`, `environment`). The outermost API middleware
@@ -2301,6 +2321,13 @@ views the producers own and grant to `cis_app` in their own migrations (contract
 `tripplanner.v_ops_data_totals`, `v_ops_pin_components`, `v_ops_component_id_map` (tp-020) and
 `booking.v_ops_data_totals`, `v_ops_trip_plan_keys` (bk-025), plus the CRM's counts over HTTP (`crm.ops.v1` 1.4
 `GET /crm/ops/v1/data-coverage`, staff token relayed; no AA role reads schema `crm`).
+
+CIS as a consumer of TripPlanner's AI notice events (AA-1126 L2 / L4): TripPlanner records `ai.allowance_used` (an
+agency's monthly AI sessions are used up) and `ai.spend_degraded` (a spend check degraded under the prod spend rules) in
+its own outbox and grants `cis_app` SELECT on `tripplanner.v_ai_notices_v1` (tp-034). The worker's ops tick
+(`services/tripplanner_notices.py`) writes the bell rows as CIS: `tripplanner.ai_allowance_used` for the agency's
+Content studio bell (Upgrade link) and `platform.tripplanner.spend_degraded` for the admin bell, once each (CIS 447
+once-only indexes). TripPlanner holds no privilege on `shared.notifications` (CIS 274 / 351 guards).
 
 CIS as a consumer of the public "from" price (AA-1029, contract `price.from.v1`, AA-Ecosys
 `docs/contracts/price.from.v1.md`; Booking bk-040 grants `booking.v_from_prices` to `cis_app`): `GET /v1/tours/pool`
@@ -2839,6 +2866,7 @@ the guide is owner tier (`ai_gateway_guide.read_asset`); the BFF decodes it like
 **Product map (AA-1106).** Platform › Product map `/admin/platform/catalogue` (admin only: PAGE_RULES `/admin/platform`, BFF `API_READ_RULES` "platform", POLICY `GET /admin/platform/catalogue` = `ops.read`). A reader of the root repo product catalogue (`docs/catalogue/features.yaml` + `integrations.yaml`: every app's features with their pages, API route groups and enabling conditions — plan feature keys, settings registry keys, AI gateway connections, secret names, tenant kinds —, every link between the apps and to outside providers with its contract, auth, conditions, cadence, failure behaviour and kill switch, and the business journeys). The root guard `tools/catalogue/catalogue.py` (workflow `Catalogue`) keeps it in step with the code: every page and router of this repo is in its surface snapshot and must map to a feature, so **a new admin page or router needs a catalogue row in the root repo** (the nightly surface job turns red otherwise). The root "Docs sync" workflow uploads the checked bundle as `docs-reader/catalogue.json` next to the docs manifest; router `api/routers/admin_product_catalogue.py`, service `api/services/product_catalogue.py` read it under the same read-only prefix grant (no table, no write path), cache it like the docs manifest (5 min, `?refresh=1` at most every 30 s), keep only the known sections and rows with an id, and mask any 12-digit run. 404 when nothing is published, 503 when storage or the format fails. Page `frontend/app/admin/platform/catalogue/` (tabs Apps / Features / Links / Journeys / Graph, URL filters by app, status, role and condition kind, drawers; Vietnamese names from the bundle's `name_vi` / `summary_vi`), helpers `frontend/lib/productCatalogue.ts`. A setting named in a condition links to Platform › Settings, which opens `?app=&area=`.
 
 **Delivery (AA-1108).** Platform › Delivery `/admin/platform/delivery` (admin only: PAGE_RULES `/admin/platform`, BFF `API_READ_RULES` "platform", POLICY `GET /admin/platform/delivery` = `ops.read`). CI/CD and DORA per app (CIS, Booking, Partner CRM, TripPlanner, Infra, root) on Dev: the five DORA keys (deployment frequency, lead time, change failure rate, failed deployment recovery time, rework rate) each with its sample size n, the lead-time segments (open → first green CI → merge queue → merged → deployed → verified), CI health per workflow (p50 / p95, failure rate, re-runs, minutes), the main branch state, merge-queue wait and ejections, flaky jobs, deploys and failed deploys with recovery time, a 12-week trend, links to every GitHub run, commit and pull request. Source: the root workflow "Delivery metrics" (`tools/delivery/delivery_metrics.py`, hourly, the root run's `GITHUB_TOKEN` over the six public repos, raw events kept 400 days) uploads `docs-reader/delivery/summary.json`; `api/services/delivery_metrics.py` reads it under the docs-reader prefix grant (no table, no write path, no GitHub token here), caches it like the docs manifest (5 min, `?refresh=1` at most every 30 s, the page's Refresh button), keeps the known keys and apps with an id, masks any 12-digit run, and colours each metric green / amber / red ("few" under the minimum n) with the settings of area `delivery` (CIS 433, keys in `services/reports/delivery_settings.py`, starting at the DORA "high" band). 404 when nothing is published, 503 when storage or the format fails. Router `api/routers/admin_platform_delivery.py`; page `frontend/app/admin/platform/delivery/` (overview cards + one tab per app, `?app=<id>`), helpers `frontend/lib/deliveryMetrics.ts`. The definitions (deploy, change, failed deploy, recovery, rework, environment) are the root guide `docs/guides/delivery-metrics.md` (`GUIDE-12-delivery`).
+**Delivery time range (AA-1135).** One range for every tab (`?range=7d|28d|90d|custom&from=&to=` on the page and the API). Presets come from the collector (`ranges.d7|d28|d90` per app in the same summary). A custom range of whole UTC days is recomputed from the collector's day files (`docs-reader/delivery/events/yyyy/mm/dd.ndjson`, read only) by `api/services/delivery_range.py` in a child process (`api/services/delivery_range_worker.py`; the store is about 50 MB of events, so the memory never stays in the API process) with `api/services/delivery_engine.py`, a **byte copy** of the root `tools/delivery/delivery_engine.py` (lock `api/services/delivery_engine.lock.json`; never edit it here, sync with the root `tools/delivery/sync_engine.py`, which also writes the parity fixture `tests/unit/fixtures/delivery_range/`). Custom ranges pause (409) while the published `definitions.engine_sha256` differs from the copy, and refuse (409 `out_of_step`) day files that do not rebuild the summary's store (`definitions.store_fingerprint`); 422 for a reversed range, one longer than `cis.delivery.custom_range_max_days` (CIS 450) or outside the stored history; results cached per range until the next summary (`cis.delivery.custom_range_cache_entries`). The page adds a DORA trend chart, the delivery flow diagram (median / p95 per step), merge-queue charts (wait histogram, ejection reasons, weekly ejection rate), a churn treemap and card sorting (`?sort=`).
 
 **Platform apps, audit and cost (AA-884).** Router `api/routers/admin_platform_ops.py` (read only, admin-only POLICY
 entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
@@ -2907,6 +2935,11 @@ entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
   request (~$0.01) behind a Redis lock, at most once a day per window (a Redis attempt marker, also after an empty
   or failed answer); `POST /admin/cost-explorer/check` (the "Refresh from AWS" button) also
   fetches the App tag (+1 request). No scheduler yet.
+  **One spend truth (AA-1127 C2):** the provider families of `platform_cost.provider_family` (`anthropic` is its own
+  family) are read by the Spend forecast, the FI-02 weekly report and `ai_spend_by_provider`; the AI gateway Providers
+  read returns that total as `totals.llm_month_usd`. A Bedrock row's account follows `cost_ops.ledger_account` (acc2,
+  acc3, a live registry satellite, else `retired`) in the forecast split and in FI-02, and `ce.account_key()` names a
+  live satellite's Cost Explorer rows by its key, so the forecast and the AWS bill tab show it as its own account.
 - **Alert recipients (AA-913).** Who gets the platform alert e-mails, chosen on the admin page instead of a
   Terraform variable. One list for everything: the CIS api manages the **e-mail subscriptions of the SNS alerts
   topic** (CloudWatch alarms of CIS, Booking, TripPlanner and shared; security EventBridge rules; cost anomalies;

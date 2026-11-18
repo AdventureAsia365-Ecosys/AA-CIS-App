@@ -119,6 +119,8 @@ export const M = defineMessages(
     // tiles
     tileMonth: "Spend this month",
     tileMonthHint: (since: string) => `paid AI and data calls since ${since} (UTC)`,
+    tileMonthLlmHint: (since: string, llm: string) =>
+      `paid AI and data calls since ${since} (UTC); AI models ${llm}, the figure on Overview and Spend`,
     tileToday: "Spend today",
     tileTodayHint: "since UTC midnight",
     tileLook: "Need a look",
@@ -321,6 +323,8 @@ export const M = defineMessages(
     refresh: "Làm mới",
     tileMonth: "Chi tháng này",
     tileMonthHint: (since: string) => `các lần gọi AI và dữ liệu trả phí từ ${since} (UTC)`,
+    tileMonthLlmHint: (since: string, llm: string) =>
+      `các lần gọi AI và dữ liệu trả phí từ ${since} (UTC); mô hình AI ${llm}, đúng số ở Overview và Spend`,
     tileToday: "Chi hôm nay",
     tileTodayHint: "từ nửa đêm UTC",
     tileLook: "Cần xem",

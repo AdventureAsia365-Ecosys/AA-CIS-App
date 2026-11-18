@@ -151,6 +151,33 @@ def test_wildcard_entries_and_stale_report():
     assert result.stale == [("g", "catalog.*:tripplanner")]
 
 
+@pytest.mark.parametrize("rule,key,obj,side", [
+    ("a", "shared.kite_meter", "shared.kite_meter", True),
+    ("a", "retired.kite_meter", "retired.kite_meter", True),
+    ("b", "silver_aa_internal.kite_meter:tenant_isolation", "silver_aa_internal.kite_meter", True),
+    ("e", "tripplanner.*->shared.kite_meter", "tripplanner.*->shared.kite_meter", False),
+    ("g", "shared.kite_meter:tripplanner", "shared.kite_meter", True),
+    ("g", "shared:crm_owner", "shared", True),
+    ("g", "catalog.*:booking", "catalog.*", True),
+    ("g", "silver_aa_internal.kite_meter.lantern:cis_app", "silver_aa_internal.kite_meter.lantern", False),
+    ("g", "booking.v_kite_meter:cis_app", "booking.v_kite_meter", False),
+    ("g", "tripplanner:cis_app", "tripplanner", False),
+    ("p", "public", "public", False),
+])
+def test_cis_side_entries_are_the_cis_objects_the_replay_builds(rule, key, obj, side):
+    """AA-1112: the CIS replay fails on a stale cis_side() entry; the others are checked on the Dev dump only."""
+    assert rules.entry_object(rule, key) == obj
+    assert rules.cis_side(rule, key) is side
+
+
+def test_shipped_allowlist_has_no_entry_for_a_dropped_or_revoked_object():
+    """AA-1112: the entries the S284 cleanup removed (stale on Dev) do not come back."""
+    removed = {("a", "acp_shared.acp_output_rules"), ("a", "retired.acp_runs"), ("a", "retired.route_pick"),
+               ("e", "tripplanner.*->shared.destinations"), ("g", "shared.llm_role_config:tripplanner"),
+               ("g", "silver_aa_internal.raw_tours.tour_id:tripplanner"), ("g", "acp_contract:tripplanner")}
+    assert not {(r, k) for r, k in removed if k in rules.ALLOWLIST.get(r, {})}
+
+
 @pytest.mark.parametrize("bad", [{"a": {"shared.x": ""}}, {"a": {"shared.x": "two\nlines"}}, {"z": {}}])
 def test_bad_allowlists_are_refused(bad):
     assert rules.check_allowlist(bad)

@@ -4,7 +4,6 @@
   "api/core/aa544_tenant_pool.py:TENANT_POOL_MAX_SIZE",
   "api/core/aa544_tenant_pool.py:TENANT_POOL_MIN_SIZE",
   "api/core/aa859_main_pool_gauge.py:MAIN_POOL_WAIT_LOG_CAP",
-  "api/core/app_registry.py:TP_NEAR_CAP_RATIO",
   "api/core/identity_verifier.py:JWKS_TTL_S",
   "api/core/identity_verifier.py:MAX_LEEWAY_S",
   "api/core/identity_verifier.py:MAX_SUB_CHARS",

@@ -162,7 +162,19 @@ async def test_tripplanner_query_failure_is_contained():
     card = await pa._tripplanner_card(pool)
     assert card["spend_today"] is None and card["error"] == "OSError"
     # AA-804 / ADR 0009 d5: TripPlanner fails closed when spend is unreadable, so the card says AI is paused
-    assert card["ai"] == {"paused": True, "reason": "spend_unreadable"}
+    assert card["ai"]["paused"] is True and card["ai"]["reason"] == "spend_unreadable"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("env, paused", [("dev", True), ("prod", False)])
+async def test_an_unreadable_spend_pauses_tripplanner_only_under_the_dev_rules(monkeypatch, env, paused):
+    """AA-1126 L4: under the prod spend rules TripPlanner degrades (AI on, a staff bell) instead of pausing."""
+    from shared import settings
+    monkeypatch.setattr(settings, "get", lambda key, tenant_id=None: env)
+    pool = MagicMock()
+    pool.fetch = AsyncMock(side_effect=OSError("db"))
+    card = await pa._tripplanner_card(pool)
+    assert card["ai"] == {"paused": paused, "reason": "spend_unreadable", "spend_environment": env}
 
 
 @pytest.mark.asyncio

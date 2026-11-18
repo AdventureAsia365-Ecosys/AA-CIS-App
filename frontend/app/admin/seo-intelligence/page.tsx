@@ -26,7 +26,7 @@ import {
   LoadingScreen,
   PageHeader,
   SkeletonStyle,
-  Tabs, PageFrame,
+  Tabs, PageFrame, Checkbox,
   useT,
   type Translator,
   useAdminIdentity,
@@ -46,6 +46,8 @@ interface DemandRow {
   keywords: number;
   keywords_with_volume: number;
   total_volume: number;
+  linked_keywords?: number;   // AA-1127: keywords our tours use (published_tours.seo_keywords_used)
+  linked_volume?: number;
 }
 interface KeywordRow {
   keyword: string;
@@ -108,7 +110,8 @@ function Stat({ label, value, sub, color = K.ink }: {
 
 function OverviewTab({ d }: { d: SeoData["overview"] }) {
   const t = useT(SEO);
-  const maxVol = Math.max(1, ...d.demand_by_market.map((m) => m.total_volume));
+  // AA-1127 (C1): the bar shows the demand our tours use; the raw total (generic terms included) stays as a column
+  const maxVol = Math.max(1, ...d.demand_by_market.map((m) => m.linked_volume ?? m.total_volume));
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
@@ -139,9 +142,11 @@ function OverviewTab({ d }: { d: SeoData["overview"] }) {
               cell: ({ row }) => row.original.keywords_with_volume.toLocaleString() },
             { id: "totalVolume", header: t("totalVolume"), accessorKey: "total_volume", meta: { align: "right" },
               cell: ({ row }) => <span style={{ fontVariantNumeric: "tabular-nums" }}>{row.original.total_volume.toLocaleString()}</span> },
+            { id: "linkedVolume", header: t("linkedVolume"), accessorFn: (m) => m.linked_volume ?? 0, meta: { align: "right" },
+              cell: ({ row }) => <span style={{ fontVariantNumeric: "tabular-nums" }}>{(row.original.linked_volume ?? 0).toLocaleString()}</span> },
             { id: "bar", header: "", enableSorting: false, meta: { hideLabelOnCard: true }, cell: ({ row }) => (
               <div style={{ minWidth: 120, height: 8, background: K.line2, borderRadius: 4, overflow: "hidden" }}>
-                <div style={{ width: `${(row.original.total_volume / maxVol) * 100}%`, height: "100%", background: K.accent }} />
+                <div style={{ width: `${((row.original.linked_volume ?? row.original.total_volume) / maxVol) * 100}%`, height: "100%", background: K.accent }} />
               </div>
             ) },
           ]}
@@ -149,6 +154,11 @@ function OverviewTab({ d }: { d: SeoData["overview"] }) {
       </div>
     </div>
   );
+}
+
+/** AA-1127 (C1): the Keywords rows shown: only the ones our tours use when the box is ticked (the default). */
+function shownKeywords(rows: KeywordRow[], linkedOnly: boolean): KeywordRow[] {
+  return linkedOnly ? rows.filter((r) => r.used_in_content) : rows;
 }
 
 const kwColumns = (t: T): ColumnDef<KeywordRow, unknown>[] => [
@@ -236,6 +246,8 @@ function SeoIntelligencePage() {
   const kwCols = useMemo(() => kwColumns(t), [t]);
   const wanted = useSearchParams().get("tab");
   const [tab, setTab] = useState(() => (wanted === RESEARCH_TAB ? RESEARCH_TAB : "overview"));
+  // AA-1127 (C1): the Keywords tab opens on the keywords our tours use (the API lists them first)
+  const [linkedOnly, setLinkedOnly] = useState(true);
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["admin-seo-intelligence"],
     queryFn: () => apiGet<SeoData>("/api/admin/seo-intelligence", { admin: true }),
@@ -265,15 +277,21 @@ function SeoIntelligencePage() {
             <>
               {tab === "overview" && <OverviewTab d={data.overview} />}
               {tab === "keywords" && (
+                <>
+                <label style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 12.5, color: K.ink3, marginBottom: 10 }}>
+                  <Checkbox checked={linkedOnly} onChange={(e) => setLinkedOnly(e.target.checked)} />
+                  {t("linkedOnly")}
+                </label>
                 <DataTable<KeywordRow>
                   tableId="seo-keywords"
-                  data={data.keywords}
+                  data={shownKeywords(data.keywords, linkedOnly)}
                   columns={kwCols}
                   getRowId={(r) => `${r.keyword}:${r.market}`}
                   searchable
                   searchPlaceholder={t("searchKeywords")}
                   pageSize={25}
                 />
+                </>
               )}
               {tab === "questions" && (
                 data.questions.length === 0 ? (

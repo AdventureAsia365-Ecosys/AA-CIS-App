@@ -62,6 +62,9 @@ export const PAGES: VisualPage[] = [
   { slug: "platform-delivery", route: "/admin/platform/delivery", path: "/admin/platform/delivery", auth: "staff" },
   { slug: "platform-delivery-queue", route: "/admin/platform/delivery", path: "/admin/platform/delivery?app=merge-queue", auth: "staff" },
   { slug: "platform-delivery-git", route: "/admin/platform/delivery", path: "/admin/platform/delivery?app=git-map", auth: "staff" },
+  // AA-1135: an app tab on the 7-day preset (flow diagram, DORA trend) and a queue repo on 90 days (queue charts)
+  { slug: "platform-delivery-app-7d", route: "/admin/platform/delivery", path: "/admin/platform/delivery?app=cis&range=7d", auth: "staff" },
+  { slug: "platform-delivery-queue-90d", route: "/admin/platform/delivery", path: "/admin/platform/delivery?app=merge-queue&repo=cis&range=90d", auth: "staff" },
   { slug: "platform-settings", route: "/admin/platform/settings", path: "/admin/platform/settings", auth: "staff" },
   { slug: "platform-staff", route: "/admin/platform/staff", path: "/admin/platform/staff", auth: "staff" },
   { slug: "platform-ui-kit", route: "/admin/platform/ui-kit", path: "/admin/platform/ui-kit", auth: "staff" },

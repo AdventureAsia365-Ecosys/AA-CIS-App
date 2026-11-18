@@ -59,7 +59,9 @@ import {
   versionBody,
   type Detail,
   type EditForm,
+  type Entity,
   type Media,
+  type SupplyWords,
   type Version,
 } from "@/lib/supplyContent";
 import { SC } from "./messages";
@@ -70,6 +72,15 @@ type Pending =
   | { kind: "unpublish" }
   | { kind: "draft" }
   | null;
+
+/** AA-1127 (C1): why publishing the open draft would be refused now (empty when there is no draft). */
+function draftBlockersOf(entity: Entity, draft: Version | null | undefined, media: Media[], words: SupplyWords): string[] {
+  return draft ? publishBlockers(entity, draft, media, words) : [];
+}
+/** The Publish button's hint: the text while something blocks it, else none. */
+function whenBlocked(blockers: string[], text: string): string | undefined {
+  return blockers.length ? text : undefined;
+}
 
 export default function SupplyContentDetail({ entityId }: { entityId: string }) {
   const t = useT(SC);
@@ -124,6 +135,9 @@ export default function SupplyContentDetail({ entityId }: { entityId: string }) 
   const republishBlockers = published && isRepublish(entity, published) ? publishBlockers(entity, published, media, st.words) : null;
   const republishable = republishBlockers !== null && republishBlockers.length === 0;
   const editBase = draft ?? published ?? null;
+  // AA-1127 (C1): one list drives both the blockers box and the Publish button, so the page never offers what it says
+  // would be refused
+  const draftBlockers = draftBlockersOf(entity, draft, media, st.words);
 
   return (
     <Shell>
@@ -192,7 +206,7 @@ export default function SupplyContentDetail({ entityId }: { entityId: string }) 
           <div data-testid="supply-draft" style={card}>
             <VersionMeta v={draft} />
             <VersionBody v={draft} media={media} />
-            <Blockers items={publishBlockers(entity, draft, media, st.words)} />
+            <Blockers items={draftBlockers} />
             {d.diff.length > 0 && (
               <details style={{ marginTop: 10 }} open>
                 <summary style={{ fontSize: 12, fontWeight: 600, cursor: "pointer", color: K.ink }}>
@@ -203,8 +217,10 @@ export default function SupplyContentDetail({ entityId }: { entityId: string }) 
             )}
             {canReview && (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
-                <span data-testid="supply-publish">
-                  <Button size="sm" variant="primary" onClick={() => setPending({ kind: "publish", version: draft })}>{t("publish")}</Button>
+                {/* AA-1127 (C1): the same blockers the box above lists disable Publish (review.publish refuses them) */}
+                <span data-testid="supply-publish" title={whenBlocked(draftBlockers, t("publishBlockedTitle"))}>
+                  <Button size="sm" variant="primary" disabled={draftBlockers.length > 0}
+                          onClick={() => setPending({ kind: "publish", version: draft })}>{t("publish")}</Button>
                 </span>
                 <span data-testid="supply-reject">
                   <Button size="sm" variant="danger" onClick={() => setPending({ kind: "reject", version: draft })}>{t("reject")}</Button>

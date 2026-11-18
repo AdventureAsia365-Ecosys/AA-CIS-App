@@ -46,4 +46,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
 
 # Keep-alive must outlive the ALB idle timeout (100 s, AA-CIS-Infra modules/alb): with uvicorn's
 # 5 s default the ALB reuses a connection uvicorn already closed and answers 502 (S231, AA-741).
-CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive", "105"]
+# AA-1111 (S284): --no-server-header — no "server: uvicorn" for API Gateway to pass on (ZAP baseline, version leak).
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive", "105", "--no-server-header"]

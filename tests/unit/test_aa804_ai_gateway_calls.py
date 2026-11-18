@@ -405,30 +405,52 @@ def test_trace_route_takes_exactly_one_of_job_or_tour():
 
 # ── AA-1015: TripPlanner stage caps on the Apps board card ─────────────────────────────────────────────────────────
 
+NO_STAGE_CAPS = {"tp_compose": None, "tp_search_embed": None}
+
+
 def test_tp_spend_today_without_stage_caps_shows_the_combined_cap():
-    s = platform_apps.tp_spend_today([{"stage": "tp_compose", "calls": 3, "cost_usd": 4.1}], cap=5.0)
+    s = platform_apps.tp_spend_today([{"stage": "tp_compose", "calls": 3, "cost_usd": 4.1}], cap=5.0,
+                                     stage_caps=NO_STAGE_CAPS, near_ratio=0.8, environment="dev")
     assert s["cap_usd"] == 5.0 and s["pct_of_cap"] == 82.0 and s["level"] == "warn"
     assert s["near_cap"] is True and s["near_cap_pct"] == 80 and s["stage_caps_set"] is False
     assert [(x["stage"], x["cap_usd"], x["cost_usd"]) for x in s["stage_caps"]] == [
         ("tp_compose", None, 4.1), ("tp_search_embed", None, 0.0)]
-    assert platform_apps.tp_spend_today([], cap=5.0)["near_cap"] is False
+    assert platform_apps.tp_spend_today([], cap=5.0, stage_caps=NO_STAGE_CAPS, near_ratio=0.8)["near_cap"] is False
     # S279 L5: no cap on the app profile = no combined cap, said in the label (no mirrored default any more)
-    none = platform_apps.tp_spend_today([{"stage": "tp_compose", "calls": 3, "cost_usd": 4.1}], cap=None)
+    none = platform_apps.tp_spend_today([{"stage": "tp_compose", "calls": 3, "cost_usd": 4.1}], cap=None,
+                                        stage_caps=NO_STAGE_CAPS, near_ratio=0.8)
     assert none["pct_of_cap"] is None and none["level"] == "ok" and "no app-profile cap" in none["cap_label"]
 
 
 def test_tp_spend_today_with_a_stage_cap_flags_that_stage():
     s = platform_apps.tp_spend_today([{"stage": "tp_search_embed", "calls": 9, "cost_usd": 0.9},
                                       {"stage": "tp_compose", "calls": 1, "cost_usd": 0.1}], cap=5.0,
-                                     stage_caps={"tp_compose": 4.0, "tp_search_embed": 1.0})
+                                     stage_caps={"tp_compose": 4.0, "tp_search_embed": 1.0}, near_ratio=0.8)
     by = {x["stage"]: x for x in s["stage_caps"]}
     assert by["tp_search_embed"]["near_cap"] is True and by["tp_search_embed"]["pct_of_cap"] == 90.0
     assert by["tp_search_embed"]["level"] == "warn" and by["tp_compose"]["near_cap"] is False
     assert s["near_cap"] is True and s["stage_caps_set"] is True and s["level"] == "ok"
 
 
-def test_the_mirrored_stage_caps_match_the_online_stages():
+def test_the_card_reads_the_caps_tripplanner_enforces(monkeypatch):
+    """AA-1126 (S283: the admin pages show what the code enforces): the stage caps, the near share and the spend rules
+    are the settings TripPlanner reads (CIS 447), not a CIS mirror; a reached cap says alert-only under prod."""
+    from shared import settings
+
+    values = {"tripplanner.spend.stage_cap_compose_usd": 0, "tripplanner.spend.stage_cap_search_usd": 1.5,
+              "tripplanner.spend.near_cap_pct": 60, "tripplanner.spend.environment": "prod"}
+    monkeypatch.setattr(settings, "get", lambda key, tenant_id=None: values[key])
+    s = platform_apps.tp_spend_today([{"stage": "tp_search_embed", "calls": 2, "cost_usd": 1.0}], cap=5.0,
+                                     environment="prod")
+    by = {x["stage"]: x for x in s["stage_caps"]}
+    assert by["tp_compose"]["cap_usd"] is None and by["tp_search_embed"]["cap_usd"] == 1.5   # 0 = no stage cap
+    assert s["near_cap_pct"] == 60 and by["tp_search_embed"]["near_cap"] is True
+    assert (s["spend_environment"], s["cap_rule"]) == ("prod", "alert_only")
+    dev = platform_apps.tp_spend_today([], cap=5.0, environment="dev")
+    assert dev["cap_rule"] == "stops_ai"
+
+
+def test_the_mirror_constants_are_gone():
     from api.core import app_registry
 
-    assert set(app_registry.TP_STAGE_CAPS_USD) == set(app_registry.TP_ONLINE_STAGES)
-    assert 0 < app_registry.TP_NEAR_CAP_RATIO < 1
+    assert not hasattr(app_registry, "TP_STAGE_CAPS_USD") and not hasattr(app_registry, "TP_NEAR_CAP_RATIO")
