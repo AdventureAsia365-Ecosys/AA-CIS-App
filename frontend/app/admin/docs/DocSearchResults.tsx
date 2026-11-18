@@ -17,7 +17,7 @@ import {
 } from "@/lib/docsReader";
 
 /** The server search for `query` (enabled from DOC_SEARCH_MIN_CHARS characters while the bundle has an index). */
-export function useDocSearch(query: string, enabled: boolean) {
+function useDocSearch(query: string, enabled: boolean) {
   const q = query.trim();
   return useQuery({
     queryKey: ["admin", "docs", "search", q],
@@ -93,6 +93,33 @@ export function DocSearchResults({
           ))}
         </div>
       ))}
+    </div>
+  );
+}
+
+/** The list's search state: `panel` = the hits to show instead of the groups (null: the title filter applies), and
+ *  `fallback` = the index exists but the search failed, so the list filters titles and says so. */
+export function useDocsSearchPanel(
+  query: string,
+  manifest: { search?: { available: boolean } } | undefined,
+  onOpen: (path: string, slug: string) => void,
+) {
+  const available = !!manifest?.search?.available;
+  const search = useDocSearch(query, available);
+  const typed = query.trim().length >= DOC_SEARCH_MIN_CHARS;
+  const fallback = available && typed && !!search.error;
+  const panel = available && typed && !search.error
+    ? <DocSearchResults data={search.data} isLoading={search.isLoading} onOpen={onOpen} />
+    : undefined;
+  return { panel, fallback };
+}
+
+export function SearchFallbackNote({ show }: { show: boolean }) {
+  const t = useT(M);
+  if (!show) return null;
+  return (
+    <div role="status" style={{ fontSize: 11, color: K.muted, marginTop: 4 }} data-testid="docs-search-fallback">
+      {t("searchFallback")}
     </div>
   );
 }

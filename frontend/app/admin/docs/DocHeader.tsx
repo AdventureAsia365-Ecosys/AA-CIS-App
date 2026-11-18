@@ -41,6 +41,89 @@ function GithubLink({ href, label, testId }: { href: string; label: string; test
   );
 }
 
+function KnownIssue({ note }: { note: string | null | undefined }) {
+  const t = useT(M);
+  if (!note) return null;
+  return (
+    <div
+      role="note"
+      data-testid="docs-known-issue"
+      style={{ margin: "0 0 12px", padding: "8px 12px", borderLeft: `3px solid ${K.amber}`, background: K.amberSoft,
+               borderRadius: RADIUS.sm, fontSize: 13, color: K.ink }}
+    >
+      <strong style={{ display: "block", fontSize: 11, letterSpacing: "0.04em", textTransform: "uppercase",
+                       color: K.amber, marginBottom: 2 }}>
+        {t("knownIssue")}
+      </strong>
+      {note}
+    </div>
+  );
+}
+
+function Breadcrumb({ page }: { page: DocEntry }) {
+  const t = useT(M);
+  const navLabel = useT(DOC_NAV_MESSAGES);
+  const nav = navOf(page);
+  return (
+    <nav aria-label={t("breadcrumbAria")} style={{ fontSize: 12, color: K.muted, marginBottom: 6 }}>
+      {t("title")}
+      {nav ? <> › <span data-testid="docs-breadcrumb-group">{navLabel(nav)}</span></> : null}
+    </nav>
+  );
+}
+
+function Badges({ page }: { page: DocEntry }) {
+  const t = useT(M);
+  const typeLabel = useT(DOC_TYPE_MESSAGES);
+  return (
+    <>
+      <Badge tone="info">{typeLabel(page.type)}</Badge>
+      {page.status && <Badge tone={STATUS_TONE[page.status] ?? "neutral"}>{page.status}</Badge>}
+      {page.access === "owner" && (
+        <Badge tone="warning">
+          <Lock size={11} /> {t("ownerOnly")}
+        </Badge>
+      )}
+      {page.generated && <Badge tone="neutral">{t("generated")}</Badge>}
+    </>
+  );
+}
+
+/** Owner, reviewed, updated (last commit), reading time, Vietnamese copy: the ones the page has, "·" between. */
+function Facts({ page, markdown, hasVietnamese }: { page: DocEntry; markdown: string; hasVietnamese: boolean }) {
+  const t = useT(M);
+  const { formatDate } = useFormat();
+  const changed = page.last_changed;
+  const facts: React.ReactNode[] = [
+    page.owner && <span key="owner">{t("ownerLabel", ownerLabel(page.owner))}</span>,
+    page.last_reviewed && <span key="rev">{t("reviewedOn", page.last_reviewed)}</span>,
+    changed?.date && (
+      <span key="upd" title={changed.sha.slice(0, 12)} data-testid="docs-updated">
+        {t("updatedOn", formatDate(changed.date))}
+      </span>
+    ),
+    <span key="min">{t("minutesRead", readingMinutes(markdown))}</span>,
+    hasVietnamese && <span key="vi">{t("hasVietnamese")}</span>,
+  ].filter(Boolean);
+  return (
+    <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 6, fontSize: 12, color: K.muted }}>
+      {facts.flatMap((f, i) => (i ? [<span key={`s${i}`} aria-hidden="true" style={{ color: K.muted2 }}>·</span>, f] : [f]))}
+    </span>
+  );
+}
+
+function GithubLinks({ links }: { links: DocGithubLinks | null }) {
+  const t = useT(M);
+  if (!links) return null;
+  return (
+    <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 12 }} data-testid="docs-github-links">
+      <GithubLink href={links.source} label={t("viewSource")} testId="docs-link-source" />
+      <GithubLink href={links.history} label={t("viewHistory")} testId="docs-link-history" />
+      {links.edit && <GithubLink href={links.edit} label={t("editPage")} testId="docs-link-edit" />}
+    </span>
+  );
+}
+
 export function DocHeader({
   page, title, markdown, links, hasVietnamese,
 }: {
@@ -51,44 +134,10 @@ export function DocHeader({
   hasVietnamese: boolean;
 }) {
   const t = useT(M);
-  const typeLabel = useT(DOC_TYPE_MESSAGES);
-  const navLabel = useT(DOC_NAV_MESSAGES);
-  const { formatDate } = useFormat();
-  const nav = navOf(page);
-  const sep = <span aria-hidden="true" style={{ color: K.muted2 }}>·</span>;
-  const facts: React.ReactNode[] = [];
-  if (page.owner) facts.push(<span key="owner">{t("ownerLabel", ownerLabel(page.owner))}</span>);
-  if (page.last_reviewed) facts.push(<span key="rev">{t("reviewedOn", page.last_reviewed)}</span>);
-  if (page.last_changed?.date) {
-    facts.push(
-      <span key="upd" title={page.last_changed.sha.slice(0, 12)} data-testid="docs-updated">
-        {t("updatedOn", formatDate(page.last_changed.date))}
-      </span>,
-    );
-  }
-  facts.push(<span key="min">{t("minutesRead", readingMinutes(markdown))}</span>);
-  if (hasVietnamese) facts.push(<span key="vi">{t("hasVietnamese")}</span>);
-
   return (
     <header style={{ marginBottom: 18 }} data-testid="docs-header">
-      <nav aria-label={t("breadcrumbAria")} style={{ fontSize: 12, color: K.muted, marginBottom: 6 }}>
-        {t("title")}
-        {nav ? <> › <span data-testid="docs-breadcrumb-group">{navLabel(nav)}</span></> : null}
-      </nav>
-      {page.known_issue && (
-        <div
-          role="note"
-          data-testid="docs-known-issue"
-          style={{ margin: "0 0 12px", padding: "8px 12px", borderLeft: `3px solid ${K.amber}`, background: K.amberSoft,
-                   borderRadius: RADIUS.sm, fontSize: 13, color: K.ink }}
-        >
-          <strong style={{ display: "block", fontSize: 11, letterSpacing: "0.04em", textTransform: "uppercase",
-                           color: K.amber, marginBottom: 2 }}>
-            {t("knownIssue")}
-          </strong>
-          {page.known_issue}
-        </div>
-      )}
+      <Breadcrumb page={page} />
+      <KnownIssue note={page.known_issue} />
       <h1 style={{ fontSize: 26, lineHeight: 1.25, fontWeight: 700, color: K.ink, margin: "0 0 6px" }}>{title}</h1>
       {page.description && (
         <p style={{ fontSize: 15, lineHeight: 1.55, color: K.ink2, margin: "0 0 10px" }} data-testid="docs-lead">
@@ -96,29 +145,14 @@ export function DocHeader({
         </p>
       )}
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginBottom: 6 }}>
-        <Badge tone="info">{typeLabel(page.type)}</Badge>
-        {page.status && <Badge tone={STATUS_TONE[page.status] ?? "neutral"}>{page.status}</Badge>}
-        {page.access === "owner" && (
-          <Badge tone="warning">
-            <Lock size={11} /> {t("ownerOnly")}
-          </Badge>
-        )}
-        {page.generated && <Badge tone="neutral">{t("generated")}</Badge>}
-        <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 6, fontSize: 12, color: K.muted }}>
-          {facts.flatMap((f, i) => (i ? [<span key={`s${i}`}>{sep}</span>, f] : [f]))}
-        </span>
+        <Badges page={page} />
+        <Facts page={page} markdown={markdown} hasVietnamese={hasVietnamese} />
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
         <span style={{ fontSize: 11, color: K.muted2, fontFamily: mono, overflowWrap: "anywhere" }}>
           {t("pageInfo", page.id, page.path)}
         </span>
-        {links && (
-          <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 12 }} data-testid="docs-github-links">
-            <GithubLink href={links.source} label={t("viewSource")} testId="docs-link-source" />
-            <GithubLink href={links.history} label={t("viewHistory")} testId="docs-link-history" />
-            {links.edit && <GithubLink href={links.edit} label={t("editPage")} testId="docs-link-edit" />}
-          </span>
-        )}
+        <GithubLinks links={links} />
       </div>
     </header>
   );

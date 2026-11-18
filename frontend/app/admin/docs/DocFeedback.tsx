@@ -21,7 +21,7 @@ const COMMENT_CHARS = 1000;   // the API's limit (acp_shared.docs_feedback comme
 
 type Sent = { helpful: boolean };
 
-export function DocFeedback({ repo, path, lang }: { repo: string; path: string; lang: string }) {
+export function DocFeedback({ repo, path, lang, show = true }: { repo: string; path: string; lang: string; show?: boolean }) {
   const t = useT(M);
   const [choice, setChoice] = useState<boolean | null>(null);
   const [note, setNote] = useState("");
@@ -34,6 +34,7 @@ export function DocFeedback({ repo, path, lang }: { repo: string; path: string; 
     onSuccess: (_d, v) => setSent({ helpful: v.helpful }),
   });
 
+  if (!show) return null;   // the read-only viewer: the API refuses its answer
   const answer = (helpful: boolean) => {
     setChoice(helpful);
     if (helpful) send.mutate({ helpful, comment: null });
@@ -162,5 +163,17 @@ export function FeedbackView({ onOpen }: { onOpen: (path: string) => void }) {
         </div>
       )}
     </div>
+  );
+}
+
+/** The header button that switches /admin/docs between the reader and the admin feedback view (admins only). */
+export function FeedbackToggle({ show, active, onToggle }: { show: boolean; active: boolean; onToggle: () => void }) {
+  const t = useT(M);
+  if (!show) return null;
+  return (
+    <Button variant={active ? "primary" : "ghost"} size="sm" ariaLabel={t("feedbackViewAria")}
+            testId="docs-feedback-view-button" onClick={onToggle}>
+      <MessageSquare size={13} /> {active ? t("backToDocs") : t("feedbackView")}
+    </Button>
   );
 }

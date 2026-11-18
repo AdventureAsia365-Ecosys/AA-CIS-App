@@ -164,7 +164,7 @@ async def search(text: str, owner_read: bool, limit: int,
         raise docs_reader.DocsUnavailable("The search could not run") from err
     visible = {(e["repo"], e["path"]): e for e in docs_reader.visible_entries(m, owner_read)}
     pages: dict[tuple[str, str], dict] = {}
-    for repo, path, lang, access, slug, heading, snip, _rank in rows:
+    for repo, path, _lang, access, slug, heading, snip, _rank in rows:
         entry = visible.get((repo, path))
         if entry is None or (access != docs_reader.ACCESS_STAFF and not owner_read):
             continue   # not listed for this caller (owner tier, or gone from the manifest): fail closed

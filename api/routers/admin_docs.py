@@ -13,9 +13,10 @@
 The bundle comes from the root repo "Docs sync" workflow through S3 (api/services/docs_reader.py), cached in this
 process. Only the feedback routes touch the database (503 ``unavailable`` before CIS 454). AA-1133 B7 (tech lead S283:
 "all staff after fix"): every staff role reads (POLICY docs.read; the BFF's API_READ_RULES "docs" lists every role);
-the read-only viewer reads but cannot post feedback (READ_ONLY_ROLES). Owner-only pages (N-3) are listed and served only to a
-principal holding docs.owner_read (staff_authz.can_read_owner_docs: a verified Cognito owner; Dev only and temporary,
-the E2E CIS admin of ADR 0006a A10b, read only, is_owner still False); for anyone else they do not exist (404).
+the read-only viewer reads but cannot post feedback (READ_ONLY_ROLES). Owner-only pages (N-3) are listed and served
+only to a principal holding docs.owner_read (staff_authz.can_read_owner_docs: a verified Cognito owner; Dev only and
+temporary, the E2E CIS admin of ADR 0006a A10b, read only, is_owner still False); for anyone else they do not exist
+(404), in the search hits too.
 
 AA-1064: the REST API Gateway in front of this service has no binaryMediaTypes, so it would corrupt a PNG / WebP body
 on the way to the admin BFF. The BFF therefore asks for ``encoding=base64`` and gets JSON {repo, path, type, bytes,

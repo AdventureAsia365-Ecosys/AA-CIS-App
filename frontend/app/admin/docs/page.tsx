@@ -27,7 +27,7 @@
 // answers with the Feedback button (?view=feedback).
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, BookMarked, MessageSquare, RefreshCw, Search, X } from "lucide-react";
+import { ArrowLeft, BookMarked, RefreshCw, Search, X } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import {
@@ -56,8 +56,8 @@ import {
 import { isReadOnlyRole } from "@/lib/rbac";
 import { DocHeader } from "./DocHeader";
 import { DocToc } from "./DocToc";
-import { DocFeedback, FeedbackView } from "./DocFeedback";
-import { DocSearchResults, useDocSearch } from "./DocSearchResults";
+import { DocFeedback, FeedbackToggle, FeedbackView } from "./DocFeedback";
+import { SearchFallbackNote, useDocsSearchPanel } from "./DocSearchResults";
 import { M } from "./messages";
 import { DocsList } from "./DocsList";
 import { DOC_AUDIENCE_MESSAGES, DOC_LANG_MESSAGES, DOC_TYPE_MESSAGES } from "@/lib/docsReader.messages";
@@ -69,7 +69,6 @@ import {
   DOC_LANG_STORAGE_KEY,
   DOC_LANGS,
   DEFAULT_DOC_LANG,
-  DOC_SEARCH_MIN_CHARS,
   audienceOptions,
   githubLinks,
   splitLeadingH1,
@@ -86,6 +85,7 @@ import {
   type DocLang,
   type DocPageResp,
   type DocsManifestResp,
+  type Heading,
 } from "@/lib/docsReader";
 
 // AA-1133: from this width the reader is three columns (docs list · text · sticky table of contents).
@@ -247,6 +247,7 @@ function Reader({
   }
 
   const p = data.page;
+  const pagePath = original?.path ?? p.path;
   return (
     <article style={{ minWidth: 0 }} lang={choice.lang}>
       {(choice.available.length > 1 || choice.missing) && (
@@ -264,13 +265,10 @@ function Reader({
         page={p}
         title={split.h1 ?? p.title}
         markdown={body}
-        links={githubLinks(data.source, (original ?? p).path, role === "admin")}
+        links={githubLinks(data.source, pagePath, role === "admin")}
         hasVietnamese={choice.available.includes("vi") && choice.lang !== "vi"}
       />
-      {!wide && <DocToc items={toc} sticky={false} />}
-      <div style={wide ? { display: "grid", gridTemplateColumns: "minmax(0, 1fr) 210px", gap: 28, alignItems: "start" }
-                       : undefined}>
-        <div style={{ minWidth: 0, maxWidth: 820 }}>
+      <ReaderColumns wide={wide} toc={toc}>
           <MarkdownView
             markdown={body}
             resolveHref={resolveHref}
@@ -286,18 +284,33 @@ function Reader({
               gap: 12,
             }}
           >
-            {!isReadOnlyRole(role) && (
-              <DocFeedback key={`${repo}/${(original ?? p).path}`} repo={repo} path={(original ?? p).path} lang={choice.lang} />
-            )}
+            <DocFeedback key={`${repo}/${pagePath}`} repo={repo} path={pagePath} lang={choice.lang}
+                         show={!isReadOnlyRole(role)} />
             <div style={{ fontSize: 12, color: K.muted, overflowWrap: "anywhere" }}>
               {t("source")} {data.source.repo ?? p.repo}@<span style={{ fontFamily: mono }}>{shortSha(data.source.sha) || t("unknown")}</span>
               {data.generated_at ? t("publishedAt", formatDateTime(data.generated_at)) : ""}{t("readOnlyFooter")}
             </div>
           </footer>
-        </div>
-        {wide && <DocToc items={toc} sticky />}
-      </div>
+      </ReaderColumns>
     </article>
+  );
+}
+
+/** AA-1133: the text and, from WIDE_QUERY, a sticky table of contents beside it; the disclosure above it otherwise. */
+function ReaderColumns({ wide, toc, children }: { wide: boolean; toc: Heading[]; children: React.ReactNode }) {
+  if (!wide) {
+    return (
+      <>
+        <DocToc items={toc} sticky={false} />
+        <div style={{ minWidth: 0 }}>{children}</div>
+      </>
+    );
+  }
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 210px", gap: 28, alignItems: "start" }}>
+      <div style={{ minWidth: 0, maxWidth: 820 }}>{children}</div>
+      <DocToc items={toc} sticky />
+    </div>
   );
 }
 
@@ -338,6 +351,31 @@ function subscribeDocLang(onChange: () => void): () => void {
 
 // ── page ────────────────────────────────────────────────────────────────────────────────────────
 
+/** No page open: the admin feedback view (?view=feedback), else the "select a page" hint. */
+function NoPageOpen({ feedback, onOpen }: { feedback: boolean; onOpen: (path: string) => void }) {
+  const t = useT(M);
+  if (feedback) return <FeedbackView onOpen={onOpen} />;
+  return <EmptyState icon={<BookMarked size={30} />} title={t("selectPage")} description={t("selectPageBody")} />;
+}
+
+/** AA-1133: what the page shows from the URL: a page (?path=), or for an admin the feedback view (?view=feedback). */
+function useDocsView() {
+  const isAdmin = useAdminIdentity().role === "admin";
+  const router = useRouter();
+  const pathname = usePathname();
+  const params = useSearchParams();
+  const feedback = isAdmin && params.get("view") === "feedback";
+  const path = feedback ? null : params.get("path");
+  return {
+    isAdmin,
+    feedback,
+    path,
+    showReader: !!path || feedback,
+    toggleFeedback: () => router.push(feedback ? pathname : `${pathname}?view=feedback`, { scroll: false }),
+    cardPadding: (wide: boolean) => (wide ? "22px 28px" : "18px 22px"),
+  };
+}
+
 function DocsReaderPage() {
   const t = useT(M);
   const typeLabel = useT(DOC_TYPE_MESSAGES);
@@ -346,13 +384,14 @@ function DocsReaderPage() {
   const uiLang = useLang();
   const isPhone = useIsPhone();
   const wide = useMediaQuery(WIDE_QUERY);
-  const isAdmin = useAdminIdentity().role === "admin";
+  const view = useDocsView();
+  const isAdmin = view.isAdmin;
   const qc = useQueryClient();
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
-  const feedbackView = isAdmin && params.get("view") === "feedback";
-  const selectedPath = feedbackView ? null : params.get("path");
+  const feedbackView = view.feedback;
+  const selectedPath = view.path;
   const selectedRepo = params.get("repo") || DEFAULT_REPO;
 
   const { data, error, isLoading, isFetching, refetch } = useQuery({
@@ -373,10 +412,6 @@ function DocsReaderPage() {
   const [type, setType] = useState(ALL);
   const [audience, setAudience] = useState(ALL);
   const [pendingHash, setPendingHash] = useState("");
-  // AA-1133: the server full-text search while the bundle has an index; the title filter otherwise (or on an error).
-  const searchOn = !!data?.search?.available;
-  const search = useDocSearch(query, searchOn);
-  const serverSearch = searchOn && query.trim().length >= DOC_SEARCH_MIN_CHARS && !search.error;
   // Page language: the viewer's last choice remembered in this browser (best effort); without one, the admin UI
   // language (English by default).
   const lang = useSyncExternalStore(subscribeDocLang, readDocLang, () => null) ?? uiLang;
@@ -406,6 +441,8 @@ function DocsReaderPage() {
     [router, pathname, setPendingHash],
   );
   const back = () => router.push(pathname, { scroll: false });
+  // AA-1133: the server full-text search while the bundle has an index; the title filter otherwise (or on an error).
+  const search = useDocsSearchPanel(query, data, open);
 
   // A link straight to a translation (?path=x.vi.md): show it through its original with that language chosen, so the
   // switch and the list highlight work and a shared link keeps one address per page.
@@ -452,11 +489,7 @@ function DocsReaderPage() {
           aria-label={t("searchAria")}
           style={{ width: "100%", padding: "0 36px 0 34px" }}
         />
-        {searchOn && search.error && query.trim().length >= DOC_SEARCH_MIN_CHARS && (
-          <div role="status" style={{ fontSize: 11, color: K.muted, marginTop: 4 }} data-testid="docs-search-fallback">
-            {t("searchFallback")}
-          </div>
-        )}
+        <SearchFallbackNote show={search.fallback} />
         {query && (
           <IconButton
             variant="plain"
@@ -500,9 +533,7 @@ function DocsReaderPage() {
         onOpen={open}
         filters={filters}
         isPhone={isPhone}
-        searchPanel={serverSearch ? (
-          <DocSearchResults data={search.data} isLoading={search.isLoading} onOpen={(path, slug) => open(path, slug)} />
-        ) : undefined}
+        searchPanel={search.panel}
       />
     </Card>
   );
@@ -520,14 +551,8 @@ function DocsReaderPage() {
       pendingHash={pendingHash}
       wide={wide}
     />
-  ) : feedbackView ? (
-    <FeedbackView onOpen={(path) => open(path)} />
   ) : (
-    <EmptyState
-      icon={<BookMarked size={30} />}
-      title={t("selectPage")}
-      description={t("selectPageBody")}
-    />
+    <NoPageOpen feedback={feedbackView} onOpen={open} />
   );
 
   return (
@@ -538,13 +563,7 @@ function DocsReaderPage() {
         description={description}
         actions={
           <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 8 }}>
-            {isAdmin && (
-              <Button variant={feedbackView ? "primary" : "ghost"} size="sm" ariaLabel={t("feedbackViewAria")}
-                      testId="docs-feedback-view-button"
-                      onClick={() => router.push(feedbackView ? pathname : `${pathname}?view=feedback`, { scroll: false })}>
-                <MessageSquare size={13} /> {feedbackView ? t("backToDocs") : t("feedbackView")}
-              </Button>
-            )}
+            <FeedbackToggle show={isAdmin} active={feedbackView} onToggle={view.toggleFeedback} />
             <Button variant="ghost" size="sm" onClick={() => reload.mutate()} disabled={busy} ariaLabel={t("reloadAria")}>
               {busy ? <Spinner size={13} /> : <RefreshCw size={13} />} {t("reload")}
             </Button>
@@ -569,7 +588,7 @@ function DocsReaderPage() {
           <ErrorState message={t("couldNotLoadDocs", loadError.message)} onRetry={() => refetch()} />
         </Card>
       ) : isPhone ? (
-        selectedPath || feedbackView ? (
+        view.showReader ? (
           <Card style={{ padding: "14px 16px" }}>
             <div style={{ marginBottom: 10 }}>
               <Button variant="ghost" size="sm" onClick={back} ariaLabel={t("backToList")}>
@@ -591,7 +610,7 @@ function DocsReaderPage() {
           }}
         >
           {list}
-          <Card style={{ padding: wide ? "22px 28px" : "18px 22px", minWidth: 0 }}>{reader}</Card>
+          <Card style={{ padding: view.cardPadding(wide), minWidth: 0 }}>{reader}</Card>
         </div>
       )}
     </PageFrame>
