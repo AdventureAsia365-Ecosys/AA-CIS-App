@@ -103,7 +103,9 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
         background: "var(--aa-side-bg)", color: "var(--aa-side-text)",
         padding: "22px 14px 24px",
         display: "flex", flexDirection: "column", gap: 24,
-        height: "100vh", overflowY: "auto", overflowX: "hidden",
+        // AA-1131 (S283 UI audit): the brand and the Collapse toggle stay in view; only the nav and the app links
+        // between them scroll (the whole aside used to scroll, so on a short screen Collapse sat below the fold).
+        height: "100vh", overflow: "hidden",
         transition: "width .18s ease",
       }}
     >
@@ -133,26 +135,33 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
         </button>
       </div>
 
-      {/* Nav — AA-1039: the seven groups of lib/adminIa.ts */}
-      <nav data-testid="admin-nav" style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-        {groups.map((group, i) => {
-          const id = navGroupId(group.label);
-          return (
-            <NavGroupBlock key={group.label} group={group} pathname={pathname} pending={pending} go={openEntry}
-              open={navGroups.isOpen(id)} onToggle={() => navGroups.toggle(id)} rail={rail}
-              spaceAbove={groupSpaceAbove(group, groups[i - 1], rail)} />
-          );
-        })}
-      </nav>
+      <div data-testid="sidebar-scroll" style={{
+        flex: "1 1 auto", minHeight: 0, overflowY: "auto", overflowX: "hidden",
+        // A thin, dark-surface scrollbar (the page's global light track would be a white strip on the sidebar).
+        scrollbarWidth: "thin", scrollbarColor: "rgba(255,255,255,0.18) transparent",
+        display: "flex", flexDirection: "column", gap: 24,
+      }}>
+        {/* Nav — AA-1039: the seven groups of lib/adminIa.ts */}
+        <nav data-testid="admin-nav" style={{ flex: "1 0 auto", display: "flex", flexDirection: "column" }}>
+          {groups.map((group, i) => {
+            const id = navGroupId(group.label);
+            return (
+              <NavGroupBlock key={group.label} group={group} pathname={pathname} pending={pending} go={openEntry}
+                open={navGroups.isOpen(id)} onToggle={() => navGroups.toggle(id)} rail={rail}
+                spaceAbove={groupSpaceAbove(group, groups[i - 1], rail)} />
+            );
+          })}
+        </nav>
 
-      {/* AA-883 — the other apps of the ecosystem (lib/apps.ts), each in a new tab. */}
-      <div data-testid="sidebar-apps" style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-        <div className="aa-sidebar-group-title" style={groupTitleStyle}>{t("appsTitle")}</div>
-        {APP_LINKS.map((a) => <AppLinkItem key={a.id} app={a} />)}
+        {/* AA-883 — the other apps of the ecosystem (lib/apps.ts), each in a new tab. */}
+        <div data-testid="sidebar-apps" style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+          <div className="aa-sidebar-group-title" style={groupTitleStyle}>{t("appsTitle")}</div>
+          {APP_LINKS.map((a) => <AppLinkItem key={a.id} app={a} />)}
+        </div>
       </div>
 
-      {/* Collapse toggle */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {/* Collapse toggle (pinned: outside the scrolling part) */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, flex: "none" }}>
         <button
           onClick={() => setCollapsed(!collapsed)}
           data-testid="sidebar-collapse"
