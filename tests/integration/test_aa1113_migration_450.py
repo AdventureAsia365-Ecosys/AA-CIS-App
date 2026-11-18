@@ -4,13 +4,13 @@ connection cap contract views, applied the way DB Migrate applies a cis/ file si
 449 is replayed by conftest like every plain file (shared.llm_role_config.free_text); conftest skips 323, 341, 350 and
 450 (catalog recipe, 245's owners). This module builds on test_aa860_migration_246's module fixture (Dev after 244 +
 245, db_migrator with rl-002's memberships), applies 323, 341, 350, then 450 twice as db_migrator under the live-owner
-switch (errors NOT swallowed). Teardown drops both views and revokes the four files' column grants and crm_app's
-schema USAGE, so later modules see the replay state.
+switch (errors NOT swallowed). Teardown drops both views and revokes the four files' column grants, so later modules
+see the replay state.
 
   * 449: every tenant stage marked free_text, a pii stage can never be marked (CHECK);
   * 450: registered once; the gateway view keeps 350's columns in order and appends free_text, over_cap_connections;
-    the cap view's columns; owners, barriers and the exact consumers (tripplanner both, crm_app the cap view only);
-  * the cap view (as crm_app / tripplanner, rolled back): this UTC month's ledger spend per capped connection, the
+    the cap view's columns; owners, barriers and the exact consumer (tripplanner; crm_app waits for CIS 451);
+  * the cap view (as tripplanner, rolled back): this UTC month's ledger spend per capped connection, the
     policy defaults, over_cap and stops; a connection with no budget has no row; last month's rows do not count;
   * the gateway view (as tripplanner): free_text from the stage row, over_cap_connections lists only the stopped
     connections of the model's own deployments.
@@ -58,8 +58,6 @@ def undo_450(a):
     t350.undo_350(a)
     for table, cols in GRANTED_450.items():
         a.execute(f"REVOKE SELECT ({', '.join(sorted(cols))}) ON shared.{table} FROM catalog_owner")
-    if _role_exists(a, "crm_app"):
-        a.execute("REVOKE USAGE ON SCHEMA catalog FROM crm_app")
     a.execute("DELETE FROM shared.schema_versions WHERE version = '450'")
 
 
@@ -150,14 +148,11 @@ def test_owners_barriers_and_consumers(cur):
         assert owner == "catalog_owner" and "security_barrier=true" in (opts or []), view
         cur.execute("SELECT has_table_privilege('tripplanner', %s, 'SELECT')", (view,))
         assert cur.fetchone()[0] is True, view
-        for role in ("booking", "aa_app_user", "cis_app"):
+        for role in ("booking", "aa_app_user", "cis_app", "crm_app"):
+            if not _role_exists(cur, role):
+                continue
             cur.execute("SELECT has_table_privilege(%s, %s, 'SELECT')", (role, view))
             assert cur.fetchone()[0] is False, (role, view)
-    if _role_exists(cur, "crm_app"):
-        cur.execute("SELECT has_table_privilege('crm_app', %s, 'SELECT')", (CAP_VIEW,))
-        assert cur.fetchone()[0] is True
-        cur.execute("SELECT has_table_privilege('crm_app', %s, 'SELECT')", (contract.GATEWAY_CONFIG_VIEW,))
-        assert cur.fetchone()[0] is False
     cur.execute("SELECT has_schema_privilege('catalog_owner', 'catalog', 'CREATE')")
     assert cur.fetchone()[0] is False
 
@@ -215,16 +210,6 @@ def test_cap_view_rows(cur):
     assert (alert["alert_pct"], alert["hard_stop"], alert["over_cap"], alert["stops"]) == (60, False, True, False)
     assert float(room["month_spent_usd"]) == pytest.approx(0.40)              # last month's 9 USD left out
     assert (room["over_cap"], room["stops"]) == (False, False)
-
-
-def test_cap_view_as_crm_app(cur):
-    if not _role_exists(cur, "crm_app"):
-        pytest.skip("no crm_app role on this database")
-    _seed(cur)
-    cur.execute("SET LOCAL ROLE crm_app")
-    rows = _rows(cur, f"SELECT connection_key AS k, stops AS s FROM {CAP_VIEW} "
-                      "WHERE connection_key = ANY(%s) ORDER BY 1", ["zz-capped", "zz-room"])
-    assert [(r["k"], r["s"]) for r in rows] == [("zz-capped", True), ("zz-room", False)]
 
 
 def test_gateway_view_free_text_and_over_cap_connections(cur):
