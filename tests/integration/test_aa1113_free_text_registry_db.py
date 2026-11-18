@@ -1,8 +1,8 @@
-"""AA-1113 (CIS 448) — the gateway's stage read carries the free-text mark against a real Postgres.
+"""AA-1113 (CIS 449) — the gateway's stage read carries the free-text mark against a real Postgres.
 
-conftest applies every migration on main. With 448 applied, a stage row marked ``free_text`` reads as marked through
+conftest applies every migration on main. With 449 applied, a stage row marked ``free_text`` reads as marked through
 ``role_config._fetch_one`` and ``list_stage_configs`` (the admin GET), and every seeded tenant stage is marked. Before
-448 (the code PR's own CI may run before the migration PR lands), the read falls back without the column: no error,
+449 (the code PR's own CI may run before the migration PR lands), the read falls back without the column: no error,
 ``free_text`` False, the ``t<n>_`` floor still scrubs. The store connects without TLS, like test_aa642_a1_stage_switch_db.
 Invented stage names only; the inserted row is deleted at teardown.
 """
@@ -62,9 +62,9 @@ async def test_the_stage_read_carries_the_mark(pool):
 
 
 @pytest.mark.asyncio
-async def test_every_seeded_tenant_stage_is_marked_once_448_is_applied(pool):
+async def test_every_seeded_tenant_stage_is_marked_once_449_is_applied(pool):
     if not await _has_column(pool):
-        pytest.skip("migration 448 not applied on this database")
+        pytest.skip("migration 449 not applied on this database")
     rows = await pool.fetch("SELECT stage AS s, free_text AS f FROM shared.llm_role_config "
                             "WHERE stage ~ '^t[0-9]+_' AND pii_class <> 'pii'")
     assert rows and all(r["f"] for r in rows)

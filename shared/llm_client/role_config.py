@@ -82,7 +82,7 @@ class StageConfig:
     # A pii stage is called only on our AWS accounts in the US (vendor_route.deployment_plan). Column missing / no row
     # = content (every row before 373).
     pii_class: str = "content"
-    # AA-1113 (CIS 448; root ADR 0009 d10): the stage's prompts carry tenant or traveller free text, scrubbed before
+    # AA-1113 (CIS 449; root ADR 0009 d10): the stage's prompts carry tenant or traveller free text, scrubbed before
     # any model call (free_text_scrub; every t<n>_ stage is scrubbed whatever this says). Column missing = False.
     free_text: bool = False
 
@@ -334,7 +334,7 @@ _switch_column_missing_at = 0.0
 # AA-1039 (R6): migration 373 adds pii_class, read the same way (missing = content, retried later).
 _PII_COLUMN = ", pii_class"
 _pii_column_missing_at = 0.0
-# AA-1113: migration 448 adds free_text, read the same way (missing = False: the t<n>_ floor still scrubs).
+# AA-1113: migration 449 adds free_text, read the same way (missing = False: the t<n>_ floor still scrubs).
 _FREE_TEXT_COLUMN = ", free_text"
 _free_text_column_missing_at = 0.0
 
@@ -357,7 +357,7 @@ def _scope_select() -> str:
 
 
 async def _fetch_scoped(fetch, sql_for):
-    """``fetch(sql_for(optional_cols))``; on a missing optional column (free_text before migration 448, pii_class before
+    """``fetch(sql_for(optional_cols))``; on a missing optional column (free_text before migration 449, pii_class before
     373, degrade_mode / disabled_reason before 326, route_deadline_s before 320, allowed_scopes before 311), once more
     without it."""
     global _scope_column_missing_at, _deadline_column_missing_at, _switch_column_missing_at, _pii_column_missing_at
@@ -372,7 +372,7 @@ async def _fetch_scoped(fetch, sql_for):
             if "free_text" in cols and "free_text" in str(e):
                 _free_text_column_missing_at = time.monotonic()
                 logger.warning("llm_role_config_free_text_column_missing",
-                               hint="migration 448 not applied: only the t<n>_ stages are scrubbed")
+                               hint="migration 449 not applied: only the t<n>_ stages are scrubbed")
             elif "pii_class" in cols and "pii_class" in str(e):
                 _pii_column_missing_at = time.monotonic()
                 logger.warning("llm_role_config_pii_column_missing",
@@ -509,7 +509,7 @@ async def list_stage_configs() -> list[StageConfig]:
             # AA-1039 (R6): content | pii; None before migration 373 (AI gateway > Routing by data class then shows
             # "no class yet"; the gateway itself reads a missing column as content)
             r["pii_class"] = data_scope.normalize_pii_class(r["pii_class"]) if "pii_class" in r else None
-            r["free_text"] = r["free_text"] is True if "free_text" in r else None   # AA-1113: None before 448
+            r["free_text"] = r["free_text"] is True if "free_text" in r else None   # AA-1113: None before 449
         return out
     finally:
         await conn.close()

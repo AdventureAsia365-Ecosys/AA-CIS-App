@@ -1521,7 +1521,7 @@ export interface DataClassSummary {
   pii: string[];
   /** Stages the API sent without a class while others have one. */
   unclassified: string[];
-  /** AA-1113 (CIS 448): stages marked free text (scrubbed before any model call); null before the API sends the mark. */
+  /** AA-1113 (CIS 449): stages marked free text (scrubbed before any model call); null before the API sends the mark. */
   freeText: string[] | null;
 }
 
