@@ -37,7 +37,9 @@ import {
   doraNumber, parseRange, rangeQuery, sortCards, statusRank, withRange, type RangeChoice, type RangeMeta,
 } from "@/lib/deliveryRange";
 import { GitMapTab, MergeQueueTab } from "./ActivityTabs";
-import { AppTrend, FlowDiagram, RangeBar, SortPicker, TrendCompare, WindowLabel, useCardSort } from "./RangeCharts";
+import {
+  AppTrend, FlowDiagram, RangeBar, SortPicker, TrendCompare, WindowLabel, useCardSort, useRangeWhen,
+} from "./RangeCharts";
 import { ACTIVITY } from "./activity.messages";
 import { DELIVERY } from "./messages";
 
@@ -231,7 +233,8 @@ function DeploysSection({ app, t }: { app: DeliveryApp; t: DT }) {
 }
 
 function SegmentsSection({ app, t }: { app: DeliveryApp; t: DT }) {
-  const c = useChartColors({ s1: "--aa-info", s2: "--aa-purple", s3: "--aa-kit-amber", s4: "--aa-accent",
+  // AA-1135 follow-up: slate, not kit-amber, next to the accent (two oranges read as one segment)
+  const c = useChartColors({ s1: "--aa-info", s2: "--aa-purple", s3: "--aa-slate", s4: "--aa-accent",
     s5: "--aa-green", axis: "--aa-muted" });
   const colors = [c.s1, c.s2, c.s3, c.s4, c.s5];
   const rows = segmentRows(app, t("medianRow"));
@@ -288,8 +291,9 @@ function useCiColumns(t: DT): ColumnDef<WorkflowRow, unknown>[] {
 
 function CiSection({ app, t }: { app: DeliveryApp; t: DT }) {
   const columns = useCiColumns(t);
+  const when = useRangeWhen();
   return (
-    <Section title={t("secCi")} description={t("secCiDesc")} testId="delivery-ci">
+    <Section title={t("secCi")} description={t("secCiDesc", when)} testId="delivery-ci">
       <DataTable<WorkflowRow> tableId={`delivery-ci-${app.id}`} data={app.ci.workflows} columns={columns}
         getRowId={(w) => w.name} paginate={false} searchable={false} tableMinWidth={820} enableCsv
         csvFilename={`ci-health-${app.id}.csv`} emptyTitle={t("noValue")} />
@@ -299,8 +303,9 @@ function CiSection({ app, t }: { app: DeliveryApp; t: DT }) {
 
 function FailedSection({ app, t }: { app: DeliveryApp; t: DT }) {
   const columns = useDeployColumns(app, t);
+  const when = useRangeWhen();
   return (
-    <Section title={t("secFailed")} description={t("secFailedDesc")} testId="delivery-failed">
+    <Section title={t("secFailed")} description={t("secFailedDesc", when)} testId="delivery-failed">
       <DataTable<DeployRow> tableId={`delivery-failed-${app.id}`} data={app.failed_deploys} columns={columns}
         getRowId={(d) => `${d.sha}-${d.started_at}`} paginate={false} searchable={false} tableMinWidth={860}
         emptyTitle={t("noFailed")} />

@@ -59,6 +59,20 @@ export function rangeParams(c: RangeChoice): Record<string, string | null> {
   return { range: c.range === DEFAULT_RANGE ? null : c.range, from: null, to: null };
 }
 
+/** What a sentence about the chosen range says: the preset's day count, or the custom days (YYYY-MM-DD, both
+ *  included). The page words it "over the last N days" / "from <day> to <day>" (RangeCharts useRangeWhen). */
+export type RangeWhen = { custom: false; days: number } | { custom: true; from: string; to: string };
+
+export function rangeWhen(c: RangeChoice): RangeWhen {
+  if (c.range === "custom") return { custom: true, from: c.from, to: c.to };
+  return { custom: false, days: Number(c.range.slice(0, -1)) };
+}
+
+/** The colours of chart series that compare apps (the DORA trend): kit tokens six hues apart in light and dark.
+ *  Accent and kit-amber were both orange (CIS and TripPlanner looked the same, AA-1135 follow-up); the nearest pair
+ *  here (info / purple, info / slate in dark) still differs clearly. Never two of the orange / amber tokens. */
+export const SERIES_VARS = ["--aa-accent", "--aa-info", "--aa-purple", "--aa-green", "--aa-red", "--aa-slate"] as const;
+
 /** Days from `from` to `to`, both included. */
 export function dayCount(from: string, to: string): number {
   return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;

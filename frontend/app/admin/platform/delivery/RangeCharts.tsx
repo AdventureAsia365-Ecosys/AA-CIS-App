@@ -11,21 +11,24 @@
 import { useMemo, useState } from "react";
 import { Bar, BarChart, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
-  Button, CHART_TOOLTIP, DataTable, DateField, K, Pressable, Section, SegmentedControl, Select, useFormat, useT,
-  useUrlFilters, type ColumnDef,
+  Button, CHART_TOOLTIP, DataTable, DateField, K, Pressable, Section, SegmentedControl, Select, controlStyle, formatDay,
+  useFormat, useLang, useT, useUrlFilters, type ColumnDef,
 } from "../../../_kit";
 import { useChartColors } from "../../../_kit/useTheme";
 import { fmtHours, type DeliveryApp } from "@/lib/deliveryMetrics";
 import type { ChurnRow, GitWindow, QueueReason, QueueSection } from "@/lib/deliveryActivity";
 import {
-  FLOW_POINTS, PRESETS, TREND_METRICS, appTrendRows, customProblem, flowSteps, histRows, parseRange, rangeParams,
-  squarify, trendRows, weeklyRows, windowNote, type RangeMeta, type RangeProblem, type RangeWindow, type TrendMetric,
+  FLOW_POINTS, PRESETS, SERIES_VARS, TREND_METRICS, appTrendRows, customProblem, flowSteps, histRows, parseRange,
+  rangeParams, rangeWhen, squarify, trendRows, weeklyRows, windowNote, type RangeMeta, type RangeProblem, type RangeWindow, type TrendMetric,
 } from "@/lib/deliveryRange";
 import { RANGE } from "./range.messages";
 
 const small = { fontSize: 12, color: K.muted, lineHeight: 1.45 } as const;
 const row = { display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" } as const;
-const SERIES = ["--aa-accent", "--aa-info", "--aa-purple", "--aa-kit-amber", "--aa-green", "--aa-red"];
+// AA-1135 follow-up: the DORA trend series (lib/deliveryRange SERIES_VARS: six hues apart in both themes)
+const SERIES = SERIES_VARS;
+// the custom range's two date boxes: the kit control look, the width of their 150 px wrapper
+const DATE_BOX = { ...controlStyle("sm"), width: "100%" } as const;
 
 export function useRangeT() {
   return useT(RANGE);
@@ -53,6 +56,15 @@ function Showing({ meta, t }: { meta: RangeMeta | null; t: RT }) {
       {meta.cached ? ` · ${t("cached")}` : ""}
     </span>
   );
+}
+
+/** "over the last N days" / "from <day> to <day>": the page's range in a sentence (EN / VI, kit day format). */
+export function useRangeWhen(): string {
+  const t = useRangeT();
+  const { get } = useUrlFilters();
+  const lang = useLang();
+  const w = rangeWhen(parseRange(get));
+  return w.custom ? t("whenDates", formatDay(w.from, lang), formatDay(w.to, lang)) : t("whenDays", w.days);
 }
 
 /** An app's window in its header: the dates of a custom range or "Last N days", and a note when the range starts
@@ -83,9 +95,10 @@ function CustomFields({ meta, from, to, setFrom, setTo, onApply, disabled, t }: 
   return (
     <span style={row}>
       <DateField aria-label={t("from")} value={from} onChange={setFrom} min={min} max={max}
-        wrapperStyle={{ width: 150 }} />
+        style={DATE_BOX} wrapperStyle={{ width: 150 }} />
       <span aria-hidden style={small}>–</span>
-      <DateField aria-label={t("to")} value={to} onChange={setTo} min={min} max={max} wrapperStyle={{ width: 150 }} />
+      <DateField aria-label={t("to")} value={to} onChange={setTo} min={min} max={max} style={DATE_BOX}
+        wrapperStyle={{ width: 150 }} />
       <span data-testid="delivery-range-apply"><Button size="sm" disabled={disabled} onClick={onApply}>
         {t("apply")}</Button></span>
     </span>
@@ -301,10 +314,10 @@ function SmallBars({ rows, dataKey, name, color, height = 180, vertical }: {
             <Bar dataKey={dataKey} name={name} fill={color} isAnimationActive={false} />
           </BarChart>
         ) : (
-          <BarChart data={rows} margin={{ top: 4, right: 8, bottom: 4, left: -16 }}>
+          <BarChart data={rows} margin={{ top: 4, right: 8, bottom: 4, left: 0 }}>
             <XAxis dataKey="label" tick={{ fontSize: 10, fill: axis }} interval={0} angle={-20} textAnchor="end"
               height={42} />
-            <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: axis }} width={36} />
+            <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: axis }} width={40} />
             <Tooltip {...CHART_TOOLTIP} />
             <Bar dataKey={dataKey} name={name} fill={color} isAnimationActive={false} />
           </BarChart>

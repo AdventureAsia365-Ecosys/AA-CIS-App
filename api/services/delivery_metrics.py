@@ -296,7 +296,7 @@ def _range_view(app: dict, block: Optional[dict], section: str) -> dict:
     if block is None:
         return app
     if section == "queue":
-        return {**app, "window": block.get("window"), "queue": block.get("queue")}
+        return {**app, "window": block.get("window"), "queue": delivery_range.clip_recent(block.get("queue"))}
     if section == "git":
         git = app.get("git") if isinstance(app.get("git"), dict) else {}
         return {**app, "window": block.get("window"), "git": {**git, "range": block.get("git")}}

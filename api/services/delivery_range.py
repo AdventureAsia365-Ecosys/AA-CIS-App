@@ -16,6 +16,9 @@ custom range and a preset of the same window give the same numbers:
   * cached per (summary generated_at, from, to) in this process: the newest cis.delivery.custom_range_cache_entries
     ranges, dropped as soon as a newer summary is published.
 
+The merge-queue `recent` list of every range is bounded to its window by `clip_recent` (the engine bounds it at the
+start only; S284 live check: a custom range ending before the newest collection listed later entries).
+
 The child's answer passes the same account-ID mask as the summary (delivery_metrics._mask): pull request titles are
 free text. Read only: S3 GETs of the docs reader prefix, no table, no GitHub token.
 """
@@ -116,6 +119,33 @@ def window(bundle: dict, start: Any, end: Any, max_days: int) -> tuple[datetime,
     a = datetime.combine(s, datetime.min.time(), timezone.utc)
     b = min(datetime.combine(e + timedelta(days=1), datetime.min.time(), timezone.utc), gen)
     return a, b
+
+
+def clip_recent(queue: Any) -> Any:
+    """The merge-queue section with its `recent` entries limited to the section's own window [start, end).
+
+    The engine lists an entry when it is still queued or left the queue after the window start, without an upper
+    bound: a custom range that ends before the newest collection then listed entries from after its last day
+    (S284 live check). Kept: an entry that left the queue inside the window, and one still queued that entered the
+    queue before the window end (it was in the queue at the end of the range). The engine is a byte copy of the
+    collector's, so the bound is applied here, after it; the counts and the other lists are already windowed."""
+    if not isinstance(queue, dict) or not isinstance(queue.get("recent"), list):
+        return queue
+    w = queue.get("window") if isinstance(queue.get("window"), dict) else {}
+    a, b = engine.ts(w.get("start")), engine.ts(w.get("end"))
+    if a is None or b is None:
+        return queue
+
+    def inside(e: Any) -> bool:
+        if not isinstance(e, dict):
+            return False
+        left = engine.ts(e.get("left_at"))
+        if left is not None:
+            return a <= left < b
+        entered = engine.ts(e.get("enqueued_at"))
+        return e.get("outcome") == "queued" and (entered is None or entered < b)
+
+    return {**queue, "recent": [e for e in queue["recent"] if inside(e)]}
 
 
 def _payload(bundle: dict, a: datetime, b: datetime, bucket: str, prefix: str) -> dict:

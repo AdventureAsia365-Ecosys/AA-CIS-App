@@ -28,7 +28,7 @@ export const DELIVERY = defineMessages(
     ci_p95: "Slowest CI p95",
     main: "Main branch",
     tipdeployment_frequency:
-      "Green deploys a week over the last 4 weeks (deploy and post-deploy verify passed). Lower than before: changes are piling up; ship smaller pull requests.",
+      "Green deploys a week over the chosen time range (deploy and post-deploy verify passed). Lower than before: changes are piling up; ship smaller pull requests.",
     tiplead_time:
       "Median time from opening a pull request to its change running green on Dev. Higher: look at the segment chart to see whether CI, review, the merge queue or the deploy is slow.",
     tipchange_failure_rate:
@@ -56,9 +56,10 @@ export const DELIVERY = defineMessages(
     secSegmentsDesc: (seg: string) => `Median hours per segment, then the slowest changes. The longest segment now: ${seg}.`,
     secSegmentsNone: "No change reached a green deploy in the window yet.",
     secCi: "CI health per workflow",
-    secCiDesc: "Runs of the last 4 weeks per workflow (cancelled and skipped runs left out).",
+    secCiDesc: (when: string) => `Runs ${when} per workflow (cancelled and skipped runs left out).`,
     secFailed: "Failed deploys and recovery",
-    secFailedDesc: "Deploys that failed in the last 12 weeks, why, and how long until a green deploy repaired them.",
+    secFailedDesc: (when: string) =>
+      `Deploys that failed ${when}, why, and how long until a green deploy repaired them.`,
     secFlaky: "Flaky jobs",
     secFlakyDesc: "Jobs that failed and then passed on the same commit (a re-run or a later run).",
     secQueue: "Merge queue and changes",
@@ -150,7 +151,7 @@ export const DELIVERY = defineMessages(
     ci_p95: "CI p95 chậm nhất",
     main: "Nhánh main",
     tipdeployment_frequency:
-      "Số lần deploy xanh mỗi tuần trong 4 tuần gần nhất (deploy và post-deploy verify đều đạt). Thấp hơn trước: thay đổi đang dồn lại; nên tách pull request nhỏ hơn.",
+      "Số lần deploy xanh mỗi tuần trong khoảng thời gian đã chọn (deploy và post-deploy verify đều đạt). Thấp hơn trước: thay đổi đang dồn lại; nên tách pull request nhỏ hơn.",
     tiplead_time:
       "Trung vị thời gian từ lúc mở pull request tới lúc thay đổi chạy xanh trên Dev. Cao hơn: xem biểu đồ các khúc để biết CI, review, hàng merge hay deploy đang chậm.",
     tipchange_failure_rate:
@@ -177,9 +178,10 @@ export const DELIVERY = defineMessages(
     secSegmentsDesc: (seg: string) => `Trung vị số giờ của từng khúc, rồi các thay đổi chậm nhất. Khúc dài nhất hiện nay: ${seg}.`,
     secSegmentsNone: "Chưa có thay đổi nào tới được lần deploy xanh trong khoảng này.",
     secCi: "Sức khoẻ CI theo workflow",
-    secCiDesc: "Các lượt chạy 4 tuần gần nhất theo workflow (bỏ lượt bị huỷ và bị bỏ qua).",
+    secCiDesc: (when: string) => `Các lượt chạy ${when} theo workflow (bỏ lượt bị huỷ và bị bỏ qua).`,
     secFailed: "Deploy hỏng và khôi phục",
-    secFailedDesc: "Các lần deploy hỏng trong 12 tuần gần nhất, lý do, và bao lâu tới khi có lần deploy xanh sửa nó.",
+    secFailedDesc: (when: string) =>
+      `Các lần deploy hỏng ${when}, lý do, và bao lâu tới khi có lần deploy xanh sửa nó.`,
     secFlaky: "Job chập chờn",
     secFlakyDesc: "Job đỏ rồi xanh trên cùng một commit (chạy lại hoặc một lượt sau).",
     secQueue: "Hàng merge và thay đổi",

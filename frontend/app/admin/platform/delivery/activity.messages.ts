@@ -19,8 +19,8 @@ export const ACTIVITY = defineMessages(
     noGitApps: "No git activity in the summary yet. It appears after the next hourly collection.",
     loadError: "Could not load this tab",
     // merge queue
-    queueIntro:
-      "Each stay of a pull request in the GitHub merge queue over the last 4 weeks: how long it waited, whether it merged or was thrown out and why, and what the merge_group checks cost.",
+    queueIntro: (when: string) =>
+      `Each stay of a pull request in the GitHub merge queue ${when}: how long it waited, whether it merged or was thrown out and why, and what the merge_group checks cost.`,
     queue_wait: "Queue wait p95",
     ejection_rate: "Ejection rate",
     flaky_rate: "Flaky rate",
@@ -49,7 +49,8 @@ export const ACTIVITY = defineMessages(
     secQueueCi: "merge_group checks",
     secQueueCiDesc: "The workflow runs on the queue's temporary branches: minutes, failures and re-runs.",
     secRecent: "Recent entries",
-    secRecentDesc: "Entries still in the queue and the ones that left it in the last 4 weeks, newest first.",
+    secRecentDesc: (when: string) =>
+      `Entries still in the queue at the end of the range and the ones that left it ${when}, newest first.`,
     secFlakyEntries: "Flaky signals",
     secFlakyEntriesDesc: "Entries that failed and then passed with the same code: a check worth fixing or quarantining.",
     noReasons: "No entry left the queue without a merge in this period.",
@@ -139,8 +140,8 @@ export const ACTIVITY = defineMessages(
     noQueueApps: "Bản tổng hợp chưa có repo nào dùng hàng merge. Lịch sử hàng merge xuất hiện sau lần thu thập hằng giờ tiếp theo.",
     noGitApps: "Bản tổng hợp chưa có hoạt động git. Số liệu xuất hiện sau lần thu thập hằng giờ tiếp theo.",
     loadError: "Không tải được tab này",
-    queueIntro:
-      "Mỗi lượt một pull request nằm trong hàng merge của GitHub trong 4 tuần gần nhất: chờ bao lâu, được merge hay bị loại và vì sao, và các check merge_group tốn bao nhiêu.",
+    queueIntro: (when: string) =>
+      `Mỗi lượt một pull request nằm trong hàng merge của GitHub ${when}: chờ bao lâu, được merge hay bị loại và vì sao, và các check merge_group tốn bao nhiêu.`,
     queue_wait: "Chờ hàng merge p95",
     ejection_rate: "Tỉ lệ bị loại",
     flaky_rate: "Tỉ lệ chập chờn",
@@ -169,7 +170,8 @@ export const ACTIVITY = defineMessages(
     secQueueCi: "Check merge_group",
     secQueueCiDesc: "Các lượt chạy workflow trên nhánh tạm của hàng merge: số phút, số lỗi và số lần chạy lại.",
     secRecent: "Lượt gần đây",
-    secRecentDesc: "Các lượt còn trong hàng và các lượt đã rời hàng trong 4 tuần gần nhất, mới nhất trước.",
+    secRecentDesc: (when: string) =>
+      `Các lượt còn trong hàng ở cuối khoảng và các lượt đã rời hàng ${when}, mới nhất trước.`,
     secFlakyEntries: "Dấu hiệu chập chờn",
     secFlakyEntriesDesc: "Các lượt hỏng rồi lại đạt với cùng một mã: check nên sửa hoặc cách ly.",
     noReasons: "Không có lượt nào rời hàng mà không được merge trong khoảng này.",

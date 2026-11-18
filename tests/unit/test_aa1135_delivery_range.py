@@ -364,3 +364,60 @@ def test_computed_answer_is_masked(client):
     res, _ = _get(client, params={"range": "custom", "from": "2026-03-14", "to": "2026-03-20"}, run=Worker(plant))
     title = res.json()["apps"][0]["changes"]["slowest"][0]["title"]
     assert "123456789012" not in title and docs_reader.ACCOUNT_ID_MARKER in title
+
+
+# ── S284 live check: the recent queue entries stay inside the range ─────────────────────────────────────────────
+
+def _entry(pr, outcome, enqueued, left):
+    return {"pr": pr, "title": f"Invented change {pr}", "outcome": outcome, "enqueued_at": enqueued, "left_at": left}
+
+
+def test_clip_recent_keeps_the_entries_of_the_window():
+    queue = {
+        "window": {"start": "2026-03-14T00:00:00Z", "end": "2026-03-16T00:00:00Z"},
+        "entries": 2,
+        "recent": [
+            _entry(5, "queued", "2026-03-16T08:00:00Z", None),                    # entered after the end
+            _entry(4, "merged", "2026-03-16T07:00:00Z", "2026-03-16T07:30:00Z"),  # left after the end
+            _entry(3, "queued", "2026-03-15T23:00:00Z", None),                    # in the queue at the end
+            _entry(2, "merged", "2026-03-15T22:00:00Z", "2026-03-16T00:00:00Z"),  # left exactly at the end
+            _entry(1, "ejected", "2026-03-15T09:00:00Z", "2026-03-15T10:00:00Z"),  # inside
+            _entry(0, "merged", "2026-03-14T00:00:00Z", "2026-03-14T00:00:00Z"),  # left at the start
+        ],
+    }
+    out = dr.clip_recent(queue)
+    assert [e["pr"] for e in out["recent"]] == [3, 1, 0]
+    assert out["entries"] == 2 and out["window"] == queue["window"]
+    assert len(queue["recent"]) == 6   # the input is not changed
+
+
+@pytest.mark.parametrize("queue", [None, {}, {"recent": []}, {"window": {"start": "x"}, "recent": [{"pr": 1}]}])
+def test_clip_recent_leaves_a_section_without_a_window_alone(queue):
+    assert dr.clip_recent(queue) == queue
+
+
+def test_custom_range_queue_lists_no_entry_after_its_last_day(client):
+    raw: list[dict] = []
+
+    def keep(out):
+        raw.append(copy.deepcopy(out["apps"][0]["range"]["queue"]))
+        return out
+
+    # the demo repo's queue entries all left on 16/03: a range that ends on 15/03 must list none of them
+    res, _ = _get(client, params={"range": "custom", "from": "2026-03-14", "to": "2026-03-15", "section": "queue"},
+                  run=Worker(keep))
+    assert res.status_code == 200, res.text
+    q = res.json()["apps"][0]["queue"]
+    assert q["window"]["end"] == "2026-03-16T00:00:00Z"
+    assert raw[0]["recent"], "the engine lists the later entries: the test would not bite without them"
+    assert q["recent"] == []
+    # a range that covers 16/03 keeps them, in the engine's order
+    dmx.reset_cache()
+    res, _ = _get(client, params={"range": "custom", "from": "2026-03-14", "to": "2026-03-16", "section": "queue"})
+    assert [e["pr"] for e in res.json()["apps"][0]["queue"]["recent"]] == [11, 11, 10]
+
+
+def test_preset_queue_recent_is_clipped_too(client):
+    res, _ = _get(client, params={"range": "7d", "section": "queue"})
+    d7 = SUMMARY["apps"][0]["ranges"]["d7"]["queue"]
+    assert res.json()["apps"][0]["queue"]["recent"] == dr.clip_recent(d7)["recent"]

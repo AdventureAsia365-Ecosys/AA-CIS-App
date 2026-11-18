@@ -6,8 +6,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  appTrendRows, customProblem, doraNumber, dayCount, edgeLabel, flowSteps, histRows, isDay, parseRange, pickSort, rangeParams,
-  rangeQuery, sortCards, squarify, statusRank, trendRows, trendValue, weeklyRows, windowNote, withRange,
+  SERIES_VARS, appTrendRows, customProblem, doraNumber, dayCount, edgeLabel, flowSteps, histRows, isDay, parseRange,
+  pickSort, rangeParams, rangeQuery, rangeWhen, sortCards, squarify, statusRank, trendRows, trendValue, weeklyRows,
+  windowNote, withRange,
 } from "./deliveryRange.ts";
 import { gitWindow, kindRows } from "./deliveryActivity.ts";
 
@@ -194,4 +195,20 @@ test("windowNote says when the range starts before the complete history", () => 
   assert.deepEqual([g.clipped, g.coveredDays, g.startsOn, g.days], [true, 10, "2026-09-21", 30]);
   assert.equal(windowNote(git, true, "2026-08-01").clipped, false);
   assert.equal(windowNote(git, true, "not a day").clipped, false);
+});
+
+test("rangeWhen says the preset's days or the custom days (AA-1135 follow-up: never a fixed 4 weeks)", () => {
+  assert.deepEqual(rangeWhen(parseRange(getter(""))), { custom: false, days: 28 });
+  assert.deepEqual(rangeWhen(parseRange(getter("range=7d"))), { custom: false, days: 7 });
+  assert.deepEqual(rangeWhen(parseRange(getter("range=90d"))), { custom: false, days: 90 });
+  assert.deepEqual(rangeWhen(parseRange(getter("range=custom&from=2026-11-05&to=2026-11-12"))),
+    { custom: true, from: "2026-11-05", to: "2026-11-12" });
+});
+
+test("the series colours are distinct kit tokens with one orange only (CIS and TripPlanner looked alike)", () => {
+  assert.equal(new Set(SERIES_VARS).size, SERIES_VARS.length);
+  assert.ok(SERIES_VARS.length >= 6, "one colour per app of the summary");
+  const oranges = SERIES_VARS.filter((v) => /accent|gold|amber/.test(v));
+  assert.deepEqual(oranges, ["--aa-accent"]);
+  for (const v of SERIES_VARS) assert.match(v, /^--aa-[a-z-]+$/);
 });
