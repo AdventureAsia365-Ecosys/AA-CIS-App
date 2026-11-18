@@ -56,6 +56,11 @@ commit); ``source.github`` ("<org>/<repo>", only while the repo is public) lets 
 Edit. A value of the wrong shape becomes null (an older builder sends none of them). The manifest may name the search
 index (``search``: key ``search/index.sqlite``, format 1, bytes, sha256), which api/services/docs_search.py loads.
 
+AA-1132 (page history, root build_docs_reader.py rule 13; the docs sync engine): an entry may also carry ``history``
+(the newest commits that touched the file, [{sha, date, subject, pr}], sha and pr optional), ``needs_review`` (a mapped
+code dependency changed after the page's last change) and ``needs_review_reason``; api/services/docs_page_history.py
+checks their shape ([] / null when absent).
+
 This repo is public: it ships the reader only, no page content.
 
 load_manifest() is cached in process for CACHE_TTL_S; load_page() caches each body for CACHE_TTL_S too (bounded).
@@ -78,6 +83,8 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
 import structlog
+
+from api.services.docs_page_history import clean_history, clean_review
 
 logger = structlog.get_logger()
 
@@ -115,7 +122,8 @@ ACCOUNT_ID_MARKER = "[redacted-account-id]"
 # Fields copied from a manifest entry into the API response (anything else in the object is dropped).
 _ENTRY_FIELDS = ("repo", "path", "id", "title", "description", "type", "status", "audience", "owner",
                  "last_reviewed", "generated", "access", "bytes", "lang", "translation_of", "translations",
-                 "nav", "nav_order", "nav_derived", "known_issue", "last_changed")
+                 "nav", "nav_order", "nav_derived", "known_issue", "last_changed", "history", "needs_review",
+                 "needs_review_reason")
 
 # AA-1133: the sidebar groups the builder emits (root frontmatter.schema.json `nav`), and the other v2 field shapes.
 NAV_GROUPS = ("start", "guides", "operations", "architecture", "reference", "legal-security")
@@ -436,6 +444,8 @@ def _clean_v2(entry: dict, raw: dict) -> None:
     entry["last_changed"] = ({"sha": lc["sha"], "date": lc["date"]}
                              if isinstance(lc, dict) and isinstance(lc.get("sha"), str) and _GIT_SHA.match(lc["sha"])
                              and isinstance(lc.get("date"), str) and _ISO_DATE.match(lc["date"]) else None)
+    entry["history"] = clean_history(raw.get("history"))                       # AA-1132
+    entry["needs_review"], entry["needs_review_reason"] = clean_review(raw)
 
 
 def _clean_search(raw: Any) -> Optional[dict]:
