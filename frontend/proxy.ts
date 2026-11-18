@@ -135,31 +135,39 @@ async function staffGate(request: NextRequest, pass: () => NextResponse): Promis
 
   // AA-656: identity comes from whichever session token is present, verified server-side.
   const staffToken = request.cookies.get(STAFF_TOKEN_COOKIE)?.value;
-  if (staffToken) {
-    if (isCognitoToken(staffToken) && tokenExpiresSoon(staffToken)) {
-      // AA-816: refresh first (no verify round trip for a token that is about to die). The route
-      // validates `next` as a same-site path before redirecting back to it.
-      const refreshUrl = new URL(REFRESH_PATH, request.url);
-      refreshUrl.searchParams.set("next", pathname + request.nextUrl.search);
-      return NextResponse.redirect(refreshUrl);
-    }
-    const verified = await verifyAdminToken(request);
-    if (verified instanceof NextResponse) return verified; // invalid/expired token
-    if (!isStaffRole(verified.role)) {
-      return toStaffLogin(request);
-    }
-    if (!allowed.includes(verified.role)) {
-      // Real staff session, page not allowed for its role → its own landing page, not /login.
-      // Every role's landing page is allowed for that role, so this cannot loop.
-      return NextResponse.redirect(new URL(landingPage(verified.role), request.url));
-    }
-    return pass();
-  }
+  if (staffToken) return sessionGate(request, staffToken, allowed, pass);
 
   // No token (a bare or forged cis_role cookie proves nothing) → log in.
   const response = NextResponse.redirect(new URL("/login", request.url));
   response.cookies.delete("cis_role");
   return response;
+}
+
+/** A request that carries a staff token: refresh, verify, then the page's role check (AA-656 / AA-816). */
+async function sessionGate(
+  request: NextRequest,
+  staffToken: string,
+  allowed: string[],
+  pass: () => NextResponse,
+): Promise<NextResponse> {
+  if (isCognitoToken(staffToken) && tokenExpiresSoon(staffToken)) {
+    // AA-816: refresh first (no verify round trip for a token that is about to die). The route
+    // validates `next` as a same-site path before redirecting back to it.
+    const refreshUrl = new URL(REFRESH_PATH, request.url);
+    refreshUrl.searchParams.set("next", request.nextUrl.pathname + request.nextUrl.search);
+    return NextResponse.redirect(refreshUrl);
+  }
+  const verified = await verifyAdminToken(request);
+  if (verified instanceof NextResponse) return verified; // invalid/expired token
+  if (!isStaffRole(verified.role)) {
+    return toStaffLogin(request);
+  }
+  if (!allowed.includes(verified.role)) {
+    // Real staff session, page not allowed for its role → its own landing page, not /login.
+    // Every role's landing page is allowed for that role, so this cannot loop.
+    return NextResponse.redirect(new URL(landingPage(verified.role), request.url));
+  }
+  return pass();
 }
 
 // ── AA-232 helper — verify cis_admin_token ──────────────────────────────────
