@@ -47,7 +47,7 @@ from typing import Iterator, Optional
 
 import structlog
 
-from . import app_profile, call_log, central_budget, connections, data_scope, pricing
+from . import app_profile, call_log, central_budget, connections, data_scope, free_text_scrub, pricing
 from .catalog import LEGACY_KEYS, get_model_sync
 from .models import ANTHROPIC_API_LABEL_PREFIX, LLMRequest, LLMResponse
 from .pricing import Usage
@@ -187,10 +187,14 @@ def resolve_target(stage: str) -> BatchTarget:
 
 
 def stage_refusal(stage: str) -> Optional[str]:
-    """Why ``stage`` may not batch now (the tenant rule, the stage kill switch, the app's AI switch), else None."""
+    """Why ``stage`` may not batch now (the tenant rule, the free-text registry, the stage kill switch, the app's AI
+    switch), else None. AA-1113: a free-text stage (registry row or ``t<n>_`` floor) stays on the scrubbed on-demand
+    path; the batch adapters send ``item.system`` / ``item.user`` as built."""
     if TENANT_STAGE_RE.match(stage or ""):
         return f"stage {stage!r} is tenant-facing: tenant stages stay synchronous"
     cfg = get_stage_config_sync(stage)
+    if free_text_scrub.is_free_text_stage(stage, cfg):
+        return f"stage {stage!r} carries free text: free-text stages stay synchronous (scrubbed on demand)"
     if cfg is not None and getattr(cfg, "enabled", True) is False:
         return f"stage {stage!r} is switched off ({getattr(cfg, 'disabled_reason', None) or 'no reason given'})"
     from . import anomaly_breaker                       # AA-1126 G2: a tripped breaker in mode enforce
