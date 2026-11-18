@@ -1,5 +1,6 @@
 -- Migration 451: AA-1113 (root ADR 0009 decision 10, accepted S283) — shared.llm_role_config.free_text: the registry
 -- of the stages whose prompts carry tenant or traveller free text, scrubbed by the gateway before any model call.
+-- break-glass: decided policy change (ADR 0009 d10, accepted by the tech lead in S283): marks the free-text stages for the PII scrub; no model, route, order or parameter of any stage changes
 --
 -- Why. The gateway's free-text PII scrub (shared/llm_client/free_text_scrub.py, CIS #1559) chose its stages by a
 -- name rule in code (every tenant stage "t<n>_...") plus an empty code deny-list. Decision 10 says the data class of a
