@@ -7,41 +7,91 @@
 // enough to need it. Only h2 / h3 headings are listed; the ids are the ones MarkdownView gives the headings
 // (lib/docsReader.ts outline), so a link and a search hit land on the same place.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { K, RADIUS, useT } from "../../_kit";
 import { HEADING_ID_PREFIX, scrollToHeading } from "../../_kit/MarkdownView";
 import { M } from "./messages";
 import type { Heading } from "@/lib/docsReader";
+import { headingHash, pickActiveIndex, slugFromHash } from "@/lib/docsToc";
 
-/** The slug of the heading the reader is at: the last one whose top has passed a line near the top of the viewport. */
-function useActiveHeading(items: Heading[], enabled: boolean): string {
-  const [active, setActive] = useState("");
-  useEffect(() => {
-    if (!enabled || !items.length || typeof window === "undefined" || !("IntersectionObserver" in window)) return;
-    const els = items
-      .map((h) => document.getElementById(`${HEADING_ID_PREFIX}${h.slug}`))
-      .filter((el): el is HTMLElement => !!el);
-    if (!els.length) return;
-    const pick = () => {
-      let current = "";
-      for (const el of els) {
-        if (el.getBoundingClientRect().top <= 96) current = el.id.slice(HEADING_ID_PREFIX.length);
-        else break;
-      }
-      setActive(current || els[0].id.slice(HEADING_ID_PREFIX.length));
-    };
-    const io = new IntersectionObserver(pick, { rootMargin: "0px 0px -70% 0px", threshold: [0, 1] });
-    els.forEach((el) => io.observe(el));
-    const first = window.requestAnimationFrame(pick);   // not a synchronous setState in the effect
-    return () => {
-      window.cancelAnimationFrame(first);
-      io.disconnect();
-    };
-  }, [items, enabled]);
-  return active;
+// AA-1133 follow-up (S284 live check): the mark used to follow IntersectionObserver callbacks only, which stop once a
+// heading is inside the observed band, so after a click or a smooth scroll the previous heading stayed marked. Now the
+// mark is recomputed on every scroll (at most once a frame, any scrolling box: capture listener), when a scroll ends
+// (`scrollend` where the browser has it), on a resize and on a #doc-<slug> change; the heading the reader went to stays
+// marked while it is on screen (lib/docsToc.ts pickActiveIndex), until they scroll by hand.
+
+type Spy = { active: string; go: (slug: string) => void };
+
+const USER_SCROLL_EVENTS = ["wheel", "touchstart", "keydown"] as const;
+
+/** Window listeners for the scroll-spy; returns the function that removes them. */
+function listen(onScroll: () => void, onEnd: () => void, onHash: () => void, onUser: () => void): () => void {
+  const opts = { capture: true, passive: true } as const;
+  window.addEventListener("scroll", onScroll, opts);
+  window.addEventListener("scrollend", onEnd, opts);
+  window.addEventListener("resize", onScroll, { passive: true });
+  window.addEventListener("hashchange", onHash);
+  USER_SCROLL_EVENTS.forEach((e) => window.addEventListener(e, onUser, opts));
+  return () => {
+    window.removeEventListener("scroll", onScroll, opts);
+    window.removeEventListener("scrollend", onEnd, opts);
+    window.removeEventListener("resize", onScroll);
+    window.removeEventListener("hashchange", onHash);
+    USER_SCROLL_EVENTS.forEach((e) => window.removeEventListener(e, onUser, opts));
+  };
 }
 
-function TocLinks({ items, active }: { items: Heading[]; active: string }) {
+/** Each listed heading's top in px from the viewport top (Infinity when it is not in the page). */
+function headingTops(slugs: readonly string[]): number[] {
+  return slugs.map((slug) => {
+    const el = document.getElementById(`${HEADING_ID_PREFIX}${slug}`);
+    return el ? el.getBoundingClientRect().top : Number.POSITIVE_INFINITY;
+  });
+}
+
+/** The heading the reader is at, and `go` (scroll to a heading, mark it, put it in the address). */
+function useActiveHeading(items: Heading[], enabled: boolean): Spy {
+  const [active, setActive] = useState("");
+  const pinned = useRef("");
+  useEffect(() => {
+    if (!enabled || !items.length || typeof window === "undefined") return;
+    const slugs = items.map((h) => h.slug);
+    const pick = () => {
+      const i = pickActiveIndex(headingTops(slugs), { viewport: window.innerHeight,
+                                                      pinned: slugs.indexOf(pinned.current) });
+      setActive(slugs[i] ?? "");
+    };
+    let frame = 0;
+    const onScroll = () => {   // throttled: at most one pick per animation frame
+      if (!frame) frame = window.requestAnimationFrame(() => { frame = 0; pick(); });
+    };
+    const onHash = () => {
+      pinned.current = slugFromHash(window.location.hash, HEADING_ID_PREFIX);
+      onScroll();
+    };
+    const onUser = () => { pinned.current = ""; };
+    const stop = listen(onScroll, pick, onHash, onUser);
+    pinned.current = slugFromHash(window.location.hash, HEADING_ID_PREFIX);
+    onScroll();   // first mark on the next frame (not a synchronous setState in the effect)
+    return () => {
+      window.cancelAnimationFrame(frame);
+      stop();
+    };
+  }, [items, enabled]);
+  const go = (slug: string) => {
+    pinned.current = slug;
+    setActive(slug);
+    scrollToHeading(slug);
+    try {
+      window.history.replaceState(window.history.state, "", headingHash(slug, HEADING_ID_PREFIX));
+    } catch {
+      /* the address stays as it was; the scroll still happened */
+    }
+  };
+  return { active, go };
+}
+
+function TocLinks({ items, active, onGo }: { items: Heading[]; active: string; onGo: (slug: string) => void }) {
   return (
     <>
       {items.map((h) => {
@@ -49,11 +99,11 @@ function TocLinks({ items, active }: { items: Heading[]; active: string }) {
         return (
           <a
             key={h.slug}
-            href={`#${HEADING_ID_PREFIX}${h.slug}`}
+            href={headingHash(h.slug, HEADING_ID_PREFIX)}
             aria-current={on ? "location" : undefined}
             onClick={(e) => {
               e.preventDefault();
-              scrollToHeading(h.slug);
+              onGo(h.slug);
             }}
             style={{
               display: "block",
@@ -77,7 +127,7 @@ function TocLinks({ items, active }: { items: Heading[]; active: string }) {
 
 export function DocToc({ items, sticky }: { items: Heading[]; sticky: boolean }) {
   const t = useT(M);
-  const active = useActiveHeading(items, sticky);
+  const spy = useActiveHeading(items, sticky);
   if (items.length < 2) return null;
   if (sticky) {
     return (
@@ -90,7 +140,7 @@ export function DocToc({ items, sticky }: { items: Heading[]; sticky: boolean })
                       marginBottom: 8 }}>
           {t("onThisPage")}
         </div>
-        <TocLinks items={items} active={active} />
+        <TocLinks items={items} active={spy.active} onGo={spy.go} />
       </nav>
     );
   }
@@ -104,7 +154,7 @@ export function DocToc({ items, sticky }: { items: Heading[]; sticky: boolean })
         {t("onThisPageCount", items.length)}
       </summary>
       <nav aria-label={t("onThisPage")} style={{ marginTop: 8 }}>
-        <TocLinks items={items} active="" />
+        <TocLinks items={items} active="" onGo={spy.go} />
       </nav>
     </details>
   );

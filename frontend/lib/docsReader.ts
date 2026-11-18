@@ -64,6 +64,7 @@ export type DocsManifestResp = {
   counts: { shown: number; owner_only_shown: number; hidden_owner_only: number };
   is_owner: boolean;
   owner_read?: boolean;   // owner-only pages are listed for this caller (an owner, or the Dev-only E2E admin)
+  can_feedback?: boolean; // this caller may answer "Was this page helpful?" (absent from an older API: lib/docsFeedback.ts)
   loaded_at: string;
   cache_ttl_s: number;
 };
