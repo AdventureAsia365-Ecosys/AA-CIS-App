@@ -1496,7 +1496,7 @@ class LLMClient:
             # AA-1126 G4: the hard cap of the call's batch run (S1 rewrite job, eval run, ad-hoc run).
             self._refuse(request, chain[0], run_cap.refusal_of(request.stage))
             # AA-1113 (ADR 0009 d10): a free-text stage sends only its scrubbed request (fail closed, no attempt).
-            request = self._free_text_gate(request, chain[0])
+            request = self._free_text_gate(request, chain[0], stage_cfg)
             if len(chain) == 1:
                 try:
                     resp = self._call_key_logged(request, chain[0], primary_acct, role=role, position=0)
@@ -1578,11 +1578,10 @@ class LLMClient:
         except central_budget.CentralBudgetExceeded as e:
             self._refuse(request, first_key, e)
 
-    def _free_text_gate(self, request: LLMRequest, first_key: str) -> LLMRequest:
-        """AA-1113 (root ADR 0009 d10): the scrubbed copy for a free-text stage, else the same request. A scrub that
-        cannot run is refused like a gate: one 0 USD row (refused / other, quality_signal.pii_scrub failed), raised."""
+    def _free_text_gate(self, request: LLMRequest, first_key: str, stage_cfg=None) -> LLMRequest:
+        """AA-1113 (ADR 0009 d10): a free-text stage's scrubbed copy, else the request; failed scrub: 0 USD refusal."""
         try:
-            return free_text_scrub.scrub_for_stage(request, _ATTEMPT_SCOPE.get())
+            return free_text_scrub.scrub_for_stage(request, _ATTEMPT_SCOPE.get(), stage_cfg)
         except free_text_scrub.FreeTextScrubFailed as e:
             self._refuse(request, first_key, e)
 
@@ -2518,7 +2517,8 @@ class LLMClient:
                                                     {"connection_test": target.connection.connection_key}))
         try:
             self._app_profile_gate(request, model.model_key)   # AA-1025 H1a: AI off for the app = no test call either
-            request = self._free_text_gate(request, model.model_key)   # AA-1113: a free-text stage is scrubbed here too
+            request = self._free_text_gate(request, model.model_key, request.stage and get_stage_config_sync(
+                request.stage))
             return self._call_target(request, model, target, admit=False, count=count)
         except Exception as e:
             billed = _billed_usage_of(e)

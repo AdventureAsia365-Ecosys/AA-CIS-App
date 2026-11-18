@@ -548,17 +548,23 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   model with no US deployment for a pii stage.
 - **Free-text PII scrub** (AA-1113, root ADR 0009 d10, accepted S283; `shared/llm_client/free_text_scrub.py` +
   `pii_patterns.py`, a copy of the CRM log scrub and its F3 detectors, never imported across repos): the stages that
-  carry tenant free text (every tenant stage `t<n>_*` by name, fail safe: the writers and the repair / FAQ / judge
-  stages that re-read their seed, agency facts and brand rules; `NOT_FREE_TEXT_STAGES` takes one out only once proven
-  free of tenant text, empty today; a migration may later move the flag into the stage row) send only a scrubbed copy of their request (system, user, few-shots):
-  e-mails, phones, cards, CCCD numbers, passports, OTPs after a cue, JWTs, credentials and signed links become bracket
-  labels (`[email]`, `[phone]` ...); dates, UUIDs and plain links stay; nothing is restored in the reply.
+  carry tenant or traveller free text send only a scrubbed copy of their request (system, user, few-shots). Which
+  stages: the registry column `shared.llm_role_config.free_text` (CIS 451, migration-only, read with the stage row as
+  `StageConfig.free_text`; every tenant stage marked by 451) plus a fail-safe floor by name, every `t<n>_*` stage
+  whatever its row says; a stage whose row could not be read on a cold cache is scrubbed too. A pii stage is never
+  marked (CHECK): it needs its data. E-mails, phones, cards, CCCD numbers, passports, OTPs after a cue, JWTs,
+  credentials and signed links become bracket labels (`[email]`, `[phone]` ...); dates, UUIDs and plain links stay;
+  nothing is restored in the reply.
   `LLMClient._generate_with` runs it after the switch and budget gates and before the first attempt (so the route,
   legacy keys, the truncation retry, the shadow and the cassette see only the scrubbed copy); the admin `probe` too.
   **Fail closed**: a scrub that raises or leaves an e-mail / `+` phone refuses the call (`FreeTextScrubFailed`, one
-  0 USD row refused / `other`, `quality_signal.pii_scrub.status = failed`). The receipt (counts per label, never a value) goes on the gateway's own
-  rows of the request (`quality_signal.pii_scrub`: refusals, failed attempts) and the log line `llm_free_text_scrubbed`;
-  the call site's success row is unchanged. Other stages get the same request object back.
+  0 USD row refused / `other`, `quality_signal.pii_scrub.status = failed`). The receipt (counts per label and
+  `scrubbed_hash`, the sha256 of the text the model gets; never a value) goes on the gateway's own rows of the request
+  (`quality_signal.pii_scrub`: refusals, failed attempts) and the log line `llm_free_text_scrubbed`; the call site's
+  success row is unchanged. Other stages get the same request object back. $0 live check:
+  `scripts/llm_ops/aa1113_scrub_probe.py` (a planted e-mail and phone, a model key the catalog lacks, the row's hash).
+  AI gateway › Routing › Routing by data class lists the free-text stages. A marked stage never batches (the batch
+  lane sends prompts as built). Not covered yet: TripPlanner's planning chat (`tp_plan_chat`, no row, its own gateway).
 - **Cost parity** (AA-1002 slice S6, migration 312 contract): `pricing.quote(model, Usage, deployment)` prices one
   billed request from its full usage (uncached input, output, cache reads, 5-minute writes 1.25x, 1-hour writes 2x,
   Message Batches 50% off every token, Anthropic `inference_geo: "us"` 1.1x, Claude Haiku 5.5 x5 above 100K prompt
@@ -595,6 +601,19 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   serves `openai_chat` rows of an OpenAI model (S235 gate keyed on the catalog row; the stage scope reads the called
   connection's data scope); its reply is labelled `azure-openai-<key>` (llm_call_log provider `azure_openai`, account = the connection). A client set
   on `LLMClient._openai` (tests, scripts) is used for every OpenAI-format call.
+- **Connection budget split** (AA-1113, tech lead S284; CIS 453, AA-Partner crm-077; root ADR 0009 d6 / 0008a): a
+  model connection has one budget at its provider; each app that spends on it has its OWN monthly cap there and the
+  shares together must stay under the provider budget. The CIS share is the connection's `monthly_budget_usd` (below;
+  a limit only while the connection's cost policy is a hard stop: with `hard_stop` false it is alert only and the page
+  counts CIS as uncapped. TripPlanner writes into the same ledger but does not enforce the cap yet, see the contract
+  views below); the CRM share is the CRM setting `crm.ai.connection_monthly_cap_usd` (the CRM enforces it on its
+  own ledger); the provider budget is the setting `cis.spend.connection_provider_budget_usd` ({connection key: USD},
+  informational). Neither app reads the other's ledger, view or table: `GET /admin/ai-gateway/connection-split`
+  (`api/services/ai_gateway_split.py`, pure rule in `api/services/llm_connection_split.py`) reads the
+  CRM share through the CRM settings relay Platform › Settings already uses (crm.ops.v1 `/settings`, the staff
+  member's own token) and AI gateway › Budgets shows provider budget, CIS share, CRM share, headroom and a flag when
+  the shares add up to more than the provider budget (also when a share is missing or alert only on a budgeted
+  connection, or the CRM could not be asked).
 - **Budget per connection + nightly cost reconciliation** (AA-1002 slice S10, migration 317 expand):
   `llm_provider_connection.monthly_budget_usd` is enforced per connection, independent of the job budgets
   (`shared.spend_budget`) and wave caps, which still apply. The policy is `shared.llm_connection_cost_policy` (no row =
@@ -818,7 +837,16 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   routing facts and circuits; 350 (E4) appends the model's `supports_temperature` and `stage_params` (the
   `shared.stage_model_params` row of the stage and model, NULL = none), which TripPlanner applies with this gateway's
   precedence. 351 (E5) revokes the grandfathered SELECT of CIS 173 on `llm_role_config` / `llm_model_catalog`:
-  TripPlanner reads the views only (fail closed) and keeps INSERT on `llm_call_log`.
+  TripPlanner reads the views only (fail closed) and keeps INSERT on `llm_call_log`. 452 (AA-1113) appends
+  `free_text` (the stage's scrub mark) and `over_cap_connections` (the connections of the model's deployments this
+  gateway leaves out for their monthly cap), and adds `catalog.v_llm_connection_cap_v1` (each capped connection's
+  month-to-date ledger spend, `over_cap`, `stops`; SELECT to `tripplanner` only): the CIS share of each connection,
+  published for TripPlanner. **TripPlanner does not read them yet**: its gateway (`backend/aa_llm`) still checks only
+  its daily app budget, so TripPlanner calls go on past the cap and, with the CRM share added, the provider budget can
+  be exceeded on the TripPlanner path. Follow-up: TripPlanner reads `v_llm_gateway_config_v1.over_cap_connections`,
+  leaves those deployments out and refuses with `budget` when every rung is over cap (hard_stop mode). The CRM reads no
+  CIS view (root ADR 0008a, tech lead S284): see "Connection budget
+  split".
 - **acc2 candidate models** (migration 324, contract class, AA-1017 w4a): Amazon Nova Lite, Nova 2 Lite, Meta Llama 4
   Maverick, Llama 4 Scout and Moonshot Kimi K3 as catalog rows with prices from the AWS price list and one enabled acc2
   deployment each (priority 20); no role config or alias names them, and the file refuses one that does. They answer

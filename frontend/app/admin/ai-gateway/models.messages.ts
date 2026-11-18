@@ -226,6 +226,8 @@ export const MODELS = defineMessages(
     dataClassContentNote: "global routes allowed",
     dataClassUnset: "No class yet",
     dataClassUnsetNote: "class not set",
+    dataClassFreeText: "Free text, scrubbed first",
+    dataClassFreeTextNote: "e-mails, phone numbers, card and ID numbers are removed before any model call; a call is refused when that cannot run. Every agency stage is scrubbed.",
     dataClassNone: "None",
     dataClassEmptyTitle: "No stage has a data class yet",
     dataClassEmptyBody:
@@ -445,6 +447,8 @@ export const MODELS = defineMessages(
     dataClassContentNote: "được dùng route toàn cầu",
     dataClassUnset: "Chưa có loại",
     dataClassUnsetNote: "chưa đặt loại",
+    dataClassFreeText: "Văn bản tự do, được lọc trước",
+    dataClassFreeTextNote: "e-mail, số điện thoại, số thẻ và số giấy tờ được xoá trước mọi lần gọi model; không lọc được thì lần gọi bị từ chối. Mọi bước của đại lý đều được lọc.",
     dataClassNone: "Không có",
     dataClassEmptyTitle: "Chưa stage nào có loại dữ liệu",
     dataClassEmptyBody:

@@ -1,12 +1,11 @@
 """AA-1113 (root ADR 0009 decision 10, accepted S283): the free-text PII scrub of the gateway, fail closed.
 
-A stage that carries tenant free text (:func:`is_free_text_stage`: every ``t<n>_`` stage) never sends a prompt to a
-model before this scrub has run on it. ``LLMClient._generate_with`` (and the admin ``probe``) call
-:func:`scrub_for_stage` after the switch and budget gates and before the first provider attempt, so every path that
-follows (the stage route, a legacy key, the truncation retry, the A/B shadow, the cassette) only ever sees the scrubbed
-request. Any other stage gets the very same
-request object back (no copy, no change: the catalogue stages ``s1_*``, ``a3_*`` and ``tp_compose`` carry no tenant
-text, S283 measure-first).
+A stage that carries tenant or traveller free text (:func:`is_free_text_stage`: its registry row says ``free_text``, or
+it is a ``t<n>_`` stage) never sends a prompt to a model before this scrub has run on it. ``LLMClient._generate_with``
+(and the admin ``probe``) call :func:`scrub_for_stage` after the switch and budget gates and before the first provider
+attempt, so every path that follows (the stage route, a legacy key, the truncation retry, the A/B shadow, the
+cassette) only ever sees the scrubbed request. Any other stage gets the very same request object back (no copy, no
+change: the catalogue stages ``s1_*``, ``a3_*`` and ``tp_compose`` carry no tenant text, S283 measure-first).
 
 **Fail closed.** When the scrub cannot run (any error inside it), or its result still holds an e-mail address or a
 ``+``-prefixed phone number, :class:`FreeTextScrubFailed` is raised: the gateway writes its 0 USD ledger row (status
@@ -21,20 +20,29 @@ details, e-mail addresses and ``+``-prefixed phone numbers, then the F3 detector
 (``[email]``, ``[phone]``, ...); nothing is restored in the reply. Free-text names cannot be found by a pattern: the
 CRM's known-value and detector passes (its own gateway, root ADR 0008a section 5) are not part of this port.
 
-**Receipt.** Counts per label only (``{"version": ..., "redacted": {"[email]": 1}}``), set on the request's attempt
-scope (``quality_signal.pii_scrub`` of the gateway's own rows) and logged as ``llm_free_text_scrubbed``; never a value.
+**Receipt.** Counts per label only (``{"version": ..., "redacted": {"[email]": 1}, "scrubbed_hash": ...}``), set on the
+request's attempt scope (``quality_signal.pii_scrub`` of the gateway's own rows) and logged as
+``llm_free_text_scrubbed``; never a value.
 
-**Which stages.** Fail safe by name: every tenant stage (``t<n>_``, the rule ``batch_lane.TENANT_STAGE_RE`` uses) is
-scrubbed, not only the writers. The repair, FAQ and judge stages (``t9_repair``, ``t9_faq_*``, ``t10_*``, ``t2_judge``,
-``t2_flag_fix``, ``t2_brand_audit``, ``t7_debate_judge``, ...) re-read the same content seed, agency facts and brand
-rules, so a writer-only list let that text reach a model raw. :data:`NOT_FREE_TEXT_STAGES` takes a ``t`` stage out
-only once it is proven free of tenant text (empty today). ``shared.llm_role_config.pii_class`` (CIS 373) has ``content``
-and ``pii`` only, and a ``pii`` stage is a different rule (US AWS deployments only, no scrub: it needs the data).
-Moving the flag into the stage row is a migration (ADR 0009 decision 10: "a scope change happens only by migration");
-see docs/implementation-notes/AA-1113.md.
+**Which stages.** The registry ``shared.llm_role_config.free_text`` (CIS 451, migration-only: root ADR 0009 decision 10,
+"a scope change happens only by migration") marks every stage whose prompts carry tenant or traveller free text; the
+gateway reads it with the stage row (``StageConfig.free_text``). Under it a fail-safe floor by name: every tenant stage
+(``t<n>_``, the rule ``batch_lane.TENANT_STAGE_RE`` uses) is scrubbed whatever its row says, so a new tenant stage
+shipped before its row (or a row seeded false by mistake) is never sent raw. The repair, FAQ and judge stages
+(``t9_repair``, ``t9_faq_*``, ``t10_*``, ``t2_judge``, ``t2_flag_fix``, ``t2_brand_audit``, ``t7_debate_judge``, ...)
+re-read the same content seed, agency facts and brand rules, so they are scrubbed too. A stage whose row could not be
+read (the database down on a cold cache) and was never read in this process is scrubbed as well
+(``role_config._read_failed_default``: fail safe). ``pii_class = 'pii'`` is the opposite rule (US AWS deployments
+only, no scrub: the stage needs the data); a CHECK keeps a pii row from being marked free_text.
+
+**Ledger evidence.** The receipt carries ``scrubbed_hash``: the sha256 of what was sent (:func:`scrubbed_hash`, the
+scrubbed system prompt, user prompt and few-shots), so a probe that plants an e-mail and a phone can show, from the
+ledger row alone, that the model got the scrubbed text. Never the text itself (DM-6.4).
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections import Counter
 from typing import Any, Optional
@@ -47,15 +55,11 @@ from .errors import OTHER
 logger = structlog.get_logger()
 
 # The rules of the scrub: bumped whenever the same prompt can scrub to a different text.
-VERSION = "aa1113-1"
-# The stages whose prompts carry tenant free text: every tenant stage, by name (fail safe). A tenant stage is
-# "t<n>_..." (batch_lane.TENANT_STAGE_RE, the same rule); the S283 measure (root
-# docs/audits/2026-11-17-S283-session/aa1113-provider-stage-30d.psv, tech lead decision s283-d10) found tenant rows on
-# the writers and on every repair / FAQ / judge stage that re-reads their seed, facts and brand rules.
+VERSION = "aa1113-2"
+# The fail-safe floor under the registry (shared.llm_role_config.free_text, CIS 451): every tenant stage is "t<n>_..."
+# (batch_lane.TENANT_STAGE_RE, the same rule; S283 measure: tenant rows on the writers and on every repair / FAQ / judge
+# stage, root docs/audits/2026-11-17-S283-session/aa1113-provider-stage-30d.psv, tech lead decision s283-d10).
 TENANT_STAGE_RE = re.compile(r"^t\d+_")
-# A tenant stage taken out of the scrub: only one proven free of tenant text (its prompt holds no seed, fact, brand
-# rule, brief or tenant-written text). Empty: no tenant stage is proven free today.
-NOT_FREE_TEXT_STAGES: frozenset[str] = frozenset()
 SCRUB_STATUS_FAILED = "failed"
 SCRUB_STATUS_OK = "scrubbed"
 
@@ -103,11 +107,12 @@ class FreeTextScrubFailed(RuntimeError):
                 "nothing was sent")
 
 
-def is_free_text_stage(stage: Optional[str]) -> bool:
-    """True for every tenant stage (``t<n>_...``) not proven free of tenant text; a new tenant stage is scrubbed
-    without a code change (fail safe)."""
-    return (isinstance(stage, str) and TENANT_STAGE_RE.match(stage) is not None
-            and stage not in NOT_FREE_TEXT_STAGES)
+def is_free_text_stage(stage: Optional[str], stage_cfg: Any = None) -> bool:
+    """True when the stage's row in the registry says free_text (``stage_cfg.free_text``), or the stage is a tenant
+    stage (``t<n>_...``, the fail-safe floor a row cannot lower). A stage with no name is never free text."""
+    if not isinstance(stage, str) or not stage:
+        return False
+    return TENANT_STAGE_RE.match(stage) is not None or getattr(stage_cfg, "free_text", False) is True
 
 
 def _sub(rx: re.Pattern[str], repl, text: str, label: str, counts: Counter) -> str:
@@ -178,6 +183,14 @@ def scrub_request(request):
     return request.model_copy(update={"system_prompt": system, "user_prompt": user, "few_shots": shots}), counts
 
 
+def scrubbed_hash(request) -> str:
+    """sha256 hex of what a scrubbed request sends: its system prompt, user prompt and few-shots (canonical JSON). The
+    receipt's ``scrubbed_hash``; a probe recomputes it from the text it expects the model to get."""
+    payload = [request.system_prompt or "", request.user_prompt or "", list(request.few_shots or [])]
+    text = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def _note(scope, receipt: dict) -> None:
     """The receipt on the request's attempt scope (its quality_signal extras), when there is one."""
     extra = getattr(scope, "extra", None)
@@ -185,20 +198,22 @@ def _note(scope, receipt: dict) -> None:
         extra["pii_scrub"] = receipt
 
 
-def scrub_for_stage(request, scope=None):
-    """The request a free-text stage may send: a scrubbed copy, or ``request`` itself (same object) for any other
-    stage. Raises :class:`FreeTextScrubFailed` (fail closed) when the scrub cannot run; the receipt goes on ``scope``
-    either way. Never logs a value."""
+def scrub_for_stage(request, scope=None, stage_cfg=None):
+    """The request a free-text stage may send (:func:`is_free_text_stage`, ``stage_cfg`` = the stage's registry row): a
+    scrubbed copy, or ``request`` itself (same object) for any other stage. Raises :class:`FreeTextScrubFailed` (fail
+    closed) when the scrub cannot run; the receipt goes on ``scope`` either way. Never logs a value."""
     stage = getattr(request, "stage", None)
-    if not is_free_text_stage(stage):
+    if not is_free_text_stage(stage, stage_cfg):
         return request
     try:
         scrubbed, counts = scrub_request(request)
+        digest = scrubbed_hash(scrubbed)
     except Exception as e:  # noqa: BLE001 — any failure refuses the call (fail closed)
         _note(scope, {"version": VERSION, "status": SCRUB_STATUS_FAILED, "error_type": type(e).__name__})
         logger.warning("llm_free_text_scrub_failed", stage=stage, error_type=type(e).__name__, version=VERSION)
         raise FreeTextScrubFailed(stage, type(e).__name__) from e
-    receipt = {"version": VERSION, "status": SCRUB_STATUS_OK, "redacted": dict(sorted(counts.items()))}
+    receipt = {"version": VERSION, "status": SCRUB_STATUS_OK, "redacted": dict(sorted(counts.items())),
+               "scrubbed_hash": digest}
     _note(scope, receipt)
     if counts:
         logger.info("llm_free_text_scrubbed", stage=stage, version=VERSION, redacted=receipt["redacted"])

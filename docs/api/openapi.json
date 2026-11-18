@@ -15899,6 +15899,73 @@
         ]
       }
     },
+    "/admin/ai-gateway/connection-split": {
+      "get": {
+        "operationId": "get_connection_split_admin_ai_gateway_connection_split_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Connection Split Admin Ai Gateway Connection Split Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Each LLM connection's provider budget split between CIS and CRM ($0)",
+        "tags": [
+          "admin-ai-gateway"
+        ]
+      }
+    },
     "/admin/ai-gateway/credit": {
       "get": {
         "operationId": "get_credit_admin_ai_gateway_credit_get",

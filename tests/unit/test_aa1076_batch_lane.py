@@ -1,8 +1,8 @@
 """AA-1076 — the gateway batch lane (shared/llm_client/batch_lane.py) and its two provider adapters.
 
 - target: the stage route's first direct-API deployment (Anthropic or OpenAI), never a Bedrock one; none = refused;
-- guards before submit: lane switch, tenant stages, a switched-off stage, the cost cap (the gateway's estimate at the
-  batch rate), custom ids;
+- guards before submit: lane switch, tenant stages, registry free-text stages (AA-1113), a switched-off stage, the
+  cost cap (the gateway's estimate at the batch rate), custom ids;
 - request bodies: the on-demand adapters' own builders (Anthropic build_params, client.openai_chat_body);
 - pricing + ledger: one row per request, pricing_mode '+batch' at half the on-demand cost, **billed_fields, 0 USD
   rows for errored / expired / canceled / missing items;
@@ -117,6 +117,19 @@ def test_tenant_stages_stay_synchronous():
     t2 = BatchTarget(**{**ANTH.as_dict(), "stage": "t2_generate"})
     with pytest.raises(BatchUnavailable, match="tenant"):
         batch_lane.guard(t2, [_item()], 1.0)
+
+
+def test_a_registry_free_text_stage_stays_synchronous(monkeypatch):
+    # AA-1113: a non-t stage marked free_text in shared.llm_role_config (CIS 451) is scrubbed on demand, so the batch
+    # lane (which sends item.system / item.user as built) refuses it; an unmarked stage still batches.
+    chat = BatchTarget(**{**ANTH.as_dict(), "stage": "zz_plan_chat"})
+    marked = SimpleNamespace(**{**vars(_cfg(stage="zz_plan_chat")), "free_text": True})
+    monkeypatch.setattr(batch_lane, "get_stage_config_sync", lambda stage: marked)
+    with pytest.raises(BatchUnavailable, match="free text"):
+        batch_lane.guard(chat, [_item()], 1.0)
+    unmarked = SimpleNamespace(**{**vars(_cfg(stage="zz_plan_chat")), "free_text": False})
+    monkeypatch.setattr(batch_lane, "get_stage_config_sync", lambda stage: unmarked)
+    assert batch_lane.stage_refusal("zz_plan_chat") is None
 
 
 def test_a_switched_off_stage_and_the_lane_switch_refuse(monkeypatch):

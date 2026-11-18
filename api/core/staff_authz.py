@@ -314,7 +314,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("DELETE", "/admin/budgets/llm/{scope}"): SPEND_WRITE,        # AA-1025 A7: remove a central LLM cap
     # ── admin_ai_gateway (AA-804) — AI providers page: every paid source's health / spend / balance and the job trace
     ("GET", "/admin/ai-gateway/providers"): SPEND_READ, ("GET", "/admin/ai-gateway/trace"): SPEND_READ,
-    ("GET", "/admin/ai-gateway/budgets"): SPEND_READ,   # AA-804 UI 2: every cap by tier (Budgets tab)
+    ("GET", "/admin/ai-gateway/budgets"): SPEND_READ, ("GET", "/admin/ai-gateway/connection-split"): SPEND_READ,
     ("GET", "/admin/ai-gateway/calls"): SPEND_READ,     # AA-804 UI 3: every logged paid call (Calls tab)
     ("GET", "/admin/ai-gateway/experiments"): SPEND_READ,   # AA-900 UI (C4): prompt register + eval runs
     ("GET", "/admin/ai-gateway/access"): SPEND_READ,        # AA-1025 C1 follow-up: page writes this caller may use

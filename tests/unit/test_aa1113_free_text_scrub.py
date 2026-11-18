@@ -22,8 +22,8 @@ from shared.llm_client import call_log, free_text_scrub, pii_patterns
 from shared.llm_client.call_log import billed_fields
 from shared.llm_client.client import attempt_outcome
 from shared.llm_client.errors import OTHER, classify
-from shared.llm_client.free_text_scrub import (NOT_FREE_TEXT_STAGES, TENANT_STAGE_RE, FreeTextScrubFailed,
-                                               is_free_text_stage, scrub_for_stage, scrub_text)
+from shared.llm_client.free_text_scrub import (TENANT_STAGE_RE, FreeTextScrubFailed, is_free_text_stage,
+                                               scrub_for_stage, scrub_text, scrubbed_hash)
 from shared.llm_client.models import LLMRequest
 from shared.llm_client.role_config import StageConfig
 from tests.unit.test_aa1002_s3_deployment_routing import World, _anthropic
@@ -99,8 +99,10 @@ def test_every_tenant_stage_is_a_free_text_stage(stage):
 def test_the_tenant_rule_is_the_batch_lane_rule_and_no_tenant_stage_is_exempt():
     from shared.llm_client import batch_lane
     assert TENANT_STAGE_RE.pattern == batch_lane.TENANT_STAGE_RE.pattern
-    # A stage leaves the scrub only once proven free of tenant text (seed, facts, brand rules, brief, tenant text).
-    assert NOT_FREE_TEXT_STAGES == frozenset()
+    # AA-1113 (CIS 451): the registry adds stages; a row that says false never takes a tenant stage out (the floor).
+    assert not hasattr(free_text_scrub, "NOT_FREE_TEXT_STAGES")
+    off = StageConfig(stage="t9_write", role="writer", provider="claude", model_id="m", account_route=None)
+    assert is_free_text_stage("t9_write", off)
 
 
 @pytest.mark.parametrize("stage", ["s1_generate", "a3_place_card", "tp_compose", "tp_plan_chat", "adhoc_t9",
@@ -124,7 +126,8 @@ def test_a_free_text_request_is_scrubbed_everywhere_with_a_receipt(stage):
     assert out.system_prompt == "Brand contact [email]" and out.user_prompt == "Seed: call [phone]"
     assert out.few_shots == [{"role": "user", "content": "ring [phone]"}]
     assert scope.extra["pii_scrub"] == {"version": free_text_scrub.VERSION, "status": "scrubbed",
-                                        "redacted": {"[email]": 1, "[phone]": 2}}
+                                        "redacted": {"[email]": 1, "[phone]": 2},
+                                        "scrubbed_hash": scrubbed_hash(out)}
 
 
 def test_a_scrub_that_raises_is_refused_and_says_no_value(monkeypatch):

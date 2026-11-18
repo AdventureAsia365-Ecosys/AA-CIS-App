@@ -17,9 +17,9 @@
       "refs": "AA-1096"
     },
     "route_defaults": {
-      "sha": "c7260792542e4027",
-      "evidence": "break-glass: initial lock at adoption, the shas in force on main (Quality W6)",
-      "refs": "AA-1052"
+      "sha": "cb9811986582d658",
+      "evidence": "parity:tests/unit/test_aa1113_free_text_registry.py",
+      "refs": "AA-1113"
     },
     "route_table": {
       "sha": "92f40df107ef82c4",

@@ -24,8 +24,25 @@ test("stages per class, order kept, the rest listed as not set", () => {
     { stage: "tp_compose" },
   ]);
   assert.deepEqual(out, {
-    content: ["s1_generate", "place_card"], pii: ["crm_draft_reply"], unclassified: ["tp_compose"],
+    content: ["s1_generate", "place_card"], pii: ["crm_draft_reply"], unclassified: ["tp_compose"], freeText: null,
   });
+});
+
+test("AA-1113 (CIS 451): the free-text stages once the API sends the mark, null before", () => {
+  const out = stagesByDataClass([
+    { stage: "s1_generate", pii_class: "content", free_text: false },
+    { stage: "t9_write", pii_class: "content", free_text: true },
+    { stage: "tp_plan_chat", pii_class: "content", free_text: true },
+    { stage: "t2_judge", pii_class: "content" },
+  ]);
+  assert.deepEqual(out?.freeText, ["t9_write", "tp_plan_chat"]);
+  assert.equal(stagesByDataClass([{ stage: "t9_write", pii_class: "content" }])?.freeText, null);
+  const src = readFileSync(fileURLToPath(new URL("../app/admin/ai-gateway/models.messages.ts", import.meta.url)), "utf8");
+  for (const key of ["dataClassFreeText", "dataClassFreeTextNote"]) {
+    assert.equal(src.split(`${key}:`).length - 1, 2, `${key} has an English and a Vietnamese row`);
+  }
+  const tab = readFileSync(fileURLToPath(new URL("../app/admin/ai-gateway/RoutingTab.tsx", import.meta.url)), "utf8");
+  assert.match(tab, /ai-gateway-data-class-free-text/);
 });
 
 test("the card copy: both languages, no issue id, the empty state says every stage counts as content", () => {

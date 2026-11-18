@@ -303,7 +303,10 @@ def test_probe_logs_a_billed_unusable_reply():
     err.billed_usage = ({"model": "sonnet-5-5", "cost_usd": 0.0001},)
     target = MagicMock()
     target.connection.connection_key = "anthropic-direct"
+    # AA-1113: adhoc_conn_test has no stage row (a read that finds none); without a database the cold-read default
+    # would mark the never-read stage free text and scrub the MagicMock request.
     with patch.object(client, "_call_target", side_effect=err), \
+            patch("shared.llm_client.client.get_stage_config_sync", return_value=None), \
             patch("shared.llm_client.client.log_gateway_billed_failure") as log:
         with pytest.raises(BilledUnusableReply):
             client.probe(MagicMock(stage="adhoc_conn_test"), SONNET55, target)

@@ -82,6 +82,9 @@ class StageConfig:
     # A pii stage is called only on our AWS accounts in the US (vendor_route.deployment_plan). Column missing / no row
     # = content (every row before 373).
     pii_class: str = "content"
+    # AA-1113 (CIS 451; root ADR 0009 d10): the stage's prompts carry tenant or traveller free text, scrubbed before
+    # any model call (free_text_scrub; every t<n>_ stage is scrubbed whatever this says). Column missing = False.
+    free_text: bool = False
 
 
 # S235 (Nghiệp, 14/10/2026): Bedrock first; the OpenAI platform API is only the LAST-RESORT fallback for
@@ -244,6 +247,9 @@ _cache: dict[str, tuple[StageConfig, float]] = {}
 # version watch, which drop ``_cache``, never clear this map: after a route save on a cold DB, a stage read before
 # keeps its real class instead of failing closed.
 _pii_known: dict[str, str] = {}
+# AA-1113: stage -> the free_text mark of its last SUCCESSFUL read in this process (a mark changes only by a migration,
+# like pii_class). A stage never read here, whose read fails on a cold cache, is scrubbed (fail safe).
+_free_text_known: dict[str, bool] = {}
 
 
 def _read_failed_default(stage: str) -> StageConfig:
@@ -254,8 +260,10 @@ def _read_failed_default(stage: str) -> StageConfig:
     ``content`` (Bedrock ``global.`` profiles, vendor APIs) because its row could not be read. A pii class (read or
     not) also gets ``allowed_scopes = (aws_only,)``, the invariant migration 373's CHECK holds in the table, so no
     path that reads only the scopes (``_call_openai``, the legacy last resort) can send it out of AWS. Not cached: the
-    next call reads again. A read that succeeds with no row, or before migration 373, is not a failure (content)."""
-    base = SAFE_DEFAULTS.get(stage, _GENERIC_FALLBACK)
+    next call reads again. A read that succeeds with no row, or before migration 373, is not a failure (content).
+    AA-1113: the free_text mark is the last successful read's, else True (a stage never read here is scrubbed)."""
+    base = dataclasses.replace(SAFE_DEFAULTS.get(stage, _GENERIC_FALLBACK),
+                               free_text=_free_text_known.get(stage, True))   # AA-1113: unknown = scrubbed
     known = _pii_known.get(stage)
     if known == data_scope.PII_CONTENT:
         return base
@@ -266,6 +274,7 @@ def _read_failed_default(stage: str) -> StageConfig:
 def _remember_class(stage: str, cfg: StageConfig) -> None:
     """Record the class of a successful read (``_pii_known``)."""
     _pii_known[stage] = data_scope.normalize_pii_class(getattr(cfg, "pii_class", None))
+    _free_text_known[stage] = getattr(cfg, "free_text", False) is True
 
 
 def _row_to_config(row) -> StageConfig:
@@ -281,6 +290,7 @@ def _row_to_config(row) -> StageConfig:
         disabled_reason=_column(row, "disabled_reason", None),
         degrade_mode=_column(row, "degrade_mode", None),
         pii_class=data_scope.normalize_pii_class(_column(row, "pii_class", None)),
+        free_text=_column(row, "free_text", False) is True,
     )
 
 
@@ -324,11 +334,14 @@ _switch_column_missing_at = 0.0
 # AA-1039 (R6): migration 373 adds pii_class, read the same way (missing = content, retried later).
 _PII_COLUMN = ", pii_class"
 _pii_column_missing_at = 0.0
+# AA-1113: migration 451 adds free_text, read the same way (missing = False: the t<n>_ floor still scrubs).
+_FREE_TEXT_COLUMN = ", free_text"
+_free_text_column_missing_at = 0.0
 
 
 def _scope_select() -> str:
-    """", allowed_scopes[, route_deadline_s[, degrade_mode, disabled_reason[, pii_class]]]" for the optional columns
-    believed to exist, else ""."""
+    """", allowed_scopes[, route_deadline_s[, degrade_mode, disabled_reason[, pii_class[, free_text]]]]" for the
+    optional columns believed to exist, else ""."""
     now = time.monotonic()
     if _scope_column_missing_at and now - _scope_column_missing_at < _SCOPE_RETRY_SECONDS:
         return ""
@@ -338,21 +351,29 @@ def _scope_select() -> str:
         return ", allowed_scopes, route_deadline_s"
     if _pii_column_missing_at and now - _pii_column_missing_at < _SCOPE_RETRY_SECONDS:
         return ", allowed_scopes, route_deadline_s" + _SWITCH_COLUMNS
-    return ", allowed_scopes, route_deadline_s" + _SWITCH_COLUMNS + _PII_COLUMN
+    if _free_text_column_missing_at and now - _free_text_column_missing_at < _SCOPE_RETRY_SECONDS:
+        return ", allowed_scopes, route_deadline_s" + _SWITCH_COLUMNS + _PII_COLUMN
+    return ", allowed_scopes, route_deadline_s" + _SWITCH_COLUMNS + _PII_COLUMN + _FREE_TEXT_COLUMN
 
 
 async def _fetch_scoped(fetch, sql_for):
-    """``fetch(sql_for(optional_cols))``; on a missing optional column (pii_class before migration 373, degrade_mode /
-    disabled_reason before 326, route_deadline_s before 320, allowed_scopes before 311), once more without it."""
+    """``fetch(sql_for(optional_cols))``; on a missing optional column (free_text before migration 451, pii_class before
+    373, degrade_mode / disabled_reason before 326, route_deadline_s before 320, allowed_scopes before 311), once more
+    without it."""
     global _scope_column_missing_at, _deadline_column_missing_at, _switch_column_missing_at, _pii_column_missing_at
-    for _ in range(5):
+    global _free_text_column_missing_at
+    for _ in range(6):
         cols = _scope_select()
         try:
             return await fetch(sql_for(cols))
         except asyncpg.exceptions.UndefinedColumnError as e:
             if not cols:
                 raise
-            if "pii_class" in cols and "pii_class" in str(e):
+            if "free_text" in cols and "free_text" in str(e):
+                _free_text_column_missing_at = time.monotonic()
+                logger.warning("llm_role_config_free_text_column_missing",
+                               hint="migration 451 not applied: only the t<n>_ stages are scrubbed")
+            elif "pii_class" in cols and "pii_class" in str(e):
                 _pii_column_missing_at = time.monotonic()
                 logger.warning("llm_role_config_pii_column_missing",
                                hint="migration 373 not applied: every stage reads as content")
@@ -488,6 +509,7 @@ async def list_stage_configs() -> list[StageConfig]:
             # AA-1039 (R6): content | pii; None before migration 373 (AI gateway > Routing by data class then shows
             # "no class yet"; the gateway itself reads a missing column as content)
             r["pii_class"] = data_scope.normalize_pii_class(r["pii_class"]) if "pii_class" in r else None
+            r["free_text"] = r["free_text"] is True if "free_text" in r else None   # AA-1113: None before 451
         return out
     finally:
         await conn.close()
