@@ -1,14 +1,14 @@
 -- Migration 452: AA-1113 (root ADR 0009 decisions 6 and 10) — one connection cap for every caller: the month-to-date
--- spend and the over-cap flag of each capped LLM connection, as a read contract for TripPlanner and the CRM, and the
--- flag (plus the free-text mark of CIS 451) appended to TripPlanner's gateway contract view.
+-- spend and the over-cap flag of each capped LLM connection, as a read contract for TripPlanner, and the flag (plus
+-- the free-text mark of CIS 451) appended to TripPlanner's gateway contract view.
 --
 -- Why. A connection's monthly cap (shared.llm_provider_connection.monthly_budget_usd, its policy in
 -- shared.llm_connection_cost_policy) is enforced by the CIS gateway only (shared/cost_guard.py
 -- connection_budgets, shared/llm_client/connection_budget.py). TripPlanner's gateway reads its routes from
--- catalog.v_llm_gateway_config_v1 and could not see a cap (S283 ai-caps-gap point 2), and the CRM's own gateway
--- reads no shared.llm_* table (root ADR 0008a), so neither stopped at a cap the CIS gateway honours (S282 audit R28,
--- G12; Partner AA-1113 notes, option 2). This file publishes the same rule as data, through the catalog contract
--- path the other apps already use.
+-- catalog.v_llm_gateway_config_v1 and could not see a cap (S283 ai-caps-gap point 2). This file publishes the same
+-- rule as data, through the catalog contract path TripPlanner already uses. The CRM reads no CIS view (root ADR 0008a,
+-- tech lead S284): it keeps its own monthly cap per connection as a CRM setting (crm-077), and a connection's
+-- monthly_budget_usd here is the CIS share (CIS + TripPlanner) of the provider budget (CIS 453, a setting).
 --
 -- What:
 --   1. Column-level SELECT for catalog_owner (the NOLOGIN owner of every catalog.* view), columns only:
@@ -22,10 +22,8 @@
 --      cost_guard._CONNECTION_MONTH_SPEND_SQL makes, shadow rows included), alert_pct and hard_stop (the policy row,
 --      else the code defaults 80 / true, cost_guard.DEFAULT_CONNECTION_ALERT_PCT / ConnectionCostPolicy.hard_stop),
 --      over_cap (spent >= budget: ConnectionBudget.reached) and stops (over_cap AND hard_stop:
---      ConnectionBudget.stops). The CIS ledger only: the CRM adds its own month spend on the connection before it
---      compares (its ledger is crm.llm_call, which CIS cannot read). SELECT to tripplanner here; the crm_app grant
---      is a separate file (CIS 453) because it amends root ADR 0008a ("no grants in either direction") and waits for
---      the tech lead's yes.
+--      ConnectionBudget.stops). The CIS ledger only (CIS + TripPlanner rows: the CIS share of the connection).
+--      SELECT to tripplanner only; crm_app never reads it (root ADR 0008a, tech lead S284).
 --   3. CREATE OR REPLACE catalog.v_llm_gateway_config_v1: 350's 27 columns unchanged, in order, then two appended
 --      (contract v1: columns are only appended):
 --        free_text             boolean  llm_role_config.free_text (CIS 451): the stage's prompts must be scrubbed
@@ -41,13 +39,13 @@
 -- Class: CONTRACT (root ADR 0017 decision 3; no migrate directive line): ACL changes on existing tables and schema and
 -- an existing view replaced. MIG-4: migration-only PR (451 + 452), the byte copy in AA-CIS-Infra db/migrations/cis/,
 -- Infra Migration Apply with every job table idle (root ADR 0017a). Consumers: TripPlanner reads the two columns by
--- name (SQLSTATE 42703 before the apply keeps its 350 read); the CRM reads the cap view once CIS 453 grants it (its AA-1113
--- code PR goes on without the grant: no cap known yet). Nothing in CIS reads either view.
+-- name (SQLSTATE 42703 before the apply keeps its 350 read). Nothing in CIS reads either view, and the CRM reads
+-- neither.
 -- DM-7.1: no new table.
 --
 -- Cost of a read. The cap view sums this UTC month's ledger rows of the capped connections (four on Dev) through
--- llm_call_log_created_id_idx (created_at, id); TripPlanner caches its gateway read 60 s, the CRM caches its cap read
--- 60 s. The gateway view reads the cap view once per query (MATERIALIZED CTE).
+-- llm_call_log_created_id_idx (created_at, id); TripPlanner caches its gateway read 60 s. The gateway view reads the
+-- cap view once per query (MATERIALIZED CTE).
 --
 -- Guards (RAISE rolls the whole file back): before — 350 and 451 registered, shared.llm_connection_cost_policy present,
 -- schema catalog owned by cis_owner. After, as catalog_owner — both views answer. After, as cis_owner — the gateway
@@ -140,8 +138,8 @@ COMMENT ON VIEW catalog.v_llm_connection_cap_v1 IS
     'AA-1113 (452, root ADR 0009 d6): one row per LLM connection with a monthly budget: this UTC month''s CIS ledger '
     'spend on it (shared.llm_call_log, account = the connection), its policy (alert_pct, hard_stop; defaults 80 / '
     'true), over_cap (spent >= budget) and stops (over_cap and hard_stop: the CIS gateway leaves the connection out). '
-    'TripPlanner and the CRM only; the CRM adds its own month spend before it compares. Contract v1: columns are only '
-    'appended; a change of meaning is a _v2 view.';
+    'TripPlanner only (the budget is the CIS share of the connection). Contract v1: columns are only appended; a '
+    'change of meaning is a _v2 view.';
 
 -- ── 3. The gateway view: 350's columns unchanged, then free_text and over_cap_connections ────────────────────────
 CREATE OR REPLACE VIEW catalog.v_llm_gateway_config_v1 WITH (security_barrier = true) AS

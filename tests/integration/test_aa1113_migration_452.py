@@ -9,7 +9,7 @@ see the replay state.
 
   * 451: every tenant stage marked free_text, a pii stage can never be marked (CHECK);
   * 452: registered once; the gateway view keeps 350's columns in order and appends free_text, over_cap_connections;
-    the cap view's columns; owners, barriers and the exact consumer (tripplanner; crm_app waits for CIS 453);
+    the cap view's columns; owners, barriers and the exact consumer (tripplanner; crm_app never: root ADR 0008a);
   * the cap view (as tripplanner, rolled back): this UTC month's ledger spend per capped connection, the
     policy defaults, over_cap and stops; a connection with no budget has no row; last month's rows do not count;
   * the gateway view (as tripplanner): free_text from the stage row, over_cap_connections lists only the stopped
