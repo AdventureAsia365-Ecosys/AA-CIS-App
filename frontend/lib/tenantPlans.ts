@@ -723,6 +723,8 @@ export interface QuoteLine {
   kind: "subscription"; product: string; plan_key: string; name: string; quantity: number;
   unit_price: string | null; amount: string; discount: string; agreed: boolean; price_missing: boolean;
   billing_interval: string; trialing: boolean;
+  /** AA-1116 S284: seats billed above the plan's included seats, and their price (absent from an older API). */
+  extra_seats?: number; extra_seat_price?: string | null;
 }
 export interface QuoteSubscription {
   product: string; plan_key: string; status: string; billing_interval: "month" | "year";

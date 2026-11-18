@@ -213,7 +213,9 @@ function Quote({ tenantId }: { tenantId: string }) {
   const cols: ColumnDef<QuoteLine, unknown>[] = [
     { id: "line", header: t("colLine"), cell: (x) => {
       const r = x.row.original;
-      const tags = [r.trialing && t("trial"), r.agreed && t("agreed"), r.price_missing && t("priceMissing")]
+      const extra = r.extra_seats && r.extra_seats > 0 && r.extra_seat_price != null
+        ? t("extraSeats", r.extra_seats, money(r.extra_seat_price, c)) : null;
+      const tags = [r.trialing && t("trial"), r.agreed && t("agreed"), r.price_missing && t("priceMissing"), extra]
         .filter(Boolean).join(" · ");
       return <span>{r.name}{r.quantity > 1 ? ` × ${r.quantity}` : ""}
         {tags && <span style={{ fontSize: 11, color: K.muted }}> ({tags})</span>}</span>;
