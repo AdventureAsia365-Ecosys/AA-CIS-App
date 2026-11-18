@@ -19,7 +19,7 @@ import { fmtHours, type DeliveryApp } from "@/lib/deliveryMetrics";
 import type { ChurnRow, GitWindow, QueueReason, QueueSection } from "@/lib/deliveryActivity";
 import {
   FLOW_POINTS, PRESETS, TREND_METRICS, appTrendRows, customProblem, flowSteps, histRows, parseRange, rangeParams,
-  squarify, trendRows, weeklyRows, type RangeMeta, type RangeProblem, type TrendMetric,
+  squarify, trendRows, weeklyRows, windowNote, type RangeMeta, type RangeProblem, type RangeWindow, type TrendMetric,
 } from "@/lib/deliveryRange";
 import { RANGE } from "./range.messages";
 
@@ -51,6 +51,25 @@ function Showing({ meta, t }: { meta: RangeMeta | null; t: RT }) {
     <span style={small} data-testid="delivery-range-showing">
       {t("showing", formatDateTime(meta.start), formatDateTime(meta.end))}
       {meta.cached ? ` · ${t("cached")}` : ""}
+    </span>
+  );
+}
+
+/** An app's window in its header: the dates of a custom range or "Last N days", and a note when the range starts
+ *  before the app's complete history (its numbers then cover fewer days than asked). `clipOnly` shows the note alone
+ *  (the cards); `completeSince` clips a window the API serves unclipped (the git activity). */
+export function WindowLabel({ window, completeSince, clipOnly = false, testId }: {
+  window: RangeWindow | null | undefined; completeSince?: string | null; clipOnly?: boolean; testId?: string;
+}) {
+  const t = useRangeT();
+  const { get } = useUrlFilters();
+  const n = windowNote(window, parseRange(get).range === "custom", completeSince);
+  if (!n || (clipOnly && !n.clipped)) return null;
+  const label = n.custom ? t("dates", n.from, n.to) : t("lastDays", n.days);
+  const note = n.clipped ? t("covered", n.coveredDays, n.startsOn) : "";
+  return (
+    <span data-testid={testId}>
+      {clipOnly ? ` · ${note}` : note ? `${label} · ${note}` : label}
     </span>
   );
 }

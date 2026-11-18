@@ -82,6 +82,51 @@ function boundsProblem(from: string, to: string, meta: RangeMeta | null): RangeP
   return null;
 }
 
+// ── the window an app was measured over ──────────────────────────────────────────────────────────────────────────
+
+/** An app's `window` as the API serves it (a range block's: `requested_start` and `covered_days` since AA-1135). */
+export interface RangeWindow {
+  start: string; end: string; days?: number; covered_days?: number; requested_start?: string;
+}
+
+/** What an app header says about its window: the dates asked for (`from`–`to`, UTC days, `to` included), and when
+ *  the start was moved up to the app's complete history (`clipped`), how many days it covers from `startsOn`. */
+export interface WindowNote {
+  custom: boolean; days: number; from: string; to: string; clipped: boolean; coveredDays: number; startsOn: string;
+}
+
+const MS_DAY = 86_400_000;
+
+/** The last UTC day a window covers: the day before an end at midnight (a custom range's `to` + 1 day), else the
+ *  end's own day (a preset ends at the collection time). */
+function lastDayOf(endMs: number): string {
+  const midnight = endMs % MS_DAY === 0;
+  return new Date(midnight ? endMs - MS_DAY : endMs).toISOString().slice(0, 10);
+}
+
+/** The note of a window, or null without one. `custom` labels it by dates instead of "last N days"; `completeSince`
+ *  (YYYY-MM-DD) clips a window the API did not clip itself (the git activity starts at the asked day, its history at
+ *  the commits' complete day). */
+export function windowNote(w: RangeWindow | null | undefined, custom: boolean,
+  completeSince?: string | null): WindowNote | null {
+  if (!w?.start || !w?.end) return null;
+  const asked = Date.parse(w.requested_start ?? w.start);
+  let start = Date.parse(w.start);
+  const end = Date.parse(w.end);
+  if ([asked, start, end].some(Number.isNaN)) return null;
+  const since = isDay(completeSince) ? Date.parse(`${completeSince}T00:00:00Z`) : NaN;
+  const own = !Number.isNaN(since) && since > start;
+  if (own) start = Math.min(since, end);
+  const clipped = start - asked >= 1000;
+  const tenth = (ms: number) => Math.round((Math.max(ms, 0) / MS_DAY) * 10) / 10;
+  const days = typeof w.days === "number" ? w.days : tenth(end - asked);
+  const covered = own || typeof w.covered_days !== "number" ? tenth(end - start) : w.covered_days;
+  return {
+    custom, days: Math.round(days), from: new Date(asked).toISOString().slice(0, 10), to: lastDayOf(end), clipped,
+    coveredDays: clipped ? covered : days, startsOn: new Date(start).toISOString().slice(0, 10),
+  };
+}
+
 // ── card sorting ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 export type CardSort = string; // "worst" | "name" | a metric key

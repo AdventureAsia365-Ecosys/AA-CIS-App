@@ -31,7 +31,7 @@ import {
 import { fmtHours, fmtNum, fmtRatio, fmtSeconds, repoUrl, safeGithubUrl, shortSha, statusTone } from "@/lib/deliveryMetrics";
 import { parseRange, rangeQuery, sortCards, statusRank, withRange } from "@/lib/deliveryRange";
 import { ACTIVITY } from "./activity.messages";
-import { ChurnTreemap, QueueCharts, SortPicker, useCardSort } from "./RangeCharts";
+import { ChurnTreemap, QueueCharts, SortPicker, WindowLabel, useCardSort } from "./RangeCharts";
 
 const small = { fontSize: 12, color: K.muted, lineHeight: 1.45 } as const;
 const linkStyle = { color: K.accentDeep, display: "inline-flex", gap: 4, alignItems: "center", fontSize: 12 } as const;
@@ -102,7 +102,8 @@ function QueueCard({ app, t, open }: { app: QueueApp; t: AT; open: (id: string) 
   const border = tone === "danger" ? K.danger : tone === "warning" ? K.amber : K.line;
   return (
     <Section testId={`queue-card-${app.id}`} style={{ borderColor: border }} title={app.name}
-      description={<span style={small}><Ext href={repoUrl(app.repo)}>{app.repo}</Ext></span>}
+      description={<span style={small}><Ext href={repoUrl(app.repo)}>{app.repo}</Ext>
+        <WindowLabel window={app.window} clipOnly testId={`queue-card-window-${app.id}`} /></span>}
       actions={<Button size="sm" variant="secondary" onClick={() => open(app.id)} testId={`queue-open-${app.id}`}>
         {t("details")}</Button>}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 140px), 1fr))", gap: 8 }}>
@@ -227,6 +228,8 @@ function QueueRepo({ app, t }: { app: QueueApp; t: AT }) {
   const q = app.queue;
   return (
     <div style={grid} data-testid={`queue-app-${app.id}`}>
+      <span style={small}><Ext href={repoUrl(app.repo)}>{app.repo}</Ext> · <WindowLabel window={app.window}
+        testId={`queue-window-${app.id}`} />{q.complete_since && <> · {t("historyFrom", q.complete_since)}</>}</span>
       <div style={tiles}>
         {QUEUE_METRICS.map((m) => <QueueMetricTile key={m} app={app} m={m} t={t} />)}
         <KpiTile size="sm" label={t("waitP50")} value={fmtHours(q.wait.p50_h)} hint={t("n", q.wait.n)} />
@@ -515,6 +518,9 @@ function GitRepo({ app, period, t }: { app: GitApp; period: string; t: AT }) {
   const win = gitWindow(app.git, period);
   return (
     <div style={grid} data-testid={`git-app-${app.id}`}>
+      {app.git.range && <span style={small}><Ext href={repoUrl(app.repo)}>{app.repo}</Ext> · <WindowLabel
+        window={app.git.range} completeSince={app.git.range.complete_since} testId={`git-window-${app.id}`} />
+        {app.git.range.complete_since && <> · {t("historyFrom", app.git.range.complete_since)}</>}</span>}
       <GitTiles app={app} win={win} days={windowDays(app, period)} t={t} />
       <Section title={t("secHeatmap")} description={t("secHeatmapDesc")} testId="git-heatmap">
         <div style={{ display: "grid", gap: 8 }}><Heatmap app={app} t={t} cell={13} /><HeatLegend t={t} />
@@ -540,7 +546,9 @@ function GitOverview({ apps, period, t, open }: { apps: GitApp[]; period: string
           return (
             <Section key={a.id} testId={`git-card-${a.id}`} title={a.name}
               description={<span style={small}><Ext href={repoUrl(a.repo)}>{a.repo}</Ext>
-                {a.git.complete_since && <> · {t("historyFrom", a.git.complete_since)}</>}</span>}
+                {a.git.complete_since && <> · {t("historyFrom", a.git.complete_since)}</>}
+                {a.git.range && <WindowLabel window={a.git.range} completeSince={a.git.range.complete_since} clipOnly
+                  testId={`git-card-window-${a.id}`} />}</span>}
               actions={<Button size="sm" variant="secondary" onClick={() => open(a.id)} testId={`git-open-${a.id}`}>
                 {t("details")}</Button>}>
               <div style={{ display: "grid", gap: 10 }}>

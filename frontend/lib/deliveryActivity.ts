@@ -53,7 +53,8 @@ export interface QueueSection {
 
 export interface AppHead {
   id: string; name: string; repo: string; environment: string;
-  window: { start: string; end: string; days: number } | null; complete_since: string | null;
+  window: { start: string; end: string; days: number; covered_days?: number; requested_start?: string } | null;
+  complete_since: string | null;
 }
 
 export interface QueueApp extends AppHead { queue: QueueSection; queue_status: Record<QueueMetric, MetricStatus> }

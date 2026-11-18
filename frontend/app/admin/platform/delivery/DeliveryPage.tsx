@@ -37,7 +37,7 @@ import {
   doraNumber, parseRange, rangeQuery, sortCards, statusRank, withRange, type RangeChoice, type RangeMeta,
 } from "@/lib/deliveryRange";
 import { GitMapTab, MergeQueueTab } from "./ActivityTabs";
-import { AppTrend, FlowDiagram, RangeBar, SortPicker, TrendCompare, useCardSort } from "./RangeCharts";
+import { AppTrend, FlowDiagram, RangeBar, SortPicker, TrendCompare, WindowLabel, useCardSort } from "./RangeCharts";
 import { ACTIVITY } from "./activity.messages";
 import { DELIVERY } from "./messages";
 
@@ -119,7 +119,8 @@ function AppCard({ app, t, open }: { app: DeliveryApp; t: DT; open: (id: string)
     <Section testId={`delivery-card-${app.id}`} style={{ borderColor: border }}
       title={<span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>{app.name}</span>}
       description={<span style={small}><Ext href={repoUrl(app.repo)}>{app.repo}</Ext>
-        {app.complete_since && <> · {t("historyFrom", app.complete_since)}</>}</span>}
+        {app.complete_since && <> · {t("historyFrom", app.complete_since)}</>}
+        <WindowLabel window={app.window} clipOnly testId={`delivery-card-window-${app.id}`} /></span>}
       actions={<Button size="sm" variant="secondary" onClick={() => open(app.id)} testId={`delivery-open-${app.id}`}>
         {t("viewApp")}</Button>}>
       <div style={{ display: "grid", gap: 8 }}>
@@ -366,7 +367,7 @@ function AppTab({ app, t }: { app: DeliveryApp; t: DT }) {
     <div style={grid} data-testid={`delivery-app-${app.id}`}>
       <div style={{ ...small, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
         <Ext href={repoUrl(app.repo)}><GitBranch size={12} /> {app.repo}</Ext>
-        <span>{t("window", app.window.days)}</span>
+        <WindowLabel window={app.window} testId={`delivery-window-${app.id}`} />
         {app.complete_since && <span>{t("historyFrom", app.complete_since)}</span>}
       </div>
       <Kpis app={app} t={t} />

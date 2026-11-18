@@ -7,7 +7,7 @@ import { test } from "node:test";
 
 import {
   appTrendRows, customProblem, doraNumber, dayCount, edgeLabel, flowSteps, histRows, isDay, parseRange, pickSort, rangeParams,
-  rangeQuery, sortCards, squarify, statusRank, trendRows, trendValue, weeklyRows, withRange,
+  rangeQuery, sortCards, squarify, statusRank, trendRows, trendValue, weeklyRows, windowNote, withRange,
 } from "./deliveryRange.ts";
 import { gitWindow, kindRows } from "./deliveryActivity.ts";
 
@@ -157,4 +157,41 @@ test("doraNumber reads each card metric", () => {
   assert.equal(doraNumber(app, "ci_p95"), 600);
   assert.equal(doraNumber({ dora: {}, ci: {} }, "rework_rate"), null);
   assert.equal(doraNumber(app, "unknown"), null);
+});
+
+test("windowNote labels a preset by days and a custom range by its dates", () => {
+  const preset = { start: "2026-11-11T09:00:00Z", end: "2026-11-18T09:00:00Z", days: 7, covered_days: 7,
+    requested_start: "2026-11-11T09:00:00Z" };
+  assert.deepEqual(windowNote(preset, false), { custom: false, days: 7, from: "2026-11-11", to: "2026-11-18",
+    clipped: false, coveredDays: 7, startsOn: "2026-11-11" });
+  // a past custom range (1-30 Sep): the end is midnight after the last day, so `to` is that last day
+  const past = { start: "2026-09-01T00:00:00Z", end: "2026-10-01T00:00:00Z", days: 30, covered_days: 30,
+    requested_start: "2026-09-01T00:00:00Z" };
+  const n = windowNote(past, true);
+  assert.equal(n.from, "2026-09-01");
+  assert.equal(n.to, "2026-09-30");
+  assert.equal(n.clipped, false);
+  // a custom range ending today ends at the collection time: never a fraction of days in the label
+  const today = { start: "2026-11-12T00:00:00Z", end: "2026-11-18T12:00:00Z", days: 6.5, covered_days: 6.5,
+    requested_start: "2026-11-12T00:00:00Z" };
+  assert.deepEqual([windowNote(today, true).from, windowNote(today, true).to], ["2026-11-12", "2026-11-18"]);
+  assert.equal(windowNote(today, false).days, 7);
+  assert.equal(windowNote(null, false), null);
+  assert.equal(windowNote({ start: "x", end: "2026-11-18T00:00:00Z" }, false), null);
+});
+
+test("windowNote says when the range starts before the complete history", () => {
+  const clipped = { start: "2026-10-20T00:00:00Z", end: "2026-11-18T09:00:00Z", days: 90, covered_days: 29.4,
+    requested_start: "2026-08-20T09:00:00Z" };
+  const n = windowNote(clipped, false);
+  assert.equal(n.clipped, true);
+  assert.equal(n.coveredDays, 29.4);
+  assert.equal(n.startsOn, "2026-10-20");
+  assert.equal(n.from, "2026-08-20");
+  // the git activity is served unclipped: its own complete day clips it
+  const git = { start: "2026-09-01T00:00:00Z", end: "2026-10-01T00:00:00Z" };
+  const g = windowNote(git, true, "2026-09-21");
+  assert.deepEqual([g.clipped, g.coveredDays, g.startsOn, g.days], [true, 10, "2026-09-21", 30]);
+  assert.equal(windowNote(git, true, "2026-08-01").clipped, false);
+  assert.equal(windowNote(git, true, "not a day").clipped, false);
 });
