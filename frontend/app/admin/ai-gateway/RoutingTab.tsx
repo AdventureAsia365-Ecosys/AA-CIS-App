@@ -411,6 +411,8 @@ function DataClassCard({ rows }: { rows: StageConfigRow[] }) {
             {line(t("dataClassContent"), t("dataClassContentNote"), summary.content, "ai-gateway-data-class-content")}
             {summary.unclassified.length > 0 && line(t("dataClassUnset"), t("dataClassUnsetNote"),
               summary.unclassified, "ai-gateway-data-class-unset")}
+            {summary.freeText && line(t("dataClassFreeText"), t("dataClassFreeTextNote"), summary.freeText,
+              "ai-gateway-data-class-free-text")}
           </>
         ) : (
           <EmptyState title={t("dataClassEmptyTitle")} description={t("dataClassEmptyBody")} />

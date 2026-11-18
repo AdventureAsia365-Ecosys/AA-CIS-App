@@ -548,17 +548,22 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   model with no US deployment for a pii stage.
 - **Free-text PII scrub** (AA-1113, root ADR 0009 d10, accepted S283; `shared/llm_client/free_text_scrub.py` +
   `pii_patterns.py`, a copy of the CRM log scrub and its F3 detectors, never imported across repos): the stages that
-  carry tenant free text (every tenant stage `t<n>_*` by name, fail safe: the writers and the repair / FAQ / judge
-  stages that re-read their seed, agency facts and brand rules; `NOT_FREE_TEXT_STAGES` takes one out only once proven
-  free of tenant text, empty today; a migration may later move the flag into the stage row) send only a scrubbed copy of their request (system, user, few-shots):
-  e-mails, phones, cards, CCCD numbers, passports, OTPs after a cue, JWTs, credentials and signed links become bracket
-  labels (`[email]`, `[phone]` ...); dates, UUIDs and plain links stay; nothing is restored in the reply.
+  carry tenant or traveller free text send only a scrubbed copy of their request (system, user, few-shots). Which
+  stages: the registry column `shared.llm_role_config.free_text` (CIS 448, migration-only, read with the stage row as
+  `StageConfig.free_text`; every tenant stage marked by 448) plus a fail-safe floor by name, every `t<n>_*` stage
+  whatever its row says; a stage whose row could not be read on a cold cache is scrubbed too. A pii stage is never
+  marked (CHECK): it needs its data. E-mails, phones, cards, CCCD numbers, passports, OTPs after a cue, JWTs,
+  credentials and signed links become bracket labels (`[email]`, `[phone]` ...); dates, UUIDs and plain links stay;
+  nothing is restored in the reply.
   `LLMClient._generate_with` runs it after the switch and budget gates and before the first attempt (so the route,
   legacy keys, the truncation retry, the shadow and the cassette see only the scrubbed copy); the admin `probe` too.
   **Fail closed**: a scrub that raises or leaves an e-mail / `+` phone refuses the call (`FreeTextScrubFailed`, one
-  0 USD row refused / `other`, `quality_signal.pii_scrub.status = failed`). The receipt (counts per label, never a value) goes on the gateway's own
-  rows of the request (`quality_signal.pii_scrub`: refusals, failed attempts) and the log line `llm_free_text_scrubbed`;
-  the call site's success row is unchanged. Other stages get the same request object back.
+  0 USD row refused / `other`, `quality_signal.pii_scrub.status = failed`). The receipt (counts per label and
+  `scrubbed_hash`, the sha256 of the text the model gets; never a value) goes on the gateway's own rows of the request
+  (`quality_signal.pii_scrub`: refusals, failed attempts) and the log line `llm_free_text_scrubbed`; the call site's
+  success row is unchanged. Other stages get the same request object back. $0 live check:
+  `scripts/llm_ops/aa1113_scrub_probe.py` (a planted e-mail and phone, a model key the catalog lacks, the row's hash).
+  AI gateway › Routing › Routing by data class lists the free-text stages.
 - **Cost parity** (AA-1002 slice S6, migration 312 contract): `pricing.quote(model, Usage, deployment)` prices one
   billed request from its full usage (uncached input, output, cache reads, 5-minute writes 1.25x, 1-hour writes 2x,
   Message Batches 50% off every token, Anthropic `inference_geo: "us"` 1.1x, Claude Haiku 5.5 x5 above 100K prompt
@@ -818,7 +823,11 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   routing facts and circuits; 350 (E4) appends the model's `supports_temperature` and `stage_params` (the
   `shared.stage_model_params` row of the stage and model, NULL = none), which TripPlanner applies with this gateway's
   precedence. 351 (E5) revokes the grandfathered SELECT of CIS 173 on `llm_role_config` / `llm_model_catalog`:
-  TripPlanner reads the views only (fail closed) and keeps INSERT on `llm_call_log`.
+  TripPlanner reads the views only (fail closed) and keeps INSERT on `llm_call_log`. 449 (AA-1113) appends
+  `free_text` (the stage's scrub mark) and `over_cap_connections` (the connections of the model's deployments this
+  gateway leaves out for their monthly cap), and adds `catalog.v_llm_connection_cap_v1` (each capped connection's
+  month-to-date ledger spend, `over_cap`, `stops`; SELECT to `tripplanner` and `crm_app`, the CRM's only catalog read):
+  one connection cap for every caller.
 - **acc2 candidate models** (migration 324, contract class, AA-1017 w4a): Amazon Nova Lite, Nova 2 Lite, Meta Llama 4
   Maverick, Llama 4 Scout and Moonshot Kimi K3 as catalog rows with prices from the AWS price list and one enabled acc2
   deployment each (priority 20); no role config or alias names them, and the file refuses one that does. They answer
