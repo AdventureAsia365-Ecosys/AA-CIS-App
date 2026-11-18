@@ -315,7 +315,7 @@ def _judge_label(judge: dict) -> str:
     return f"{judge['instrument']} ({base})" if judge.get("instrument") else base
 
 
-CAMPAIGN_ORDER = ("w5-null-t9-blog-v7", "w5-t9", "w5-s1", "w5-t2")  # root ADR 0020 W5: null run, then T9, S1, T2
+CAMPAIGN_ORDER = ("w5-null-t9-blog-v7-g150", "w5-t9", "w5-s1", "w5-t2")  # root ADR 0020 W5: null run, then T9, S1, T2
 
 
 async def campaign(pool, *, ids: tuple[str, ...] = CAMPAIGN_ORDER, r1_report: Optional[str] = None,

@@ -189,7 +189,7 @@ def test_campaign_plans_every_proof_in_the_d12_order_and_sums_the_estimates(fake
     assert all(r["stage"] == cfg.W5_STAGE for r in out["proofs"])
     assert out["d12_total_cap_usd"] == pr.total_cap() == 33.0 and out["fits_d12_total"]
     # S283: only the registered null run (sample rule, claim instrument judge) is estimated; the drafts are not
-    assert {c.prereg_id for c in fakes["estimates"]} == {"w5-null-t9-blog-v7"}
+    assert {c.prereg_id for c in fakes["estimates"]} == {"w5-null-t9-blog-v7-g150"}   # S284: superseded v7
     assert out["proofs"][0]["judge"].startswith("aa1048-two-step-v7 (")
 
 

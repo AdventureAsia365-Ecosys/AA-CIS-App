@@ -215,6 +215,27 @@ async def test_r2_pairs_release_0_on_an_older_version_through_this_versions_base
 
 
 @pytest.mark.asyncio
+async def test_s284_cost_samples_count_one_write_per_reverify_item(conn):
+    """AA-1051 S284 review: a reverify candidate row carries the item's control regenerate and candidate spend (two
+    judge calls here, the fake writer costs nothing); the cost sample halves it when the run holds the item's
+    regenerated control, so an r2 item and a reverify item sample the same. A reverify trap item (no control) is one
+    call already."""
+    await _golden(conn)
+    await conn.execute("SET LOCAL ROLE cis_app")
+    store = r2.PgStore(OneConnPool(conn))
+    for kind in ("r2", "reverify"):
+        await r2.run_r2(store, r2.R2Config(writer="a1", run_kind=kind, require_calibrated=False),
+                        writer_fn=_writer(), judge_fn=_judge(conn, spend_each=0.002), flush=_flush)
+    raw = await conn.fetch(
+        "SELECT p.run_kind, r.cost_usd::float AS cost_usd FROM shared.eval_item_result r "
+        "JOIN shared.prompt_eval_runs p ON p.id = r.run_id WHERE p.writer = 'a1' AND r.arm = 'candidate' "
+        "AND r.mode = 'regenerate' AND r.verdict <> 'error' AND r.cost_usd > 0")
+    assert any(r["run_kind"] == "reverify" and r["cost_usd"] == pytest.approx(0.004) for r in raw)
+    costs = await store.item_cost_samples("a1")
+    assert costs and all(c == pytest.approx(0.002) for c in costs)
+
+
+@pytest.mark.asyncio
 async def test_run_spend_counts_only_this_runs_labelled_rows(conn):
     store = r2.PgStore(OneConnPool(conn))
     since = datetime.now(timezone.utc) - timedelta(minutes=1)
