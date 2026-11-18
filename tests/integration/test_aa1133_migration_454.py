@@ -58,7 +58,7 @@ async def test_454_one_answer_per_person_and_page(conn):
 @pytest.mark.parametrize("repo,path,lang,comment", [
     ("bad repo", "docs/zz.md", "en", None),
     ("AA-Ecosys", "docs/zz.txt", "en", None),
-    ("AA-Ecosys", "x.md", "en", None),
+    ("AA-Ecosys", ".md", "en", None),
     ("AA-Ecosys", "docs/zz.md", "eng", None),
     ("AA-Ecosys", "docs/zz.md", "en", ""),
     ("AA-Ecosys", "docs/zz.md", "en", "x" * 1001),
