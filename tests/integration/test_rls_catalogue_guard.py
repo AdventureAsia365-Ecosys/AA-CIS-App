@@ -76,6 +76,16 @@ def test_catalogue_has_no_unallowlisted_violation(catalog):
         + rules.format_findings(result.violations))
 
 
+def test_cis_side_entries_are_used(catalog):
+    """AA-1112: an entry for a CIS object that matches nothing in the replay is stale (the table was dropped, the grant
+    revoked, the object fixed): remove it in the same PR. Entries for other owners' objects are checked on the Dev dump
+    (AA-CIS-Infra db/check_rls_allowlist.py)."""
+    result = rules.check(catalog, rules.merge_allowlists(rules.ALLOWLIST, CI_ONLY_ALLOWLIST))
+    stale = [(r, k) for r, k in result.stale if k in rules.ALLOWLIST.get(r, {}) and rules.cis_side(r, k)]
+    assert not stale, (f"stale RLS allowlist entries (AA-1112): {stale}. Remove them from rls_catalogue_rules.ALLOWLIST "
+                       "and copy the file to AA-CIS-Infra db/.")
+
+
 def test_ci_only_entries_are_used(catalog):
     """A CI-only entry that no longer matches anything here is dead weight: remove it."""
     result = rules.check(catalog, rules.merge_allowlists(rules.ALLOWLIST, CI_ONLY_ALLOWLIST))
