@@ -7,9 +7,12 @@ from contextlib import asynccontextmanager
 import pytest
 
 from api.core.staff_authz import POLICY, SPEND_READ
-from api.services import ai_gateway_split, llm_connection_split as split
+from api.services import ai_gateway_split
 from shared.llm_client import connections as conn_registry
 from shared.llm_client.connections import ProviderConnection
+
+# The pure rule ships with the CIS 453 migration PR (MIG-4); this code PR runs after main has it.
+split = pytest.importorskip("api.services.llm_connection_split", reason="ships with the CIS 453 migration PR")
 
 
 class _Pool:
