@@ -109,14 +109,15 @@ def _as_owner():
     return patch.object(staff_authz, "request_staff_identity", lambda request: identity)
 
 
-def test_policy_is_admin_only():
-    assert staff_authz.POLICY[("GET", ASSET)] == staff_authz.OPS_READ
+def test_policy_is_every_staff_role():
+    # AA-1133 B7: every staff role reads the docs (docs.read); an unknown role still reaches nothing.
+    assert staff_authz.POLICY[("GET", ASSET)] == staff_authz.DOCS_READ
 
 
-def test_non_admin_403_without_storage_reads(client):
+def test_unknown_role_403_without_storage_reads(client):
     fake = FakeS3(_objects())
     with _use(fake):
-        for role in ("viewer", "content", "tenant"):
+        for role in ("tenant", "nobody"):
             res = client.get(ASSET, params={"path": SVG_PATH}, headers={"X-Admin-Secret": SECRET, "x-admin-role": role})
             assert res.status_code == 403
     assert fake.calls == []

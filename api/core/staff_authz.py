@@ -150,6 +150,10 @@ REFERENCE_PRICE_WRITE = "reference_price.write"
 # the delegated pages (finance billing, ai_ops gateway) keep their own capabilities.
 SETTINGS_WRITE = "settings.write"
 SETTINGS_APPROVE = "settings.approve"
+# AA-1133 B7 (tech lead S283 c-s283-docs-reader-access: "all staff after fix") — read the published docs of
+# /admin/docs (manifest, pages, images, search) and leave page feedback. Every staff role; owner-only pages stay
+# filtered by can_read_owner_docs(), the feedback admin view stays ops.read.
+DOCS_READ = "docs.read"
 LEARN_PREVIEW = "learn.preview"  # AA-1105: AA Academy draft modules (/learn/v1 reads it; admin and content_lead)
 
 _CONTENT_WORK = frozenset({CONTENT_READ, CONTENT_WRITE, REVIEW_ACT})
@@ -167,19 +171,19 @@ ROLE_PERMS: dict[str, frozenset[str]] = {
         TENANT_CONTENT_READ, CATALOG_READ, TENANT_BOOK_READ, TENANT_BOOK_ACCOUNT_READ, TENANT_MEMBER_WRITE,
         TENANT_ASSIGN, BILLING_READ, BILLING_WRITE, WAVE_RUN, LAB_READ, TENANT_MEMBER_RESEND, TENANT_BOOK_WRITE,
         TENANT_VIEW_AS, NOTIFICATIONS_READ, REFERENCE_PRICE_READ, REFERENCE_PRICE_WRITE, SETTINGS_WRITE,
-        SETTINGS_APPROVE, LEARN_PREVIEW,
+        SETTINGS_APPROVE, LEARN_PREVIEW, DOCS_READ,
     },
     # AA Catalogue W, Tenant QA W, Writing Lab R (wave, review queue, master content, atoms / photos, SEO).
     "content_lead": _CONTENT_WORK | {
         MASTER_ADMIN, ATOMS_WRITE, PHOTOS_WRITE, A4_UNPUBLISH, QUALITY_WRITE, CONTENT_SETTINGS_WRITE,
         CATALOG_READ, TENANT_CONTENT_READ, LAB_READ, WAVE_RUN, NOTIFICATIONS_READ, REFERENCE_PRICE_READ,
-        REFERENCE_PRICE_WRITE, LEARN_PREVIEW,
+        REFERENCE_PRICE_WRITE, LEARN_PREVIEW, DOCS_READ,
     },
     # AA Catalogue R + W of the writing (upload, S1 rewrite, review); never master lifecycle, atoms or tenants.
-    "content": _CONTENT_WORK | {CATALOG_READ, NOTIFICATIONS_READ, REFERENCE_PRICE_READ},
+    "content": _CONTENT_WORK | {CATALOG_READ, NOTIFICATIONS_READ, REFERENCE_PRICE_READ, DOCS_READ},
     # Tenant QA W, AA Catalogue R, Writing Lab R.
     "tenant_qa": frozenset({CONTENT_READ, CATALOG_READ, TENANT_CONTENT_READ, QUALITY_WRITE, A4_UNPUBLISH, LAB_READ,
-                            NOTIFICATIONS_READ}),
+                            NOTIFICATIONS_READ, DOCS_READ}),
     # Tenants directory R / Tenant 360 W of the own book except billing (tenant_scope.py; tenant.book.write), members
     # and invitations but never the owner role (tenant.write); plans and add-ons R, AI & spend R and Tenant QA R of the
     # own tenants (tenant.book.account.read). Slice 2: read-only view-as of the own book (tenant.view_as). Close-out:
@@ -187,24 +191,26 @@ ROLE_PERMS: dict[str, frozenset[str]] = {
     "customer_success": frozenset({
         TENANT_BOOK_READ, TENANT_BOOK_ACCOUNT_READ, TENANT_BOOK_WRITE, TENANT_MEMBER_WRITE, TENANT_MEMBER_RESEND,
         TENANT_VIEW_AS, NOTIFICATIONS_READ, TENANT_CONTENT_BOOK_READ, REFERENCE_PRICE_READ, REFERENCE_PRICE_WRITE,
+        DOCS_READ,
     }),
     # Tenants directory R / Tenant 360 R of the own book and the pool; sends an existing non-owner invitation again
     # (tenant.member.resend), nothing else. Never plans, billing, usage, cost, Tenant QA or AI spend (no
     # tenant.book.account.read). Reset MFA of a tenant member has no CIS route (the CRM owns it). Slice 2: read-only
     # view-as of the own book and the pool (tenant.view_as; matrix "R (own + pool)").
-    "support": frozenset({TENANT_BOOK_READ, TENANT_MEMBER_RESEND, TENANT_VIEW_AS, NOTIFICATIONS_READ}),
+    "support": frozenset({TENANT_BOOK_READ, TENANT_MEMBER_RESEND, TENANT_VIEW_AS, NOTIFICATIONS_READ, DOCS_READ}),
     # Billing columns and plans of every tenant, plan change and suspend for debt (field-level), AI & spend R.
-    "finance": frozenset({BILLING_READ, BILLING_WRITE, SPEND_READ, NOTIFICATIONS_READ, REFERENCE_PRICE_READ}),
+    "finance": frozenset({BILLING_READ, BILLING_WRITE, SPEND_READ, NOTIFICATIONS_READ, REFERENCE_PRICE_READ, DOCS_READ}),
     # AI & spend W, Writing Lab W, AA Catalogue R. Slice 2: the tenant text of the Writing Lab, logged per read
     # (lab.tenant_text.read; never tenant_content.read, which would open Tenant QA and Content Trace too).
     "ai_ops": frozenset({
         CONTENT_READ, CATALOG_READ, AI_ADMIN, SPEND_READ, SPEND_WRITE, LAB_READ, LAB_TENANT_TEXT_READ,
-        NOTIFICATIONS_READ,
+        NOTIFICATIONS_READ, DOCS_READ,
     }),
     # AA-878 — read-only staff (the UI-smoke E2E account, migration 249). Reads the content pages; refused on
     # every write (READ_ONLY_ROLES below, whatever the route's capability) and on every admin-only read. Not
     # assignable from the Staff page (api/services/staff_directory.py CIS_ROLES) and no Booking token.
-    "viewer": frozenset({CONTENT_READ, NOTIFICATIONS_READ}),
+    # AA-1133 B7: + the docs reader (read only; its feedback POST is a write, refused by READ_ONLY_ROLES).
+    "viewer": frozenset({CONTENT_READ, NOTIFICATIONS_READ, DOCS_READ}),
 }
 
 # AA-1035: the capability an unlisted GET needs (deny by default for a role without it).
@@ -808,11 +814,15 @@ POLICY: dict[tuple[str, str], Any] = {
     # (every schema of the shared RDS, PII tags included), admin only.
     ("GET", "/admin/data-model"): OPS_READ,
 
-    # ── admin_docs (AA-898) — Developer › Docs: the docs catalog reader synced from the root repo by CI, admin only;
-    # owner-only pages (N-3) are filtered in the route by the verified owner flag.
-    ("GET", "/admin/docs/manifest"): OPS_READ,
-    ("GET", "/admin/docs/page"): OPS_READ,
-    ("GET", "/admin/docs/asset"): OPS_READ,   # AA-697 — SVG diagrams of the docs bundle
+    # ── admin_docs (AA-898) — Developer › Docs: the docs catalog reader synced from the root repo by CI. AA-1133 B7:
+    # every staff role reads it (docs.read); owner-only pages (N-3) are filtered in the route by the verified owner
+    # flag, in the search hits too. Feedback: every role but the read-only viewer leaves it; the admin view is ops.read.
+    ("GET", "/admin/docs/manifest"): DOCS_READ,
+    ("GET", "/admin/docs/page"): DOCS_READ,
+    ("GET", "/admin/docs/asset"): DOCS_READ,   # AA-697 — SVG diagrams of the docs bundle
+    ("GET", "/admin/docs/search"): DOCS_READ,   # AA-1133 — FTS5 index of the bundle
+    ("POST", "/admin/docs/feedback"): DOCS_READ,
+    ("GET", "/admin/docs/feedback"): OPS_READ,
 
     # ── admin_supply_content (AA-835) — the review of the customer content of Booking hotels / services. An edit or
     # a (paid) regenerate is content work; publish, reject and unpublish are review actions. Reads: every staff role.

@@ -1,13 +1,19 @@
 """AA-898 — the docs reader for the admin page /admin/docs (Platform › Developer › Docs).
 
-  GET /admin/docs/manifest[?refresh=1]          the published docs catalog this caller may see     ops.read (admin)
-  GET /admin/docs/page?repo=AA-Ecosys&path=...  one redacted page, only if listed for the caller   ops.read (admin)
-  GET /admin/docs/asset?repo=AA-Ecosys&path=... one checked image: SVG (AA-697, rule 9) or     ops.read (admin)
+  GET /admin/docs/manifest[?refresh=1]          the published docs catalog this caller may see     docs.read
+  GET /admin/docs/page?repo=AA-Ecosys&path=...  one redacted page, only if listed for the caller   docs.read
+  GET /admin/docs/asset?repo=AA-Ecosys&path=... one checked image: SVG (AA-697, rule 9) or         docs.read
                                                 PNG / WebP screenshot (AA-1064, rule 10); &encoding=base64 answers JSON
+  GET /admin/docs/search?q=...&limit=20         AA-1133: full-text search (FTS5 index of the bundle,  docs.read
+                                                api/services/docs_search.py), only pages listed for the caller
+  POST /admin/docs/feedback                     AA-1133: {repo, path, lang, helpful, comment?} on a  docs.read
+                                                listed page (acp_shared.docs_feedback, CIS 454; not the viewer)
+  GET /admin/docs/feedback                      AA-1133: the per-page feedback view                 ops.read (admin)
 
-Read only. The bundle comes from the root repo "Docs sync" workflow through S3 (api/services/docs_reader.py), cached
-in this process; nothing here touches the database. Admin only: POLICY = ops.read, and the BFF refuses every other
-role first (frontend/lib/rbac.ts API_READ_RULES "docs"). Owner-only pages (N-3) are listed and served only to a
+The bundle comes from the root repo "Docs sync" workflow through S3 (api/services/docs_reader.py), cached in this
+process. Only the feedback routes touch the database (503 ``unavailable`` before CIS 454). AA-1133 B7 (tech lead S283:
+"all staff after fix"): every staff role reads (POLICY docs.read; the BFF's API_READ_RULES "docs" lists every role);
+the read-only viewer reads but cannot post feedback (READ_ONLY_ROLES). Owner-only pages (N-3) are listed and served only to a
 principal holding docs.owner_read (staff_authz.can_read_owner_docs: a verified Cognito owner; Dev only and temporary,
 the E2E CIS admin of ADR 0006a A10b, read only, is_owner still False); for anyone else they do not exist (404).
 
@@ -20,14 +26,16 @@ Included in main.py WITHOUT an include prefix: staff_policy reads the route temp
 """
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Optional
 
+import asyncpg
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, ConfigDict, Field
 
 from api.core.staff_authz import StaffPrincipal, docs_owner_read_via, staff_policy
-from api.services import docs_reader
+from api.services import docs_feedback, docs_reader, docs_search
 
 logger = structlog.get_logger()
 
@@ -106,6 +114,84 @@ async def get_asset(
     except docs_reader.DocsUnavailable as e:
         raise HTTPException(status_code=503, detail=str(e))
     return asset_response(repo, path, data, encoding)
+
+
+@router.get("/search", summary="Full-text search of the published docs this caller may read")
+async def search_docs(
+    q: str = Query(..., min_length=2, max_length=200, description="words to find (all required, prefix match)"),
+    limit: int = Query(20, ge=1, le=50, description="pages returned"),
+    principal: StaffPrincipal = Depends(staff_policy),
+):
+    try:
+        view = await docs_search.search(q, _owner_read(principal, "search"), limit)
+    except docs_reader.DocsMissing as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except docs_reader.DocsUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    return JSONResponse(view, headers=_NO_STORE)
+
+
+class FeedbackIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    repo: str = Field("AA-Ecosys", min_length=1, max_length=64, pattern=r"^[A-Za-z0-9._-]+$")
+    path: str = Field(..., min_length=4, max_length=300)
+    lang: str = Field("en", pattern=r"^[a-z]{2}$")
+    helpful: bool
+    comment: Optional[str] = Field(None, max_length=docs_feedback.COMMENT_CHARS)
+
+
+def _pool(request: Request):
+    pool = getattr(request.app.state, "pool", None)
+    if pool is None:
+        raise HTTPException(status_code=503, detail="DB not ready")
+    return pool
+
+
+def _unavailable(e: Exception) -> HTTPException:
+    logger.warning("aa1133_docs_feedback_unavailable", error=f"{type(e).__name__}: {str(e)[:200]}")
+    return HTTPException(status_code=503, detail={"detail": "The docs feedback table is not applied yet (CIS 454)",
+                                                 "code": "unavailable"})
+
+
+@router.post("/feedback", summary="Was this page helpful? (one answer per staff member and page, the last one counts)")
+async def post_feedback(body: FeedbackIn, request: Request, principal: StaffPrincipal = Depends(staff_policy)):
+    from api.core.tenant_scope import staff_id_of
+
+    try:
+        m = await docs_reader.cached_manifest()
+    except docs_reader.DocsMissing as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except docs_reader.DocsUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    if docs_feedback.listed_page(m, _owner_read(principal, "feedback"), body.repo, body.path) is None:
+        raise HTTPException(status_code=404, detail="No such page")
+    staff_id = staff_id_of(request)
+    actor = f"admin:{staff_id}" if staff_id else ("machine" if principal.is_machine else "staff:unknown")
+    try:
+        async with _pool(request).acquire() as conn:
+            out = await docs_feedback.record(conn, repo=body.repo, path=body.path, lang=body.lang,
+                                             helpful=body.helpful, comment=body.comment, actor=actor,
+                                             role=principal.role)
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    logger.info("docs_feedback_recorded", path=body.path, helpful=body.helpful, created=out["created"])
+    return JSONResponse(out, headers=_NO_STORE)
+
+
+@router.get("/feedback", summary="Page feedback per page (most 'not helpful' first), admin only")
+async def get_feedback(request: Request, principal: StaffPrincipal = Depends(staff_policy)):
+    try:
+        m = await docs_reader.cached_manifest()
+    except docs_reader.DocsMissing as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except docs_reader.DocsUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    try:
+        async with _pool(request).acquire() as conn:
+            view = await docs_feedback.summary(conn, m, _owner_read(principal, "feedback_view"))
+    except asyncpg.UndefinedTableError as e:
+        raise _unavailable(e)
+    return JSONResponse(view, headers=_NO_STORE)
 
 
 def asset_response(repo: str, path: str, data: bytes, encoding: str) -> Response:
