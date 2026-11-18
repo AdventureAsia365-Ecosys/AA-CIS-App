@@ -19,8 +19,8 @@ class _Pool:
 
 
 def _conn(key, budget):
-    return ProviderConnection(connection_key=key, kind="bedrock", label=f"Zz {key}", enabled=True,
-                              monthly_budget_usd=budget)
+    return ProviderConnection(connection_key=key, kind="bedrock", auth_mode="assume_role", label=f"Zz {key}",
+                              data_scope="global", enabled=True, monthly_budget_usd=budget)
 
 
 @pytest.fixture

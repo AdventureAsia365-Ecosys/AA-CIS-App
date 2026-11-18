@@ -103,8 +103,8 @@ from api.core.tenant_scope import TENANT_SCOPED
 from api.routers.admin import verify_admin_secret
 from api.routers.admin_docs import asset_response
 from api.services import (ai_gateway, ai_gateway_batches, ai_gateway_calls, ai_gateway_experiments, ai_gateway_guide,
-                          ai_gateway_split, crm_console, docs_reader, platform_apps, settings_registry, spend_rules_view,
-                          tenant_ai_budget)
+                          ai_gateway_split, crm_console, docs_reader, platform_apps, settings_registry,
+                          spend_rules_view, tenant_ai_budget)
 from services.acp_shared.audit_log import write_audit_log
 from shared import provider_credit
 from shared.llm_client import app_profile, capacity
