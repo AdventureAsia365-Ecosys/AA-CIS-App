@@ -1,4 +1,4 @@
--- Migration 449: AA-1113 (root ADR 0009 decision 10, accepted S283) — shared.llm_role_config.free_text: the registry
+-- Migration 451: AA-1113 (root ADR 0009 decision 10, accepted S283) — shared.llm_role_config.free_text: the registry
 -- of the stages whose prompts carry tenant or traveller free text, scrubbed by the gateway before any model call.
 --
 -- Why. The gateway's free-text PII scrub (shared/llm_client/free_text_scrub.py, CIS #1559) chose its stages by a
@@ -7,7 +7,7 @@
 -- "t<n>_" (a CRM or Booking stage routed through the shared gateway) could not be marked at all. This column is that
 -- registry: the gateway scrubs a stage whose row says free_text (and every "t<n>_" stage, as a fail-safe floor that a
 -- row cannot lower), and refuses the call when the scrub cannot run. catalog.v_llm_gateway_config_v1 publishes the
--- mark (CIS 450, same PR).
+-- mark (CIS 452, same PR).
 -- Not covered by this file (review S284): TripPlanner's planning chat (tp_plan_chat) carries traveller free text but
 -- has no row (it borrows tp_compose, left false here) and runs in TripPlanner's own gateway, which does not read the
 -- mark yet. A follow-up seeds its row with free_text = true together with the TripPlanner change that refuses an
@@ -24,7 +24,7 @@
 --      stay false (tenants = 0 in the measure).
 --   4. Migration-only, like pii_class: cis_app gets no INSERT / UPDATE grant on the column (the admin GET
 --      /admin/llm-config shows it read-only; cis_app already has table-wide SELECT).
---   5. Register 449.
+--   5. Register 451.
 --
 -- Guards (RAISE rolls the whole file back): before, shared.llm_role_config has pii_class (373). After, no tenant stage
 -- that is not pii is left with free_text = false, and the CHECK holds (added VALID).
@@ -35,12 +35,11 @@
 --
 -- Class: contract (root ADR 0017 decision 3): ALTER TABLE ADD COLUMN, ADD CONSTRAINT and UPDATE on an existing table.
 -- No migrate directive line: Infra Migration Apply applies it once every job table is idle (root ADR 0017a). MIG-4:
--- this migration-only PR (with 450), the byte copy in AA-CIS-Infra db/migrations/cis/, the apply, then the code PR.
+-- this migration-only PR (with 452), the byte copy in AA-CIS-Infra db/migrations/cis/, the apply, then the code PR.
 -- DM-7.1: no new table.
 --
--- Number. 446 is the highest on main (18/11); 447 and 448 are held by other open migration PRs (the AA-1126 PR of
--- S283 and an S284 lane). Renumber to main max + 1 if needed (git grep '449_' and 'CIS 449' / 'migration 449'; 450
--- moves with it).
+-- Number. 447 is the highest on main (18/11, AA-1126); 448-450 are held by other S284 lanes' open migration PRs.
+-- Renumber to main max + 1 if needed (git grep '451_' and 'CIS 451' / 'migration 451'; 452 and 453 move with it).
 --
 -- Rollback (a NEW forward migration, after the code is reverted; the code treats a missing column as false):
 --   ALTER TABLE shared.llm_role_config DROP CONSTRAINT llm_role_config_free_text_pii_check;
@@ -57,12 +56,12 @@ SET LOCAL statement_timeout = '1min';
 DO $$
 BEGIN
     IF to_regclass('shared.llm_role_config') IS NULL THEN
-        RAISE EXCEPTION 'migration 449: shared.llm_role_config (137) is missing';
+        RAISE EXCEPTION 'migration 451: shared.llm_role_config (137) is missing';
     END IF;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_schema = 'shared' AND table_name = 'llm_role_config'
                       AND column_name = 'pii_class') THEN
-        RAISE EXCEPTION 'migration 449: shared.llm_role_config.pii_class (373) is missing';
+        RAISE EXCEPTION 'migration 451: shared.llm_role_config.pii_class (373) is missing';
     END IF;
 END $$;
 
@@ -85,12 +84,12 @@ UPDATE shared.llm_role_config
    AND NOT free_text;
 
 COMMENT ON COLUMN shared.llm_role_config.free_text IS
-    'AA-1113 (CIS 449, root ADR 0009 d10): the stage''s prompts carry tenant or traveller free text. The gateway '
+    'AA-1113 (CIS 451, root ADR 0009 d10): the stage''s prompts carry tenant or traveller free text. The gateway '
     'scrubs them (e-mails, phones, cards, ids, links, credentials) before any model call and refuses the call when '
     'the scrub cannot run; every t<n>_ stage is scrubbed whatever this says (fail-safe floor). Never true on a pii '
     'stage (CHECK llm_role_config_free_text_pii_check). Migration-only.';
 COMMENT ON CONSTRAINT llm_role_config_free_text_pii_check ON shared.llm_role_config IS
-    'AA-1113 (CIS 449): a pii stage needs its data unscrubbed (CIS 373), so it is never a free_text stage.';
+    'AA-1113 (CIS 451): a pii stage needs its data unscrubbed (CIS 373), so it is never a free_text stage.';
 
 DO $$
 DECLARE
@@ -102,13 +101,13 @@ BEGIN
       INTO n_free, n_missed
       FROM shared.llm_role_config;
     IF n_missed > 0 THEN
-        RAISE EXCEPTION 'migration 449: % tenant stage(s) left without free_text', n_missed;
+        RAISE EXCEPTION 'migration 451: % tenant stage(s) left without free_text', n_missed;
     END IF;
-    RAISE NOTICE 'migration 449: stages marked free_text: %', n_free;
+    RAISE NOTICE 'migration 451: stages marked free_text: %', n_free;
 END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('449', now(), 'AA-1113: shared.llm_role_config.free_text (the gateway scrubs these stages before any model '
+VALUES ('451', now(), 'AA-1113: shared.llm_role_config.free_text (the gateway scrubs these stages before any model '
                       'call, fail closed; every tenant stage marked; never on a pii stage)')
 ON CONFLICT (version) DO NOTHING;
 
