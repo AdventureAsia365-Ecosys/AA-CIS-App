@@ -14,6 +14,8 @@
 //     drawn by MermaidDiagram (lazy-loaded, strict mode, SVG sanitised; the labelled source on any error);
 //   - GitHub alerts ("> [!NOTE]", [!TIP], [!IMPORTANT], [!WARNING], [!CAUTION]) are callouts with a label
 //     (lib/markdownCallouts.ts, a remark plugin: the content stays ordinary Markdown).
+// AA-1133: a fenced code block shows its language (```bash -> "Bash") and a Copy button (the block's text, as
+// written); Mermaid blocks stay diagrams.
 // Heading ids come from `slugForLine` (the page builds them from the same text as its table of contents), prefixed
 // with "doc-" so they never collide with ids of the shell.
 
@@ -21,11 +23,13 @@ import React from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { K, RADIUS, mono, sans } from "./core/tokens";
+import { Button } from "./core/Buttons";
 import { MermaidDiagram } from "./MermaidDiagram";
 import { calloutKindOf, remarkCallouts, type CalloutKind } from "@/lib/markdownCallouts";
 import { CALLOUT_MESSAGES } from "@/lib/markdownCallouts.messages";
 import { useT } from "./core/useI18n";
 import { SHELL_MESSAGES } from "./shell.messages";
+import { codeLanguage } from "@/lib/docsReader";
 
 export type MarkdownLink =
   | { kind: "internal"; href: string; onNavigate: () => void }
@@ -75,6 +79,12 @@ const CSS = `
 .aa-md pre { margin: 0.8em 0; padding: 12px 14px; background: ${K.neutralBg}; border: 1px solid ${K.line};
   border-radius: ${RADIUS.md}px; overflow-x: auto; overflow-wrap: normal; }
 .aa-md pre code { background: none; padding: 0; font-size: 12.5px; white-space: pre; }
+.aa-md .aa-md-code { position: relative; margin: 0.8em 0; border: 1px solid ${K.line}; border-radius: ${RADIUS.md}px;
+  background: ${K.neutralBg}; }
+.aa-md .aa-md-code pre { margin: 0; border: none; border-radius: 0 0 ${RADIUS.md}px ${RADIUS.md}px; }
+.aa-md .aa-md-code-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 4px 6px 4px 12px; border-bottom: 1px solid ${K.line}; font-family: ${sans}; font-size: 11px;
+  font-weight: 700; letter-spacing: 0.04em; color: ${K.muted}; }
 .aa-md .aa-md-label { display: block; font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
   text-transform: uppercase; color: ${K.muted}; margin-bottom: 6px; font-family: ${sans}; }
 .aa-md .aa-md-table { margin: 0.8em 0; overflow-x: auto; border: 1px solid ${K.line}; border-radius: ${RADIUS.md}px; }
@@ -118,6 +128,43 @@ export function mermaidSource(pre: unknown): string | null {
   const cls = code?.properties?.className;
   if (!Array.isArray(cls) || !cls.includes("language-mermaid")) return null;
   return hastText(code).replace(/\n$/, "");
+}
+
+/** The <code> child of a <pre> (hast), for its language class and its text. */
+function codeChild(pre: unknown): HastNode | undefined {
+  return (pre as HastNode | undefined)?.children?.find((c) => c.type === "element" && c.tagName === "code");
+}
+
+/** AA-1133: a fenced code block with its language label and a Copy button. */
+function CodeBlock({ node, children }: { node: unknown; children?: React.ReactNode }) {
+  const t = useT(SHELL_MESSAGES);
+  const code = codeChild(node);
+  const lang = codeLanguage(code?.properties?.className);
+  const [copied, setCopied] = React.useState(false);
+  React.useEffect(() => {
+    if (!copied) return;
+    const id = window.setTimeout(() => setCopied(false), 1600);
+    return () => window.clearTimeout(id);
+  }, [copied]);
+  const copy = () => {
+    const text = hastText(code).replace(/\n$/, "");
+    try {
+      void navigator.clipboard?.writeText(text).then(() => setCopied(true), () => setCopied(false));
+    } catch {
+      /* no clipboard (an insecure context): the text stays selectable */
+    }
+  };
+  return (
+    <div className="aa-md-code" data-testid="md-code">
+      <div className="aa-md-code-bar">
+        <span data-testid="md-code-lang">{lang}</span>
+        <Button size="sm" variant="ghost" onClick={copy} ariaLabel={t("copyCodeAria", lang)} testId="md-code-copy">
+          {copied ? t("copiedCode") : t("copyCode")}
+        </Button>
+      </div>
+      <pre>{children}</pre>
+    </div>
+  );
 }
 
 function headingId(slugForLine: Props["slugForLine"], node: unknown): string | undefined {
@@ -222,7 +269,7 @@ export function MarkdownView({ markdown, resolveHref, slugForLine, resolveImage 
       pre({ children, node }) {
         const source = mermaidSource(node);
         if (source !== null) return <MermaidDiagram source={source} />;
-        return <pre>{children}</pre>;
+        return <CodeBlock node={node}>{children}</CodeBlock>;
       },
     };
   }, [resolveHref, slugForLine, resolveImage, t, callout]);

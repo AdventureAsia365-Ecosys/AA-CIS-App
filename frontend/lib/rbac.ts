@@ -124,7 +124,9 @@ export const PAGE_RULES: PageRule[] = [
   { prefix: "/admin/lab", roles: WRITING_LAB },
   { prefix: "/admin/api-docs", roles: ["admin"] },          // AA-577 follow-up — OpenAPI reader
   { prefix: "/admin/data-model", roles: ["admin"] },        // AA-894 — live ERD from the nightly schema dump
-  { prefix: "/admin/docs", roles: ["admin"] },              // AA-898 — docs catalog reader (synced by root CI)
+  // AA-898 — docs catalog reader (synced by root CI). AA-1133 B7 (tech lead S283: "all staff after fix"): every staff
+  // role reads it (backend docs.read); owner-only pages stay filtered by the backend, the feedback view stays admin.
+  { prefix: "/admin/docs", roles: EVERY_STAFF },
   // AA-883 — Platform pages (staff directory first). Matches /admin/platform and /admin/platform/…
   // only, never a sibling such as /admin/platform-x (pageRule compares prefix or prefix + "/").
   { prefix: "/admin/platform", roles: ["admin"] },
@@ -250,8 +252,9 @@ export const API_READ_RULES: { prefix: string; roles: StaffRole[] }[] = [
   // the backend (staff_policy, capability ops.read).
   { prefix: "data-model", roles: ["admin"] },
   // AA-898 — backend /admin/docs/* (the docs catalog reader; owner-only pages filtered by the backend on the verified
-  // owner flag): admin only, re-checked by the backend (staff_policy, capability ops.read).
-  { prefix: "docs", roles: ["admin"] },
+  // owner flag). AA-1133 B7: every staff role, re-checked by the backend (staff_policy, docs.read; GET docs/feedback,
+  // the admin view, is ops.read there; the viewer's feedback POST is refused as a write).
+  { prefix: "docs", roles: EVERY_STAFF },
   // AA-992 — backend /admin/data-coverage (counts of every stage, CRM included): admin only, re-checked by the backend
   // (staff_policy, capability ops.read).
   { prefix: "data-coverage", roles: ["admin"] },

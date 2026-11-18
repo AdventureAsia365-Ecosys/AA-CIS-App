@@ -18,15 +18,21 @@
 // without the chosen language shows English with a note. ```mermaid blocks are drawn as diagrams (MarkdownView).
 // AA-697: `![alt](x.svg)` shows an SVG of the bundle (GET /api/admin/docs/asset, checked server-side) through <img>.
 // AA-1064: a PNG / WebP screenshot a page links loads the same way (lib/docsAsset.ts decodes it in the BFF).
+// AA-1133 (reader v2, tech lead S283 decisions): every staff role (lib/rbac.ts; backend docs.read). The list is the
+// topic sidebar (bundle `nav`); the search box runs the server full-text search (FTS5) and lists hits with snippets,
+// falling back to the title filter when the index is not there. A page opens with a header (DocHeader: breadcrumb,
+// title, lead, facts, GitHub Source / History for all, Edit for admins, known-issue banner), code blocks with a
+// language label and Copy (MarkdownView), the table of contents as a sticky scroll-spy column on wide screens
+// (DocToc), and "Was this page helpful?" at the end (DocFeedback; not for the read-only viewer). Admins open the
+// answers with the Feedback button (?view=feedback).
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, BookMarked, Lock, RefreshCw, Search, X } from "lucide-react";
+import { ArrowLeft, BookMarked, MessageSquare, RefreshCw, Search, X } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import {
   PageFrame,
   ApiError,
-  Badge,
   Button,
   EmptyState,
   ErrorState,
@@ -42,10 +48,16 @@ import {
   useFormat,
   useIsPhone,
   useLang,
+  useMediaQuery,
   useT,
-  type Tone,
+  useAdminIdentity,
   IconButton, Input, Select,
 } from "../../_kit";
+import { isReadOnlyRole } from "@/lib/rbac";
+import { DocHeader } from "./DocHeader";
+import { DocToc } from "./DocToc";
+import { DocFeedback, FeedbackView } from "./DocFeedback";
+import { DocSearchResults, useDocSearch } from "./DocSearchResults";
 import { M } from "./messages";
 import { DocsList } from "./DocsList";
 import { DOC_AUDIENCE_MESSAGES, DOC_LANG_MESSAGES, DOC_TYPE_MESSAGES } from "@/lib/docsReader.messages";
@@ -57,7 +69,10 @@ import {
   DOC_LANG_STORAGE_KEY,
   DOC_LANGS,
   DEFAULT_DOC_LANG,
+  DOC_SEARCH_MIN_CHARS,
   audienceOptions,
+  githubLinks,
+  splitLeadingH1,
   listedPages,
   originalOf,
   parseDocLang,
@@ -73,18 +88,12 @@ import {
   type DocsManifestResp,
 } from "@/lib/docsReader";
 
+// AA-1133: from this width the reader is three columns (docs list · text · sticky table of contents).
+const WIDE_QUERY = "(min-width: 1280px)";
+
 const MANIFEST_PATH = "/api/admin/docs/manifest";
 const MANIFEST_KEY = ["admin", "docs", "manifest"] as const;
 const DEFAULT_REPO = "AA-Ecosys";
-
-const STATUS_TONE: Record<string, Tone> = {
-  active: "success",
-  accepted: "success",
-  draft: "warning",
-  proposed: "warning",
-  deprecated: "neutral",
-  superseded: "neutral",
-};
 
 // ── small pieces ────────────────────────────────────────────────────────────────────────────────
 
@@ -156,6 +165,7 @@ function Reader({
   assets,
   onOpen,
   pendingHash,
+  wide,
 }: {
   repo: string;
   original: DocEntry | undefined;
@@ -166,11 +176,11 @@ function Reader({
   assets: Set<string>;
   onOpen: (path: string, hash: string) => void;
   pendingHash: string;
+  wide: boolean;
 }) {
   const t = useT(M);
-  const typeLabel = useT(DOC_TYPE_MESSAGES);
-  const audienceLabel = useT(DOC_AUDIENCE_MESSAGES);
   const langName = useT(DOC_LANG_MESSAGES);
+  const role = useAdminIdentity().role;
   const { formatDateTime } = useFormat();
   const uiLang = useLang();
   const choice: LangChoice = original
@@ -188,9 +198,12 @@ function Reader({
   });
 
   const markdown = data?.markdown ?? "";
-  const headings = useMemo(() => outline(markdown), [markdown]);
+  // AA-1133: the header shows the title, so the body's own H1 is taken out (its slug still counts: outline seed).
+  const split = useMemo(() => splitLeadingH1(markdown), [markdown]);
+  const body = split.body;
+  const headings = useMemo(() => outline(body, split.h1 ? [split.h1] : []), [body, split.h1]);
   const byLine = useMemo(() => new Map(headings.map((h) => [h.line, h.slug])), [headings]);
-  const toc = headings.filter((h) => h.level === 2 || h.level === 3);
+  const toc = useMemo(() => headings.filter((h) => h.level === 2 || h.level === 3), [headings]);
   const slugForLine = useCallback((line: number | undefined) => (line ? byLine.get(line) : undefined), [byLine]);
   const resolveHref = useCallback(
     (href: string | undefined): MarkdownLink => {
@@ -247,65 +260,43 @@ function Reader({
           )}
         </div>
       )}
-      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, marginBottom: 6 }}>
-        <Badge tone="info">{typeLabel(p.type)}</Badge>
-        {p.status && <Badge tone={STATUS_TONE[p.status] ?? "neutral"}>{p.status}</Badge>}
-        {p.access === "owner" && (
-          <Badge tone="warning">
-            <Lock size={11} /> {t("ownerOnly")}
-          </Badge>
-        )}
-        {p.generated && <Badge tone="neutral">{t("generated")}</Badge>}
-      </div>
-      <div style={{ fontSize: 12, color: K.muted, fontFamily: mono, marginBottom: 14, overflowWrap: "anywhere" }}>
-        {p.id} · {p.path}
-        {p.last_reviewed ? t("lastReviewed", p.last_reviewed) : ""}
-        {p.audience.length ? t("forAudience", p.audience.map((a) => audienceLabel(a)).join(", ")) : ""}
-      </div>
-
-      {toc.length >= 3 && (
-        <details style={{ marginBottom: 16, border: `1px solid ${K.line}`, borderRadius: RADIUS.md, padding: "8px 12px" }}>
-          <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600, color: K.ink }}>
-            {t("onThisPageCount", toc.length)}
-          </summary>
-          <nav aria-label={t("onThisPage")} style={{ marginTop: 8, display: "grid", gap: 4 }}>
-            {toc.map((h) => (
-              <a
-                key={h.slug}
-                href={`#doc-${h.slug}`}
-                onClick={(e) => {
-                  e.preventDefault();
-                  scrollToHeading(h.slug);
-                }}
-                style={{ fontSize: 13, color: K.accentDeep, paddingLeft: h.level === 3 ? 14 : 0, textDecoration: "none" }}
-              >
-                {h.text}
-              </a>
-            ))}
-          </nav>
-        </details>
-      )}
-
-      <MarkdownView
-        markdown={markdown}
-        resolveHref={resolveHref}
-        slugForLine={slugForLine}
-        resolveImage={resolveImg}
+      <DocHeader
+        page={p}
+        title={split.h1 ?? p.title}
+        markdown={body}
+        links={githubLinks(data.source, (original ?? p).path, role === "admin")}
+        hasVietnamese={choice.available.includes("vi") && choice.lang !== "vi"}
       />
-
-      <footer
-        style={{
-          marginTop: 24,
-          paddingTop: 12,
-          borderTop: `1px solid ${K.line}`,
-          fontSize: 12,
-          color: K.muted,
-          overflowWrap: "anywhere",
-        }}
-      >
-        {t("source")} {data.source.repo ?? p.repo}@<span style={{ fontFamily: mono }}>{shortSha(data.source.sha) || t("unknown")}</span>
-        {data.generated_at ? t("publishedAt", formatDateTime(data.generated_at)) : ""}{t("readOnlyFooter")}
-      </footer>
+      {!wide && <DocToc items={toc} sticky={false} />}
+      <div style={wide ? { display: "grid", gridTemplateColumns: "minmax(0, 1fr) 210px", gap: 28, alignItems: "start" }
+                       : undefined}>
+        <div style={{ minWidth: 0, maxWidth: 820 }}>
+          <MarkdownView
+            markdown={body}
+            resolveHref={resolveHref}
+            slugForLine={slugForLine}
+            resolveImage={resolveImg}
+          />
+          <footer
+            style={{
+              marginTop: 28,
+              paddingTop: 14,
+              borderTop: `1px solid ${K.line}`,
+              display: "grid",
+              gap: 12,
+            }}
+          >
+            {!isReadOnlyRole(role) && (
+              <DocFeedback key={`${repo}/${(original ?? p).path}`} repo={repo} path={(original ?? p).path} lang={choice.lang} />
+            )}
+            <div style={{ fontSize: 12, color: K.muted, overflowWrap: "anywhere" }}>
+              {t("source")} {data.source.repo ?? p.repo}@<span style={{ fontFamily: mono }}>{shortSha(data.source.sha) || t("unknown")}</span>
+              {data.generated_at ? t("publishedAt", formatDateTime(data.generated_at)) : ""}{t("readOnlyFooter")}
+            </div>
+          </footer>
+        </div>
+        {wide && <DocToc items={toc} sticky />}
+      </div>
     </article>
   );
 }
@@ -354,11 +345,14 @@ function DocsReaderPage() {
   const { formatDateTime } = useFormat();
   const uiLang = useLang();
   const isPhone = useIsPhone();
+  const wide = useMediaQuery(WIDE_QUERY);
+  const isAdmin = useAdminIdentity().role === "admin";
   const qc = useQueryClient();
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
-  const selectedPath = params.get("path");
+  const feedbackView = isAdmin && params.get("view") === "feedback";
+  const selectedPath = feedbackView ? null : params.get("path");
   const selectedRepo = params.get("repo") || DEFAULT_REPO;
 
   const { data, error, isLoading, isFetching, refetch } = useQuery({
@@ -379,6 +373,10 @@ function DocsReaderPage() {
   const [type, setType] = useState(ALL);
   const [audience, setAudience] = useState(ALL);
   const [pendingHash, setPendingHash] = useState("");
+  // AA-1133: the server full-text search while the bundle has an index; the title filter otherwise (or on an error).
+  const searchOn = !!data?.search?.available;
+  const search = useDocSearch(query, searchOn);
+  const serverSearch = searchOn && query.trim().length >= DOC_SEARCH_MIN_CHARS && !search.error;
   // Page language: the viewer's last choice remembered in this browser (best effort); without one, the admin UI
   // language (English by default).
   const lang = useSyncExternalStore(subscribeDocLang, readDocLang, () => null) ?? uiLang;
@@ -454,6 +452,11 @@ function DocsReaderPage() {
           aria-label={t("searchAria")}
           style={{ width: "100%", padding: "0 36px 0 34px" }}
         />
+        {searchOn && search.error && query.trim().length >= DOC_SEARCH_MIN_CHARS && (
+          <div role="status" style={{ fontSize: 11, color: K.muted, marginTop: 4 }} data-testid="docs-search-fallback">
+            {t("searchFallback")}
+          </div>
+        )}
         {query && (
           <IconButton
             variant="plain"
@@ -497,6 +500,9 @@ function DocsReaderPage() {
         onOpen={open}
         filters={filters}
         isPhone={isPhone}
+        searchPanel={serverSearch ? (
+          <DocSearchResults data={search.data} isLoading={search.isLoading} onOpen={(path, slug) => open(path, slug)} />
+        ) : undefined}
       />
     </Card>
   );
@@ -512,7 +518,10 @@ function DocsReaderPage() {
       assets={assets}
       onOpen={open}
       pendingHash={pendingHash}
+      wide={wide}
     />
+  ) : feedbackView ? (
+    <FeedbackView onOpen={(path) => open(path)} />
   ) : (
     <EmptyState
       icon={<BookMarked size={30} />}
@@ -528,9 +537,18 @@ function DocsReaderPage() {
         title={t("title")}
         description={description}
         actions={
-          <Button variant="ghost" size="sm" onClick={() => reload.mutate()} disabled={busy} ariaLabel={t("reloadAria")}>
-            {busy ? <Spinner size={13} /> : <RefreshCw size={13} />} {t("reload")}
-          </Button>
+          <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 8 }}>
+            {isAdmin && (
+              <Button variant={feedbackView ? "primary" : "ghost"} size="sm" ariaLabel={t("feedbackViewAria")}
+                      testId="docs-feedback-view-button"
+                      onClick={() => router.push(feedbackView ? pathname : `${pathname}?view=feedback`, { scroll: false })}>
+                <MessageSquare size={13} /> {feedbackView ? t("backToDocs") : t("feedbackView")}
+              </Button>
+            )}
+            <Button variant="ghost" size="sm" onClick={() => reload.mutate()} disabled={busy} ariaLabel={t("reloadAria")}>
+              {busy ? <Spinner size={13} /> : <RefreshCw size={13} />} {t("reload")}
+            </Button>
+          </span>
         }
       />
 
@@ -551,7 +569,7 @@ function DocsReaderPage() {
           <ErrorState message={t("couldNotLoadDocs", loadError.message)} onRetry={() => refetch()} />
         </Card>
       ) : isPhone ? (
-        selectedPath ? (
+        selectedPath || feedbackView ? (
           <Card style={{ padding: "14px 16px" }}>
             <div style={{ marginBottom: 10 }}>
               <Button variant="ghost" size="sm" onClick={back} ariaLabel={t("backToList")}>
@@ -573,7 +591,7 @@ function DocsReaderPage() {
           }}
         >
           {list}
-          <Card style={{ padding: "18px 22px", minWidth: 0 }}>{reader}</Card>
+          <Card style={{ padding: wide ? "22px 28px" : "18px 22px", minWidth: 0 }}>{reader}</Card>
         </div>
       )}
     </PageFrame>
