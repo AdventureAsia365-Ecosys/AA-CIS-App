@@ -37,6 +37,12 @@ read error (L4), plus the CIS data the TripPlanner (L2) and CRM (L3) lanes read.
   tenant no longer needs approval (new month, upgrade, raised budget), through the existing
   `queue.retry_by_reason(tenant_ai_budget_approval)` which keeps the jobs of a tenant still over its allowance held.
   So the hold message says "Writing continues on its own when the allowance resets or after an upgrade" truthfully.
+  Review fix (S284): the automatic path is narrower than the staff bulk Retry. It lists the held jobs with a dry run of
+  `retry_by_reason` (one apply page, 50), then re-queues a job only when its tenant still has a budget that no longer
+  needs approval, its account is in service (`reader.IN_SERVICE` = trial, active, past_due; `is_active`, not
+  cancelled) and no `shared.tenant_erasure_request` of it is open (`lifecycle.resume_refusal`). A removed budget, a
+  suspended / offboarding / closed account or an erasure in flight keeps the job held for the staff Retry, so a
+  tenant out of service never spends LLM money or gets tenant_tour_versions rows from an automatic resume.
 - **L4:** under `prod`, a tenant budget that cannot be read lets the T-stage call go on with a warning log and one admin
   bell per tenant per 24 h (database de-dup) and per 10 min in process. Under `dev` it still fails closed (AA-642 A8).
   The 402 pre-check never blocks on a read error in either environment (the gateway decides at call time).
@@ -78,6 +84,13 @@ read error (L4), plus the CIS data the TripPlanner (L2) and CRM (L3) lanes read.
 - The unreadable bell writes through a fresh connection while the database may be the reason: best effort, paced,
   never raises.
 - The CRM plan value seeded at 2 USD keeps Dev unchanged; the business owner's prices may set other values.
+
+- The resume check lives in `services/tenant_account/lifecycle.py`, not in `shared/jobs/queue.py`: queue.py is at its
+  file-size baseline and `retry_by_reason` at the complexity limit (10). The re-queue is its own guarded UPDATE (still
+  `stopped_budget` with the same error prefix), so a job staff retried or cancelled meanwhile is not touched.
+- past_due counts as in service (the grace state where service goes on, the same set the account contract serves);
+  the reviewer suggested trial/active only. A past_due agency can start new AI work today, so holding only its resumed
+  work would be inconsistent; billing suspension moves it to suspended, which this check then holds.
 
 ## Should know
 

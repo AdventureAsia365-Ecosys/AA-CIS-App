@@ -1,7 +1,8 @@
 """AA-1126 l16 (S283) — on a real database: a job held by its tenant's AI budget reads back with the tenant-facing stop
 code (the my-versions / version reads, v1_tours._job_statuses and the joined column), the 402 check reads the real
 budget, and the hourly tick re-queues the held jobs once the tenant no longer needs approval while it keeps the held
-ones of a tenant still over its allowance. Invented tenants only; every row is removed after."""
+ones of a tenant still over its allowance, of a suspended tenant and of a tenant whose budget is gone (those wait for
+staff Retry). Invented tenants only; every row is removed after."""
 import json
 import os
 import sys
@@ -98,3 +99,17 @@ async def test_the_tick_requeues_only_the_tenants_no_longer_over(pool):
     status = {r["id"]: r["status"] for r in await pool.fetch(
         "SELECT id::text AS id, status FROM shared.job WHERE id = ANY($1::uuid[])", [mine, theirs])}
     assert status[mine] == "queued" and status[theirs] == "stopped_budget"
+
+
+@pytest.mark.asyncio
+async def test_the_tick_keeps_the_holds_of_a_suspended_tenant_and_of_a_removed_budget(pool):
+    await _budget(pool, TENANT, 10, 12.0)
+    await _budget(pool, OTHER, 10, 12.0)
+    suspended, gone = await _held_job(pool, TENANT), await _held_job(pool, OTHER)
+    await pool.execute("UPDATE shared.tenant_ai_budget SET monthly_usd = 100 WHERE tenant_id = $1::uuid", TENANT)
+    await pool.execute("UPDATE shared.tenants SET account_status = 'suspended' WHERE tenant_id = $1::uuid", TENANT)
+    await pool.execute("DELETE FROM shared.tenant_ai_budget WHERE tenant_id = $1::uuid", OTHER)
+    assert await lifecycle.resume_allowance_holds(pool) == 0
+    status = {r["id"]: r["status"] for r in await pool.fetch(
+        "SELECT id::text AS id, status FROM shared.job WHERE id = ANY($1::uuid[])", [suspended, gone])}
+    assert status == {suspended: "stopped_budget", gone: "stopped_budget"}

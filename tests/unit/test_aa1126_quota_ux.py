@@ -221,17 +221,110 @@ def test_holds_since_the_previous_month(now, since):
     assert lifecycle.allowance_holds_since(now) == since.replace(tzinfo=timezone.utc)
 
 
-def test_the_tick_requeues_through_the_tenant_budget_retry(monkeypatch):
-    from shared.jobs import queue
-    seen = {}
+HELD_ERR = f"tenant_ai_budget_approval: Tenant {TENANT}: AI spend this month $12.00 is 120% of its $10.00 AI budget"
+OTHER = "6d1a3b25-9e4c-4f7b-a032-1b2c3d4e5f60"
 
-    async def retry(pool, prefix, *, since, dry_run, **kw):
-        seen.update(prefix=prefix, since=since, dry_run=dry_run)
-        return {"requeued": 3, "held_count": 1}
+
+def _acct(tid=TENANT, status="active", is_active=True, cancelled_at=None, erasing=False):
+    return {"tenant_id": tid, "account_status": status, "is_active": is_active, "cancelled_at": cancelled_at,
+            "erasing": erasing}
+
+
+class _TickPool:
+    """The two reads and the guarded UPDATE the automatic resume runs (the dry run and the budget read are stubbed)."""
+
+    def __init__(self, accounts):
+        self.accounts, self.updated, self.serving_args = accounts, [], None
+
+    async def fetch(self, sql, *args):
+        assert sql == lifecycle.SERVING_SQL
+        self.serving_args = args
+        return [a for a in self.accounts if a["tenant_id"] in args[0]]
+
+    async def fetchrow(self, sql, job_id, prefix, delay):
+        assert sql == lifecycle.RESUME_ONE_SQL and prefix == "tenant_ai_budget_approval" and 0 <= delay <= 60
+        self.updated.append(job_id)
+        return {"id": job_id}
+
+
+def _stub_queue(monkeypatch, jobs, budgets, seen=None):
+    from shared.jobs import queue
+
+    async def retry(pool, prefix, *, since, dry_run, limit, **kw):
+        if seen is not None:
+            seen.update(prefix=prefix, since=since, dry_run=dry_run, limit=limit)
+        return {"jobs": jobs, "held_count": 1}
+
+    async def waiting(pool, rows):
+        return {t: budgets.get(t) for t in {lifecycle_tenant(r) for r in rows}}
     monkeypatch.setattr(queue, "retry_by_reason", retry)
-    assert run(lifecycle.resume_allowance_holds(object(), NOV)) == 3
-    assert seen == {"prefix": queue.RETRY_REASON_TENANT_BUDGET, "since": datetime(2026, 10, 1, tzinfo=timezone.utc),
-                    "dry_run": False}
+    monkeypatch.setattr(queue, "tenants_waiting", waiting)
+
+
+def lifecycle_tenant(row):
+    return tenant_budget.tenant_of_error(row["error"])
+
+
+def _job(jid, tid=TENANT):
+    return {"id": jid, "kind": "t9_write", "error": HELD_ERR.replace(TENANT, tid), "finished_at": None}
+
+
+def test_the_tick_lists_through_the_staff_retry_as_a_dry_run_then_requeues_one_job_at_a_time(monkeypatch):
+    seen = {}
+    _stub_queue(monkeypatch, [_job("j1")], {TENANT: _budget(spent=1.0)}, seen)
+    pool = _TickPool([_acct()])
+    assert run(lifecycle.resume_allowance_holds(pool, NOV, rand=lambda: 0.5)) == 1
+    assert seen == {"prefix": "tenant_ai_budget_approval", "since": datetime(2026, 10, 1, tzinfo=timezone.utc),
+                    "dry_run": True, "limit": 50}
+    assert pool.updated == ["j1"] and pool.serving_args == ([TENANT], ["done", "cancelled", "failed"])
+
+
+@pytest.mark.parametrize("acct", [
+    _acct(status="suspended"), _acct(status="offboarding"), _acct(status="closed"), _acct(is_active=False),
+    _acct(cancelled_at=datetime(2026, 11, 1, tzinfo=timezone.utc)), _acct(erasing=True)])
+def test_a_tenant_out_of_service_or_mid_erasure_keeps_its_held_jobs(monkeypatch, acct):
+    _stub_queue(monkeypatch, [_job("j1")], {TENANT: _budget(spent=1.0)})
+    pool = _TickPool([acct])
+    assert run(lifecycle.resume_allowance_holds(pool, NOV)) == 0
+    assert pool.updated == []
+
+
+def test_a_tenant_whose_budget_row_is_gone_waits_for_staff_retry(monkeypatch):
+    _stub_queue(monkeypatch, [_job("j1")], {TENANT: None})
+    pool = _TickPool([_acct()])
+    assert run(lifecycle.resume_allowance_holds(pool, NOV)) == 0
+    assert pool.updated == []
+
+
+def test_only_the_tenant_in_service_resumes(monkeypatch):
+    _stub_queue(monkeypatch, [_job("j1"), _job("j2", OTHER)],
+                {TENANT: _budget(spent=1.0), OTHER: _budget(spent=1.0)})
+    pool = _TickPool([_acct(), _acct(OTHER, status="suspended")])
+    assert run(lifecycle.resume_allowance_holds(pool, NOV)) == 1
+    assert pool.updated == ["j1"]
+
+
+@pytest.mark.parametrize("status", ["trial", "active", "past_due"])
+def test_the_in_service_statuses_are_the_account_contract_ones(status):
+    assert lifecycle.resume_refusal(TENANT, _budget(spent=1.0), {TENANT: _acct(status=status)}) is None
+
+
+@pytest.mark.parametrize("tid, budget, serving, expected", [
+    (None, None, {}, "the stop names no tenant"),
+    (TENANT, None, {}, "tenant not found"),
+    (TENANT, _budget(spent=12.0), {TENANT: _acct()}, "the tenant still waits for approval"),
+])
+def test_the_refusal_reasons(tid, budget, serving, expected):
+    assert lifecycle.resume_refusal(tid, budget, serving) == expected
+
+
+def test_nothing_held_reads_nothing_else(monkeypatch):
+    _stub_queue(monkeypatch, [], {})
+
+    class NoPool:
+        async def fetch(self, *a):
+            raise AssertionError("no read without held jobs")
+    assert run(lifecycle.resume_allowance_holds(NoPool(), NOV)) == 0
 
 
 def test_a_failing_requeue_never_stops_the_tick(monkeypatch):
