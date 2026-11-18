@@ -12,7 +12,7 @@ import { useMemo } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { Badge, DataTable, ErrorState, K, Section, apiGet, mono, useT, type ColumnDef } from "../../_kit";
-import { defineMessages } from "../../_kit/core/i18n";
+import { SPLIT as M, SPLIT_STATE } from "./connectionSplit.messages";
 import { usd } from "@/lib/aiGateway";
 import {
   CONNECTION_SPLIT_API, missingShareApps, splitOrder, splitTone, type SplitResp, type SplitRow, type SplitState,
@@ -20,74 +20,29 @@ import {
 
 export const CONNECTION_SPLIT_KEY = ["ai-gateway", "connection-split"] as const;
 
-const SPLIT_STATE = defineMessages(
-  { ok: "Fits", over_allocated: "Over-allocated", unbounded: "A share is not enforced", crm_unknown: "CRM share unknown",
-    no_provider_budget: "No provider budget" },
-  { ok: "Vừa", over_allocated: "Vượt phân bổ", unbounded: "Một phần không chặn", crm_unknown: "Chưa rõ phần CRM",
-    no_provider_budget: "Chưa có ngân sách nhà cung cấp" },
-);
-
-const M = defineMessages(
-  {
-    title: "Connection budget split",
-    help: "Each connection has one budget at its provider. CIS and the CRM each keep their own monthly cap on it and "
-      + "neither reads the other's spend, so the two shares together must stay under the provider budget.",
-    colConnection: "Connection",
-    colProvider: "Provider budget",
-    colCis: "CIS share",
-    colCrm: "CRM share",
-    colLeft: "Left",
-    colState: "State",
-    notSet: "not set",
-    noCap: "no cap",
-    unknown: "unknown",
-    overBy: (v: string) => `over by ${v}`,
-    uncapped: (apps: string) => `no cap: ${apps}`,
-    alertOnly: "alert only",
-    alertOnlyApps: (apps: string) => `alert only, calls go on past it: ${apps}`,
-    editProvider: "Provider budgets",
-    editCrm: "CRM shares",
-    crmError: (code: string) => `The CRM share could not be read (${code}); CIS alone is checked against the budget.`,
-    stray: (keys: string) => `Setting entries that name no connection: ${keys}`,
-    sourceError: "The provider budget setting could not be read; nothing is checked against it.",
-    policyError: "The connections' stop policy could not be read; every CIS share is shown as alert only.",
-    loadError: "Could not load the connection budget split",
-    empty: "No LLM connection",
-  },
-  {
-    title: "Phân bổ ngân sách kết nối",
-    help: "Mỗi kết nối có một ngân sách tại nhà cung cấp. CIS và CRM mỗi bên giữ hạn mức tháng riêng trên kết nối đó và "
-      + "không bên nào đọc chi tiêu của bên kia, nên hai phần cộng lại phải nằm dưới ngân sách nhà cung cấp.",
-    colConnection: "Kết nối",
-    colProvider: "Ngân sách nhà cung cấp",
-    colCis: "Phần CIS",
-    colCrm: "Phần CRM",
-    colLeft: "Còn lại",
-    colState: "Trạng thái",
-    notSet: "chưa đặt",
-    noCap: "không giới hạn",
-    unknown: "chưa rõ",
-    overBy: (v: string) => `vượt ${v}`,
-    uncapped: (apps: string) => `không giới hạn: ${apps}`,
-    alertOnly: "chỉ cảnh báo",
-    alertOnlyApps: (apps: string) => `chỉ cảnh báo, vẫn gọi tiếp khi vượt: ${apps}`,
-    editProvider: "Ngân sách nhà cung cấp",
-    editCrm: "Phần của CRM",
-    crmError: (code: string) => `Không đọc được phần của CRM (${code}); chỉ kiểm phần CIS với ngân sách.`,
-    stray: (keys: string) => `Mục cài đặt không khớp kết nối nào: ${keys}`,
-    sourceError: "Không đọc được cài đặt ngân sách nhà cung cấp; không kiểm gì theo nó.",
-    policyError: "Không đọc được chính sách chặn của các kết nối; mọi phần CIS được coi là chỉ cảnh báo.",
-    loadError: "Không tải được phân bổ ngân sách kết nối",
-    empty: "Chưa có kết nối LLM",
-  },
-);
-
 const small = { fontSize: 12, color: K.muted, lineHeight: 1.45 } as const;
 const PROVIDER_HREF = "/admin/platform/settings?app=cis&area=spend&key=cis.spend.connection_provider_budget_usd";
 const CRM_HREF = "/admin/platform/settings?app=crm&area=ai&key=crm.ai.connection_monthly_cap_usd";
 
 function Amount({ value, empty }: { value: number | null; empty: string }) {
   return <span style={{ fontFamily: mono }}>{value == null ? empty : usd(value, 2)}</span>;
+}
+
+// The notices above the table (CRM unreadable, a setting unreadable, stray keys); its own component keeps the section's
+// complexity under the code-health limit.
+function SplitNotices({ data }: { data: SplitResp }) {
+  const t = useT(M);
+  if (!data.crm_error && data.errors.length === 0 && data.unknown_keys.length === 0) return null;
+  return (
+    <div role="status" style={{ ...small, padding: "8px 16px", display: "grid", gap: 2 }}>
+      {data.crm_error && <span style={{ color: K.amber }}>{t("crmError", data.crm_error)}</span>}
+      {data.errors.some((e) => e.source === "provider_budget")
+        && <span style={{ color: K.danger }}>{t("sourceError")}</span>}
+      {data.errors.some((e) => e.source === "cost_policy")
+        && <span style={{ color: K.amber }}>{t("policyError")}</span>}
+      {data.unknown_keys.length > 0 && <span>{t("stray", data.unknown_keys.join(", "))}</span>}
+    </div>
+  );
 }
 
 export default function ConnectionSplitSection() {
@@ -166,16 +121,7 @@ export default function ConnectionSplitSection() {
           <Link href={CRM_HREF}>{t("editCrm")}</Link>
         </span>
       )}>
-      {data && (data.crm_error || data.errors.length > 0 || data.unknown_keys.length > 0) && (
-        <div role="status" style={{ ...small, padding: "8px 16px", display: "grid", gap: 2 }}>
-          {data.crm_error && <span style={{ color: K.amber }}>{t("crmError", data.crm_error)}</span>}
-          {data.errors.some((e) => e.source === "provider_budget")
-            && <span style={{ color: K.danger }}>{t("sourceError")}</span>}
-          {data.errors.some((e) => e.source === "cost_policy")
-            && <span style={{ color: K.amber }}>{t("policyError")}</span>}
-          {data.unknown_keys.length > 0 && <span>{t("stray", data.unknown_keys.join(", "))}</span>}
-        </div>
-      )}
+      {data && <SplitNotices data={data} />}
       <DataTable<SplitRow>
         tableId="ai-gateway-budgets-connection-split" data={data ? splitOrder(data.rows) : []} columns={columns}
         getRowId={(r) => r.connection_key} loading={!data} searchable={false} paginate={false} stickyHeader={false}
