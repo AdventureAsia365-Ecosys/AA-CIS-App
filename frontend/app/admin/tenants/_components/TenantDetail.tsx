@@ -30,6 +30,7 @@ import { T360_WORDS_MESSAGES } from "./tenant360.messages";
 import type { Tenant } from "./tenantRow";
 import { scoreTone, type ScoreBands } from "@/lib/qualityThresholds";
 import { useScoreBands } from "../../_components/useQualityThresholds";
+import { Pagination } from "../../_components/Pagination";
 import { TEN } from "../messages";
 
 // ─── Detail types (unchanged from previous) ───────────────────────────────────
@@ -50,7 +51,9 @@ interface TenantDetails {
     api_calls_this_month: number; quota_pct: number;
     plan_name: string; member_since: string;
     tours_view?: string; pipeline_note?: string | null;
+    pipeline_runs_shown?: number;   // AA-1127: the runs list is the newest N
   };
+  pagination?: { page: number; page_size: number; total: number };
   rewritten_tours: RewrittenTour[];
   pipeline_runs: PipelineRun[];
   api_usage: { total_calls: number; quota_used: number; quota_total: number; rate_limit_per_min: number };
@@ -77,7 +80,12 @@ const STATUS_TONE: Record<string, Tone> = {
 function StatusChip({ status }: { status: string }) {
   return <Badge tone={STATUS_TONE[status] ?? "neutral"} dot={false} style={{ textTransform: "none", letterSpacing: 0 }}>{status}</Badge>;
 }
-function ToursTabContent({ tours, toursView }: { tours: RewrittenTour[]; toursView?: string }) {
+// AA-1127 (C1, S283 UI audit): the Tours tab pages on the server (the API's page / page_size) and its label reads the
+// API's total, so "Tours (n)" and the header's total agree and every tour is reachable.
+export const TOURS_PAGE_SIZE = 25;
+function ToursTabContent({ tours, toursView, page, total, onPage }: {
+  tours: RewrittenTour[]; toursView?: string; page: number; total: number; onPage: (p: number) => void;
+}) {
   const bands = useScoreBands();
   const tr = useT(TEN);
   const { formatDate: fmtD } = useFormat();
@@ -114,6 +122,11 @@ function ToursTabContent({ tours, toursView }: { tours: RewrittenTour[]; toursVi
             cell: ({ row: { original: x } }) => <span style={{ fontFamily: mono, color: K.muted2 }}>{fmtD(x.created_at)}</span> },
         ]}
       />
+      {total > TOURS_PAGE_SIZE && (
+        <div data-testid="tenant-tours-pager" style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
+          <Pagination page={page} total={total} pageSize={TOURS_PAGE_SIZE} onPage={onPage} />
+        </div>
+      )}
     </>
   );
 }
@@ -466,6 +479,16 @@ export function initialDetailTab(linkTab: string | null): DTab {
   return (DETAIL_TABS as readonly string[]).includes(linkTab ?? "") ? (linkTab as DTab) : "tours";
 }
 
+/** AA-1127: the Tours tab's count is the API's total (pagination.total), never the length of one page. */
+function toursTotal(d: TenantDetails): number {
+  return d.pagination?.total ?? d.rewritten_tours.length;
+}
+/** AA-1127: the runs list is the newest-N window when it is full ("Pipeline (latest 20)"), else a real count. */
+function pipelineCount(d: TenantDetails): { latest: boolean; n: number } {
+  const shown = d.summary.pipeline_runs_shown;
+  return shown != null && d.pipeline_runs.length >= shown ? { latest: true, n: shown } : { latest: false, n: d.pipeline_runs.length };
+}
+
 export function TenantDetail({ tenant, onChanged }: {
   tenant: Tenant; onChanged: () => void;
 }) {
@@ -490,11 +513,13 @@ export function TenantDetail({ tenant, onChanged }: {
   // tenant is the route's (/admin/tenants/<id>), so the tab no longer checks a `tenant` query value.
   const deepTab = useSearchParams();
   const [picked, setTab]        = useState<DTab>(() => initialDetailTab(deepTab.get("tab")));
+  const [toursPage, setToursPage] = useState(1);
   // AA-1006: one react-query load for the details and the rewrite activity (was an effect that set state first).
   const detailQ = useQuery({
-    queryKey: ["tenant-details", tenantId, isInternal],
+    queryKey: ["tenant-details", tenantId, isInternal, toursPage],
+    placeholderData: (prev) => prev,
     queryFn: () => {
-      const p1 = fetch(`/api/admin/tenants/${tenantId}/details`)
+      const p1 = fetch(`/api/admin/tenants/${tenantId}/details?page=${toursPage}&page_size=${TOURS_PAGE_SIZE}`)
         .then(r => r.ok ? r.json() : Promise.reject())
         .then((d: TenantDetails) => {
           const fw = d.brand_rules?.forbidden_words;
@@ -522,12 +547,13 @@ export function TenantDetail({ tenant, onChanged }: {
   if (!data)   return <div style={{ padding: "12px 0", fontSize: 12, color: K.danger }}>{tr("detailsLoadError")}</div>;
 
   const s = data.summary;
+  const pipelineRuns = pipelineCount(data);
   // AA-557 I.17 — "Planning" tab removed entirely (the tech lead confirmed: tenants no longer self-
   // serve Quarter-Plan, replaced by Slate since AA-511/519 — the tab had no meaning left).
   const ALL_TABS: { key: DTab; label: string }[] = [
-    { key: "tours",   label: tr("tabTours", data.rewritten_tours.length) },
+    { key: "tours",   label: tr("tabTours", toursTotal(data)) },
     ...(isInternal
-      ? [{ key: "pipeline" as DTab, label: tr("tabPipeline", data.pipeline_runs.length) }]
+      ? [{ key: "pipeline" as DTab, label: pipelineRuns.latest ? tr("tabPipelineLatest", pipelineRuns.n) : tr("tabPipeline", pipelineRuns.n) }]
       : [{ key: "activity" as DTab, label: tr("tabActivity", activity.length) }]
     ),
     { key: "api",   label: tr("tabApi") },
@@ -586,7 +612,8 @@ export function TenantDetail({ tenant, onChanged }: {
           tabs={TABS.map((x) => ({ key: x.key, label: x.label }))} active={tab} onChange={(k) => setTab(k as DTab)}
           style={{ marginBottom: -1 }} />
       </div>
-      {tab === "tours"    && <ToursTabContent    tours={data.rewritten_tours} toursView={data.summary.tours_view} />}
+      {tab === "tours"    && <ToursTabContent    tours={data.rewritten_tours} toursView={data.summary.tours_view}
+                                                 page={toursPage} total={toursTotal(data)} onPage={setToursPage} />}
       {tab === "pipeline" && <PipelineTabContent runs={data.pipeline_runs}    pipelineNote={data.summary.pipeline_note} />}
       {tab === "activity" && <ActivityTabContent items={activity} />}
       {tab === "api"      && <ApiTabContent      usage={data.api_usage} />}

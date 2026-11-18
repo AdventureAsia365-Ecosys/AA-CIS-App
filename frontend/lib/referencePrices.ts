@@ -8,7 +8,9 @@ export const BASE = "/api/admin/reference-prices";
 
 export const STATUSES = ["missing", "suggested", "needs_review", "parsed", "confirmed"] as const;
 export type RefStatus = (typeof STATUSES)[number];
-export const FILTERS = ["no_price", "needs_review", "parsed", "confirmed", "all"] as const;
+// AA-1127 (C1, S283 UI audit): "suggested" (nothing saved, the parser found a price: one click to Accept) is a filter and
+// a tile of its own; the API counted 539 such tours that no tile or filter reached. The API already accepts it.
+export const FILTERS = ["no_price", "suggested", "needs_review", "parsed", "confirmed", "all"] as const;
 export type RefFilter = (typeof FILTERS)[number];
 export const BASES = ["per_person", "per_group", "from"] as const;
 export type Basis = (typeof BASES)[number];

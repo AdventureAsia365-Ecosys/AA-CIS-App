@@ -124,6 +124,9 @@ export default function SupplyContentDetail({ entityId }: { entityId: string }) 
   const republishBlockers = published && isRepublish(entity, published) ? publishBlockers(entity, published, media, st.words) : null;
   const republishable = republishBlockers !== null && republishBlockers.length === 0;
   const editBase = draft ?? published ?? null;
+  // AA-1127 (C1): one list drives both the blockers box and the Publish button, so the page never offers what it says
+  // would be refused
+  const draftBlockers = draft ? publishBlockers(entity, draft, media, st.words) : [];
 
   return (
     <Shell>
@@ -192,7 +195,7 @@ export default function SupplyContentDetail({ entityId }: { entityId: string }) 
           <div data-testid="supply-draft" style={card}>
             <VersionMeta v={draft} />
             <VersionBody v={draft} media={media} />
-            <Blockers items={publishBlockers(entity, draft, media, st.words)} />
+            <Blockers items={draftBlockers} />
             {d.diff.length > 0 && (
               <details style={{ marginTop: 10 }} open>
                 <summary style={{ fontSize: 12, fontWeight: 600, cursor: "pointer", color: K.ink }}>
@@ -203,8 +206,10 @@ export default function SupplyContentDetail({ entityId }: { entityId: string }) 
             )}
             {canReview && (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
-                <span data-testid="supply-publish">
-                  <Button size="sm" variant="primary" onClick={() => setPending({ kind: "publish", version: draft })}>{t("publish")}</Button>
+                {/* AA-1127 (C1): the same blockers the box above lists disable Publish (review.publish refuses them) */}
+                <span data-testid="supply-publish" title={draftBlockers.length ? t("publishBlockedTitle") : undefined}>
+                  <Button size="sm" variant="primary" disabled={draftBlockers.length > 0}
+                          onClick={() => setPending({ kind: "publish", version: draft })}>{t("publish")}</Button>
                 </span>
                 <span data-testid="supply-reject">
                   <Button size="sm" variant="danger" onClick={() => setPending({ kind: "reject", version: draft })}>{t("reject")}</Button>

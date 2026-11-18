@@ -177,6 +177,7 @@ export default function ReferencePricesConsole() {
 
   const kpis: { key: RefFilter; label: string; hint: string; value: number | undefined; tone: Tone }[] = [
     { key: "no_price", label: t("kNoPrice"), hint: t("kNoPriceHint"), value: counts?.no_price, tone: "danger" },
+    { key: "suggested", label: t("kSuggested"), hint: t("kSuggestedHint"), value: counts?.suggested, tone: "info" },
     { key: "needs_review", label: t("kReview"), hint: t("kReviewHint"), value: counts?.needs_review, tone: "warning" },
     { key: "parsed", label: t("kParsed"), hint: t("kParsedHint"), value: counts?.parsed, tone: "neutral" },
     { key: "confirmed", label: t("kConfirmed"), hint: t("kConfirmedHint"), value: counts?.confirmed, tone: "success" },
