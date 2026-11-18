@@ -1,5 +1,5 @@
-"""AA-1108 (CIS 433), AA-1125 (CIS 445) and AA-1135 (CIS 447) — the settings registry keys of Platform › Delivery and of the DORA keys of
-DEV-01.
+"""AA-1108 (CIS 433), AA-1125 (CIS 445) and AA-1135 (CIS 447) — the settings registry keys of Platform › Delivery and
+of the DORA keys of DEV-01.
 
 Every colour threshold of the delivery metrics is a platform setting on Platform › Settings (area "delivery"; tech lead
 S279: a threshold is a setting, never a code literal; S282 decision 4: the starting values are the DORA "high" band).
