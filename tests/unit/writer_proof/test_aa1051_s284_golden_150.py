@@ -1,7 +1,8 @@
-"""AA-1051 S284 — the W5 null run on golden aa729@1.5.0 ($0 part): the rebased addendum merge that adds 14 panel-labelled
-t9_blog items (6 on GATE), the new registered pre-registration `w5-null-t9-blog-v7-g150`, and the R2 wiring that lets a
-reverify run be the null run's control (its estimate counts both writes, a fixed-sample reverify reaches every item,
-the null run takes the newest reverify of the version). Invented text only; no DB, no model call."""
+"""AA-1051 S284 — the W5 null run on golden aa729@1.5.0 ($0 part): the rebased addendum merge that adds 14
+panel-labelled t9_blog items (6 on GATE), the panel statuses `apply` accepts, the new registered pre-registration
+`w5-null-t9-blog-v7-g150`, and the R2 wiring that lets a reverify run be the null run's control (its estimate counts
+both writes, a fixed-sample reverify reaches every item, the null run pairs on the regenerated controls of the newest
+reverify of the version, cost samples count one write per item). Invented text only; no DB, no model call."""
 from __future__ import annotations
 
 import asyncio
@@ -87,6 +88,26 @@ def test_eval_gate_counts_skips_traps_and_counts_per_writer():
     assert labels.eval_gate_counts(samples) == {"t9_blog": 6}
 
 
+@pytest.mark.parametrize("status", ["majority", "split", "AGREED"])
+def test_apply_refuses_a_panel_status_outside_agreed_and_disputed(status):
+    """S284 review: a 2-1 split written as status "majority" skipped the disputed gate (and the verifier)."""
+    base, add = _addendum("1.0.0")
+    sid = next(s["sample_id"] for s in add["samples"])
+    panel = {sid: {"verdict": "pass", "grade": "light", "reason": "Invented.", "status": status}}
+    with pytest.raises(ValueError, match="panel status"):
+        labels.apply_labels(add, panel, approved_by="owner")
+
+
+def test_apply_keeps_a_disputed_label_out_until_it_is_decided():
+    base, add = _addendum("1.0.0")
+    sid = next(s["sample_id"] for s in add["samples"] if s.get("label_source") == "needs_panel")
+    panel = {sid: {"verdict": "fail", "grade": "heavy", "reason": "Invented.", "status": "disputed"}}
+    _, rep = labels.apply_labels(add, panel, approved_by="owner")
+    assert rep["skipped"] == [(sid, "disputed")] and not rep["applied"]
+    _, rep = labels.apply_labels(add, panel, approved_by="owner decision", include_disputed=True)
+    assert rep["applied"] == [sid]
+
+
 # ── the pre-registration ─────────────────────────────────────────────────────────────────────────────────────────
 
 def test_the_new_null_run_is_registered_on_golden_150_with_the_accepted_values():
@@ -138,9 +159,15 @@ def test_full_sample_runs():
         r2.PREREG_FULL_SAMPLE
 
 
-def test_a_reverify_ranks_its_regenerated_control_first():
-    assert min(r2.CONTROL_RANKS["reverify"], key=r2.CONTROL_RANKS["reverify"].get) == ("control", "regenerate")
+def test_a_null_run_pairs_on_regenerated_controls_only_and_other_runs_keep_the_candidate_first():
+    """S284 review: a reverify candidate may be written with a release's view, so it is never a null run's control;
+    a reverify that is a release's eval run keeps the r2 ranking (its candidate is the release's text)."""
+    assert r2.NULL_CONTROL_RANKS == {("control", "regenerate"): 0}
+    assert "reverify" not in r2.CONTROL_RANKS
     assert min(r2.CONTROL_RANKS[None], key=r2.CONTROL_RANKS[None].get) == ("candidate", "regenerate")
+    srcs = {"a": {"arm": "control", "mode": "regenerate"}, "b": {"arm": "candidate", "mode": "regenerate"},
+            "c": {"arm": "control", "mode": "score_only"}}
+    assert set(r2.null_control_sources(srcs)) == {"a"}
 
 
 def _gate_ids(store):
@@ -171,13 +198,29 @@ class _RevStore(PreregStore):
         self.reverify_run = rev
         self.run_infos[REV_RUN] = {"run_kind": "reverify", "golden_set_id": "5e700000-0000-4000-8000-000000000001"}
 
-    async def control_sources(self, run_id, items):
+    # sample ids whose regenerated control failed in the reverify (no control row): its candidate row is all there is
+    no_control: frozenset = frozenset()
+
+    async def control_sources(self, run_id, items, ranks=None):
         if run_id != REV_RUN:
+            assert ranks is None
             return await super().control_sources(run_id, items)
+        self.ranks_seen = ranks
         want = {i["item_id"] for i in items}
-        return {i["item_id"]: {"result_id": f"rev-{i['item_id']}", "item_id": i["item_id"], "mode": "regenerate",
-                               "arm": "control", "output": {"name": "Reverify text", "summary": "A calm text."}}
-                for i in self._items if i["item_id"] in want and not i["trap"]}
+        out = {}
+        for i in self._items:
+            if i["item_id"] not in want or i["trap"]:
+                continue
+            arm = "candidate" if i["sample_id"] in self.no_control else "control"
+            if ranks is not None and (arm, "regenerate") not in ranks:
+                continue
+            out[i["item_id"]] = {"result_id": f"rev-{i['item_id']}", "item_id": i["item_id"], "mode": "regenerate",
+                                 "arm": arm, "output": {"name": "Reverify text", "summary": "A calm text."}}
+        return out
+
+    async def reverify_control_run(self, set_id, writer, release_ids=()):
+        self.release_ids_seen = list(release_ids)
+        return self.reverify_run
 
 
 def test_the_null_run_takes_the_newest_reverify_of_the_version_as_its_control():
@@ -189,9 +232,33 @@ def test_the_null_run_takes_the_newest_reverify_of_the_version_as_its_control():
     assert details["controls"]["found"] == details["controls"]["planned"] > 0
     rejudged = [r for r in store.results if r["arm"] == "control" and r["mode"] == "rejudge"
                 and str(r.get("scored_result_id", "")).startswith("rev-")]
-    assert rejudged
+    assert rejudged and store.ranks_seen == r2.NULL_CONTROL_RANKS and store.release_ids_seen == ["r0"]   # release 0
 
 
+@pytest.mark.parametrize("ranks_obeyed", [True, False])
+def test_a_null_run_whose_reverify_lost_one_control_is_refused_and_never_pairs_a_candidate_row(ranks_obeyed):
+    """S284 review: an item whose regenerated control failed in the reverify (no row, or an `error` row) has only the
+    reverify's candidate row; it never stands in for the control, so the run is refused at $0 (controls found <
+    planned). Also when a store ignores `ranks` (the null filter drops the candidate row)."""
+    items = _store_with_sides()._items
+    store = _RevStore(items)
+    gate = _gate_ids(store)
+    store.no_control = frozenset(gate[:1])
+    if not ranks_obeyed:
+        base = store.control_sources
+
+        async def ignore_ranks(run_id, its, ranks=None):
+            return await base(run_id, its)
+        store.control_sources = ignore_ranks
+    with pytest.raises(r2.R2Refused, match="controls found for"):
+        run(store, _w5(sample_ids=gate))
+    assert not store.results and not store.runs
+
+
+def test_the_null_control_asks_for_a_reverify_of_no_release_or_an_active_one():
+    active = {"platform": {"release_id": "rel-p", "eval_run_id": "e"}, "tenant": {"release_id": "rel-t"}}
+    assert r2.active_release_ids(active) == ["rel-p", "rel-t"]
+    assert r2.active_release_ids({"platform": {"release_id": None}, "tenant": None}) == []
 def test_other_workflows_and_a_version_without_a_reverify_keep_the_release_control():
     items = _store_with_sides()._items
     t9 = _RevStore(items)
@@ -206,8 +273,18 @@ def test_the_reverify_control_sql_reads_finished_reverify_runs_of_one_writer_and
     from services.writing_memory.r2_w5 import REVERIFY_CONTROL_SQL
     sql = " ".join(REVERIFY_CONTROL_SQL.split())
     for part in ("run_kind = 'reverify'", "writer = $1", "golden_set_id = $2::uuid", "finished_at IS NOT NULL",
-                 "ORDER BY finished_at DESC"):
+                 "(release_id IS NULL OR release_id = ANY($3::uuid[]))", "ORDER BY finished_at DESC"):
         assert part in sql
+
+
+def test_the_cost_samples_count_one_write_per_reverify_item():
+    """S284 review: a reverify candidate row carries the control regenerate and the candidate write; the sample halves
+    it when the same run holds the item's regenerated control (a trap item has none: one write)."""
+    sql = " ".join(r2.ITEM_COST_SAMPLES_SQL.split())
+    assert ("r.cost_usd / CASE WHEN p.run_kind = 'reverify' AND EXISTS ( SELECT 1 FROM shared.eval_item_result c "
+            "WHERE c.run_id = r.run_id AND c.item_id = r.item_id AND c.arm = 'control' AND c.mode = 'regenerate') "
+            "THEN 2 ELSE 1 END") in sql
+    assert "r.arm = 'candidate' AND r.mode = 'regenerate'" in sql and sql.endswith("LIMIT $2")
 
 
 def test_pg_store_reads_the_reverify_run_with_writer_then_set():
@@ -229,5 +306,7 @@ def test_pg_store_reads_the_reverify_run_with_writer_then_set():
         def acquire(self):
             return _Acq()
 
-    got = asyncio.run(r2.PgStore(_Pool()).reverify_control_run("set-1", "t9_blog"))
-    assert got == REV_RUN and seen["args"] == ("t9_blog", "set-1")
+    got = asyncio.run(r2.PgStore(_Pool()).reverify_control_run("set-1", "t9_blog", ["rel-p"]))
+    assert got == REV_RUN and seen["args"] == ("t9_blog", "set-1", ["rel-p"])
+    asyncio.run(r2.PgStore(_Pool()).reverify_control_run("set-1", "t9_blog"))
+    assert seen["args"] == ("t9_blog", "set-1", [])

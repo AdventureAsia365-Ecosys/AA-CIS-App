@@ -183,21 +183,21 @@ async def test_w5_job_reads_and_the_control_fingerprint(conn):
 @pytest.mark.asyncio
 async def test_s284_the_null_control_is_the_newest_finished_reverify_of_the_writer_and_version(conn):
     """AA-1051 S284: PgStore.reverify_control_run reads only finished reverify runs of one writer on one golden set
-    version, newest first, as cis_app."""
+    version, of no release or one of the given (active) releases, newest first, as cis_app."""
     gs, b = _gs()
     await conn.execute("SET LOCAL ROLE cis_app")
     rep = await importer.run(gs, b, apply=True, conn=conn)
     set_id = rep["db"]["set_id"]
 
-    async def add(kind, writer, *, finished, minutes_ago, golden=set_id):
+    async def add(kind, writer, *, finished, minutes_ago, golden=set_id, release=None):
         return await conn.fetchval(
             """INSERT INTO shared.prompt_eval_runs (pipeline, prompt_version, tour_count, cost_usd,
                    regression_detected, details, triggered_by, run_kind, writer, golden_set_id, tiers,
-                   cost_cap_usd, fingerprint, finished_at, stop_reason, verdict)
+                   cost_cap_usd, fingerprint, finished_at, stop_reason, verdict, release_id)
                VALUES ('writing_memory', 'zz-v', 0, 0, false, '{}'::jsonb, 'pytest', $1, $2, $3::uuid, '{}',
                        1, '{}'::jsonb, CASE WHEN $4 THEN now() - make_interval(mins => $5) END,
-                       CASE WHEN $4 THEN 'completed' END, CASE WHEN $4 THEN 'informative' END)
-               RETURNING id::text""", kind, writer, golden, finished, minutes_ago)
+                       CASE WHEN $4 THEN 'completed' END, CASE WHEN $4 THEN 'informative' END, $6::uuid)
+               RETURNING id::text""", kind, writer, golden, finished, minutes_ago, release)
 
     class _Pool:
         def acquire(self):
@@ -221,3 +221,11 @@ async def test_s284_the_null_control_is_the_newest_finished_reverify_of_the_writ
     if other_set:
         await add("reverify", "t9_blog", finished=True, minutes_ago=1, golden=other_set)   # another version
     assert await store.reverify_control_run(set_id, "t9_blog") == newest != older
+    # S284 review: a newer reverify of another (draft) release wrote its candidates with that release's view: skipped;
+    # one of an active release counts when that release is passed
+    draft, active_rel = "0a1051d0-0000-4000-8000-000000000001", "0a1051a0-0000-4000-8000-000000000002"
+    await add("reverify", "t9_blog", finished=True, minutes_ago=2, release=draft)
+    assert await store.reverify_control_run(set_id, "t9_blog", [active_rel]) == newest
+    of_active = await add("reverify", "t9_blog", finished=True, minutes_ago=1, release=active_rel)
+    assert await store.reverify_control_run(set_id, "t9_blog") == newest
+    assert await store.reverify_control_run(set_id, "t9_blog", [active_rel]) == of_active

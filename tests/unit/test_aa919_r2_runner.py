@@ -136,7 +136,7 @@ class FakeStore:
     async def item_cost_samples(self, writer):
         return list(self.cost_samples)
 
-    async def reverify_control_run(self, set_id, writer):
+    async def reverify_control_run(self, set_id, writer, release_ids=()):
         """AA-1051 S284: the newest finished reverify run of the writer on the version (none unless a test sets it)."""
         return getattr(self, "reverify_run", None)
 

@@ -117,8 +117,9 @@ import structlog
 from services.writing_memory import config as cfg
 from services.writing_memory import eval_checks as ec
 from services.writing_memory.r2_w5 import (  # noqa: F401 — re-exported (AA-1051): callers and tests use r2.<name>
-    PREREG_FULL_SAMPLE, _instrument_check, _instrument_version, _max_claims, full_sample, kappa_by_side, null_control,
-    null_config_problems, tune_step, writes_per_item)
+    ITEM_COST_SAMPLES_SQL, NULL_CONTROL_RANKS, PREREG_FULL_SAMPLE, _instrument_check, _instrument_version, _max_claims,
+    active_release_ids, full_sample, kappa_by_side, null_config_problems, null_control, null_control_sources, tune_step,
+    writes_per_item)
 from shared import settings
 from shared.llm_client import family_rule
 
@@ -127,11 +128,10 @@ logger = structlog.get_logger()
 GOLDEN_SET = "aa729"
 RUN_KINDS = ("r2", "reverify")
 # Which stored row of a control run is an item's control text, by the run's kind (best first). The baseline import:
-# the frozen fixture text. A reverify (AA-1051 S284, a null run's control): the regenerated control, written with the
-# active view. Any other run (r2): its candidate output.
+# the frozen fixture text. Any other run (an r2 or a reverify that is a release's eval run): its candidate output, the
+# release's text. A null run's reverify control pairs on its regenerated controls only (r2_w5.NULL_CONTROL_RANKS).
 CONTROL_RANKS: dict[Optional[str], dict[tuple[str, str], int]] = {
     "baseline_import": {("control", "score_only"): 0, ("control", "regenerate"): 1},
-    "reverify": {("control", "regenerate"): 0, ("candidate", "regenerate"): 1},
     None: {("candidate", "regenerate"): 0, ("control", "regenerate"): 1, ("control", "score_only"): 2},
 }
 GOALS = ("non_inferior", "improve")
@@ -165,6 +165,7 @@ class Store(Protocol):
     async def baseline_run(self, set_id: str, writer: str) -> Optional[str]: ...
     async def run_info(self, run_id: str) -> Optional[dict]: ...
     async def control_sources(self, run_id: str, items: list[dict]) -> dict[str, dict]: ...
+    # ... a null run's reverify control passes `ranks=NULL_CONTROL_RANKS` (AA-1051 S284 review)
     async def calibration_sources(self, run_id: str, item_ids: list[str]) -> dict[str, dict]: ...
     async def rule_texts(self, rule_ids: list[str]) -> list[tuple[str, str]]: ...
     async def fingerprint(self, writer: str) -> dict: ...
@@ -178,8 +179,9 @@ class Store(Protocol):
     # async def prereg_runs(self, prereg_id: str) -> list[dict]: [{run_id, sha256, arm, results}]
     # ... and only for a null run (prereg_workflow NULL_WORKFLOW): the stored fingerprint of the control run
     # async def run_fingerprint(self, run_id: str) -> Optional[dict]
-    # ... and (S284) the newest finished reverify run of the writer on the golden set version (r2_w5.null_control)
-    # async def reverify_control_run(self, set_id: str, writer: str) -> Optional[str]
+    # ... and (S284) the newest finished reverify run of the writer on the golden set version, of no release or one
+    # of `release_ids` (r2_w5.null_control)
+    # async def reverify_control_run(self, set_id: str, writer: str, release_ids: list[str]) -> Optional[str]
 
 
 @dataclass
@@ -528,14 +530,15 @@ async def _controls(store: Store, gs: dict, active: dict, baseline: Optional[str
                     ctl_mode: str, null_writer: Optional[str] = None) -> dict:
     """The run's controls, read before any spend: {control_run, stale, sources (current item id -> stored source),
     cross_set (sample ids whose only stored output belongs to another version's item), plan (control_plan)}.
-    `null_writer` (AA-1051 S284, a null run): the newest finished reverify run of that writer on this version is the
-    control when there is one (r2_w5.null_control)."""
+    `null_writer` (AA-1051 S284, a null run): the newest finished reverify run of that writer on this version (of no
+    release or an active one) is the control when there is one, paired on its regenerated controls only
+    (r2_w5.null_control, NULL_CONTROL_RANKS)."""
     eval_run = next((p["eval_run_id"] for p in (active.get("tenant"), active.get("platform"))
                      if p and p.get("eval_run_id")), None)
     info = await store.run_info(eval_run) if eval_run else None
     control_run, _part, stale = resolve_control_run(active, baseline, gs["set_id"], info)
     kind = "baseline_import" if control_run and control_run == baseline else (info or {}).get("run_kind")
-    reverify = await null_control(store, gs["set_id"], null_writer) if null_writer else None
+    reverify = await null_control(store, gs["set_id"], null_writer, active) if null_writer else None
     if reverify:
         control_run, stale, kind = reverify, None, "reverify"
     sources: dict[str, dict] = {}
@@ -543,7 +546,9 @@ async def _controls(store: Store, gs: dict, active: dict, baseline: Optional[str
     if control_run and ctl_mode == "rejudge":
         wanted = [it for it in planned if not it.get("trap")]
         by_id = {it["item_id"]: it for it in wanted}
-        for iid, src in (await store.control_sources(control_run, wanted)).items():
+        found = (null_control_sources(await store.control_sources(control_run, wanted, ranks=NULL_CONTROL_RANKS))
+                 if reverify else await store.control_sources(control_run, wanted))
+        for iid, src in found.items():
             if src.get("source_item_id") not in (None, iid):
                 # a rejudge row scores a result of the SAME item (CIS 284 trigger): another version's output is
                 # reported, never stored as this item's control
@@ -1133,12 +1138,14 @@ class PgStore:
                                     "FROM shared.prompt_eval_runs WHERE id = $1::uuid", run_id)
         return None if r is None else dict(r)
 
-    async def control_sources(self, run_id, items):
+    async def control_sources(self, run_id, items, ranks=None):
         """The stored output each item's control re-judges, PAIRED on (sample_id, input_sha256) (S271 W0): the
         identity of a golden sample across set versions (item ids are new in every version, so the old item_id match
         paired 0 of 15). Keyed by the current item id; `source_item_id` is the item the row belongs to. An r2 run: its
         candidate output. The baseline_import run (release 0): the frozen fixture text (control / score_only, output
-        NULL) before any AA-729 regenerate score row, so release 0's control is the frozen labelled output."""
+        NULL) before any AA-729 regenerate score row, so release 0's control is the frozen labelled output. `ranks`
+        (AA-1051 S284 review, a null run's reverify control: NULL_CONTROL_RANKS) replaces the kind's ranking, and a row
+        it does not rank never pairs."""
         want = {(it.get("sample_id"), it.get("input_sha256")): it["item_id"] for it in items or []
                 if it.get("sample_id") and it.get("input_sha256")}
         if not run_id or not want:
@@ -1153,7 +1160,7 @@ class PgStore:
                     WHERE r.run_id = $1::uuid AND g.sample_id = ANY($2::text[]) AND r.verdict <> 'error'
                       AND r.mode IN ('score_only', 'regenerate')""",
                 run_id, sorted({k[0] for k in want}))
-        rank = CONTROL_RANKS.get(kind, CONTROL_RANKS[None])
+        rank = ranks if ranks is not None else CONTROL_RANKS.get(kind, CONTROL_RANKS[None])
         out: dict[str, dict] = {}
         for r in sorted(rows, key=lambda r: rank.get((r["arm"], r["mode"]), 9)):
             iid = want.get((r["sample_id"], r["input_sha256"]))
@@ -1255,24 +1262,19 @@ class PgStore:
             v = await conn.fetchval("SELECT fingerprint FROM shared.prompt_eval_runs WHERE id = $1::uuid", run_id)
         return _j(v)
 
-    async def reverify_control_run(self, set_id, writer):
-        """AA-1051 S284: the newest finished reverify run of the writer on the golden set version, or None."""
+    async def reverify_control_run(self, set_id, writer, release_ids=()):
+        """AA-1051 S284: the newest finished reverify run of the writer on the golden set version, of no release or
+        one of `release_ids` (the owner's active releases), or None."""
         from services.writing_memory.r2_w5 import REVERIFY_CONTROL_SQL
         async with self.pool.acquire() as conn:
-            return await conn.fetchval(REVERIFY_CONTROL_SQL, writer, set_id)
+            return await conn.fetchval(REVERIFY_CONTROL_SQL, writer, set_id, list(release_ids or []))
 
     async def item_cost_samples(self, writer):
         """S271 W0 (F8): the logged cost of the writer's last candidate items (finished r2 / reverify runs, no seeded
-        fault: a seeded item makes no writer call), newest first. What `item_estimate` reserves from."""
+        fault: a seeded item makes no writer call), newest first, one write each (AA-1051 S284 review: a reverify
+        item's two writes are halved, r2_w5.ITEM_COST_SAMPLES_SQL). What `item_estimate` reserves from."""
         async with self.pool.acquire() as conn:
-            rows = await conn.fetch(
-                """SELECT r.cost_usd::float AS cost_usd
-                     FROM shared.eval_item_result r
-                     JOIN shared.prompt_eval_runs p ON p.id = r.run_id
-                    WHERE p.pipeline = 'writing_memory' AND p.run_kind IN ('r2', 'reverify') AND p.writer = $1
-                      AND p.finished_at IS NOT NULL AND (p.details->>'seeded_fault') IS NULL
-                      AND r.arm = 'candidate' AND r.mode = 'regenerate' AND r.verdict <> 'error' AND r.cost_usd > 0
-                    ORDER BY r.created_at DESC LIMIT $2""", writer, cfg.R2_COST_SAMPLES)
+            rows = await conn.fetch(ITEM_COST_SAMPLES_SQL, writer, cfg.R2_COST_SAMPLES)
         return [r["cost_usd"] for r in rows]
 
 

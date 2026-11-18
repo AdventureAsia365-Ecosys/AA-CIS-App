@@ -59,23 +59,61 @@ def writes_per_item(run_kind: str) -> int:
     return 2 if run_kind == "reverify" else 1
 
 
-# AA-1051 S284: the newest finished reverify run of a writer on one golden set version: the control of a null run
+# AA-1051 S284: the newest finished reverify run of a writer on one golden set version: the control of a null run.
+# Only a reverify of no release or of one of the owner's active releases ($3): a reverify of another release wrote
+# its candidates with that release's view (S284 review).
 REVERIFY_CONTROL_SQL = """
     SELECT id::text AS run_id FROM shared.prompt_eval_runs
      WHERE pipeline = 'writing_memory' AND run_kind = 'reverify' AND writer = $1 AND golden_set_id = $2::uuid
-       AND finished_at IS NOT NULL
+       AND finished_at IS NOT NULL AND (release_id IS NULL OR release_id = ANY($3::uuid[]))
      ORDER BY finished_at DESC, id DESC
      LIMIT 1
 """
+# AA-1051 S284 review: the only stored row of a reverify run a null run pairs on, its REGENERATED CONTROL (written
+# with the active view of its day, the configuration its stored fingerprint names). Its candidate row is never a
+# fallback: a candidate may be written with a release's view, so B == A would no longer hold by configuration. An
+# item whose control regenerate failed or was judged `error` has no row, the control plan reports it missing
+# (controls found < planned) and the run is refused at $0.
+NULL_CONTROL_RANKS: dict[tuple[str, str], int] = {("control", "regenerate"): 0}
 
 
-async def null_control(store: Any, set_id: str, writer: str) -> Optional[str]:
+def active_release_ids(active: dict) -> list[str]:
+    """The release ids of the owner's active parts (platform and tenant), for REVERIFY_CONTROL_SQL."""
+    return sorted({str(p["release_id"]) for p in (active.get("platform"), active.get("tenant"))
+                   if p and p.get("release_id")})
+
+
+async def null_control(store: Any, set_id: str, writer: str, active: dict) -> Optional[str]:
     """AA-1051 S284: the control run of a null run, the newest finished reverify run of the writer on this golden set
-    version (it regenerated the controls under the configuration of its day; `null_config_problems` then requires that
-    configuration to be today's). None when there is none: the release / baseline control applies, and the null check
-    refuses a baseline import at $0 as before. A reverify that does not hold every planned item is caught by the
-    control plan (`controls found < planned`), never paid for."""
-    return await store.reverify_control_run(set_id, writer)
+    version, of no release or an active one (it regenerated the controls under the configuration of its day;
+    `null_config_problems` then requires that configuration to be today's). None when there is none: the release /
+    baseline control applies, and the null check refuses a baseline import at $0 as before. A reverify that does not
+    hold a regenerated control for every planned item is caught by the control plan (`controls found < planned`, only
+    NULL_CONTROL_RANKS rows pair), never paid for."""
+    return await store.reverify_control_run(set_id, writer, active_release_ids(active))
+
+
+def null_control_sources(sources: dict[str, dict]) -> dict[str, dict]:
+    """The sources of a null run's reverify control that may pair: regenerated controls only (NULL_CONTROL_RANKS),
+    whatever a store returned."""
+    return {iid: src for iid, src in sources.items() if (src.get("arm"), src.get("mode")) in NULL_CONTROL_RANKS}
+
+
+# AA-1051 S284 review: the logged cost of the writer's last candidate items, ONE write each. A reverify candidate row
+# carries the item's whole spend (the control regenerate, then the candidate: r2._control_regenerate writes no cost),
+# so where the same run holds the item's regenerated control the cost is halved; a trap item (no control) is one write.
+ITEM_COST_SAMPLES_SQL = """
+    SELECT (r.cost_usd / CASE WHEN p.run_kind = 'reverify' AND EXISTS (
+                SELECT 1 FROM shared.eval_item_result c
+                 WHERE c.run_id = r.run_id AND c.item_id = r.item_id AND c.arm = 'control' AND c.mode = 'regenerate')
+            THEN 2 ELSE 1 END)::float AS cost_usd
+      FROM shared.eval_item_result r
+      JOIN shared.prompt_eval_runs p ON p.id = r.run_id
+     WHERE p.pipeline = 'writing_memory' AND p.run_kind IN ('r2', 'reverify') AND p.writer = $1
+       AND p.finished_at IS NOT NULL AND (p.details->>'seeded_fault') IS NULL
+       AND r.arm = 'candidate' AND r.mode = 'regenerate' AND r.verdict <> 'error' AND r.cost_usd > 0
+     ORDER BY r.created_at DESC LIMIT $2
+"""
 
 
 def null_config_problems(control_fp: Optional[dict], now_fp: Optional[dict]) -> list[str]:

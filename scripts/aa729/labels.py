@@ -108,10 +108,20 @@ def pack_markdown(pack: dict) -> str:
     return "\n".join(lines)
 
 
+# The panel statuses `apply` knows (AA-729 round-1 protocol, docs/implementation-notes/AA-729.md): any other status is
+# refused, so a label never skips the human decision a disputed sample needs.
+PANEL_STATUSES = frozenset({"agreed", "disputed"})
+
+
 def apply_labels(fixture: dict, panel: dict, *, approved_by: str, include_disputed: bool = False) -> tuple[dict, dict]:
     """A new fixture (minor version bump) with the panel's verdicts on needs_panel samples."""
     if not approved_by.strip():
         raise ValueError("approved_by is required (Nghiệp approves panel labels)")
+    unknown = sorted(sid for sid, lab in panel.items() if (lab.get("status") or "agreed") not in PANEL_STATUSES)
+    if unknown:
+        # AA-1051 S284 review: a 2-1 split written as status "majority" slipped past the human-decision gate
+        raise ValueError(f"panel status must be one of {sorted(PANEL_STATUSES)} (agreed = the full-source verifier "
+                         f"matches the judges' majority, disputed = it overturns it): {unknown[:10]}")
     out = copy.deepcopy(fixture)
     applied, skipped = [], []
     by_id = {s["sample_id"]: s for s in out["samples"]}

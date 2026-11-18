@@ -4650,8 +4650,9 @@ counting the flagged claims (`fail_claims_per_item`); R2 then skips its kappa bl
 A file may fix its sample as a rule (`sample`: n GATE items by a seeded hash of the id, drawn from the registered
 golden version). The registered null run is `w5-null-t9-blog-v7-g150` (S284: golden aa729@1.5.0, 12 t9_blog GATE
 items; it supersedes `w5-null-t9-blog-v7`, whose 1.4.0 had 6). Its control A is the newest finished **reverify** run of
-the writer on that golden version (a reverify of a fixed sample regenerates the control of every sample item), so B ==
-A by configuration; without one the null check refuses at $0.
+the writer on that golden version, of no release or an active one (a reverify of a fixed sample regenerates the control
+of every sample item), paired on its regenerated controls only, never its candidate rows, so B == A by configuration;
+without one, or with a control missing, the run refuses at $0.
 _Avoid_: A/B test (a proof has a fixed pre-registered rule), experiment.
 
 **Scope (writing memory)**:
