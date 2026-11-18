@@ -11,6 +11,11 @@ Rules (S282 decisions):
     that currency is a 0 line flagged ``price_missing``;
   * per-seat plans bill max(seats, seats_min) seats (decision 2); other plans bill the plan price plus the seats above
     ``seats_included`` at the extra-seat price;
+  * seat overage on a per-seat plan (AA-1116, S284): the seats the plan includes (max(``seats_included``,
+    ``seats_min``)) at the seat price, the seats above them (``extra_seats``) at the plan's extra-seat price in the
+    billing currency, else at the seat price (so a plan with no extra-seat price bills exactly as before); with an
+    agreed price in force every seat is at the agreed (locked) seat price. Booking drafts the same split as a
+    ``subscription`` and an ``extra_seats`` line;
   * an agreed price in the billing currency replaces the list unit price while ``agreed_until`` is empty or not past.
     It is per billed unit, like the list price (CIS 435 column comment, contract tenant.entitlements.v1 1.9): on a
     per-seat plan the line is agreed x max(seats, seats_min), so a seat added during a price lock is billed at the
@@ -67,10 +72,14 @@ class Line:
     billing_interval: str = "month"
     trialing: bool = False
     discount: Decimal = Decimal(0)
+    extra_seats: int = 0                      # AA-1116 S284: seats billed above the plan's included seats
+    extra_seat_price: Optional[Decimal] = None
 
     def out(self, currency: str) -> dict:
         return {"kind": self.kind, "product": self.product, "plan_key": self.plan_key, "name": self.name,
-                "quantity": self.quantity,
+                "quantity": self.quantity, "extra_seats": self.extra_seats,
+                "extra_seat_price": None if self.extra_seat_price is None
+                else str(_money(self.extra_seat_price, currency)),
                 "unit_price": None if self.unit_price is None else str(_money(self.unit_price, currency)),
                 "amount": str(_money(self.amount, currency)), "discount": str(_money(self.discount, currency)),
                 "agreed": self.agreed, "price_missing": self.price_missing,
@@ -134,24 +143,43 @@ def _agreed(sub: dict, currency: str, today: date) -> Optional[Decimal]:
     return price
 
 
+def seat_split(seats: Any, seats_included: Any, seats_min: Any) -> tuple[int, int]:
+    """(seats billed at the seat price, extra seats) of a per-seat plan. The billed total is max(seats, seats_min, 1)
+    (no seats = the included ones); the plan includes max(seats_included, seats_min, 1) of them; the rest are extra.
+    A plan with no ``seats_included`` has no extra seats (every seat at the seat price). Pure; Booking's
+    ``app/agency_billing/drafts.py`` keeps the same rule."""
+    total = max(int(seats or seats_included or 1), int(seats_min or 1), 1)
+    if seats_included is None:
+        return total, 0
+    base = min(total, max(int(seats_included), int(seats_min or 1), 1))
+    return base, total - base
+
+
 def subscription_line(sub: dict, currency: str, today: date) -> Line:
     """One subscription's line. An agreed price in force replaces the list UNIT price (per seat on a per-seat plan)."""
     agreed = _agreed(sub, currency, today)
     unit = agreed if agreed is not None else _unit_price(sub, currency)
-    seats_min = sub.get("seats_min")
+    extra_seats, extra_price = 0, None
     if sub.get("price_unit") == "seat":
-        qty = max(int(sub.get("seats") or sub.get("seats_included") or 1), int(seats_min or 1))
-        amount = (unit or Decimal(0)) * qty
+        base, extra_seats = seat_split(sub.get("seats"), sub.get("seats_included"), sub.get("seats_min"))
+        qty = base + extra_seats
+        if extra_seats:
+            # the locked seat price covers seats added during the lock; else the plan's extra-seat price, else the seat
+            listed = _unit_price(sub, currency, extra_seat=True)
+            extra_price = agreed if agreed is not None else (listed if listed is not None else unit)
+        amount = (unit or Decimal(0)) * base + (extra_price or Decimal(0)) * extra_seats
     else:
         qty = 1
         amount = unit or Decimal(0)
         included, seats = sub.get("seats_included"), sub.get("seats")
         extra = _unit_price(sub, currency, extra_seat=True)
         if extra is not None and included is not None and seats is not None and seats > included:
-            amount += extra * (seats - included)
+            extra_seats, extra_price = seats - included, extra
+            amount += extra * extra_seats
     return Line("subscription", sub["product"], sub["plan_key"], sub.get("plan_name") or sub["plan_key"], qty, unit,
                 amount, agreed=agreed is not None, price_missing=unit is None,
-                billing_interval=sub.get("billing_interval") or "month", trialing=sub.get("status") == "trialing")
+                billing_interval=sub.get("billing_interval") or "month", trialing=sub.get("status") == "trialing",
+                extra_seats=extra_seats, extra_seat_price=extra_price)
 
 
 def _in_offer(tenant: dict, today: date) -> bool:
