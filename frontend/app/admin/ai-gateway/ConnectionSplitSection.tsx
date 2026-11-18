@@ -15,15 +15,15 @@ import { Badge, DataTable, ErrorState, K, Section, apiGet, mono, useT, type Colu
 import { defineMessages } from "../../_kit/core/i18n";
 import { usd } from "@/lib/aiGateway";
 import {
-  CONNECTION_SPLIT_API, splitOrder, splitTone, type SplitResp, type SplitRow, type SplitState,
+  CONNECTION_SPLIT_API, missingShareApps, splitOrder, splitTone, type SplitResp, type SplitRow, type SplitState,
 } from "@/lib/connectionSplit";
 
 export const CONNECTION_SPLIT_KEY = ["ai-gateway", "connection-split"] as const;
 
 const SPLIT_STATE = defineMessages(
-  { ok: "Fits", over_allocated: "Over-allocated", unbounded: "A share is not set", crm_unknown: "CRM share unknown",
+  { ok: "Fits", over_allocated: "Over-allocated", unbounded: "A share is not enforced", crm_unknown: "CRM share unknown",
     no_provider_budget: "No provider budget" },
-  { ok: "Vừa", over_allocated: "Vượt phân bổ", unbounded: "Thiếu một phần", crm_unknown: "Chưa rõ phần CRM",
+  { ok: "Vừa", over_allocated: "Vượt phân bổ", unbounded: "Một phần không chặn", crm_unknown: "Chưa rõ phần CRM",
     no_provider_budget: "Chưa có ngân sách nhà cung cấp" },
 );
 
@@ -43,11 +43,14 @@ const M = defineMessages(
     unknown: "unknown",
     overBy: (v: string) => `over by ${v}`,
     uncapped: (apps: string) => `no cap: ${apps}`,
+    alertOnly: "alert only",
+    alertOnlyApps: (apps: string) => `alert only, calls go on past it: ${apps}`,
     editProvider: "Provider budgets",
     editCrm: "CRM shares",
     crmError: (code: string) => `The CRM share could not be read (${code}); CIS alone is checked against the budget.`,
     stray: (keys: string) => `Setting entries that name no connection: ${keys}`,
     sourceError: "The provider budget setting could not be read; nothing is checked against it.",
+    policyError: "The connections' stop policy could not be read; every CIS share is shown as alert only.",
     loadError: "Could not load the connection budget split",
     empty: "No LLM connection",
   },
@@ -66,11 +69,14 @@ const M = defineMessages(
     unknown: "chưa rõ",
     overBy: (v: string) => `vượt ${v}`,
     uncapped: (apps: string) => `không giới hạn: ${apps}`,
+    alertOnly: "chỉ cảnh báo",
+    alertOnlyApps: (apps: string) => `chỉ cảnh báo, vẫn gọi tiếp khi vượt: ${apps}`,
     editProvider: "Ngân sách nhà cung cấp",
     editCrm: "Phần của CRM",
     crmError: (code: string) => `Không đọc được phần của CRM (${code}); chỉ kiểm phần CIS với ngân sách.`,
     stray: (keys: string) => `Mục cài đặt không khớp kết nối nào: ${keys}`,
     sourceError: "Không đọc được cài đặt ngân sách nhà cung cấp; không kiểm gì theo nó.",
+    policyError: "Không đọc được chính sách chặn của các kết nối; mọi phần CIS được coi là chỉ cảnh báo.",
     loadError: "Không tải được phân bổ ngân sách kết nối",
     empty: "Chưa có kết nối LLM",
   },
@@ -106,7 +112,15 @@ export default function ConnectionSplitSection() {
       accessorFn: (r) => r.provider_budget_usd ?? -1,
       cell: (c) => <Amount value={c.row.original.provider_budget_usd} empty={t("notSet")} /> },
     { id: "cis", header: t("colCis"), meta: { align: "right" }, accessorFn: (r) => r.cis_share_usd ?? -1,
-      cell: (c) => <Amount value={c.row.original.cis_share_usd} empty={t("noCap")} /> },
+      cell: (c) => {
+        const r = c.row.original;
+        return (
+          <div style={{ display: "grid", gap: 2, justifyItems: "end" }}>
+            <Amount value={r.cis_share_usd} empty={t("noCap")} />
+            {(r.alert_only_apps ?? []).includes("cis") && <span style={small}>{t("alertOnly")}</span>}
+          </div>
+        );
+      } },
     { id: "crm", header: t("colCrm"), meta: { align: "right" }, accessorFn: (r) => r.crm_share_usd ?? -1,
       cell: (c) => <Amount value={c.row.original.crm_share_usd}
         empty={c.row.original.crm_known ? t("noCap") : t("unknown")} /> },
@@ -126,8 +140,11 @@ export default function ConnectionSplitSection() {
             <Badge tone={splitTone(r.state)} dot={false} style={{ whiteSpace: "nowrap" }}>
               {ts(r.state as SplitState)}
             </Badge>
-            {r.uncapped_apps.length > 0 && r.state !== "no_provider_budget" && (
-              <span style={small}>{t("uncapped", r.uncapped_apps.map((a) => a.toUpperCase()).join(", "))}</span>
+            {missingShareApps(r).length > 0 && r.state !== "no_provider_budget" && (
+              <span style={small}>{t("uncapped", missingShareApps(r).map((a) => a.toUpperCase()).join(", "))}</span>
+            )}
+            {(r.alert_only_apps ?? []).length > 0 && r.state !== "no_provider_budget" && (
+              <span style={small}>{t("alertOnlyApps", r.alert_only_apps.map((a) => a.toUpperCase()).join(", "))}</span>
             )}
           </div>
         );
@@ -152,7 +169,10 @@ export default function ConnectionSplitSection() {
       {data && (data.crm_error || data.errors.length > 0 || data.unknown_keys.length > 0) && (
         <div role="status" style={{ ...small, padding: "8px 16px", display: "grid", gap: 2 }}>
           {data.crm_error && <span style={{ color: K.amber }}>{t("crmError", data.crm_error)}</span>}
-          {data.errors.length > 0 && <span style={{ color: K.danger }}>{t("sourceError")}</span>}
+          {data.errors.some((e) => e.source === "provider_budget")
+            && <span style={{ color: K.danger }}>{t("sourceError")}</span>}
+          {data.errors.some((e) => e.source === "cost_policy")
+            && <span style={{ color: K.amber }}>{t("policyError")}</span>}
           {data.unknown_keys.length > 0 && <span>{t("stray", data.unknown_keys.join(", "))}</span>}
         </div>
       )}

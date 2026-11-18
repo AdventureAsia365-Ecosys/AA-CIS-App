@@ -8,6 +8,7 @@ import pytest
 
 from api.core.staff_authz import POLICY, SPEND_READ
 from api.services import ai_gateway_split
+from shared import cost_guard
 from shared.llm_client import connections as conn_registry
 from shared.llm_client.connections import ProviderConnection
 
@@ -30,7 +31,7 @@ def _conn(key, budget):
 def world(monkeypatch):
     state = {"registry": {"zz-a": _conn("zz-a", 80), "zz-b": _conn("zz-b", None)},
              "provider": {"zz-a": 100}, "crm": (200, {"settings": [{"key": split.CRM_CAP_KEY, "value": {"zz-a": 30}}]}),
-             "calls": []}
+             "policies": {}, "calls": []}
 
     async def fetch_connections(conn, **_):
         return state["registry"]
@@ -39,6 +40,11 @@ def world(monkeypatch):
         assert key == split.PROVIDER_BUDGET_KEY
         return state["provider"]
 
+    async def read_cost_policies(conn, **_):
+        if isinstance(state["policies"], Exception):
+            raise state["policies"]
+        return state["policies"]
+
     async def crm_ops_call(method, path, authorization, *, json=None, params=None):
         state["calls"].append((method, path, authorization, params))
         return state["crm"]
@@ -46,6 +52,7 @@ def world(monkeypatch):
     monkeypatch.setattr(conn_registry, "fetch_connections", fetch_connections)
     monkeypatch.setattr(ai_gateway_split.settings, "aget", aget)
     monkeypatch.setattr(ai_gateway_split.crm_console, "crm_ops_call", crm_ops_call)
+    monkeypatch.setattr(ai_gateway_split.cost_guard, "read_cost_policies", read_cost_policies)
     return state
 
 
@@ -96,3 +103,32 @@ async def test_the_route_passes_the_pool_and_the_staff_token(world, monkeypatch)
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(pool=_Pool())))
     out = await ai_gateway_split.read_for(request)
     assert world["calls"][0][2] == "Bearer zz-staff" and out["crm_cap_key"] == split.CRM_CAP_KEY
+
+
+@pytest.mark.asyncio
+async def test_a_cis_share_whose_policy_is_alert_only_is_not_reported_as_fitting(world):
+    # Provider 100, CIS 50 with hard_stop false, CRM 30: the numbers fit, but the CIS gateway keeps calling past 50.
+    world["registry"]["zz-a"] = _conn("zz-a", 50)
+    world["policies"] = {"zz-a": cost_guard.ConnectionCostPolicy(connection_key="zz-a", hard_stop=False, stored=True)}
+    out = await ai_gateway_split.read_connection_split(_Pool(), "Bearer zz")
+    row = next(r for r in out["rows"] if r["connection_key"] == "zz-a")
+    assert row["state"] != split.OK and row["state"] == split.UNBOUNDED
+    assert row["uncapped_apps"] == ["cis"] and row["alert_only_apps"] == ["cis"] and row["cis_hard_stop"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_connection_without_a_policy_row_is_a_hard_stop(world):
+    world["registry"]["zz-a"] = _conn("zz-a", 50)
+    out = await ai_gateway_split.read_connection_split(_Pool(), "Bearer zz")
+    row = next(r for r in out["rows"] if r["connection_key"] == "zz-a")
+    assert row["state"] == split.OK and row["cis_hard_stop"] is True
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_policy_never_reports_a_cis_share_as_a_limit(world):
+    world["registry"]["zz-a"] = _conn("zz-a", 50)
+    world["policies"] = RuntimeError("zz down")
+    out = await ai_gateway_split.read_connection_split(_Pool(), "Bearer zz")
+    assert {"source": "cost_policy", "error": "RuntimeError"} in out["errors"]
+    row = next(r for r in out["rows"] if r["connection_key"] == "zz-a")
+    assert row["state"] == split.UNBOUNDED and row["alert_only_apps"] == ["cis"]

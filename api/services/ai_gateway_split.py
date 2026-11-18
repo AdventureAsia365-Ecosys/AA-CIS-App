@@ -4,7 +4,10 @@ split of each LLM connection's provider budget between the CIS share and the CRM
 Three sources, each read on its own (a failing one is named in ``errors`` / ``crm_error``, the others still show):
 
 - the registry connections and their CIS share (``shared.llm_provider_connection.monthly_budget_usd``, the CIS
-  gateway's connection budget, CIS + TripPlanner);
+  gateway's connection budget), with the connection's cost policy (``shared.llm_connection_cost_policy.hard_stop``
+  through ``cost_guard.read_cost_policies``): the CIS gateway refuses at the share only on a hard stop, so a share
+  whose policy is alert only is reported as uncapped, never as a limit. TripPlanner writes into the same ledger but
+  does not enforce this cap yet (a follow-up), so the CIS share does not bound TripPlanner's calls;
 - the provider budget per connection, the CIS setting ``cis.spend.connection_provider_budget_usd`` (CIS 453; the
   settings snapshot);
 - the CRM share, the CRM setting ``crm.ai.connection_monthly_cap_usd`` (crm-077) as the CRM reports it through the
@@ -23,7 +26,7 @@ from typing import Any, Optional
 import structlog
 
 from api.services import crm_console
-from shared import settings
+from shared import cost_guard, settings
 
 logger = structlog.get_logger()
 
@@ -57,6 +60,12 @@ async def read_connection_split(pool: Any, authorization: Optional[str]) -> dict
     errors: list[dict] = []
     async with pool.acquire() as conn:
         registry = await conn_registry.fetch_connections(conn)
+        try:
+            policies = await cost_guard.read_cost_policies(conn)
+        except Exception as e:  # a policy read that fails: every share is called alert only, never a limit
+            logger.warning("connection_split_cost_policy_unreadable", error=type(e).__name__)
+            policies = None
+            errors.append({"source": "cost_policy", "error": type(e).__name__})
     try:
         provider = split.budget_map(await settings.aget(split.PROVIDER_BUDGET_KEY))
     except Exception as e:  # a value that breaks the shape: say so, check nothing against it
@@ -64,7 +73,8 @@ async def read_connection_split(pool: Any, authorization: Optional[str]) -> dict
         provider = {}
         errors.append({"source": "provider_budget", "error": type(e).__name__})
     crm_caps, crm_error = await _crm_caps(authorization)
-    out = split.split_rows(((k, c.monthly_budget_usd) for k, c in registry.items()), provider, crm_caps)
+    hard_stops = {k: (policies is not None and cost_guard.policy_of(policies, k).hard_stop) for k in registry}
+    out = split.split_rows(((k, c.monthly_budget_usd) for k, c in registry.items()), provider, crm_caps, hard_stops)
     for row in out["rows"]:
         c = registry[row["connection_key"]]
         row.update(label=c.label, kind=c.kind, enabled=c.enabled)

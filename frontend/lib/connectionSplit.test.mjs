@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { splitOrder, splitTone } from "./connectionSplit.ts";
+import { missingShareApps, splitOrder, splitTone } from "./connectionSplit.ts";
 
 const row = (connection_key, state) => ({ connection_key, state });
 
@@ -24,6 +24,12 @@ test("rows needing a look come first, then by connection key", () => {
   const out = splitOrder([row("zz-d", "no_provider_budget"), row("zz-c", "ok"), row("zz-b", "unbounded"),
     row("zz-a", "over_allocated"), row("zz-0", "ok")]);
   assert.deepEqual(out.map((r) => r.connection_key), ["zz-a", "zz-b", "zz-0", "zz-c", "zz-d"]);
+});
+
+test("an alert-only share is named apart from a missing one", () => {
+  assert.deepEqual(missingShareApps({ uncapped_apps: ["cis", "crm"], alert_only_apps: ["cis"] }), ["crm"]);
+  assert.deepEqual(missingShareApps({ uncapped_apps: ["cis"], alert_only_apps: [] }), ["cis"]);
+  assert.deepEqual(missingShareApps({ uncapped_apps: ["cis"], alert_only_apps: ["cis"] }), []);
 });
 
 test("the section's copy has English and Vietnamese and names no issue id", () => {

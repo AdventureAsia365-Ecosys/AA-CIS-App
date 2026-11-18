@@ -17,13 +17,18 @@ export interface SplitRow {
   enabled: boolean;
   provider_budget_usd: number | null;
   cis_share_usd: number | null;
+  /** The connection's cost policy: false = the CIS share is alert only (the CIS gateway keeps calling past it). */
+  cis_hard_stop: boolean;
   /** null = no CRM cap on the connection, or (crm_known false) the CRM could not be asked. */
   crm_share_usd: number | null;
   crm_known: boolean;
   allocated_usd: number;
   headroom_usd: number | null;
   over_allocated: boolean;
+  /** Apps with no cap on the connection, alert-only ones included. */
   uncapped_apps: ("cis" | "crm")[];
+  /** Apps whose share is set but alert only (CIS with the connection's hard stop off). */
+  alert_only_apps: ("cis" | "crm")[];
   state: SplitState;
 }
 
@@ -56,4 +61,10 @@ export function splitOrder(rows: SplitRow[]): SplitRow[] {
   const rank: Record<SplitState, number> = { over_allocated: 0, crm_unknown: 1, unbounded: 1, ok: 2,
     no_provider_budget: 3 };
   return [...rows].sort((a, b) => rank[a.state] - rank[b.state] || a.connection_key.localeCompare(b.connection_key));
+}
+
+/** The apps with no share at all: uncapped ones that are not merely alert only (the table names those apart). */
+export function missingShareApps(row: Pick<SplitRow, "uncapped_apps" | "alert_only_apps">): ("cis" | "crm")[] {
+  const alertOnly = new Set(row.alert_only_apps ?? []);
+  return row.uncapped_apps.filter((a) => !alertOnly.has(a));
 }

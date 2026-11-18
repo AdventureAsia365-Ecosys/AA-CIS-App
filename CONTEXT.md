@@ -603,15 +603,17 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   on `LLMClient._openai` (tests, scripts) is used for every OpenAI-format call.
 - **Connection budget split** (AA-1113, tech lead S284; CIS 453, AA-Partner crm-077; root ADR 0009 d6 / 0008a): a
   model connection has one budget at its provider; each app that spends on it has its OWN monthly cap there and the
-  shares together must stay under the provider budget. The CIS share is the connection's `monthly_budget_usd` (below,
-  CIS + TripPlanner); the CRM share is the CRM setting `crm.ai.connection_monthly_cap_usd` (the CRM enforces it on its
+  shares together must stay under the provider budget. The CIS share is the connection's `monthly_budget_usd` (below;
+  a limit only while the connection's cost policy is a hard stop: with `hard_stop` false it is alert only and the page
+  counts CIS as uncapped. TripPlanner writes into the same ledger but does not enforce the cap yet, see the contract
+  views below); the CRM share is the CRM setting `crm.ai.connection_monthly_cap_usd` (the CRM enforces it on its
   own ledger); the provider budget is the setting `cis.spend.connection_provider_budget_usd` ({connection key: USD},
   informational). Neither app reads the other's ledger, view or table: `GET /admin/ai-gateway/connection-split`
   (`api/services/ai_gateway_split.py`, pure rule in `api/services/llm_connection_split.py`) reads the
   CRM share through the CRM settings relay Platform › Settings already uses (crm.ops.v1 `/settings`, the staff
   member's own token) and AI gateway › Budgets shows provider budget, CIS share, CRM share, headroom and a flag when
-  the shares add up to more than the provider budget (also when a share is missing on a budgeted connection, or the
-  CRM could not be asked).
+  the shares add up to more than the provider budget (also when a share is missing or alert only on a budgeted
+  connection, or the CRM could not be asked).
 - **Budget per connection + nightly cost reconciliation** (AA-1002 slice S10, migration 317 expand):
   `llm_provider_connection.monthly_budget_usd` is enforced per connection, independent of the job budgets
   (`shared.spend_budget`) and wave caps, which still apply. The policy is `shared.llm_connection_cost_policy` (no row =
@@ -839,7 +841,11 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   `free_text` (the stage's scrub mark) and `over_cap_connections` (the connections of the model's deployments this
   gateway leaves out for their monthly cap), and adds `catalog.v_llm_connection_cap_v1` (each capped connection's
   month-to-date ledger spend, `over_cap`, `stops`; SELECT to `tripplanner` only): the CIS share of each connection,
-  honoured by TripPlanner too. The CRM reads no CIS view (root ADR 0008a, tech lead S284): see "Connection budget
+  published for TripPlanner. **TripPlanner does not read them yet**: its gateway (`backend/aa_llm`) still checks only
+  its daily app budget, so TripPlanner calls go on past the cap and, with the CRM share added, the provider budget can
+  be exceeded on the TripPlanner path. Follow-up: TripPlanner reads `v_llm_gateway_config_v1.over_cap_connections`,
+  leaves those deployments out and refuses with `budget` when every rung is over cap (hard_stop mode). The CRM reads no
+  CIS view (root ADR 0008a, tech lead S284): see "Connection budget
   split".
 - **acc2 candidate models** (migration 324, contract class, AA-1017 w4a): Amazon Nova Lite, Nova 2 Lite, Meta Llama 4
   Maverick, Llama 4 Scout and Moonshot Kimi K3 as catalog rows with prices from the AWS price list and one enabled acc2
