@@ -5,6 +5,11 @@ conftest applies every migration on main. With 449 applied, a stage row marked `
 449 (the code PR's own CI may run before the migration PR lands), the read falls back without the column: no error,
 ``free_text`` False, the ``t<n>_`` floor still scrubs. The store connects without TLS, like test_aa642_a1_stage_switch_db.
 Invented stage names only; the inserted row is deleted at teardown.
+
+The ledger (review S284): ``LLMClient.generate`` on ``t9_write`` with a planted e-mail and phone and a model key the
+catalog does not hold (the $0 live probe's path) writes its row through the real ``call_log`` writer: the row is 0 USD,
+``quality_signal.pii_scrub`` says scrubbed with the scrubbed request's ``scrubbed_hash``, and no column holds a planted
+value. The probe rows (model ``zz-aa1113-ledger-no-model``) are deleted before and after.
 """
 import os
 import sys
@@ -71,3 +76,80 @@ async def test_every_seeded_tenant_stage_is_marked_once_449_is_applied(pool):
     for r in rows:
         cfg = await role_config._fetch_one(r["s"])
         assert cfg.free_text is True
+
+
+# ── the ledger row of a scrubbed call, written by the real call_log writer ──────────────────────────────────────────
+
+PROBE_KEY = "zz-aa1113-ledger-no-model"          # not in the catalog: refused after the scrub, before any attempt
+PLANTED_EMAIL = "lantern.guest@example.test"      # invented values only
+PLANTED_PHONE = "+84 900 000 222"
+
+
+@pytest.fixture
+def real_ledger(monkeypatch):
+    """The gateway and the call_log writer on the test database (no TLS here), every cache cold."""
+    from unittest.mock import patch
+
+    from shared.llm_client import call_log, catalog
+    from shared.llm_client.client import LLMClient
+    real_connect = asyncpg.connect
+
+    async def connect(*a, **k):
+        k.pop("ssl", None)
+        return await real_connect(DSN, **{key: v for key, v in k.items() if key == "timeout"})
+    monkeypatch.setattr(asyncpg, "connect", connect)
+    monkeypatch.delenv("SECRET_DB_ARN", raising=False)
+    monkeypatch.setenv("DATABASE_URL", DSN)
+    monkeypatch.setattr(role_config, "get_database_url", lambda: DSN)
+    monkeypatch.setattr(call_log, "get_database_url", lambda: DSN)
+    role_config.invalidate()
+    catalog.invalidate()
+    _delete_probe_rows()
+    with patch("shared.llm_client.client.boto3"), patch("shared.llm_client.client.openai"):
+        client = LLMClient()
+    yield client
+    call_log.wait_for_pending_writes()
+    _delete_probe_rows()
+    role_config.invalidate()
+    catalog.invalidate()
+
+
+def _sql(query: str, *args):
+    import asyncio
+
+    async def run():
+        conn = await asyncpg.connect(DSN)
+        try:
+            return await conn.fetch(query, *args)
+        finally:
+            await conn.close()
+    return asyncio.run(run())
+
+
+def _delete_probe_rows():
+    _sql("DELETE FROM shared.llm_call_log WHERE model = $1", PROBE_KEY)
+
+
+def test_a_free_text_call_lands_in_the_ledger_scrubbed(real_ledger):
+    import json
+
+    from shared.llm_client import call_log
+    from shared.llm_client.free_text_scrub import scrub_request, scrubbed_hash
+    from shared.llm_client.models import LLMRequest
+    req = LLMRequest(system_prompt="Probe: write one line about the Lantern Valley.",
+                     user_prompt=f"Guest note: write to {PLANTED_EMAIL} or call {PLANTED_PHONE}.",
+                     stage="t9_write", model_tier=PROBE_KEY, max_tokens=16)
+    with pytest.raises(Exception, match=PROBE_KEY):
+        real_ledger.generate(req)
+    call_log.wait_for_pending_writes()
+    rows = _sql("SELECT status, error_class, cost_usd::float8 AS cost, quality_signal::text AS qs, "
+                "row_to_json(l)::text AS whole FROM shared.llm_call_log l WHERE model = $1", PROBE_KEY)
+    assert len(rows) == 1, "the refusal row was not written (see the llm_call_log_write_failed warning)"
+    row = rows[0]
+    # An unknown key fails as a gateway error before any provider attempt (the $0 probe path): nothing billed.
+    assert (row["status"], row["error_class"], row["cost"]) == ("error", "other", 0.0)
+    receipt = json.loads(row["qs"])["pii_scrub"]
+    assert receipt["status"] == "scrubbed" and receipt["redacted"] == {"[email]": 1, "[phone]": 1}
+    assert receipt["scrubbed_hash"] == scrubbed_hash(scrub_request(req)[0])
+    for value in (PLANTED_EMAIL, PLANTED_PHONE, "900 000 222"):
+        assert value not in row["whole"]
