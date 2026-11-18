@@ -126,9 +126,17 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     - No CORS is needed for the portal: its BFF calls the API server to server. The API sends no CORS grant on a
       deployed task (AA-876, `cors_allow_origins()` in `api/main.py`: empty when `AWS_EXECUTION_ENV` is set, only
       `localhost:3000/3001` off ECS); a browser preflight from any origin gets no `Access-Control-Allow-Origin`.
-    - The admin app (`frontend/next.config.ts`) sends six security headers on every response (HSTS, `nosniff`,
-      `Referrer-Policy`, `X-Frame-Options: DENY`, a minimal CSP `frame-ancestors 'none'; base-uri 'self';
-      form-action 'self'; object-src 'none'`, `Permissions-Policy`), plus `poweredByHeader: false` (AA-876).
+    - The admin app sends security headers on every response (AA-876; AA-1111 S284 after the ZAP baseline): HSTS
+      (two years, sub-domains, no preload), `nosniff`, `Referrer-Policy`, `X-Frame-Options: DENY`,
+      `Permissions-Policy`, `Cross-Origin-Opener-Policy: same-origin` (list in `frontend/lib/securityHeaders.ts`,
+      sent by `next.config.ts`) and a full Content-Security-Policy: `default-src 'self'`, scripts only with a
+      per-response nonce (`'strict-dynamic'`, no `'unsafe-inline'` for scripts), `style-src` keeps `'unsafe-inline'`
+      (kit inline styles), images from any https host, `connect-src` = self + the Sentry DSN origin, `frame-ancestors
+      'none'`. `proxy.ts` sends it with the nonce on every path but `/_next/static`, `/_next/image` and `/api/*`
+      (the staff gate still runs only on `/admin/*` and `/login`); `app/layout.tsx` reads the nonce (`x-nonce`) for
+      its restore scripts, which also renders every page per request; `/api/*` and `/_next/*` get the policy without
+      a nonce from `next.config.ts`. `next.config.ts` redirects (`/upload`, `/portal`, ...) are answered before any
+      header rule and carry none. `poweredByHeader: false`.
     - **Cross-site writes (AA-911):** every admin BFF write route (any method but GET/HEAD/OPTIONS)
       first calls `lib/crossSiteGuard.ts` `refuseCrossSiteWrite()` and answers 403 when `Origin` (or, without it,
       `Sec-Fetch-Site`) is not this origin. `it.com` is a public suffix, so every `*.lumiguides.it.com` host (the
@@ -2260,6 +2268,11 @@ reads, never the CIS tenant picker), the value and "In force now" of that agency
   `api-breaking` or a `type!:` title; `/admin/*` breaks are warnings. FastAPI and Pydantic are pinned in
   `requirements.txt` for that reason. Each release gets the document as an asset (`aa-cis-openapi-vX.Y.Z.json`).
   How-to: `docs/api/README.md`.
+- **API security headers (AA-1111, S284)**: `api/middleware/security_headers.py` (just inside the request id
+  middleware) adds `X-Content-Type-Options: nosniff` and HSTS (same value as the frontends) to every response that
+  does not set them itself; the unhandled 500 gets them from `unhandled_error_handler`. The image starts uvicorn with
+  `--no-server-header`. Responses API Gateway answers itself (missing route 403, throttling 429) get the same two
+  headers from its gateway responses (AA-CIS-Infra).
 - **Logs are JSON with request / job ids (AA-871)**: `shared/log_config.py` (called once by `api.main` and
   `python -m worker`, not under unit tests) renders structlog, stdlib and uvicorn lines as one JSON object each on
   `/ecs/aa-cis-dev` (`service` = `cis-api` | `cis-worker`, `git_sha`, `environment`). The outermost API middleware

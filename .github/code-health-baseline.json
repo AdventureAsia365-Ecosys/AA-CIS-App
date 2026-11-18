@@ -646,7 +646,6 @@
   "frontend/lib/usageExplorer.ts::drillHref": 21,
   "frontend/lib/writingLab.ts::writerWeeks.map()": 12,
   "frontend/lib/writingMemory.ts::evidenceOk": 12,
-  "frontend/proxy.ts::proxy": 13,
   "frontend/proxy.ts::verifyAdminToken": 14,
   "frontend/scripts/kit-new-rules.mjs::newRules": 15
  },
