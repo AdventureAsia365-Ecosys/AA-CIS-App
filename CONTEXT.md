@@ -1672,7 +1672,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
 - **Plans and quota (AA-640, AA-1028 R1 slice 3)**: the tour-rewrite quota is the tenant's resolved entitlement
   `content.rewrite` (starter 50 / growth 200 / business 500, edited on Tenants › Plans & add-ons), with the old
   `shared.membership_plans` read only as the fallback for a tenant with no numeric key. Over-quota rewrites are
-  allowed, logged as `rewrite_over_quota` and billed as overage. **One rewrite ledger (AA-1127, CIS 447):** the month's
+  allowed, logged as `rewrite_over_quota` and billed as overage. **One rewrite ledger (AA-1127, CIS 452):** the month's
   count is `shared.tenant_rewrite_usage` (incremented only by `trigger_rewrite`); `GET /v1/quota`, the usage view's
   `tours_rewritten` (`GET /v1/billing`, the admin tenant list, Tenant 360) and the billed overage all read it. A
   tenant's own inline edit (`tenant_edit`) is not a rewrite. There is no `PLAN_LIMITS` any more: a tier's
@@ -2914,6 +2914,11 @@ entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
   request (~$0.01) behind a Redis lock, at most once a day per window (a Redis attempt marker, also after an empty
   or failed answer); `POST /admin/cost-explorer/check` (the "Refresh from AWS" button) also
   fetches the App tag (+1 request). No scheduler yet.
+  **One spend truth (AA-1127 C2):** the provider families of `platform_cost.provider_family` (`anthropic` is its own
+  family) are read by the Spend forecast, the FI-02 weekly report and `ai_spend_by_provider`; the AI gateway Providers
+  read returns that total as `totals.llm_month_usd`. A Bedrock row's account follows `cost_ops.ledger_account` (acc2,
+  acc3, a live registry satellite, else `retired`) in the forecast split and in FI-02, and `ce.account_key()` names a
+  live satellite's Cost Explorer rows by its key, so the forecast and the AWS bill tab show it as its own account.
 - **Alert recipients (AA-913).** Who gets the platform alert e-mails, chosen on the admin page instead of a
   Terraform variable. One list for everything: the CIS api manages the **e-mail subscriptions of the SNS alerts
   topic** (CloudWatch alarms of CIS, Booking, TripPlanner and shared; security EventBridge rules; cost anomalies;
