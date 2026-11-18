@@ -304,7 +304,7 @@ def _range_view(app: dict, block: Optional[dict], section: str) -> dict:
 
 
 async def _custom_max_days(required: bool) -> Optional[int]:
-    """The longest custom range (setting cis.delivery.custom_range_max_days, CIS 448), for the page's picker.
+    """The longest custom range (setting cis.delivery.custom_range_max_days, CIS 450), for the page's picker.
 
     A preset request never depends on that key: when this build runs before the settings registry knows it (the code
     deployed ahead of its settings rows) a preset still answers, with max_days null (the picker then leaves the check
