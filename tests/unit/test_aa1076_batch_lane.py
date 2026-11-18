@@ -120,7 +120,7 @@ def test_tenant_stages_stay_synchronous():
 
 
 def test_a_registry_free_text_stage_stays_synchronous(monkeypatch):
-    # AA-1113: a non-t stage marked free_text in shared.llm_role_config (CIS 449) is scrubbed on demand, so the batch
+    # AA-1113: a non-t stage marked free_text in shared.llm_role_config (CIS 451) is scrubbed on demand, so the batch
     # lane (which sends item.system / item.user as built) refuses it; an unmarked stage still batches.
     chat = BatchTarget(**{**ANTH.as_dict(), "stage": "zz_plan_chat"})
     marked = SimpleNamespace(**{**vars(_cfg(stage="zz_plan_chat")), "free_text": True})

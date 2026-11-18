@@ -49,7 +49,7 @@ export interface StageConfigRow {
   degrade_mode?: string | null;
   /** AA-1039 (root ADR 0019 TL-12, CIS 373): content | pii, migration-only; null before 373 (the Routing tab shows an empty state). */
   pii_class?: string | null;
-  /** AA-1113 (CIS 449): the stage's prompts carry free text, scrubbed before any model call; null before 449. */
+  /** AA-1113 (CIS 451): the stage's prompts carry free text, scrubbed before any model call; null before 451. */
   free_text?: boolean | null;
   /** AA-1052 W6: a model / chain edit needs evidence and is refused during a rerun wave (services/quality/edit_gate). */
   gated?: boolean;

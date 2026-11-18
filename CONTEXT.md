@@ -549,8 +549,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
 - **Free-text PII scrub** (AA-1113, root ADR 0009 d10, accepted S283; `shared/llm_client/free_text_scrub.py` +
   `pii_patterns.py`, a copy of the CRM log scrub and its F3 detectors, never imported across repos): the stages that
   carry tenant or traveller free text send only a scrubbed copy of their request (system, user, few-shots). Which
-  stages: the registry column `shared.llm_role_config.free_text` (CIS 449, migration-only, read with the stage row as
-  `StageConfig.free_text`; every tenant stage marked by 449) plus a fail-safe floor by name, every `t<n>_*` stage
+  stages: the registry column `shared.llm_role_config.free_text` (CIS 451, migration-only, read with the stage row as
+  `StageConfig.free_text`; every tenant stage marked by 451) plus a fail-safe floor by name, every `t<n>_*` stage
   whatever its row says; a stage whose row could not be read on a cold cache is scrubbed too. A pii stage is never
   marked (CHECK): it needs its data. E-mails, phones, cards, CCCD numbers, passports, OTPs after a cue, JWTs,
   credentials and signed links become bracket labels (`[email]`, `[phone]` ...); dates, UUIDs and plain links stay;
@@ -824,10 +824,10 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   routing facts and circuits; 350 (E4) appends the model's `supports_temperature` and `stage_params` (the
   `shared.stage_model_params` row of the stage and model, NULL = none), which TripPlanner applies with this gateway's
   precedence. 351 (E5) revokes the grandfathered SELECT of CIS 173 on `llm_role_config` / `llm_model_catalog`:
-  TripPlanner reads the views only (fail closed) and keeps INSERT on `llm_call_log`. 450 (AA-1113) appends
+  TripPlanner reads the views only (fail closed) and keeps INSERT on `llm_call_log`. 452 (AA-1113) appends
   `free_text` (the stage's scrub mark) and `over_cap_connections` (the connections of the model's deployments this
   gateway leaves out for their monthly cap), and adds `catalog.v_llm_connection_cap_v1` (each capped connection's
-  month-to-date ledger spend, `over_cap`, `stops`; SELECT to `tripplanner`; 451, once the tech lead accepts the root
+  month-to-date ledger spend, `over_cap`, `stops`; SELECT to `tripplanner`; 453, once the tech lead accepts the root
   ADR 0008a amendment, grants it to `crm_app`, the CRM's only catalog read): one connection cap for every caller.
 - **acc2 candidate models** (migration 324, contract class, AA-1017 w4a): Amazon Nova Lite, Nova 2 Lite, Meta Llama 4
   Maverick, Llama 4 Scout and Moonshot Kimi K3 as catalog rows with prices from the AWS price list and one enabled acc2

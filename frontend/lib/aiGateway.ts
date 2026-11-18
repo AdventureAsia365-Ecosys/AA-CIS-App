@@ -1520,7 +1520,7 @@ export interface DataClassSummary {
   content: string[];
   pii: string[];
   unclassified: string[]; // stages the API sent without a class while others have one
-  freeText: string[] | null; // AA-1113 (CIS 449): free-text stages (scrubbed first); null before the API sends the mark
+  freeText: string[] | null; // AA-1113 (CIS 451): free-text stages (scrubbed first); null before the API sends the mark
 }
 
 /** Stages per data class, or null when no stage carries a `pii_class` (the empty state). Order kept from `rows`. */

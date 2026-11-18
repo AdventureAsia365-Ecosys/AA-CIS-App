@@ -461,7 +461,7 @@ async def get_llm_config():
         r["updated_at"] = r["updated_at"].isoformat() if r["updated_at"] else None
         # AA-1002 (S5): read-only here (a migration sets it); None until migration 311 is applied
         r["allowed_scopes"] = r.get("allowed_scopes")
-        # AA-1039 (CIS 373) / AA-1113 (CIS 449): the data class and the free-text mark, read-only (None before them)
+        # AA-1039 (CIS 373) / AA-1113 (CIS 451): the data class and the free-text mark, read-only (None before them)
         r["pii_class"], r["free_text"] = r.get("pii_class"), r.get("free_text")
         r["options"] = _options_for(r["role"], r["stage"], models,
                                     data_scope.normalize(r["allowed_scopes"]), reach)

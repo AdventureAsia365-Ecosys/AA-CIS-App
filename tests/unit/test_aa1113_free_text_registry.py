@@ -1,10 +1,10 @@
-"""AA-1113 (root ADR 0009 decision 10; CIS 449): the free-text stage list is the registry column
+"""AA-1113 (root ADR 0009 decision 10; CIS 451): the free-text stage list is the registry column
 ``shared.llm_role_config.free_text``, not a code literal, and the ledger shows what the model got.
 
 - A stage marked free_text in its row is scrubbed whatever its name (a planted e-mail and phone never reach the fake
   model); an unmarked catalogue stage is sent as is; a tenant stage (``t<n>_``) is scrubbed even when its row says false
   (the fail-safe floor).
-- role_config reads the column (missing before 449 = False, the read retried without it), remembers the last read,
+- role_config reads the column (missing before 451 = False, the read retried without it), remembers the last read,
   and a stage whose row could not be read on a cold cache is scrubbed (fail safe).
 - The gateway's own ledger row of a scrubbed call carries ``quality_signal.pii_scrub.scrubbed_hash``, the sha256 of the
   text the model would get: the $0 live probe recomputes it (a refused model key, nothing billed).
@@ -163,7 +163,7 @@ def test_the_hash_names_what_was_sent_never_the_raw_text():
 
 # ── change control parity (ADR 0020): the new field leaves every fallback route as it was ──────────────────────────
 
-PRE_449_FIELDS = ("stage", "role", "provider", "model_id", "account_route", "fallback_model_ids", "shadow_model_id",
+PRE_451_FIELDS = ("stage", "role", "provider", "model_id", "account_route", "fallback_model_ids", "shadow_model_id",
                   "shadow_sample_pct", "allowed_scopes", "route_deadline_s", "enabled", "disabled_reason",
                   "degrade_mode", "pii_class")
 
@@ -172,11 +172,11 @@ def test_the_safe_defaults_gain_only_an_unset_mark():
     # The route_defaults lock moved because StageConfig gained free_text (default False); every route field of every
     # SAFE_DEFAULTS row is what it was, and no fallback row marks a stage (the t<n>_ floor scrubs the tenant stages).
     from dataclasses import asdict, fields
-    assert tuple(f.name for f in fields(StageConfig)) == PRE_449_FIELDS + ("free_text",)
+    assert tuple(f.name for f in fields(StageConfig)) == PRE_451_FIELDS + ("free_text",)
     for stage, cfg in role_config.SAFE_DEFAULTS.items():
         row = asdict(cfg)
         assert row.pop("free_text") is False, stage
-        assert tuple(row) == PRE_449_FIELDS
+        assert tuple(row) == PRE_451_FIELDS
 
 
 # ── the $0 live probe script ────────────────────────────────────────────────────────────────────────────────────────

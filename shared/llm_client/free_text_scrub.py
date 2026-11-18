@@ -24,7 +24,7 @@ CRM's known-value and detector passes (its own gateway, root ADR 0008a section 5
 request's attempt scope (``quality_signal.pii_scrub`` of the gateway's own rows) and logged as
 ``llm_free_text_scrubbed``; never a value.
 
-**Which stages.** The registry ``shared.llm_role_config.free_text`` (CIS 449, migration-only: root ADR 0009 decision 10,
+**Which stages.** The registry ``shared.llm_role_config.free_text`` (CIS 451, migration-only: root ADR 0009 decision 10,
 "a scope change happens only by migration") marks every stage whose prompts carry tenant or traveller free text; the
 gateway reads it with the stage row (``StageConfig.free_text``). Under it a fail-safe floor by name: every tenant stage
 (``t<n>_``, the rule ``batch_lane.TENANT_STAGE_RE`` uses) is scrubbed whatever its row says, so a new tenant stage
@@ -56,7 +56,7 @@ logger = structlog.get_logger()
 
 # The rules of the scrub: bumped whenever the same prompt can scrub to a different text.
 VERSION = "aa1113-2"
-# The fail-safe floor under the registry (shared.llm_role_config.free_text, CIS 449): every tenant stage is "t<n>_..."
+# The fail-safe floor under the registry (shared.llm_role_config.free_text, CIS 451): every tenant stage is "t<n>_..."
 # (batch_lane.TENANT_STAGE_RE, the same rule; S283 measure: tenant rows on the writers and on every repair / FAQ / judge
 # stage, root docs/audits/2026-11-17-S283-session/aa1113-provider-stage-30d.psv, tech lead decision s283-d10).
 TENANT_STAGE_RE = re.compile(r"^t\d+_")

@@ -99,7 +99,7 @@ def test_every_tenant_stage_is_a_free_text_stage(stage):
 def test_the_tenant_rule_is_the_batch_lane_rule_and_no_tenant_stage_is_exempt():
     from shared.llm_client import batch_lane
     assert TENANT_STAGE_RE.pattern == batch_lane.TENANT_STAGE_RE.pattern
-    # AA-1113 (CIS 449): the registry adds stages; a row that says false never takes a tenant stage out (the floor).
+    # AA-1113 (CIS 451): the registry adds stages; a row that says false never takes a tenant stage out (the floor).
     assert not hasattr(free_text_scrub, "NOT_FREE_TEXT_STAGES")
     off = StageConfig(stage="t9_write", role="writer", provider="claude", model_id="m", account_route=None)
     assert is_free_text_stage("t9_write", off)
