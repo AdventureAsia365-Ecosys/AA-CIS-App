@@ -183,7 +183,8 @@ def _connection(cur, key, budget):
 
 
 def _spend(cur, account, usd, when="now()"):
-    cur.execute(f"""INSERT INTO shared.llm_call_log (stage, role, model, account, cost_usd, status, quality_signal, created_at)
+    cur.execute(f"""INSERT INTO shared.llm_call_log
+                        (stage, role, model, account, cost_usd, status, quality_signal, created_at)
                     VALUES ('adhoc_zz', 'writer', 'zz-writer', %s, %s, 'ok', '{{}}'::jsonb, {when})""", (account, usd))
 
 
