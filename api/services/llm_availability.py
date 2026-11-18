@@ -19,7 +19,7 @@ Two sources, both real outcomes inside the window:
 Status: the newest outcome wins. ``blocked`` when the newest account-level refusal is newer than the last answered
 text call (embeddings run on another account and do not clear it), ``degraded`` for a throttle newer than it,
 ``ok`` when an answered call is the newest and at most ``idle_after_hours()`` old (the setting
-cis.llm.idle_after_hours, CIS 453), ``unknown`` otherwise.
+cis.llm.idle_after_hours, CIS 449), ``unknown`` otherwise.
 
 AA-1002 (S4) — per connection: ``connections`` lists every row of ``shared.llm_provider_connection`` with the circuit
 breaker state of each of its deployments that has a health row (``shared.llm_provider_health``, migration 309; the
@@ -147,7 +147,7 @@ def summarize_failures(job_rows: Iterable[dict]) -> list[dict]:
 
 # S258: no answered call for this long means "we cannot tell", not "ok" — after a provider refusal nothing may run
 # (Dev on 29/10/2026: the newest outcome was a success from before the refusal, so the card said ok while every
-# model was refused). AA-1127 (C1): the window is the setting cis.llm.idle_after_hours (CIS 453, Platform › Settings,
+# model was refused). AA-1127 (C1): the window is the setting cis.llm.idle_after_hours (CIS 449, Platform › Settings,
 # area "ai"); this value only stands in while the registry cannot serve it (the seeded default is the same 6).
 STALE_OK_HOURS = 6
 

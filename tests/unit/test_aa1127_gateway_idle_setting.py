@@ -1,4 +1,4 @@
-"""AA-1127 (C1, S283 UI audit) — the AI gateway idle window is the setting cis.llm.idle_after_hours (CIS 453).
+"""AA-1127 (C1, S283 UI audit) — the AI gateway idle window is the setting cis.llm.idle_after_hours (CIS 449).
 
 The status ("ok" while the newest answered call is at most that old, then "unknown" with no reason, the row badge's
 "No recent calls") and the "Need a look" tile (frontend/lib/aiGateway.ts needsLook, which leaves an idle row out) read

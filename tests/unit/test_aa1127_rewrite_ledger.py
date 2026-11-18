@@ -1,10 +1,10 @@
 """AA-1127 (S1, S283 UI audit) — one ledger for tour rewrites.
 
 The Content studio dashboard said "Rewrites used 2 / 200" (GET /v1/billing, v_tenant_monthly_usage.tours_rewritten) while
-the Billing and Marketplace meters said 0 used (GET /v1/quota, shared.tenant_rewrite_usage). Since CIS 452 the view
+the Billing and Marketplace meters said 0 used (GET /v1/quota, shared.tenant_rewrite_usage). Since CIS 448 the view
 reads the counter; these tests pin the code side: GET /v1/quota reads the counter for the month key trigger_rewrite
 writes, the counter is written only there, and the dashboard's per-day rewrite line leaves a tenant's own edits out.
-The view half is tests/integration/test_aa1127_migration_452.py (migration PR).
+The view half is tests/integration/test_aa1127_migration_448.py (migration PR).
 """
 import inspect
 import re
