@@ -78,6 +78,7 @@ def _env(monkeypatch):
     monkeypatch.delenv("DOCS_READER_S3_PREFIX", raising=False)
     dmx.reset_cache()
     dr.reset_cache()
+    monkeypatch.setattr(dr, "WARM", False)  # the background preparation: test_aa1135_delivery_cold_range.py
     with patch.object(admin, "ADMIN_SECRET", SECRET), patch.object(docs_reader, "_bucket", lambda: "bucket"):
         yield
     dmx.reset_cache()

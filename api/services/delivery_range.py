@@ -16,6 +16,16 @@ custom range and a preset of the same window give the same numbers:
   * cached per (summary generated_at, from, to) in this process: the newest cis.delivery.custom_range_cache_entries
     ranges, dropped as soon as a newer summary is published.
 
+Cold path (S284 live check: the first custom range after a summary rebuild took 29 s and API Gateway answered 504):
+  * the child starts from `_BOOT`, which registers an empty `api` package before importing the worker, so it never runs
+    api/__init__.py (the whole FastAPI app: about 2,700 modules and 200 MB before the first day file);
+  * the store work that does not depend on the window (day file reads, the fingerprint check, every app's context) is
+    done once per summary and saved as a snapshot in a private temporary folder of this process (`_snapshot_path`);
+    a custom range of a prepared summary only cuts its window (no S3 read);
+  * `warm` prepares it in the background as soon as a summary that offers custom ranges is loaded for a preset (the
+    page's first load), so a custom range picked afterwards answers in about a second; a summary whose day files are
+    out of step is remembered and refused at once.
+
 The merge-queue `recent` list of every range is bounded to its window by the engine before its list cap (S284 live
 check: a custom range ending before the newest collection listed later entries); `clip_recent` keeps the same bound on
 the API side as a guard.
@@ -26,8 +36,10 @@ free text. Read only: S3 GETs of the docs reader prefix, no table, no GitHub tok
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import sys
+import tempfile
 from collections import OrderedDict
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -44,7 +56,7 @@ logger = structlog.get_logger()
 
 PRESETS = ("7d", "28d", "90d")
 CUSTOM = "custom"
-WORKER_TIMEOUT_S = 180  # technical-constant: wall-clock guard of one child computation (about 5 s on Dev data)
+WORKER_TIMEOUT_S = 180  # technical-constant: wall-clock guard of one child computation (seconds on Dev data)
 _ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -65,10 +77,14 @@ class RangeFailed(Exception):
 
 _cache: "OrderedDict[tuple, dict]" = OrderedDict()
 _lock = asyncio.Lock()
+# the prepared store per summary (one file, the newest summary) and the summary whose day files were out of step
+_snap: dict[str, Any] = {"dir": None, "refused": None, "task": None}
+WARM = True  # tests switch the background preparation off; it is exercised by its own tests
 
 
 def reset_cache() -> None:
     _cache.clear()
+    _snap["refused"] = None
 
 
 def preset_key(range_: str) -> str:
@@ -149,17 +165,52 @@ def clip_recent(queue: Any) -> Any:
     return {**queue, "recent": [e for e in queue["recent"] if inside(e)]}
 
 
-def _payload(bundle: dict, a: datetime, b: datetime, bucket: str, prefix: str) -> dict:
+def _payload(bundle: dict, a: Optional[datetime], b: Optional[datetime], bucket: str, prefix: str,
+             snapshot: Optional[Path] = None) -> dict:
+    """The child's stdin; a and b None: prepare the summary's snapshot only."""
     apps = [{"repo": x.get("repo"), "complete_since": x.get("complete_since"),
              "git": {"complete_since": (x.get("git") or {}).get("complete_since")}}
             for x in bundle["apps"] if isinstance(x.get("repo"), str)]
     return {"bucket": bucket, "prefix": prefix, "start": engine.iso(a), "end": engine.iso(b),
+            "snapshot": str(snapshot) if snapshot else None,
             "summary": {"generated_at": bundle["generated_at"], "config": bundle["config"],
                         "definitions": bundle["definitions"], "apps": apps}}
 
 
+# The child's entry: an empty `api` package (its folder only) stands in for api/__init__.py, which imports the whole
+# app; then the worker module and its few imports load as usual. argv[1] is the api folder.
+_STUB = ("import sys, types\n"
+         "pkg = types.ModuleType('api')\n"
+         "pkg.__path__ = [sys.argv[1]]\n"
+         "sys.modules['api'] = pkg\n"
+         "from api.services import delivery_range_worker as worker\n")
+_BOOT = _STUB + "sys.exit(worker.main())\n"
+
+
 def _worker_argv() -> list[str]:
-    return [sys.executable, "-m", "api.services.delivery_range_worker"]
+    return [sys.executable, "-c", _BOOT, str(_ROOT / "api")]
+
+
+def _snapshot_path(generated_at: str) -> Path:
+    """Where the prepared store of a summary lives: a folder of this process that only its user can read (mkdtemp,
+    0700), one file per summary and engine; the files of older summaries are removed."""
+    if _snap["dir"] is None or not Path(_snap["dir"]).is_dir():
+        _snap["dir"] = tempfile.mkdtemp(prefix="aa-delivery-range-")
+    name = _snapshot_name(generated_at)
+    folder = Path(_snap["dir"])
+    for old in folder.iterdir():
+        if old.name != name:
+            old.unlink(missing_ok=True)
+    return folder / name
+
+
+def prepared(generated_at: str) -> bool:
+    """Whether the snapshot of this summary is ready (a custom range then reads no day file)."""
+    return _snap["dir"] is not None and (Path(_snap["dir"]) / _snapshot_name(generated_at)).is_file()
+
+
+def _snapshot_name(generated_at: str) -> str:
+    return hashlib.sha256(f"{generated_at}|{engine.engine_sha256()}".encode()).hexdigest()[:24] + ".pickle"
 
 
 async def _run_worker(payload: dict) -> dict:
@@ -173,8 +224,7 @@ async def _run_worker(payload: dict) -> dict:
         raise RangeFailed("The custom range took too long") from e
     if proc.returncode == OUT_OF_STEP:
         logger.warning("delivery_range_out_of_step", error=err.decode(errors="replace")[:300])
-        raise RangeRefused(409, "out_of_step", "The collector's day files are out of step with its summary; custom "
-                           "ranges come back after its next full upload. The presets work.")
+        raise _out_of_step()
     if proc.returncode != 0:
         logger.warning("delivery_range_worker_failed", rc=proc.returncode, error=err.decode(errors="replace")[:300])
         raise RangeFailed("The custom range could not be computed")
@@ -184,9 +234,59 @@ async def _run_worker(payload: dict) -> dict:
         raise RangeFailed("The custom range answer is not JSON") from e
 
 
+def _out_of_step() -> RangeRefused:
+    return RangeRefused(409, "out_of_step", "The collector's day files are out of step with its summary; custom ranges "
+                        "come back after its next full upload. The presets work.")
+
+
+async def _child(bundle: dict, a: Optional[datetime], b: Optional[datetime]) -> dict:
+    """One child run for this summary (the caller holds _lock): the range [a, b), or the snapshot only when a and b
+    are None. A summary found out of step is remembered, so the next request is refused without a child."""
+    from api.services import docs_reader
+
+    gen = bundle["generated_at"]
+    if _snap["refused"] == gen:
+        raise _out_of_step()
+    prefix = f"{docs_reader.s3_prefix()}/delivery"
+    payload = _payload(bundle, a, b, docs_reader._bucket(), prefix, _snapshot_path(gen))
+    try:
+        return await _run_worker(payload)
+    except RangeRefused as err:
+        if err.code == "out_of_step":
+            _snap["refused"] = gen
+        raise
+
+
+def warm(bundle: dict) -> None:
+    """Prepare the snapshot of `bundle` in the background when it offers custom ranges and none is ready (called when
+    a summary is served for a preset). Never raises: a failure only means the first custom range prepares it."""
+    if not WARM or not bounds(bundle)["custom"] or not isinstance(bundle.get("config"), dict):
+        return
+    gen = bundle["generated_at"]
+    task = _snap["task"]
+    if prepared(gen) or _snap["refused"] == gen or (task is not None and not task.done()):
+        return
+    try:
+        _snap["task"] = asyncio.get_running_loop().create_task(_warm(bundle))
+    except RuntimeError:  # no running loop: nothing to schedule on
+        return
+
+
+async def _warm(bundle: dict) -> None:
+    gen = bundle["generated_at"]
+    async with _lock:
+        if prepared(gen) or _snap["refused"] == gen:
+            return
+        try:
+            await _child(bundle, None, None)
+            logger.info("delivery_range_prepared", generated_at=gen)
+        except Exception as err:  # logged only: the first custom range prepares it again (or answers the refusal)
+            logger.warning("delivery_range_prepare_failed", generated_at=gen, error=type(err).__name__)
+
+
 async def compute(bundle: dict, start: Any, end: Any) -> dict:
     """{"start", "end", "from", "to", "apps": {app id: range block}, "cached"} of one custom range."""
-    from api.services import delivery_metrics, docs_reader
+    from api.services import delivery_metrics
 
     max_days = int(await settings.aget(ds.CUSTOM_RANGE_MAX_DAYS))
     a, b = window(bundle, start, end, max_days)
@@ -200,8 +300,7 @@ async def compute(bundle: dict, start: Any, end: Any) -> dict:
         hit = _cache.get(key)
         if hit is not None:
             return {**hit, "cached": True}
-        prefix = f"{docs_reader.s3_prefix()}/delivery"
-        raw = await _run_worker(_payload(bundle, a, b, docs_reader._bucket(), prefix))
+        raw = await _child(bundle, a, b)
         if raw.get("engine_sha256") != engine.engine_sha256() or not isinstance(raw.get("apps"), list):
             raise RangeFailed("The custom range answer does not match this engine")
         hits = [0]

@@ -35,7 +35,8 @@ reads the app's `ranges.d<N>` block from the summary (the collector computes it;
 headline for 28d and refuses the others); a custom range is recomputed from the collector's day files with the byte
 copy of its engine (api/services/delivery_range.py). The chosen block replaces the windowed keys of each app (DORA, CI,
 deploys, changes, merge queue, the git window), so the page renders every range with the same code. The summary's
-`config` and the apps' `ranges` are never served.
+`config` and the apps' `ranges` are never served. Serving a preset also starts the background preparation of the
+custom ranges of that summary (delivery_range.warm), so the first custom range does not wait for the day files.
 
 DeliveryMissing -> 404 (nothing published yet), DeliveryUnavailable -> 503 (storage or format).
 """
@@ -328,7 +329,11 @@ async def view(refresh: bool = False, section: str = "dora", range_: str = "28d"
     if section not in SECTIONS:
         raise ValueError(f"unknown section {section!r}")
     delivery_range.asked(range_, start, end)
-    bundle = await load(refresh=refresh or range_ == delivery_range.CUSTOM)
+    bundle = await load(refresh=refresh)
+    if range_ == delivery_range.CUSTOM and not delivery_range.prepared(bundle["generated_at"]):
+        # the day files on storage belong to the newest summary: compute from them with that summary. A prepared
+        # summary needs no day file (its snapshot was checked against it), so it serves the range as it serves presets
+        bundle = await load(refresh=True)
     meta: dict[str, Any] = {"key": range_, **delivery_range.bounds(bundle)}
     if range_ == delivery_range.CUSTOM:
         got = await delivery_range.compute(bundle, start, end)
@@ -336,6 +341,7 @@ async def view(refresh: bool = False, section: str = "dora", range_: str = "28d"
         meta.update({k: got[k] for k in ("start", "end", "from", "to", "cached")})
     else:
         blocks = _blocks(bundle, range_)
+        delivery_range.warm(bundle)  # S284: a custom range picked next reads a prepared store, not ~100 day files
     meta["max_days"] = await _custom_max_days(required=range_ == delivery_range.CUSTOM)
     served = {k: v for k, v in bundle.items() if k != "config"}
     base = {**served, "section": section, "cache_ttl_s": docs_reader.CACHE_TTL_S, "range": meta}
