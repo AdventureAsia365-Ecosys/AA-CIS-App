@@ -43,8 +43,8 @@ import httpx
 import structlog
 
 from api.core import readiness
-from api.core.app_registry import APPS, TP_NEAR_CAP_RATIO, TP_ONLINE_STAGES, TP_STAGE_CAPS_USD
-from api.services import app_health
+from api.core.app_registry import APPS, TP_ONLINE_STAGES
+from api.services import app_health, spend_rules_view
 
 logger = structlog.get_logger()
 
@@ -338,18 +338,23 @@ async def tp_profile_cap(db: Any) -> Optional[float]:
 
 def _cap_label(cap: Optional[float]) -> str:
     if cap is None:
-        return "no app-profile cap (TripPlanner uses its Lambda env cap, not readable from CIS)"
+        return ("no app-profile cap: TripPlanner falls back to its built-in daily cap on its customer-facing stages "
+                "(set a daily budget on AI gateway > App profiles to control it)")
     return f"app profile cap {cap:g} USD (AI gateway > App profiles)"
 
 
 def tp_spend_today(by_stage: list[dict], *, cap: Optional[float],
                    stage_caps: Optional[dict[str, Optional[float]]] = None,
-                   near_ratio: float = TP_NEAR_CAP_RATIO) -> dict:
+                   near_ratio: Optional[float] = None, environment: Optional[str] = None) -> dict:
     """The TripPlanner card's spend block: today's online-stage spend against the daily cap of TripPlanner's app
     profile (``cap``, None = none set there) and, AA-1015, each online stage against its own cap (None = no stage cap:
     only the combined cap applies, as in TP ``budget_status``). ``near_cap`` follows TP's rule: at ``near_ratio`` of
-    either cap. Pure (unit-tested)."""
-    stage_caps = TP_STAGE_CAPS_USD if stage_caps is None else stage_caps
+    either cap. AA-1126: the stage caps and the near share are the settings TripPlanner reads (CIS 447; the defaults
+    read them, spend_rules_view), and ``environment`` (tripplanner.spend.environment) says whether a reached cap stops
+    the AI (dev) or only alerts (prod). Pure when every argument is given (unit-tested)."""
+    stage_caps = spend_rules_view.tp_stage_caps() if stage_caps is None else stage_caps
+    near_ratio = spend_rules_view.tp_near_ratio() if near_ratio is None else near_ratio
+    within = near_ratio if near_ratio is not None else 1.0   # rules unknown (CIS 447 not applied): near = reached
     spent = {s["stage"]: s for s in by_stage}
     total = round(sum(s["cost_usd"] for s in by_stage), 6)
     pct = round(100.0 * total / cap, 1) if cap else None
@@ -359,19 +364,22 @@ def tp_spend_today(by_stage: list[dict], *, cap: Optional[float],
         stage_cap = stage_caps.get(stage)
         s_pct = round(100.0 * row["cost_usd"] / stage_cap, 1) if stage_cap else None
         stages.append({"stage": stage, "calls": row["calls"], "cost_usd": row["cost_usd"], "cap_usd": stage_cap,
-                       "pct_of_cap": s_pct, "near_cap": bool(stage_cap) and row["cost_usd"] >= stage_cap * near_ratio,
+                       "pct_of_cap": s_pct, "near_cap": bool(stage_cap) and row["cost_usd"] >= stage_cap * within,
                        "level": _cap_level(s_pct)})
-    near = (bool(cap) and total >= cap * near_ratio) or any(s["near_cap"] for s in stages)
+    near = (bool(cap) and total >= cap * within) or any(s["near_cap"] for s in stages)
     return {
         "cost_usd": total, "calls": sum(s["calls"] for s in by_stage), "by_stage": by_stage,
         "cap_usd": cap, "pct_of_cap": pct,
         "cap_label": _cap_label(cap),
         "level": _cap_level(pct),
         "since": "UTC midnight", "stages": list(TP_ONLINE_STAGES),
-        # AA-1015: per-stage caps (mirrored TP env, unset today), the near-cap flag and its threshold.
+        # AA-1015: per-stage caps (settings since AA-1126, CIS 447), the near-cap flag and its threshold.
         "stage_caps": stages,
         "stage_caps_set": any(s["cap_usd"] is not None for s in stages),
-        "near_cap": near, "near_cap_pct": round(near_ratio * 100),
+        "near_cap": near, "near_cap_pct": round(within * 100),
+        # AA-1126: what a reached cap does under TripPlanner's spend rules (dev: stops the AI; prod: alert only).
+        "spend_environment": environment,
+        "cap_rule": spend_rules_view.cap_rule("tripplanner", environment),
     }
 
 
@@ -390,11 +398,14 @@ async def _tripplanner_card(pool: Any) -> dict:
         # AA-804 / ADR 0009 d5: TripPlanner stops calling AI when its spend cannot be read (fail closed, AA-642 S0). The
         # same database refused this read, so the card says AI is paused. The CIS read is the only signal today:
         # TripPlanner's own counter (tripplanner.llm_spend_daily) is not readable from CIS.
-        card["ai"] = {"paused": True, "reason": "spend_unreadable"}
+        # AA-1126 L4: under the prod spend rules TripPlanner degrades instead (its AI goes on, a staff bell is raised).
+        env = spend_rules_view.environment(spend_rules_view.TP_ENV_KEY)
+        card["ai"] = {"paused": env != spend_rules_view.PROD, "reason": "spend_unreadable", "spend_environment": env}
         return card
     by_stage = [{"stage": r["stage"], "calls": r["calls"], "cost_usd": round(float(r["cost_usd"]), 6)}
                 for r in rows]
-    card["spend_today"] = tp_spend_today(by_stage, cap=await tp_profile_cap(pool))
+    card["spend_today"] = tp_spend_today(by_stage, cap=await tp_profile_cap(pool),
+                                         environment=spend_rules_view.environment(spend_rules_view.TP_ENV_KEY))
     card["ai"] = {"paused": False, "reason": None}
     return card
 

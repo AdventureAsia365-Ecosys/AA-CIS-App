@@ -255,6 +255,7 @@ class Worker:
                 last_beat = loop.time()
             if loop.time() - last_ops_flush >= self.ops_flush_every_seconds:
                 await self._flush_ops_events()
+                await self._tripplanner_notices()   # AA-1126: TripPlanner's AI notice events -> CIS bells
                 last_ops_flush = loop.time()
             if not self.yielding and loop.time() - last_reverify >= self.reverify_every_seconds:
                 await self._reverify_scan()
@@ -280,6 +281,18 @@ class Worker:
                 logger.warning("job_worker_ops_checks", worker_id=self.worker_id, ops_checks=results)
         except Exception as e:  # noqa: BLE001 — the events stay counted until a flush succeeds
             logger.warning("job_worker_ops_checks_failed", error=f"{type(e).__name__}: {str(e)[:200]}")
+
+    async def _tripplanner_notices(self, timeout_s: float = OPS_FLUSH_TIMEOUT_S) -> None:
+        """AA-1126 L2 / L4: write the CIS bell rows of TripPlanner's AI notice events (services/tripplanner_notices.py,
+        contract view tripplanner.v_ai_notices_v1). Bounded and never fails the loop."""
+        from services.tripplanner_notices import relay_safe
+
+        try:
+            result = await asyncio.wait_for(relay_safe(self.pool), timeout=timeout_s)
+            if result.get("allowance") or result.get("degraded") or result.get("skipped"):
+                logger.info("job_worker_tripplanner_notices", worker_id=self.worker_id, **result)
+        except Exception as e:  # noqa: BLE001 — the next tick relays again
+            logger.warning("job_worker_tripplanner_notices_failed", error=f"{type(e).__name__}: {str(e)[:200]}")
 
     async def _reverify_scan(self, timeout_s: Optional[float] = None) -> None:
         """AA-900 W0: the periodic writing-memory reverify scan. Bounded and never fails the loop."""

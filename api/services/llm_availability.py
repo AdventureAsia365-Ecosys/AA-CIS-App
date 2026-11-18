@@ -18,14 +18,16 @@ Two sources, both real outcomes inside the window:
 
 Status: the newest outcome wins. ``blocked`` when the newest account-level refusal is newer than the last answered
 text call (embeddings run on another account and do not clear it), ``degraded`` for a throttle newer than it,
-``ok`` when an answered call is the newest and at most STALE_OK_HOURS old, ``unknown`` otherwise.
+``ok`` when an answered call is the newest and at most ``idle_after_hours()`` old (the setting
+cis.llm.idle_after_hours, CIS 449), ``unknown`` otherwise.
 
 AA-1002 (S4) — per connection: ``connections`` lists every row of ``shared.llm_provider_connection`` with the circuit
 breaker state of each of its deployments that has a health row (``shared.llm_provider_health``, migration 309; the
 state rule is ``shared.llm_client.breaker.state_of``). A connection's status: ``disabled`` (switched off), ``open``
 (a deployment's circuit is open or half-open: calls skip it), ``degraded`` (failures in a row, circuit still closed),
-``ok`` (no failure, an answered call within STALE_OK_HOURS), ``unknown`` otherwise. Before 304 / 309 are applied the
-list is empty and ``health_ready`` is false. Still no probe call: the admin's "Test connection" is a separate action.
+``ok`` (no failure, an answered call within ``idle_after_hours()``), ``unknown`` otherwise. Before 304 / 309 are
+applied the list is empty and ``health_ready`` is false. Still no probe call: the admin's "Test connection" is a
+separate action.
 
 AA-1018 — each connection also carries ``circuit``: its connection-level circuit (``model_key "*"``, derived from
 the deployment rows by ``shared.llm_client.breaker.connection_health``: tripped by a key or credit refusal, or access
@@ -52,6 +54,7 @@ from typing import Iterable, Optional
 
 import asyncpg
 
+from api.services import gateway_health_settings
 from shared.llm_client import invariant, stage_coverage
 from shared.llm_client.breaker import (CLOSED, Health, connection_health, connection_members, connection_refusing,
                                        state_of)
@@ -144,14 +147,28 @@ def summarize_failures(job_rows: Iterable[dict]) -> list[dict]:
 
 # S258: no answered call for this long means "we cannot tell", not "ok" — after a provider refusal nothing may run
 # (Dev on 29/10/2026: the newest outcome was a success from before the refusal, so the card said ok while every
-# model was refused).
+# model was refused). AA-1127 (C1): the window is the setting cis.llm.idle_after_hours (CIS 449, Platform › Settings,
+# area "ai"); this value only stands in while the registry cannot serve it (the seeded default is the same 6).
 STALE_OK_HOURS = 6
+
+
+def idle_after_hours() -> float:
+    """The idle window in force: ``cis.llm.idle_after_hours`` from the settings registry, else STALE_OK_HOURS. Never
+    raises (a settings problem never breaks the Providers read)."""
+    try:
+        from shared import settings
+        v = settings.get(gateway_health_settings.IDLE_AFTER_HOURS)
+    except Exception:  # noqa: BLE001 — not seeded yet, or the registry cannot be read
+        return float(STALE_OK_HOURS)
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or v <= 0:
+        return float(STALE_OK_HOURS)
+    return float(v)
 
 
 def decide_status(last_ok_at: Optional[datetime], failures: list[dict],
                   now: Optional[datetime] = None) -> tuple[str, Optional[dict]]:
     """(status, the failure entry that set it). See the module docstring for the rule; an answered call older than
-    STALE_OK_HOURS (with ``now`` given) gives ``unknown``."""
+    ``idle_after_hours()`` (with ``now`` given) gives ``unknown``."""
     blocking = [f for f in failures if f["error_class"] in BLOCKING_CLASSES and f["last_at"]]
     throttled = [f for f in failures if f["error_class"] == THROTTLED and f["last_at"]]
     newest_block = max(blocking, key=lambda f: f["last_at"], default=None)
@@ -160,7 +177,7 @@ def decide_status(last_ok_at: Optional[datetime], failures: list[dict],
         return "blocked", newest_block
     if newest_throttle and (last_ok_at is None or newest_throttle["last_at"] > last_ok_at):
         return "degraded", newest_throttle
-    if last_ok_at is not None and (now is None or now - last_ok_at <= timedelta(hours=STALE_OK_HOURS)):
+    if last_ok_at is not None and (now is None or now - last_ok_at <= timedelta(hours=idle_after_hours())):
         return "ok", None
     return "unknown", None
 
@@ -219,7 +236,7 @@ def connection_status(enabled: bool, models: list[dict], now: datetime) -> str:
     if any(m["consecutive_failures"] for m in live):
         return "degraded"
     last_ok = _latest(m["_last_ok"] for m in models)
-    if last_ok is not None and now - last_ok <= timedelta(hours=STALE_OK_HOURS):
+    if last_ok is not None and now - last_ok <= timedelta(hours=idle_after_hours()):
         return "ok"
     return "unknown"
 

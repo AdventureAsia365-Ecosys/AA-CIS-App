@@ -229,6 +229,8 @@ ALLOWLIST: dict[str, dict[str, str]] = {
         "tripplanner.v_ops_inquiry_keys:cis_app": "contract: CIS TP-03 handoff check, keys and times (tp-022)",
         "tripplanner.v_tenant_erasure_report_v1:cis_app":
             "contract: tenant.erasure.v1, TripPlanner erasure report for the CIS tenant_erasure_saga (tp-030)",
+        "tripplanner.v_ai_notices_v1:cis_app":
+            "contract: TripPlanner AI notice events the CIS worker relays into its bells (tp-034, AA-1126)",
     },
     "t": {
         "acp_contract.tour_atoms:catalog_owner_read": "catalog_owner views read every atom as before (CIS 266); D9 = 0 "

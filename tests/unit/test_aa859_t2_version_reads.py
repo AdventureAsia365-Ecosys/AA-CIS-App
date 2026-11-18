@@ -75,7 +75,8 @@ def _version_row(job_id=JOB_A, **over):
     row = {"id": uuid.UUID(VERSION_ID), "tenant_id": uuid.UUID(TENANT_ID), "published_tour_id": PT_ID,
            "version_number": 1, "status": "ai_generated", "edit_source": "ai_generated",
            "rewrite_language": "en-US", "created_at": NOW, "rewritten_content": {}, "job_id": job_id,
-           "tour_id": uuid.uuid4(), "aa_name": "Ha Long", "country": "Vietnam", "job_status": None}
+           "tour_id": uuid.uuid4(), "aa_name": "Ha Long", "country": "Vietnam", "job_status": None,
+           "job_stop_code": None}
     row.update(over)
     return row
 
@@ -84,7 +85,7 @@ def _my_row(job_id):
     return {"id": uuid.uuid4(), "version_number": 1, "status": "ai_generated", "edit_source": "ai_generated",
             "rewrite_language": "en-US", "created_at": NOW, "rewritten_content": {},
             "published_tour_id": PT_ID, "tour_id": uuid.uuid4(), "aa_name": "Ha Long", "country": "Vietnam",
-            "duration": "3 days", "_job_id": job_id, "job_status": None}
+            "duration": "3 days", "_job_id": job_id, "job_status": None, "job_stop_code": None}
 
 
 def _tenant(tenant_id):
@@ -260,6 +261,11 @@ _OLD_VERSION = """
     LEFT JOIN shared.job j ON j.id = ttv.job_id
     WHERE ttv.id = $1::uuid AND ttv.tenant_id = $2::uuid
 """
+# AA-1126 L1: the joined form also reads the job's tenant-facing stop code (api/routers/_job_status.py), right after
+# the status, in both pinned statements.
+_OLD_MY_VERSIONS_ROWS = _OLD_MY_VERSIONS_ROWS.replace("j.status AS job_status",
+                                                      "j.status AS job_status, " + v1_tours._JOB_STOP_COL)
+_OLD_VERSION = _OLD_VERSION.replace("j.status AS job_status", "j.status AS job_status, " + v1_tours._JOB_STOP_COL)
 
 
 def _norm(sql):
