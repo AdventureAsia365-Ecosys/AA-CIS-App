@@ -173,7 +173,9 @@ export interface ProvidersResp {
   month_start: string;
   providers: ProviderRow[];
   unattributed_llm: Spend | null;
-  totals: { today_usd: number; month_usd: number };
+  /** AA-1127: `llm_month_usd` is the month's AI (LLM) spend the Overview and Spend pages show (absent from an older API,
+   *  null when unreadable); `month_usd` adds the data providers and the CRM rows. */
+  totals: { today_usd: number; month_usd: number; llm_month_usd?: number | null };
   errors: { source: string; error: string }[];
 }
 

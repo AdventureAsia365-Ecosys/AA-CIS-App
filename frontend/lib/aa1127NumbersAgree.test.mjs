@@ -56,3 +56,11 @@ test("SEO intelligence: the Keywords tab opens on linked keywords and the demand
   assert.match(src, /return linkedOnly \? rows\.filter\(\(r\) => r\.used_in_content\) : rows;/);
   assert.match(src, /m\.linked_volume \?\? m\.total_volume/);
 });
+
+test("AI gateway: the Month tile names the AI (LLM) month the Overview and Spend pages show", () => {
+  const src = readFileSync(new URL("../app/admin/ai-gateway/ProvidersTab.tsx", import.meta.url), "utf8");
+  assert.match(src, /monthHint\(data\.month_start\.slice\(0, 10\), data\.totals\.llm_month_usd\)/);
+  assert.match(src, /llm == null \? t\("tileMonthHint", since\) : t\("tileMonthLlmHint", since, usd\(llm, 2\)\)/);
+  const msgs = readFileSync(new URL("../app/admin/ai-gateway/messages.ts", import.meta.url), "utf8");
+  assert.equal((msgs.match(/tileMonthLlmHint: \(since: string, llm: string\) =>/g) || []).length, 2);   // EN + VI
+});
