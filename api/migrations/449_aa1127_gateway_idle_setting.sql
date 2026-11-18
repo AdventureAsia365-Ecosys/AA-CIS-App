@@ -1,4 +1,4 @@
--- Migration 453: AA-1127 (S284, UI audit batch C1) — the AI gateway's idle window in the platform settings registry
+-- Migration 449: AA-1127 (S284, UI audit batch C1) — the AI gateway's idle window in the platform settings registry
 -- (CIS 407; tech lead S279: a threshold, limit, cap or policy value is a setting on Platform › Settings, never a code
 -- literal or an env var alone).
 --
@@ -16,19 +16,19 @@
 --      settings-lint reader check; the code PR reads it through shared.settings):
 --        cis.llm.idle_after_hours   int hours 1-168, default 6 (today's STALE_OK_HOURS)
 --      The seed row carries its plain label and its EN + VI operator guide (CIS 416 rule).
---   2. Register 453.
+--   2. Register 449.
 --
 -- Behaviour on apply. None for running code: no value row is seeded and nothing on main reads the key; after the code
 -- PR the gateway reads the default (6, today's value) until an administrator changes it.
 --
 -- Class: CONTRACT (root ADR 0017 decision 3; no migrate directive line): a config row INSERTed into an existing table.
--- MIG-4: the AA-1127 migration-only PR (452-453, one batch), applied on Dev by Infra Migration Apply when the job tables
+-- MIG-4: the AA-1127 migration-only PR (448-449, one batch), applied on Dev by Infra Migration Apply when the job tables
 -- are idle (ADR 0017a), then the code PR (no readiness raise: the reader falls back to the compiled defaults). DM-6.1:
 -- no personal data. DM-7.1: no new table.
 --
--- Number. 452 (this PR) + 1 (452 names the wave's order). If the owner main max + 1 differs at merge, renumber
--- (git grep '453_' and '453' here, in tests/integration/test_aa1127_migration_453.py, compiled_defaults.json and
--- docs/implementation-notes/AA-1127.md).
+-- Number. 448 (this PR) + 1 (448 names the wave's order: this batch merges first, 450-453 follow). If the owner main
+-- max + 1 differs at merge, renumber (git grep '449_' and '449' here, in
+-- tests/integration/test_aa1127_migration_449.py, compiled_defaults.json and docs/implementation-notes/AA-1127.md).
 --
 -- Locks. One INSERT of one row (the definition guard trigger allows the file's role, cis_owner). lock_timeout 5s.
 --
@@ -56,7 +56,7 @@ ON CONFLICT (key) DO NOTHING;
 -- settings-seed:end
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('453', now(), 'AA-1127: the AI gateway idle window (cis.llm.idle_after_hours) in the settings registry')
+VALUES ('449', now(), 'AA-1127: the AI gateway idle window (cis.llm.idle_after_hours) in the settings registry')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

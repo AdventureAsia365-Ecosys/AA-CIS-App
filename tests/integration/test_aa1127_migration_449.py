@@ -1,4 +1,4 @@
-"""AA-1127 (S284, UI audit batch C1) — CIS 453: the AI gateway idle window in shared.setting_definition (conftest replays
+"""AA-1127 (S284, UI audit batch C1) — CIS 449: the AI gateway idle window in shared.setting_definition (conftest replays
 every migration). Registered; the row equals the compiled default the reader serves; values within their bounds only;
 platform scope, single approval, no evidence, enforced; a label and a complete guide; a re-run changes nothing. Runs in
 a transaction that is rolled back; invented values only."""
@@ -17,7 +17,7 @@ from api.services import gateway_health_settings as gh  # noqa: E402
 from shared import settings  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-M453 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations", "453_aa1127_gateway_idle_setting.sql")
+M449 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations", "449_aa1127_gateway_idle_setting.sql")
 INS = ("INSERT INTO shared.setting_value (key, value, version, proposed_by, reason, evidence_ref) "
        "VALUES ($1, $2::jsonb, 1, 'admin:zz-a', 'zz test: a reason of at least twenty characters', NULL) RETURNING id")
 
@@ -41,8 +41,8 @@ async def _refused(c, *args):
 
 
 @pytest.mark.asyncio
-async def test_453_registered_and_the_row_is_the_compiled_default(conn):
-    assert await conn.fetchval("SELECT version AS ok FROM shared.schema_versions WHERE version = '453'") == "453"
+async def test_449_registered_and_the_row_is_the_compiled_default(conn):
+    assert await conn.fetchval("SELECT version AS ok FROM shared.schema_versions WHERE version = '449'") == "449"
     assert gh.ALL == (gh.IDLE_AFTER_HOURS,)
     row = await conn.fetchrow(
         "SELECT default_value::text AS d, min_value::float AS lo, max_value::float AS hi, unit, area, scope_kind, "
@@ -67,7 +67,7 @@ async def test_a_value_must_stay_within_its_bounds(conn):
 
 @pytest.mark.asyncio
 async def test_rerun_changes_nothing(conn):
-    body = open(M453, encoding="utf-8").read().replace("BEGIN;", "", 1).rsplit("COMMIT;", 1)[0]
+    body = open(M449, encoding="utf-8").read().replace("BEGIN;", "", 1).rsplit("COMMIT;", 1)[0]
     before = await conn.fetchval("SELECT count(*) AS n FROM shared.setting_definition")
     await conn.execute(body)
     assert await conn.fetchval("SELECT count(*) AS n FROM shared.setting_definition") == before
