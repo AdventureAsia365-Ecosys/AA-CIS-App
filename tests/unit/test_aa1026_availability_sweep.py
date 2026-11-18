@@ -252,7 +252,9 @@ def test_an_uncounted_probe_skips_the_breaker_but_keeps_the_limiter():
     with patch.object(breaker, "guarded", side_effect=AssertionError("counted")), \
             patch.object(breaker, "record_failure") as rec_fail, patch.object(breaker, "record_success") as rec_ok, \
             patch.object(breaker, "limit", return_value=_Slot()), \
+            patch("shared.llm_client.client.get_stage_config_sync", return_value=None), \
             patch.object(client, "_dispatch_target", side_effect=refused):
+        # AA-1113: no stage row for adhoc_conn_test (without a database the cold-read default would scrub the mock)
         with pytest.raises(RuntimeError, match="not available"):
             client.probe(MagicMock(stage="adhoc_conn_test"), MODELS["cand-a"], _target(), count=False)
     rec_fail.assert_not_called() and rec_ok.assert_not_called()

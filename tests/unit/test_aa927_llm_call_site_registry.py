@@ -167,6 +167,10 @@ EXCLUDED: dict[tuple[str, str], str] = {
         "AA-1026 contract smoke: the brand fit call runs on the smoke's pinned client (LLMClient.probe, stage "
         "adhoc_aa1026) and run_smoke writes one llm_call_log row per reply (_log_replies); the plan's capture client "
         "makes no call"),
+    ("scripts/llm_ops/aa1113_scrub_probe.py", "main"): (
+        "AA-1113 $0 scrub probe: the model key is not in the catalog, so the gateway refuses the call after the "
+        "free-text scrub and before any provider attempt, and writes the 0 USD refusal row itself (the row the "
+        "probe reads back); there is no reply to log"),
 }
 
 

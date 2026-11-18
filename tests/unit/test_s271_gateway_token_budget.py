@@ -407,6 +407,8 @@ SUB_FLOOR_CEILINGS = {
     "services/supply_content/writer.py:179": "supplier content writer",
     "shared/llm_client/column_mapper.py:81": "spreadsheet column mapping (JSON object)",
     "shared/llm_client/judge.py:invoke_judge": "T10 judge default (callers pass their own)",
+    "scripts/llm_ops/aa1113_scrub_probe.py:PROBE_MAX_TOKENS": "AA-1113 $0 scrub probe: never sent (unknown key, "
+                                                              "refused before any attempt)",
 }
 SCAN_DIRS = ("api", "services", "shared", "worker", "scripts")
 

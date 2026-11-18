@@ -28,13 +28,14 @@ import time
 PLANTED_EMAIL = "probe.guest@example.test"
 PLANTED_PHONE = "+84 900 000 111"
 PROBE_MODEL = "zz-aa1113-probe-no-model"
+PROBE_MAX_TOKENS = 16  # never sent: the unknown key is refused before any provider attempt
 
 
 def _request(stage: str):
     from shared.llm_client.models import LLMRequest
     return LLMRequest(system_prompt="AA-1113 probe: reply with one word.",
                       user_prompt=f"Guest note: write to {PLANTED_EMAIL} or call {PLANTED_PHONE}.",
-                      stage=stage, model_tier=PROBE_MODEL, max_tokens=16)
+                      stage=stage, model_tier=PROBE_MODEL, max_tokens=PROBE_MAX_TOKENS)
 
 
 async def _row(trace: str) -> dict | None:
