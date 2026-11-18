@@ -29,6 +29,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
 from api.routers._served import refuse_http
+from api.core.ai_allowance import refuse_if_allowance_used
 from api.routers.v1_tours import get_tenant
 from shared.tour_liveness import TourNotServedError
 from services.acp_angle_gate.service import RequestNotFoundError
@@ -64,6 +65,7 @@ class WriteBody(BaseModel):
 async def write(request_id: UUID, body: WriteBody, request: Request, tenant=Depends(get_tenant)):
     tenant_id = UUID(tenant["sub"])
     pool = request.app.state.pool
+    await refuse_if_allowance_used(pool, str(tenant_id), action="write")   # AA-1126 L1: 402 ai_quota_exhausted
     try:
         started = await service.start_write(tenant_id, request_id, pool, cta_override=body.cta)
     except TourNotServedError as exc:          # AA-986 L3: 409 tour_discontinued / tour_paused

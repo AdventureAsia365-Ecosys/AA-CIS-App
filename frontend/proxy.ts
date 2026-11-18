@@ -57,6 +57,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { adminVerifyCache } from "./lib/auth-server";
 import { isStaffRole, landingPage, pageRule } from "./lib/rbac";
+import { NONCE_HEADER, contentSecurityPolicy, newNonce, sentryOrigin } from "./lib/securityHeaders";
 import {
   REFRESH_PATH,
   STAFF_REFRESH_COOKIE,
@@ -70,11 +71,41 @@ const PUBLIC_PATHS = ["/login"];
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "https://api-cis.lumiguides.it.com";
 
+// AA-1111 (S284): the browser posts Sentry events to the DSN's origin (a public build-time value; none = no Sentry).
+const SENTRY_ORIGIN = sentryOrigin(process.env.NEXT_PUBLIC_SENTRY_DSN);
+
+/** The staff gate runs on these paths only (the matcher before AA-1111: "/admin/:path*" and "/login"). */
+function isGatedPath(pathname: string): boolean {
+  return pathname === "/login" || pathname === "/admin" || pathname.startsWith("/admin/");
+}
+
+/**
+ * AA-1111 (S284, ZAP baseline): every response the proxy handles carries the full CSP with a fresh nonce. The policy
+ * also rides on the request (Next takes the nonce from it for its own scripts; app/layout.tsx reads x-nonce for the
+ * restore scripts). Then the staff gate below decides, as before, for /admin/* and /login only.
+ */
 export async function proxy(request: NextRequest) {
+  const nonce = newNonce();
+  const csp = contentSecurityPolicy({
+    nonce,
+    dev: process.env.NODE_ENV === "development",
+    connectSrc: [SENTRY_ORIGIN],
+  });
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set(NONCE_HEADER, nonce);
+  requestHeaders.set("Content-Security-Policy", csp);
+  const pass = () => NextResponse.next({ request: { headers: requestHeaders } });
+  const response = isGatedPath(request.nextUrl.pathname) ? await staffGate(request, pass) : pass();
+  response.headers.set("Content-Security-Policy", csp);
+  return response;
+}
+
+/** The staff gate (AA-232 / AA-252 / AA-656 / AA-816, see the header). `pass` lets the request through. */
+async function staffGate(request: NextRequest, pass: () => NextResponse): Promise<NextResponse> {
   const { pathname } = request.nextUrl;
 
   if (PUBLIC_PATHS.some(p => pathname.startsWith(p))) {
-    return NextResponse.next();
+    return pass();
   }
 
   // AA-722 — the legacy /admin/dashboard page is retired. Route old bookmarks
@@ -104,31 +135,39 @@ export async function proxy(request: NextRequest) {
 
   // AA-656: identity comes from whichever session token is present, verified server-side.
   const staffToken = request.cookies.get(STAFF_TOKEN_COOKIE)?.value;
-  if (staffToken) {
-    if (isCognitoToken(staffToken) && tokenExpiresSoon(staffToken)) {
-      // AA-816: refresh first (no verify round trip for a token that is about to die). The route
-      // validates `next` as a same-site path before redirecting back to it.
-      const refreshUrl = new URL(REFRESH_PATH, request.url);
-      refreshUrl.searchParams.set("next", pathname + request.nextUrl.search);
-      return NextResponse.redirect(refreshUrl);
-    }
-    const verified = await verifyAdminToken(request);
-    if (verified instanceof NextResponse) return verified; // invalid/expired token
-    if (!isStaffRole(verified.role)) {
-      return toStaffLogin(request);
-    }
-    if (!allowed.includes(verified.role)) {
-      // Real staff session, page not allowed for its role → its own landing page, not /login.
-      // Every role's landing page is allowed for that role, so this cannot loop.
-      return NextResponse.redirect(new URL(landingPage(verified.role), request.url));
-    }
-    return NextResponse.next();
-  }
+  if (staffToken) return sessionGate(request, staffToken, allowed, pass);
 
   // No token (a bare or forged cis_role cookie proves nothing) → log in.
   const response = NextResponse.redirect(new URL("/login", request.url));
   response.cookies.delete("cis_role");
   return response;
+}
+
+/** A request that carries a staff token: refresh, verify, then the page's role check (AA-656 / AA-816). */
+async function sessionGate(
+  request: NextRequest,
+  staffToken: string,
+  allowed: string[],
+  pass: () => NextResponse,
+): Promise<NextResponse> {
+  if (isCognitoToken(staffToken) && tokenExpiresSoon(staffToken)) {
+    // AA-816: refresh first (no verify round trip for a token that is about to die). The route
+    // validates `next` as a same-site path before redirecting back to it.
+    const refreshUrl = new URL(REFRESH_PATH, request.url);
+    refreshUrl.searchParams.set("next", request.nextUrl.pathname + request.nextUrl.search);
+    return NextResponse.redirect(refreshUrl);
+  }
+  const verified = await verifyAdminToken(request);
+  if (verified instanceof NextResponse) return verified; // invalid/expired token
+  if (!isStaffRole(verified.role)) {
+    return toStaffLogin(request);
+  }
+  if (!allowed.includes(verified.role)) {
+    // Real staff session, page not allowed for its role → its own landing page, not /login.
+    // Every role's landing page is allowed for that role, so this cannot loop.
+    return NextResponse.redirect(new URL(landingPage(verified.role), request.url));
+  }
+  return pass();
 }
 
 // ── AA-232 helper — verify cis_admin_token ──────────────────────────────────
@@ -198,9 +237,10 @@ function toStaffLogin(request: NextRequest): NextResponse {
   return response;
 }
 
+// AA-1111 (S284): every path but the build chunks, the image optimiser and the BFF (/api/*), so pages, 404s,
+// /robots.txt and /sitemap.xml get the nonce CSP; isGatedPath() keeps the staff gate on /admin/* and /login only.
+// /api/* stays out on purpose: a proxy that runs clones the request body and cuts it at 10 MiB (uploads go through
+// the BFF); next.config.ts gives those paths the same policy without a nonce.
 export const config = {
-  matcher: [
-    "/admin/:path*",
-    "/login",
-  ],
+  matcher: ["/((?!_next/static|_next/image|api/).*)"],
 };

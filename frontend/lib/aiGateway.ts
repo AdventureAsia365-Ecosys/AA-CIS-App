@@ -173,7 +173,7 @@ export interface ProvidersResp {
   month_start: string;
   providers: ProviderRow[];
   unattributed_llm: Spend | null;
-  totals: { today_usd: number; month_usd: number };
+  totals: { today_usd: number; month_usd: number; llm_month_usd?: number | null };   // llm: the Overview AI month
   errors: { source: string; error: string }[];
 }
 
@@ -266,9 +266,9 @@ export function severity(status: string | null | undefined): number {
   return SEVERITY[(status ?? "unknown") as ProviderStatus] ?? 4;
 }
 
-/** How many providers need a look (not ok, not switched off, not a source we do not log). */
-export function needsLook(rows: readonly Pick<ProviderRow, "status">[]): number {
-  return rows.filter((r) => r.status !== "ok" && r.status !== "disabled" && r.status !== "untracked").length;
+/** How many providers need a look: not ok / off / untracked, and not idle ("No recent calls", the row badge; AA-1127). */
+export function needsLook(rows: readonly Pick<ProviderRow, "status" | "group" | "status_reason">[]): number {
+  return rows.filter((r) => !["ok", "disabled", "untracked"].includes(r.status) && statusWordKey(r) !== "no_recent_calls").length;
 }
 
 /** A latency as people read it: whole milliseconds below one second, else seconds with one decimal. */

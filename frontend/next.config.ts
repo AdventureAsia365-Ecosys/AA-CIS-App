@@ -3,23 +3,14 @@ import path from "path";
 import { withSentryConfig } from "@sentry/nextjs";
 import { PORTAL_BASE_URL, TRIP_PAGE_BASE_URL } from "./lib/apps";
 import { adminIaRedirects } from "./lib/adminIa";
+import { STATIC_SECURITY_HEADERS, contentSecurityPolicy, sentryOrigin } from "./lib/securityHeaders";
 
-// AA-876 — security headers on every admin response, same list as the portal (AA-885). The CSP is
-// deliberately minimal (no script-src / style-src yet: the pages use inline styles and Next inline
-// scripts); it only stops framing, <base> hijacking, foreign form posts and plugins. The public
-// white-label /trip/[tourId] pages are covered too: nothing embeds them in an iframe today; a partner
-// embed would need an explicit frame-ancestors allow-list for /trip/:path*.
-const SECURITY_HEADERS = [
-  { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" },
-  { key: "X-Content-Type-Options", value: "nosniff" },
-  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-  { key: "X-Frame-Options", value: "DENY" },
-  {
-    key: "Content-Security-Policy",
-    value: "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'",
-  },
-  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
-];
+// AA-876 — security headers on every admin response, same list as the portal (AA-885). AA-1111 (S284, ZAP baseline):
+// the list lives in lib/securityHeaders.ts (+ Cross-Origin-Opener-Policy) and the Content-Security-Policy is the full
+// policy: proxy.ts sends it with a per-request nonce on every path it runs on (pages, 404s, /robots.txt,
+// /sitemap.xml); the paths it skips (the BFF under /api, the build chunks under /_next) get it here without a nonce,
+// so no response leaves without a CSP. The public white-label /trip/[tourId] pages moved to the CRM web (AA-979).
+const STATIC_CSP = contentSecurityPolicy({ connectSrc: [sentryOrigin(process.env.NEXT_PUBLIC_SENTRY_DSN)] });
 
 const nextConfig: NextConfig = {
   turbopack: {
@@ -30,7 +21,12 @@ const nextConfig: NextConfig = {
   ...(process.env.NEXT_OUTPUT === "standalone" ? { output: "standalone" as const } : {}),
   poweredByHeader: false,
   async headers() {
-    return [{ source: "/(.*)", headers: SECURITY_HEADERS }];
+    const csp = [{ key: "Content-Security-Policy", value: STATIC_CSP }];
+    return [
+      { source: "/(.*)", headers: STATIC_SECURITY_HEADERS },
+      { source: "/api/:path*", headers: csp },
+      { source: "/_next/:path*", headers: csp },
+    ];
   },
   // AA-663 — admin IA consolidation. The legacy (internal) route group duplicated /admin/* and was
   // deleted; Brand Identity moved into Settings. Old URLs keep working. Redirects run before

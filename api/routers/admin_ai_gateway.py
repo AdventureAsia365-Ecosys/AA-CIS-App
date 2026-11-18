@@ -99,7 +99,8 @@ from api.core.tenant_scope import TENANT_SCOPED
 from api.routers.admin import verify_admin_secret
 from api.routers.admin_docs import asset_response
 from api.services import (ai_gateway, ai_gateway_batches, ai_gateway_calls, ai_gateway_experiments, ai_gateway_guide,
-                          crm_console, docs_reader, platform_apps, settings_registry, tenant_ai_budget)
+                          crm_console, docs_reader, platform_apps, settings_registry, spend_rules_view,
+                          tenant_ai_budget)
 from services.acp_shared.audit_log import write_audit_log
 from shared import provider_credit
 from shared.llm_client import app_profile, capacity
@@ -514,11 +515,15 @@ async def get_app_profiles(request: Request) -> dict:
             caps = central_app_caps(await conn.fetch(_CENTRAL_APP_CAPS_SQL))
     except app_profile.AppProfileUnavailable:
         raise HTTPException(status_code=503, detail=_PROFILE_MISSING)
+    # AA-1126: each app's spend rules, so the budget column says whether a reached budget stops the AI (dev) or only
+    # alerts (prod) for the apps whose daily budget is their app-wide cap (TripPlanner, the CRM).
+    envs = await spend_rules_view.app_environments(platform_apps.relay_authorization(request))
     rows = []
     for app in app_profile.APPS:
         p = profiles.get(app) or app_profile.AppProfile(app=app)
         rows.append({**p.as_dict(), "central_cap": caps.get(app),
-                     "enforced_here": app in ENFORCED_APPS})
+                     "enforced_here": app in ENFORCED_APPS, "spend_environment": envs.get(app),
+                     "budget_rule": spend_rules_view.cap_rule(app, envs.get(app))})
     return {"profiles": rows, "degrade_modes": list(app_profile.DEGRADE_MODES)}
 
 
