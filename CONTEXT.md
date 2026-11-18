@@ -2315,6 +2315,13 @@ views the producers own and grant to `cis_app` in their own migrations (contract
 `booking.v_ops_data_totals`, `v_ops_trip_plan_keys` (bk-025), plus the CRM's counts over HTTP (`crm.ops.v1` 1.4
 `GET /crm/ops/v1/data-coverage`, staff token relayed; no AA role reads schema `crm`).
 
+CIS as a consumer of TripPlanner's AI notice events (AA-1126 L2 / L4): TripPlanner records `ai.allowance_used` (an
+agency's monthly AI sessions are used up) and `ai.spend_degraded` (a spend check degraded under the prod spend rules) in
+its own outbox and grants `cis_app` SELECT on `tripplanner.v_ai_notices_v1` (tp-034). The worker's ops tick
+(`services/tripplanner_notices.py`) writes the bell rows as CIS: `tripplanner.ai_allowance_used` for the agency's
+Content studio bell (Upgrade link) and `platform.tripplanner.spend_degraded` for the admin bell, once each (CIS 447
+once-only indexes). TripPlanner holds no privilege on `shared.notifications` (CIS 274 / 351 guards).
+
 CIS as a consumer of the public "from" price (AA-1029, contract `price.from.v1`, AA-Ecosys
 `docs/contracts/price.from.v1.md`; Booking bk-040 grants `booking.v_from_prices` to `cis_app`): `GET /v1/tours/pool`
 (the Content studio Marketplace) reads the suggested retail price per person of the page's tours by catalog key, on MAIN

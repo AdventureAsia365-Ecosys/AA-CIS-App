@@ -19,6 +19,11 @@ from api.routers._served import annotate as _annotate_served, refuse_http as _re
 from shared import settings as platform_settings
 from shared import tour_liveness as _tl
 from shared.tour_liveness import TourNotServedError, live_source_sql
+from api.core import ai_allowance  # AA-1126 L1: 402 ai_quota_exhausted
+from api.core.ai_allowance import refuse_if_allowance_used
+from api.routers._job_status import (_JOB_JOIN, _JOB_STATUS_SQL, _JOB_STOP_COL, _job_statuses,  # noqa: F401
+                                     _with_allowance, _with_job_status)
+from shared.llm_client import tenant_budget
 from services.photos import covers as _covers
 from services.photos.sync import public_base
 from services.quality import final_contract  # AA-1047 W1 (REPORT-mode exit contract)
@@ -91,22 +96,7 @@ def _log_t2_read(route: str, tenant_id, used_tenant_pool: bool, **extra) -> None
                 used_tenant_pool=used_tenant_pool, **extra)
 
 
-# AA-859 MAIN exception: shared.job has no tenant column (tenant only in `payload`), is worker-hot, and
-# aa_app_user has no SELECT on it after 241 (plan D2). On the tenant pool the version rows come back with
-# their job_id through RLS; the statuses are read here on MAIN, after the tenant block, keyed only by those
-# ids. Flag off keeps the pre-AA-859 LEFT JOIN shared.job instead.
-_JOB_STATUS_SQL = "SELECT id, status FROM shared.job WHERE id = ANY($1::uuid[])"
-_JOB_JOIN = "LEFT JOIN shared.job j ON j.id = ttv.job_id"
-
-
-async def _job_statuses(pool, job_ids) -> dict:
-    """{job_id text: status} for the given ids (None ignored); no query when there is none."""
-    ids = sorted({str(j) for j in job_ids if j is not None})
-    if not ids:
-        return {}
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(_JOB_STATUS_SQL, ids)
-    return {str(r["id"]): r["status"] for r in rows}
+# AA-859 MAIN exception + AA-1126 L1 stop code: api/routers/_job_status.py
 
 
 # GET /v1/tours/pool. `{where}` is built from _POOL_BASE_CONDITIONS + the filters; `{tid}` is the
@@ -624,6 +614,8 @@ async def trigger_rewrite(
     """
     tenant_id = tenant["sub"]
     pool = request.app.state.pool
+    # AA-1126 L1: no new rewrite (and no quota charge) while the plan's AI allowance is used up: 402
+    await refuse_if_allowance_used(pool, tenant_id, action="rewrite")
 
     # AA-741 pre-audit: validate first, charge last, all in ONE transaction. Before, the quota was
     # consumed (autocommit) before the tour was even looked up, so a 404, an inactive Master or a
@@ -766,23 +758,9 @@ _MY_VERSIONS_ROWS_SQL = """
     ORDER BY ttv.created_at DESC, ttv.id DESC
     LIMIT ${limit} OFFSET ${offset}
 """
-_MY_VERSIONS_JOB_JOINED = {"job_col": "j.status AS job_status", "job_join": _JOB_JOIN}
-_MY_VERSIONS_JOB_SPLIT = {"job_col": "ttv.job_id AS _job_id, NULL::text AS job_status", "job_join": ""}
-
-
-async def _with_job_status(pool, rows, job_id_key: str) -> list:
-    """Tenant-pool rows -> dicts with `job_status` filled from shared.job on MAIN (D2 exception, see
-    _JOB_STATUS_SQL). `_job_id` (my-versions' helper column) is dropped; same keys as the joined form."""
-    statuses = await _job_statuses(pool, [r[job_id_key] for r in rows])
-    out = []
-    for r in rows:
-        d = dict(r)
-        job_id = d[job_id_key]
-        if job_id_key == "_job_id":
-            del d["_job_id"]  # my-versions' helper column, not part of the response
-        d["job_status"] = statuses.get(str(job_id)) if job_id is not None else None  # keeps the key's place
-        out.append(d)
-    return out
+_MY_VERSIONS_JOB_JOINED = {"job_col": f"j.status AS job_status, {_JOB_STOP_COL}", "job_join": _JOB_JOIN}
+_MY_VERSIONS_JOB_SPLIT = {"job_col": "ttv.job_id AS _job_id, NULL::text AS job_status, NULL::text AS job_stop_code",
+                          "job_join": ""}
 
 
 @router.get("/my-versions")
@@ -829,7 +807,7 @@ async def list_my_versions(
         rows = await _with_job_status(request.app.state.pool, rows, "_job_id")
 
     return {
-        "data": [{**project_version(r), **{k: v for k, v in sv.items() if k != "tour_id"}}
+        "data": [_with_allowance({**project_version(r), **{k: v for k, v in sv.items() if k != "tour_id"}})
                  for r, sv in zip(rows, served)],
         "pagination": {"page": page, "page_size": page_size,
                        "total": total, "pages": -(-total // page_size)},
@@ -851,6 +829,10 @@ async def retry_rewrite(version_id: str, request: Request, tenant=Depends(get_te
             LEFT JOIN gold_aa_internal.published_tours pt ON pt.id = ttv.published_tour_id
             WHERE ttv.id = $1::uuid AND ttv.tenant_id = $2::uuid
         """, version_id, tenant_id)
+        # AA-1126 L1: a Retry while the plan's AI allowance is used up is refused with the reason (402), before the
+        # generic 409 a held (still pending) version would get
+        if row and await ai_allowance.allowance_used(conn, tenant_id):
+            raise HTTPException(status_code=ai_allowance.PAYMENT_REQUIRED, detail=tenant_budget.quota_refusal())
         if row and row["status"] == "failed" and row["job_id"] is not None:
             # AA-986 L3: no retry (LLM spend) on a tour AA no longer serves or has paused
             try:
@@ -1068,8 +1050,8 @@ _VERSION_SQL = """
     {job_join}
     WHERE {tenant_cond}
 """
-_VERSION_JOB_JOINED = {"job_col": "j.status AS job_status", "job_join": _JOB_JOIN}
-_VERSION_JOB_SPLIT = {"job_col": "NULL::text AS job_status", "job_join": ""}
+_VERSION_JOB_JOINED = {"job_col": f"j.status AS job_status, {_JOB_STOP_COL}", "job_join": _JOB_JOIN}
+_VERSION_JOB_SPLIT = {"job_col": "NULL::text AS job_status, NULL::text AS job_stop_code", "job_join": ""}
 _VERSION_HISTORY_TENANT_COND = "tenant_id = $1::uuid"
 _VERSION_HISTORY_SQL = """
     SELECT id, version_number, status, edit_source, created_at
@@ -1111,11 +1093,11 @@ async def get_version(
 
     # AA-770 (S233) — scores and QA state stay admin-side (/admin/content-quality).
     # AA-796 — and the score-derived needs_review status reads as ai_generated.
-    return {
+    return _with_allowance({
         **project_version(row),
         **{k: v for k, v in served.items() if k != "tour_id"},
         "version_history": [project_version(h) for h in history],
-    }
+    })
 
 
 # AA-566 Phần B.2 — tenant-facing DOCX export, one version at a time (matches Admin Master
