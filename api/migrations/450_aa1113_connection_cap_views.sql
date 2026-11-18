@@ -1,6 +1,6 @@
--- Migration 449: AA-1113 (root ADR 0009 decisions 6 and 10) — one connection cap for every caller: the month-to-date
+-- Migration 450: AA-1113 (root ADR 0009 decisions 6 and 10) — one connection cap for every caller: the month-to-date
 -- spend and the over-cap flag of each capped LLM connection, as a read contract for TripPlanner and the CRM, and the
--- flag (plus the free-text mark of CIS 448) appended to TripPlanner's gateway contract view.
+-- flag (plus the free-text mark of CIS 449) appended to TripPlanner's gateway contract view.
 --
 -- Why. A connection's monthly cap (shared.llm_provider_connection.monthly_budget_usd, its policy in
 -- shared.llm_connection_cost_policy) is enforced by the CIS gateway only (shared/cost_guard.py
@@ -12,7 +12,7 @@
 --
 -- What:
 --   1. Column-level SELECT for catalog_owner (the NOLOGIN owner of every catalog.* view), columns only:
---        shared.llm_role_config (free_text)                                   CIS 448
+--        shared.llm_role_config (free_text)                                   CIS 449
 --        shared.llm_provider_connection (monthly_budget_usd)                  (connection_key since 341)
 --        shared.llm_connection_cost_policy (connection_key, alert_pct, hard_stop)
 --        shared.llm_call_log (account)                                        (cost_usd, created_at since 323)
@@ -27,7 +27,7 @@
 --      USAGE on schema catalog for it (its first catalog read; no other catalog object is granted to it).
 --   3. CREATE OR REPLACE catalog.v_llm_gateway_config_v1: 350's 27 columns unchanged, in order, then two appended
 --      (contract v1: columns are only appended):
---        free_text             boolean  llm_role_config.free_text (CIS 448): the stage's prompts must be scrubbed
+--        free_text             boolean  llm_role_config.free_text (CIS 449): the stage's prompts must be scrubbed
 --                                       before any model call, the call refused when the scrub cannot run;
 --        over_cap_connections  text[]   the connections of this model's deployments whose row in
 --                                       v_llm_connection_cap_v1 says stops (empty array when none): the CIS gateway
@@ -35,10 +35,10 @@
 --                                       still leaves them out while another rung can answer).
 --      The 350 body is repeated byte for byte; the additions are one MATERIALIZED CTE (the cap view read once per
 --      query, not once per row) and one LEFT JOIN LATERAL.
---   4. Register 449.
+--   4. Register 450.
 --
 -- Class: CONTRACT (root ADR 0017 decision 3; no migrate directive line): ACL changes on existing tables and schema and
--- an existing view replaced. MIG-4: migration-only PR (448 + 449), the byte copy in AA-CIS-Infra db/migrations/cis/,
+-- an existing view replaced. MIG-4: migration-only PR (449 + 450), the byte copy in AA-CIS-Infra db/migrations/cis/,
 -- Infra Migration Apply with every job table idle (root ADR 0017a). Consumers: TripPlanner reads the two columns by
 -- name (SQLSTATE 42703 before the apply keeps its 350 read); the CRM reads the cap view in its AA-1113 code PR, which
 -- treats a missing view as "no cap known" per its spend environment. Nothing in CIS reads either view.
@@ -48,7 +48,7 @@
 -- llm_call_log_created_id_idx (created_at, id); TripPlanner caches its gateway read 60 s, the CRM caches its cap read
 -- 60 s. The gateway view reads the cap view once per query (MATERIALIZED CTE).
 --
--- Guards (RAISE rolls the whole file back): before — 350 and 448 registered, shared.llm_connection_cost_policy present,
+-- Guards (RAISE rolls the whole file back): before — 350 and 449 registered, shared.llm_connection_cost_policy present,
 -- schema catalog owned by cis_owner. After, as catalog_owner — both views answer. After, as cis_owner — the gateway
 -- view's exact columns (350's then the two appended), both views owned by catalog_owner and security_barrier,
 -- tripplanner reads both, crm_app reads the cap view and not the gateway view, booking / aa_app_user / cis_app read
@@ -57,11 +57,11 @@
 -- Recipe. The X1 S22 catalog recipe (as 323 / 341 / 350): GRANT CREATE ON SCHEMA catalog TO catalog_owner; SET LOCAL
 -- ROLE catalog_owner; the view DDL; SET LOCAL ROLE cis_owner; REVOKE CREATE. DB Migrate runs the file as cis_owner
 -- (login db_migrator). Never RESET ROLE, no SECURITY DEFINER, no role DDL. The conftest replay skips this file (it
--- needs 323, 341 and 350, skipped too); tests/integration/test_aa1113_migration_449.py applies 323, 341, 350 then 449
--- the DB Migrate way and undoes them. After 449, 350 can no longer be re-run on that database (CREATE OR REPLACE VIEW
+-- needs 323, 341 and 350, skipped too); tests/integration/test_aa1113_migration_450.py applies 323, 341, 350 then 450
+-- the DB Migrate way and undoes them. After 450, 350 can no longer be re-run on that database (CREATE OR REPLACE VIEW
 -- cannot drop appended columns); DB Migrate never re-runs a registered version.
 --
--- Number. 448 (same PR) is this file's predecessor; renumber both together (git grep '449_' and 'CIS 449').
+-- Number. 449 (same PR) is this file's predecessor; renumber both together (git grep '450_' and 'CIS 450').
 --
 -- Locks. Column GRANTs (no lock that blocks readers or writers) and two CREATE OR REPLACE VIEW (AccessExclusiveLock on
 -- each view only, held for the transaction). lock_timeout 5s, statement_timeout 1min. Idempotent (CREATE OR REPLACE
@@ -80,18 +80,18 @@ DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM shared.schema_versions WHERE version = '350')
        OR to_regclass('catalog.v_llm_gateway_config_v1') IS NULL THEN
-        RAISE EXCEPTION 'migration 449: apply 350 (catalog.v_llm_gateway_config_v1 stage params) first';
+        RAISE EXCEPTION 'migration 450: apply 350 (catalog.v_llm_gateway_config_v1 stage params) first';
     END IF;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                     WHERE table_schema = 'shared' AND table_name = 'llm_role_config'
                       AND column_name = 'free_text') THEN
-        RAISE EXCEPTION 'migration 449: shared.llm_role_config.free_text missing (apply 448 first)';
+        RAISE EXCEPTION 'migration 450: shared.llm_role_config.free_text missing (apply 449 first)';
     END IF;
     IF to_regclass('shared.llm_connection_cost_policy') IS NULL THEN
-        RAISE EXCEPTION 'migration 449: shared.llm_connection_cost_policy missing (317)';
+        RAISE EXCEPTION 'migration 450: shared.llm_connection_cost_policy missing (317)';
     END IF;
     IF (SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = 'catalog') <> 'cis_owner' THEN
-        RAISE EXCEPTION 'migration 449: schema catalog is not owned by cis_owner (apply 245 first)';
+        RAISE EXCEPTION 'migration 450: schema catalog is not owned by cis_owner (apply 245 first)';
     END IF;
 END $$;
 
@@ -136,7 +136,7 @@ SELECT c.connection_key,
   LEFT JOIN shared.llm_connection_cost_policy p ON p.connection_key = c.connection_key;
 
 COMMENT ON VIEW catalog.v_llm_connection_cap_v1 IS
-    'AA-1113 (449, root ADR 0009 d6): one row per LLM connection with a monthly budget: this UTC month''s CIS ledger '
+    'AA-1113 (450, root ADR 0009 d6): one row per LLM connection with a monthly budget: this UTC month''s CIS ledger '
     'spend on it (shared.llm_call_log, account = the connection), its policy (alert_pct, hard_stop; defaults 80 / '
     'true), over_cap (spent >= budget) and stops (over_cap and hard_stop: the CIS gateway leaves the connection out). '
     'TripPlanner and the CRM only; the CRM adds its own month spend before it compares. Contract v1: columns are only '
@@ -175,7 +175,7 @@ WITH conn_ok AS (
         OR s.connection_key IN (SELECT d.connection_key FROM conn_denied d)
      GROUP BY s.connection_key
 ), cap_stop AS MATERIALIZED (
-    -- AA-1113 (449): the connections over their monthly cap with a hard-stop policy, read once per query.
+    -- AA-1113 (450): the connections over their monthly cap with a hard-stop policy, read once per query.
     SELECT cap.connection_key FROM catalog.v_llm_connection_cap_v1 cap WHERE cap.stops
 )
 SELECT r.stage,
@@ -259,7 +259,7 @@ SELECT r.stage,
        WHERE x.model_key = k.model_key
   ) g ON true
   LEFT JOIN LATERAL (
-      -- AA-1113 (449): this model's deployments whose connection the CIS gateway leaves out for its monthly cap.
+      -- AA-1113 (450): this model's deployments whose connection the CIS gateway leaves out for its monthly cap.
       SELECT array_agg(DISTINCT x.connection_key ORDER BY x.connection_key) AS keys
         FROM shared.llm_model_deployment x
         JOIN cap_stop s ON s.connection_key = x.connection_key
@@ -273,7 +273,7 @@ COMMENT ON VIEW catalog.v_llm_gateway_config_v1 IS
     'its chain (position 0 = primary, then the fallbacks), with the catalog row and the deployments (JSON, by '
     'priority). AA-1027 E3 (341): + route_deadline_s and deployment_routing (per deployment: non-secret connection '
     'facts, the deployment circuit and the connection circuit). AA-1027 E4 (350): + supports_temperature and '
-    'stage_params (the shared.stage_model_params row of the stage and model, NULL when none). AA-1113 (449): + '
+    'stage_params (the shared.stage_model_params row of the stage and model, NULL when none). AA-1113 (450): + '
     'free_text (scrub the prompt before any call, refuse when the scrub cannot run) and over_cap_connections (the '
     'connections of this model the CIS gateway leaves out for their monthly cap, catalog.v_llm_connection_cap_v1). '
     'TripPlanner only. Contract v1: columns are only appended; a change of meaning is a _v2 view.';
@@ -295,7 +295,7 @@ DECLARE
 BEGIN
     SELECT count(*) INTO n_cap FROM catalog.v_llm_connection_cap_v1;
     SELECT count(*) INTO n_free FROM catalog.v_llm_gateway_config_v1 WHERE free_text;
-    RAISE NOTICE 'migration 449: as catalog_owner, % capped connection(s), % TripPlanner free-text route row(s)',
+    RAISE NOTICE 'migration 450: as catalog_owner, % capped connection(s), % TripPlanner free-text route row(s)',
         n_cap, n_free;
 END $$;
 
@@ -321,28 +321,28 @@ DECLARE
 BEGIN
     FOREACH v IN ARRAY ARRAY[gw, cap] LOOP
         IF (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid = v::regclass) <> 'catalog_owner' THEN
-            RAISE EXCEPTION 'migration 449: % is not catalog_owner''s', v;
+            RAISE EXCEPTION 'migration 450: % is not catalog_owner''s', v;
         END IF;
         IF NOT EXISTS (SELECT 1 FROM pg_class WHERE oid = v::regclass AND 'security_barrier=true' = ANY(reloptions)) THEN
-            RAISE EXCEPTION 'migration 449: % is not security_barrier', v;
+            RAISE EXCEPTION 'migration 450: % is not security_barrier', v;
         END IF;
         IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'tripplanner')
            AND NOT pg_catalog.has_table_privilege('tripplanner', v, 'SELECT') THEN
-            RAISE EXCEPTION 'migration 449: tripplanner cannot read %', v;
+            RAISE EXCEPTION 'migration 450: tripplanner cannot read %', v;
         END IF;
         FOREACH r IN ARRAY ARRAY['booking', 'aa_app_user', 'cis_app'] LOOP
             IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = r)
                AND pg_catalog.has_table_privilege(r, v, 'SELECT') THEN
-                RAISE EXCEPTION 'migration 449: % can read %', r, v;
+                RAISE EXCEPTION 'migration 450: % can read %', r, v;
             END IF;
         END LOOP;
     END LOOP;
     IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'crm_app') THEN
         IF NOT pg_catalog.has_table_privilege('crm_app', cap, 'SELECT') THEN
-            RAISE EXCEPTION 'migration 449: crm_app cannot read %', cap;
+            RAISE EXCEPTION 'migration 450: crm_app cannot read %', cap;
         END IF;
         IF pg_catalog.has_table_privilege('crm_app', gw, 'SELECT') THEN
-            RAISE EXCEPTION 'migration 449: crm_app can read % (tripplanner only)', gw;
+            RAISE EXCEPTION 'migration 450: crm_app can read % (tripplanner only)', gw;
         END IF;
     END IF;
     SELECT string_agg(a.attname, ',' ORDER BY a.attnum) INTO cols
@@ -353,21 +353,21 @@ BEGIN
        'model_enabled,price_in_per_mtok,price_out_per_mtok,price_cache_read_per_mtok,'
        'price_cache_write_per_mtok,deployments,route_updated_at,route_deadline_s,deployment_routing,'
        'supports_temperature,stage_params,free_text,over_cap_connections' THEN
-        RAISE EXCEPTION 'migration 449: % columns are %', gw, cols;
+        RAISE EXCEPTION 'migration 450: % columns are %', gw, cols;
     END IF;
     SELECT string_agg(a.attname, ',' ORDER BY a.attnum) INTO cols
       FROM pg_attribute a WHERE a.attrelid = cap::regclass AND a.attnum > 0 AND NOT a.attisdropped;
     IF cols IS DISTINCT FROM
        'connection_key,monthly_budget_usd,month_start,month_spent_usd,month_calls,alert_pct,hard_stop,over_cap,stops' THEN
-        RAISE EXCEPTION 'migration 449: % columns are %', cap, cols;
+        RAISE EXCEPTION 'migration 450: % columns are %', cap, cols;
     END IF;
     IF pg_catalog.has_schema_privilege('catalog_owner', 'catalog', 'CREATE') THEN
-        RAISE EXCEPTION 'migration 449: catalog_owner still has CREATE on schema catalog';
+        RAISE EXCEPTION 'migration 450: catalog_owner still has CREATE on schema catalog';
     END IF;
 END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('449', now(), 'AA-1113: catalog.v_llm_connection_cap_v1 (month spend, over_cap, stops per capped LLM '
+VALUES ('450', now(), 'AA-1113: catalog.v_llm_connection_cap_v1 (month spend, over_cap, stops per capped LLM '
                       'connection; tripplanner + crm_app) and catalog.v_llm_gateway_config_v1 + free_text, '
                       'over_cap_connections')
 ON CONFLICT (version) DO NOTHING;

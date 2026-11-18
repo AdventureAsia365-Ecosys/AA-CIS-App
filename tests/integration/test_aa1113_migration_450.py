@@ -1,14 +1,14 @@
-"""AA-1113 (root ADR 0009 decisions 6 and 10) — migrations 448 and 449: the free-text registry column and the
+"""AA-1113 (root ADR 0009 decisions 6 and 10) — migrations 449 and 450: the free-text registry column and the
 connection cap contract views, applied the way DB Migrate applies a cis/ file since X1 S22.
 
-448 is replayed by conftest like every plain file (shared.llm_role_config.free_text); conftest skips 323, 341, 350 and
-449 (catalog recipe, 245's owners). This module builds on test_aa860_migration_246's module fixture (Dev after 244 +
-245, db_migrator with rl-002's memberships), applies 323, 341, 350, then 449 twice as db_migrator under the live-owner
+449 is replayed by conftest like every plain file (shared.llm_role_config.free_text); conftest skips 323, 341, 350 and
+450 (catalog recipe, 245's owners). This module builds on test_aa860_migration_246's module fixture (Dev after 244 +
+245, db_migrator with rl-002's memberships), applies 323, 341, 350, then 450 twice as db_migrator under the live-owner
 switch (errors NOT swallowed). Teardown drops both views and revokes the four files' column grants and crm_app's
 schema USAGE, so later modules see the replay state.
 
-  * 448: every tenant stage marked free_text, a pii stage can never be marked (CHECK);
-  * 449: registered once; the gateway view keeps 350's columns in order and appends free_text, over_cap_connections;
+  * 449: every tenant stage marked free_text, a pii stage can never be marked (CHECK);
+  * 450: registered once; the gateway view keeps 350's columns in order and appends free_text, over_cap_connections;
     the cap view's columns; owners, barriers and the exact consumers (tripplanner both, crm_app the cap view only);
   * the cap view (as crm_app / tripplanner, rolled back): this UTC month's ledger spend per capped connection, the
     policy defaults, over_cap and stops; a connection with no budget has no row; last month's rows do not count;
@@ -33,13 +33,13 @@ from test_aa860_migration_246 import db_migrator_login  # noqa: E402,F401  (modu
 from shared.aa_llm import contract  # noqa: E402
 
 HERE = os.path.dirname(__file__)
-M448 = os.path.join(HERE, "..", "..", "api", "migrations", "448_aa1113_stage_free_text.sql")
-M449 = os.path.join(HERE, "..", "..", "api", "migrations", "449_aa1113_connection_cap_views.sql")
+M449 = os.path.join(HERE, "..", "..", "api", "migrations", "449_aa1113_stage_free_text.sql")
+M450 = os.path.join(HERE, "..", "..", "api", "migrations", "450_aa1113_connection_cap_views.sql")
 CAP_VIEW = "catalog.v_llm_connection_cap_v1"
 APPENDED = ("free_text", "over_cap_connections")
 CAP_COLUMNS = ("connection_key", "monthly_budget_usd", "month_start", "month_spent_usd", "month_calls", "alert_pct",
                "hard_stop", "over_cap", "stops")
-GRANTED_449 = {
+GRANTED_450 = {
     "llm_role_config": {"free_text"},
     "llm_provider_connection": {"monthly_budget_usd"},
     "llm_connection_cost_policy": {"connection_key", "alert_pct", "hard_stop"},
@@ -52,33 +52,33 @@ def _role_exists(a, role):
     return a.fetchone() is not None
 
 
-def undo_449(a):
+def undo_450(a):
     a.execute("DROP VIEW IF EXISTS catalog.v_llm_gateway_config_v1")
     a.execute(f"DROP VIEW IF EXISTS {CAP_VIEW}")
     t350.undo_350(a)
-    for table, cols in GRANTED_449.items():
+    for table, cols in GRANTED_450.items():
         a.execute(f"REVOKE SELECT ({', '.join(sorted(cols))}) ON shared.{table} FROM catalog_owner")
     if _role_exists(a, "crm_app"):
         a.execute("REVOKE USAGE ON SCHEMA catalog FROM crm_app")
-    a.execute("DELETE FROM shared.schema_versions WHERE version = '449'")
+    a.execute("DELETE FROM shared.schema_versions WHERE version = '450'")
 
 
 @pytest.fixture(scope="module", autouse=True)
-def applied_449(db_migrator_login):  # noqa: F811
+def applied_450(db_migrator_login):  # noqa: F811
     admin = t245._connect()
     admin.autocommit = True
     a = admin.cursor()
     try:
-        undo_449(a)
+        undo_450(a)
         t323._apply(t323.MIGRATION)
         t323._apply(t341.M341)
         t323._apply(t350.M350)
-        t323._apply(M448)                                    # replayed by conftest already: a no-op re-run
-        t323._apply(M449)
-        t323._apply(M449)                                    # idempotent re-run
+        t323._apply(M449)                                    # replayed by conftest already: a no-op re-run
+        t323._apply(M450)
+        t323._apply(M450)                                    # idempotent re-run
         yield
     finally:
-        undo_449(a)
+        undo_450(a)
         admin.close()
 
 
@@ -105,17 +105,17 @@ def _cols(cur, view):
     return tuple(r[0] for r in cur.fetchall())
 
 
-# ── 448 ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+# ── 449 ──────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-def test_448_registered_and_every_tenant_stage_marked(cur):
-    cur.execute("SELECT count(*) AS n FROM shared.schema_versions WHERE version = '448'")
+def test_449_registered_and_every_tenant_stage_marked(cur):
+    cur.execute("SELECT count(*) AS n FROM shared.schema_versions WHERE version = '449'")
     assert cur.fetchone()[0] == 1
     rows = _rows(cur, "SELECT stage, free_text FROM shared.llm_role_config WHERE stage ~ '^t[0-9]+_' "
                       "AND pii_class <> 'pii'")
     assert all(r["free_text"] for r in rows)
 
 
-def test_448_a_pii_stage_is_never_free_text(cur):
+def test_449_a_pii_stage_is_never_free_text(cur):
     import psycopg2
 
     cur.execute("""INSERT INTO shared.llm_role_config
@@ -127,10 +127,10 @@ def test_448_a_pii_stage_is_never_free_text(cur):
         cur.execute("UPDATE shared.llm_role_config SET free_text = true WHERE stage = 'zz_pii_stage'")
 
 
-# ── 449: shape and grants ────────────────────────────────────────────────────────────────────────────────────────
+# ── 450: shape and grants ────────────────────────────────────────────────────────────────────────────────────────
 
-def test_449_registered_once(cur):
-    cur.execute("SELECT count(*) AS n FROM shared.schema_versions WHERE version = '449'")
+def test_450_registered_once(cur):
+    cur.execute("SELECT count(*) AS n FROM shared.schema_versions WHERE version = '450'")
     assert cur.fetchone()[0] == 1
 
 
@@ -168,13 +168,13 @@ def test_catalog_owner_reads_only_the_granted_columns_of_the_new_tables(cur):
                         WHERE a.attrelid = %s::regclass AND a.attnum > 0 AND NOT a.attisdropped
                           AND has_column_privilege('catalog_owner', a.attrelid, a.attnum, 'SELECT')""",
                     (f"shared.{table}",))
-        assert {r[0] for r in cur.fetchall()} == GRANTED_449[table], table
-    for table in GRANTED_449:
+        assert {r[0] for r in cur.fetchall()} == GRANTED_450[table], table
+    for table in GRANTED_450:
         cur.execute("SELECT has_table_privilege('catalog_owner', %s, 'SELECT')", (f"shared.{table}",))
         assert cur.fetchone()[0] is False, f"table-wide SELECT on {table}"
 
 
-# ── 449: behaviour ───────────────────────────────────────────────────────────────────────────────────────────────
+# ── 450: behaviour ───────────────────────────────────────────────────────────────────────────────────────────────
 
 def _connection(cur, key, budget):
     cur.execute("""INSERT INTO shared.llm_provider_connection
