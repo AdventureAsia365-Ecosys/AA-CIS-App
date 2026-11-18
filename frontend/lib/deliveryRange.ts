@@ -104,26 +104,37 @@ function lastDayOf(endMs: number): string {
   return new Date(midnight ? endMs - MS_DAY : endMs).toISOString().slice(0, 10);
 }
 
+const tenthOfDays = (ms: number) => Math.round((Math.max(ms, 0) / MS_DAY) * 10) / 10;
+
+/** The asked start, measured start and end of a window in ms, or null when one is missing or not a time. */
+function windowTimes(w: RangeWindow | null | undefined): { asked: number; start: number; end: number } | null {
+  if (!w?.start || !w?.end) return null;
+  const t = { asked: Date.parse(w.requested_start ?? w.start), start: Date.parse(w.start), end: Date.parse(w.end) };
+  return Object.values(t).some(Number.isNaN) ? null : t;
+}
+
+/** The start moved up to `completeSince` (YYYY-MM-DD) when that day is later, else null. */
+function ownClip(start: number, end: number, completeSince?: string | null): number | null {
+  if (!isDay(completeSince)) return null;
+  const since = Date.parse(`${completeSince}T00:00:00Z`);
+  return since > start ? Math.min(since, end) : null;
+}
+
 /** The note of a window, or null without one. `custom` labels it by dates instead of "last N days"; `completeSince`
  *  (YYYY-MM-DD) clips a window the API did not clip itself (the git activity starts at the asked day, its history at
  *  the commits' complete day). */
 export function windowNote(w: RangeWindow | null | undefined, custom: boolean,
   completeSince?: string | null): WindowNote | null {
-  if (!w?.start || !w?.end) return null;
-  const asked = Date.parse(w.requested_start ?? w.start);
-  let start = Date.parse(w.start);
-  const end = Date.parse(w.end);
-  if ([asked, start, end].some(Number.isNaN)) return null;
-  const since = isDay(completeSince) ? Date.parse(`${completeSince}T00:00:00Z`) : NaN;
-  const own = !Number.isNaN(since) && since > start;
-  if (own) start = Math.min(since, end);
-  const clipped = start - asked >= 1000;
-  const tenth = (ms: number) => Math.round((Math.max(ms, 0) / MS_DAY) * 10) / 10;
-  const days = typeof w.days === "number" ? w.days : tenth(end - asked);
-  const covered = own || typeof w.covered_days !== "number" ? tenth(end - start) : w.covered_days;
+  const t = windowTimes(w);
+  if (!t || !w) return null;
+  const own = ownClip(t.start, t.end, completeSince);
+  const start = own ?? t.start;
+  const clipped = start - t.asked >= 1000;
+  const days = typeof w.days === "number" ? w.days : tenthOfDays(t.end - t.asked);
+  const served = own === null && typeof w.covered_days === "number" ? w.covered_days : tenthOfDays(t.end - start);
   return {
-    custom, days: Math.round(days), from: new Date(asked).toISOString().slice(0, 10), to: lastDayOf(end), clipped,
-    coveredDays: clipped ? covered : days, startsOn: new Date(start).toISOString().slice(0, 10),
+    custom, days: Math.round(days), from: new Date(t.asked).toISOString().slice(0, 10), to: lastDayOf(t.end), clipped,
+    coveredDays: clipped ? served : days, startsOn: new Date(start).toISOString().slice(0, 10),
   };
 }
 
