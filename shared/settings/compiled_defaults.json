@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -910,6 +910,78 @@
      "lower": "Chỉ pipeline nhanh mới hiện xanh; shard test chậm nổi bật.",
      "when": "Giảm sau khi pipeline đã chia shard và có cache; tăng cho app cố ý chạy bộ end-to-end dài.",
      "example": "Với mặc định 15 phút, workflow deploy có p95 12 phút là xanh."
+    }
+   }
+  },
+  {
+   "key": "cis.delivery.custom_range_cache_entries",
+   "app": "cis",
+   "area": "delivery",
+   "label": "Delivery: custom ranges kept in the cache",
+   "description": "Platform › Delivery (api/services/delivery_range.py) keeps the result of this many custom date ranges in the API process until the next delivery collection replaces them; the least recently used range is dropped first. Starting value 20.",
+   "value_type": "int",
+   "unit": "ranges",
+   "min_value": 1,
+   "max_value": 200,
+   "allowed_values": null,
+   "default_value": 20,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many computed custom date ranges the Delivery page keeps, so opening the same range again is instant.",
+     "raise": "More ranges stay ready; each kept range uses a little more API memory.",
+     "lower": "Fewer ranges stay ready; a range asked again after it is dropped is computed again (a few seconds).",
+     "when": "Raise it when several people compare many ranges in the same hour; the cache empties at each hourly collection anyway.",
+     "example": "With the default of 20, the 21st different range drops the one used longest ago."
+    },
+    "vi": {
+     "what": "Số khoảng thời gian tự chọn đã tính mà trang Delivery giữ lại, để mở lại cùng khoảng thì có ngay.",
+     "raise": "Nhiều khoảng được giữ sẵn hơn; mỗi khoảng giữ lại tốn thêm một ít bộ nhớ API.",
+     "lower": "Ít khoảng được giữ sẵn hơn; khoảng bị bỏ ra rồi hỏi lại thì được tính lại (vài giây).",
+     "when": "Tăng khi nhiều người so sánh nhiều khoảng trong cùng một giờ; bộ đệm vẫn được làm trống sau mỗi lượt thu thập hằng giờ.",
+     "example": "Với mặc định 20, khoảng khác nhau thứ 21 sẽ đẩy ra khoảng lâu chưa dùng nhất."
+    }
+   }
+  },
+  {
+   "key": "cis.delivery.custom_range_max_days",
+   "app": "cis",
+   "area": "delivery",
+   "label": "Delivery: longest custom date range (days)",
+   "description": "Platform › Delivery (api/services/delivery_range.py) refuses a custom date range longer than this many days (from and to included). The custom range is recomputed from the delivery collector's daily event files, which reach back about 98 days; a longer range is refused, never estimated. Starting value 90 days (the longest preset).",
+   "value_type": "int",
+   "unit": "days",
+   "min_value": 1,
+   "max_value": 400,
+   "allowed_values": null,
+   "default_value": 90,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The longest custom date range (in days, both ends included) the Delivery page computes.",
+     "raise": "Longer custom ranges are allowed, up to the history the collector keeps; each computation reads more data.",
+     "lower": "Only shorter custom ranges are allowed; the presets (7, 28 and 90 days) still work.",
+     "when": "Keep it at or under the collector's stored history (about 98 days); a range beyond the history is refused anyway.",
+     "example": "With the default of 90 days, 1 August to 29 October is allowed and 1 August to 30 October is refused."
+    },
+    "vi": {
+     "what": "Khoảng thời gian tự chọn dài nhất (tính bằng ngày, gồm cả hai đầu) mà trang Delivery tính.",
+     "raise": "Cho phép khoảng tự chọn dài hơn, tới mức lịch sử bộ thu thập còn giữ; mỗi lần tính đọc nhiều dữ liệu hơn.",
+     "lower": "Chỉ cho phép khoảng ngắn hơn; các mốc sẵn (7, 28 và 90 ngày) vẫn dùng được.",
+     "when": "Giữ bằng hoặc dưới lịch sử bộ thu thập lưu (khoảng 98 ngày); khoảng vượt lịch sử vẫn bị từ chối.",
+     "example": "Với mặc định 90 ngày, từ 1/8 tới 29/10 được phép còn từ 1/8 tới 30/10 bị từ chối."
     }
    }
   },
@@ -2324,6 +2396,42 @@
      "lower": "hard_stop: kết nối vượt ngân sách không bao giờ được gọi; job không còn đường nào khác sẽ dừng vì ngân sách và chờ.",
      "when": "Giữ hard_stop ở Dev để tránh test quá tay. Dùng failover_continue ở prod, nơi khách trả theo mức dùng và không được bị chặn bởi trần của nền tảng.",
      "example": "Với mặc định hard_stop, job mà mọi kết nối đều ở 100 % ngân sách sẽ dừng. Với failover_continue lệnh gọi sang kết nối kế, và nếu tất cả đều 100 % thì vẫn tới kết nối khoẻ đầu tiên và chuông admin báo việc đó."
+    }
+   }
+  },
+  {
+   "key": "cis.llm.idle_after_hours",
+   "app": "cis",
+   "area": "ai",
+   "label": "AI gateway: hours without a call before a connection reads idle",
+   "description": "AI gateway > Providers (api/services/llm_availability.py): a connection or model with no failure since its newest answered call reads ok while that call is at most this many hours old, then unknown with no reason, shown as No recent calls. The Need a look tile leaves such an idle row out (frontend/lib/aiGateway.ts needsLook follows the row badge). A failure newer than the answered call still reads blocked or degraded at once, whatever this value.",
+   "value_type": "int",
+   "unit": "hours",
+   "min_value": 1,
+   "max_value": 168,
+   "allowed_values": null,
+   "default_value": 6,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How long a working AI connection keeps its green ok badge on AI gateway > Providers after its last answered call. After that it shows No recent calls and is not counted in Need a look.",
+     "raise": "A connection used only now and then stays green longer; a connection that silently stopped answering also looks fine for longer.",
+     "lower": "The page tells you sooner that a connection has not been used; quiet connections show No recent calls more often.",
+     "when": "Raise it when connections that are only used a few times a day keep showing No recent calls; lower it when you want to notice an unused connection sooner.",
+     "example": "With the default of 6 hours, a connection whose last answered call was 7 hours ago shows No recent calls and the Need a look tile does not count it."
+    },
+    "vi": {
+     "what": "Một kết nối AI đang chạy tốt giữ nhãn xanh ok trên AI gateway > Providers bao lâu sau lần gọi có trả lời gần nhất. Sau mốc đó nó hiện No recent calls và không được tính vào ô Need a look.",
+     "raise": "Kết nối chỉ thỉnh thoảng mới dùng giữ màu xanh lâu hơn; kết nối âm thầm ngừng trả lời cũng trông như bình thường lâu hơn.",
+     "lower": "Trang báo sớm hơn rằng một kết nối chưa được dùng; kết nối ít dùng hiện No recent calls thường hơn.",
+     "when": "Tăng khi các kết nối chỉ dùng vài lần mỗi ngày cứ hiện No recent calls; giảm khi muốn biết sớm hơn một kết nối không được dùng.",
+     "example": "Với mặc định 6 giờ, kết nối có lần gọi trả lời gần nhất cách đây 7 giờ hiện No recent calls và ô Need a look không tính nó."
     }
    }
   },
@@ -9324,6 +9432,42 @@
      "lower": "Tắt: một quản trị viên tự đổi được; nhanh hơn, chỉ có e-mail làm bước kiểm tra.",
      "when": "Bật khi ra mắt bản production đầu tiên hoặc có tenant trả phí đầu tiên.",
      "example": "Với mặc định tắt (off, giai đoạn phát triển)."
+    }
+   }
+  },
+  {
+   "key": "cis.spend.connection_provider_budget_usd",
+   "app": "cis",
+   "area": "spend",
+   "label": "LLM connections: provider budget per month (USD)",
+   "description": "The monthly budget each LLM connection has at its provider (the AWS Budget of the account, the vendor console's monthly limit), by connection key, for example {\"acc3\": 100}. The apps split it: the CIS share is the connection's monthly budget (AI gateway > Providers > Connections), the CRM share is the CRM setting crm.ai.connection_monthly_cap_usd. AI gateway > Budgets shows the split and flags a connection whose two shares add up to more than this budget. A connection left out has no provider budget declared and is not checked. Read by api/services/llm_connection_split.py; no gateway call reads it.",
+   "value_type": "json",
+   "unit": "USD/month",
+   "min_value": 0,
+   "max_value": 1000000,
+   "allowed_values": null,
+   "default_value": {},
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The monthly budget a model connection has at its provider, the ceiling that the apps' own monthly caps on that connection must fit under together.",
+     "raise": "More room for the apps' shares; set it only to what the provider budget really is, or the check stops meaning anything.",
+     "lower": "The Budgets tab flags the connection sooner when the CIS and CRM shares add up to more than the provider allows.",
+     "when": "Set it when a provider budget is created or changed (an AWS Budget in Terraform, a vendor console limit), on the same day.",
+     "example": "With {\"acc3\": 100}, a CIS share of 80 and a CRM share of 30 on acc3 add up to 110: the Budgets tab flags acc3 as over-allocated by 10 USD."
+    },
+    "vi": {
+     "what": "Ngân sách hằng tháng của một kết nối model tại nhà cung cấp, là mức trần mà hạn mức tháng riêng của các app trên kết nối đó cộng lại phải nằm dưới.",
+     "raise": "Thêm chỗ cho phần của các app; chỉ đặt đúng bằng ngân sách thật ở nhà cung cấp, nếu không phép kiểm không còn ý nghĩa.",
+     "lower": "Tab Budgets đánh dấu kết nối sớm hơn khi phần của CIS và CRM cộng lại vượt mức nhà cung cấp cho phép.",
+     "when": "Đặt ngay trong ngày khi tạo hoặc đổi ngân sách ở nhà cung cấp (AWS Budget trong Terraform, giới hạn trên console của vendor).",
+     "example": "Với {\"acc3\": 100}, phần CIS 80 và phần CRM 30 trên acc3 cộng lại 110: tab Budgets đánh dấu acc3 vượt phân bổ 10 USD."
     }
    }
   },

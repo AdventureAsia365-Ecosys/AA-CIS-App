@@ -78,6 +78,8 @@ from services.acp_publish.dispatch import (
     publish_to_channel, put_back_remote,
 )
 from services.acp_publish.idempotency import claim, finish, publish_key
+from api.routers._publish_checks import (PUBLISH_REQUEST_LIVE, REQUEST_LIVE_SQL,  # noqa: F401  AA-1127
+                                         publishable_channel as _publishable_channel)
 from services.acp_publish import put_back as _pb
 from services.acp_publish import retired_pages as _rp
 from services.tour_lifecycle import fanout as _fanout
@@ -304,6 +306,7 @@ _PENDING_SQL = """
           SELECT 1 FROM acp_shared.publish_log pl
           WHERE pl.piece_id = cp.piece_id AND pl.status IN ('published', 'requested')
       )
+      AND NOT """ + REQUEST_LIVE_SQL + """
     ORDER BY cp.created_at DESC
 """
 
@@ -406,7 +409,8 @@ _PUBLISH_PIECE_SQL = """
                    EXISTS (SELECT 1 FROM acp_shared.content_piece newer
                            WHERE newer.angle_gate_request_id = cp.angle_gate_request_id
                              AND newer.tenant_id = cp.tenant_id
-                             AND newer.created_at > cp.created_at) AS superseded
+                             AND newer.created_at > cp.created_at) AS superseded,
+                   """ + REQUEST_LIVE_SQL + """ AS request_live
             FROM acp_shared.content_piece cp
             JOIN acp_shared.angle_gate_request agr ON agr.request_id = cp.angle_gate_request_id
             LEFT JOIN acp_shared.angle_gate_option ago
@@ -417,41 +421,6 @@ _PUBLISH_PIECE_SQL = """
             """
 _PUBLISH_INTEGRATION_SQL = ("SELECT secret_key FROM shared.tenant_integrations "
                             "WHERE tenant_id = $1::uuid AND integration_type = $2")
-
-
-def _publishable_channel(piece) -> str:
-    """The checks between reading the piece and its connection: raises the route's 404 / 422 / 409, returns the
-    piece's channel."""
-    if not piece:
-        raise HTTPException(status_code=404, detail="Content piece not found")
-    # AA-613 — publish gate under the 3-tier severity model: only 'approved' pieces publish.
-    # A warn-only piece (off-brand voice / framework miss) already finalized as 'approved', so it
-    # publishes fine. A 'held' piece = unresolved product-truth after ≤2 retries (grounding,
-    # banned, missing CTA, FACT_CHECK, cannibalization) — it is fully visible to the tenant in My
-    # Content and editable, but must NOT be published until the tenant edits it (which re-opens it
-    # for a fresh write) or an admin clears it. 422 (not 404) here because the tenant DOES own this
-    # piece and the reason is actionable — no existence leak (ownership already confirmed above).
-    # AA-770 (S233) — the tenant always receives the content: a 'held' piece (a gate verdict, an
-    # admin-only quality label) is listed, read, edited and exported like an approved one. Only a
-    # piece with no content yet ('processing') or a failed write is refused here. AA-1088 (M3): its
-    # PUBLISH needs the account owner's explicit "publish anyway" (publish() below, _held_refusal()).
-    if piece["status"] not in ("approved", "held"):
-        raise HTTPException(
-            status_code=422,
-            detail="This piece isn't written yet — try again once it shows as Ready.",
-        )
-    # AA-802 (S238) — only a request's latest piece is publishable (the /pending rule above). An
-    # older version (earlier attempt, a re-write after a reopen) is refused even when the caller
-    # still holds its piece_id from a stale page. 409: the tenant owns it, a newer version exists.
-    if piece.get("superseded"):
-        raise HTTPException(
-            status_code=409,
-            detail="A newer version of this content exists — reload and publish that one.",
-        )
-    channel = piece["channel"]
-    if channel not in SUPPORTED_CHANNELS:
-        raise HTTPException(status_code=404, detail=f"Publishing to '{channel}' is not yet supported")
-    return channel
 
 
 # ── AA-1088 (M3, S278 system audit): a held piece needs the owner's explicit "publish anyway" ────────────────────────

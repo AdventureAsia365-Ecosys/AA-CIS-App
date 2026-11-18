@@ -119,3 +119,26 @@ async def test_publish_not_written_yet_still_422_before_the_superseded_check():
     with pytest.raises(HTTPException) as exc_info:
         await mod.publish(PIECE_ID, _request(pool), TENANT)
     assert exc_info.value.status_code == 422
+
+
+# ── AA-1127 (S1): one live post per request and channel ─────────────────────────────────────────────
+
+def test_pending_and_publish_read_one_request_live_rule():
+    """The Publish list and publish() share one fragment, so the list never offers what publish() refuses."""
+    frag = _norm(mod.REQUEST_LIVE_SQL)
+    assert frag in _norm(mod._PENDING_SQL)
+    assert "NOT " + frag in _norm(mod._PENDING_SQL)
+    assert frag in _norm(mod._PUBLISH_PIECE_SQL)
+    assert "op.piece_id <> cp.piece_id" in frag
+    assert "other.status IN ('published', 'requested')" in frag
+    assert "other.channel = COALESCE(cp.channel, agr.channel)" in frag
+
+
+@pytest.mark.asyncio
+async def test_publish_refuses_a_piece_whose_request_is_already_live_with_409():
+    pool, conn = _pool(_piece(superseded=False, request_live=True))
+    with pytest.raises(HTTPException) as exc_info:
+        await mod.publish(PIECE_ID, _request(pool), TENANT)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == mod.PUBLISH_REQUEST_LIVE
+    assert conn.fetchrow.call_count == 1  # refused before the integration lookup / claim

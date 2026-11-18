@@ -77,15 +77,35 @@ WHERE pt.tenant_id = $1::uuid AND pt.master_status <> 'trashed'
   )
 """
 
-# demand totals per market
-_DEMAND_BY_MARKET_SQL = """
-SELECT market,
-       count(*)                                    AS keywords,
-       count(*) FILTER (WHERE search_volume > 0)   AS keywords_with_volume,
-       coalesce(sum(search_volume), 0)::bigint     AS total_volume
-FROM acp_contract.search_demand
-GROUP BY market
-ORDER BY total_volume DESC
+# AA-1127 (C1, S283 UI audit): the keywords Master Content uses (published_tours.seo_keywords_used), lower-cased, with
+# the number of masters using each. ONE definition for the Keywords tab's "Tours using" and the demand totals' linked
+# volume, so the two never disagree. $1 = the master tenant.
+_USED_CTE = """
+used AS (
+    SELECT lower(kw) AS keyword, count(DISTINCT pt.tour_id) AS tours_using
+    FROM gold_aa_internal.published_tours pt
+    CROSS JOIN LATERAL jsonb_array_elements_text(
+        CASE WHEN jsonb_typeof(pt.seo_keywords_used) = 'array' THEN pt.seo_keywords_used ELSE '[]'::jsonb END
+    ) kw
+    WHERE pt.tenant_id = $1::uuid AND pt.master_status <> 'trashed'
+    GROUP BY lower(kw)
+)"""
+
+# demand totals per market. AA-1127 (C1): only the buyer markets (_MARKETS; "US-PAA2" is the storage key of the SERP
+# deep-PAA top-up rows, not a market) and, next to the raw total, the volume of the keywords our content uses
+# (generic terms with no linked tour, e.g. "hotel", inflated the raw total). $2 = the markets.
+_DEMAND_BY_MARKET_SQL = "WITH " + _USED_CTE + """
+SELECT sd.market,
+       count(*)                                                            AS keywords,
+       count(*) FILTER (WHERE sd.search_volume > 0)                        AS keywords_with_volume,
+       coalesce(sum(sd.search_volume), 0)::bigint                          AS total_volume,
+       count(*) FILTER (WHERE u.keyword IS NOT NULL)                       AS linked_keywords,
+       coalesce(sum(sd.search_volume) FILTER (WHERE u.keyword IS NOT NULL), 0)::bigint AS linked_volume
+FROM acp_contract.search_demand sd
+LEFT JOIN used u ON u.keyword = lower(sd.keyword)
+WHERE sd.market = ANY($2::text[])
+GROUP BY sd.market
+ORDER BY linked_volume DESC, total_volume DESC
 """
 
 _PAA_COUNT_SQL = """
@@ -109,23 +129,17 @@ SELECT
 
 # ── Keywords tab ──────────────────────────────────────────────────────────────────────────
 # researched keywords with real volume + how many published masters use each (seo_keywords_used).
-_KEYWORDS_SQL = """
-WITH used AS (
-    SELECT lower(kw) AS keyword, count(DISTINCT pt.tour_id) AS tours_using
-    FROM gold_aa_internal.published_tours pt
-    CROSS JOIN LATERAL jsonb_array_elements_text(
-        CASE WHEN jsonb_typeof(pt.seo_keywords_used) = 'array' THEN pt.seo_keywords_used ELSE '[]'::jsonb END
-    ) kw
-    WHERE pt.tenant_id = $1::uuid AND pt.master_status <> 'trashed'
-    GROUP BY lower(kw)
-)
+# AA-1127 (C1): linked keywords first (most tours, then volume), so generic terms with 0 linked tours no longer top the
+# list; buyer markets only, like the demand totals. The page filters to linked keywords by default.
+_KEYWORDS_SQL = "WITH " + _USED_CTE + """
 SELECT sd.keyword, sd.market, sd.search_volume,
        coalesce(u.tours_using, 0) AS tours_using,
        (u.keyword IS NOT NULL)    AS used_in_content
 FROM acp_contract.search_demand sd
 LEFT JOIN used u ON u.keyword = lower(sd.keyword)
 WHERE sd.search_volume IS NOT NULL AND sd.search_volume > 0
-ORDER BY sd.search_volume DESC
+  AND sd.market = ANY($2::text[])
+ORDER BY (u.keyword IS NOT NULL) DESC, coalesce(u.tours_using, 0) DESC, sd.search_volume DESC, sd.keyword
 LIMIT 2000
 """
 
@@ -196,10 +210,10 @@ async def get_seo_intelligence(
     async with pool.acquire() as conn:
         cov = await conn.fetchrow(_COVERAGE_SQL, _AA_INTERNAL)
         with_vol = await conn.fetchval(_WITH_VOLUME_SQL, _AA_INTERNAL)
-        demand = await conn.fetch(_DEMAND_BY_MARKET_SQL)
+        demand = await conn.fetch(_DEMAND_BY_MARKET_SQL, _AA_INTERNAL, _MARKETS)
         paa_total = await conn.fetchval(_PAA_COUNT_SQL)
         fresh = await conn.fetchrow(_FRESHNESS_SQL, _fresh_days())
-        keywords = await conn.fetch(_KEYWORDS_SQL, _AA_INTERNAL)
+        keywords = await conn.fetch(_KEYWORDS_SQL, _AA_INTERNAL, _MARKETS)
         paa_rows = await conn.fetch(_PAA_SQL)
         gaps = await conn.fetch(_GAPS_SQL, _AA_INTERNAL)
 

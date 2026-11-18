@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -260,8 +260,14 @@ LLM_STATS = [{"connection_key": "llm-main", "calls_24h": 20, "errors_24h": 1, "r
               "p95_24h": 450.0, "calls_7d": 9, "errors_7d": 1, "refused_7d": 0, "p50_7d": 310.0, "p95_7d": 470.0}]
 
 
+# AA-1127 (C2): platform_cost.AI_SPEND_SQL (rolled-up + raw days) answers with the same month as LEDGER, per app row.
+AI_SPEND_ROWS = [{"app": "cis", "provider": r["provider"], "account": r["account"], "calls": r["month_calls"],
+                  "cost_usd": r["month_usd"], "billed_in_acc2": False} for r in LEDGER]
+
+
 def _provider_pool(fail=()):
     return FakePool({
+        "FROM shared.llm_call_daily": [dict(r) for r in AI_SPEND_ROWS],   # first: AI_SPEND_SQL also names llm_call_log
         "coalesce(connection_key, account) AS connection_key": [dict(r) for r in LLM_STATS],
         "NOT cache_hit": {"calls_24h": 2, "errors_24h": 1, "refused_24h": 0, "p50_24h": 1500.0, "p95_24h": 2900.0,
                           "calls_7d": 2, "errors_7d": 1, "refused_7d": 0, "p50_7d": 1500.0, "p95_7d": 2900.0},
@@ -338,6 +344,20 @@ def test_read_providers_lists_every_paid_source(stubs):
     assert out["totals"]["month_usd"] == round(21.0 + 3.0 + 0.9 + 0.4 + 2.0, 4)
 
 
+def test_the_llm_month_is_the_overview_figure(stubs):
+    """AA-1127 (C2): the page's AI (LLM) month total is platform_cost.ai_spend_by_provider over the same ledger (the
+    Overview, Spend and Platform cost figure), apart from the DataForSEO / Geoapify spend in totals.month_usd."""
+    from api.services import platform_cost as pc
+    pool = _provider_pool()
+    out = asyncio.run(gw.read_providers(pool, now=NOW))
+    shared_read = asyncio.run(pc.ai_spend_by_provider(_provider_pool(), None, NOW))
+    assert out["totals"]["llm_month_usd"] == shared_read["total_usd"] == round(21.0 + 3.0 + 0.9 + 0.4, 4)
+    assert out["totals"]["llm_month_by_family"] == shared_read["by_provider"] == {
+        "bedrock": 21.0, "openai": 3.4, "jev": 0.9}
+    assert out["totals"]["month_usd"] == round(out["totals"]["llm_month_usd"] + 2.0, 4)   # + DataForSEO
+    assert pool.ran("FROM shared.llm_call_daily") == [(MONTH.date(), date(2026, 3, 15))]   # month to date
+
+
 def test_one_failing_source_keeps_the_others(stubs):
     out = asyncio.run(gw.read_providers(_provider_pool(fail=("FROM shared.dfs_call_log",)), now=NOW))
     by = {p["key"]: p for p in out["providers"]}
@@ -355,8 +375,9 @@ def test_unreadable_ledger_blanks_spend_but_keeps_health(stubs):
     main = out["providers"][0]
     assert main["status"] == "open" and main["spend"] is None and "LLM ledger read failed" in main["error"]
     assert out["unattributed_llm"] is None
-    assert [e["source"] for e in out["errors"]] == ["llm_ledger", "llm_stats"]
+    assert [e["source"] for e in out["errors"]] == ["llm_ledger", "llm_stats", "ai_spend"]
     assert main["stats"] is None
+    assert out["totals"]["llm_month_usd"] is None and out["totals"]["llm_month_by_family"] is None
 
 
 def test_unreadable_registry_gives_one_placeholder_row(stubs, monkeypatch):

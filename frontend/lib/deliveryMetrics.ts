@@ -4,6 +4,8 @@
 // (api/services/delivery_metrics.py, GET /admin/platform/delivery) with each metric's colour and the thresholds in
 // force (settings cis.delivery.*). Definitions of every number: root docs/guides/delivery-metrics.md.
 
+import type { RangeMeta } from "./deliveryRange";
+
 export const DELIVERY_PATH = "/api/admin/platform/delivery";
 export const GUIDE_PATH = "docs/guides/delivery-metrics.md";
 export const SETTINGS_HREF = "/admin/platform/settings?app=cis&area=delivery";
@@ -26,7 +28,11 @@ export interface Dora {
   rework_rate: { value: number | null; n: number; rework: number };
 }
 
-export interface SegmentStat { segment: SegmentKey; p50_h: number | null; p90_h: number | null; n: number }
+export interface SegmentStat {
+  segment: SegmentKey; p50_h: number | null; p90_h: number | null; n: number;
+  /** AA-1135: collectors from 18/11/2026 on */
+  p95_h?: number | null;
+}
 
 export interface WorkflowRow {
   name: string; file: string; runs: number; failures: number; failure_rate: number | null; p50_s: number | null;
@@ -69,7 +75,7 @@ export interface ChangeRow {
 
 export interface DeliveryApp {
   id: string; name: string; repo: string; environment: string;
-  window: { start: string; end: string; days: number; covered_days?: number };
+  window: { start: string; end: string; days: number; covered_days?: number; requested_start?: string };
   complete_since: string | null;
   dora: Dora;
   lead_time_segments: SegmentStat[];
@@ -97,6 +103,8 @@ export interface DeliveryResp {
   collection: { requests?: number | null; stopped?: string | null; errors?: string[] } | null;
   apps: DeliveryApp[];
   thresholds: Record<Exclude<MetricKey, "main">, Band> & { main_red_hours: number; min_sample: number };
+  /** AA-1135: the range served and what the date picker may offer */
+  range?: RangeMeta;
   cache_ttl_s: number;
   loaded_at: string;
 }

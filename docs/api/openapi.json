@@ -37713,6 +37713,62 @@
             }
           },
           {
+            "description": "the window: a preset of the collector, or custom with from and to",
+            "in": "query",
+            "name": "range",
+            "required": false,
+            "schema": {
+              "default": "28d",
+              "description": "the window: a preset of the collector, or custom with from and to",
+              "enum": [
+                "7d",
+                "28d",
+                "90d",
+                "custom"
+              ],
+              "title": "Range",
+              "type": "string"
+            }
+          },
+          {
+            "description": "custom range: first day (UTC), included",
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "custom range: first day (UTC), included",
+              "title": "From"
+            }
+          },
+          {
+            "description": "custom range: last day (UTC), included",
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "custom range: last day (UTC), included",
+              "title": "To"
+            }
+          },
+          {
             "in": "header",
             "name": "x-admin-secret",
             "required": false,

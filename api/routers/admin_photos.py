@@ -36,6 +36,8 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from api.routers.admin import verify_admin_secret
+from services.places.store import MASTER_TENANT_ID
+from shared import tour_liveness as _tl
 
 logger = structlog.get_logger()
 
@@ -84,11 +86,20 @@ def _photo(row) -> dict:
     return d
 
 
+# AA-1127 (C1): the tours a photo coverage figure counts, one per served raw tour (shared/tour_liveness: live Master
+# Content of the master tenant $1 + live source), with its country. Base and covered both read it.
+SERVED_TOURS_SQL = (
+    "SELECT DISTINCT rt.tour_id, rt.country FROM gold_aa_internal.published_tours pt "
+    "JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id AND " + _tl.live_source_sql("rt") + " "
+    "WHERE pt.tenant_id = $1::uuid AND " + _tl.live_master_sql("pt"))
+
+
 @router.get("/summary", summary="Photo coverage per country + last sync")
 async def summary(request: Request):
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         rows = await conn.fetch(
+            "WITH served AS (" + SERVED_TOURS_SQL + ")"
             """
             SELECT country, count(*) AS photos,
                    count(*) FILTER (WHERE tour_id IS NOT NULL AND status = 'matched') AS with_tour,
@@ -97,19 +108,21 @@ async def summary(request: Request):
                    count(*) FILTER (WHERE status = 'rejected') AS rejected,
                    count(*) FILTER (WHERE status = 'error') AS errors,
                    count(DISTINCT tour_folder) AS tour_folders,
-                   count(DISTINCT tour_id) FILTER (WHERE status = 'matched') AS tours_covered,
+                   count(DISTINCT tour_id) FILTER (WHERE status = 'matched' AND tour_id IN (SELECT tour_id FROM served))
+                       AS tours_covered,
                    count(*) FILTER (WHERE s3_key_small IS NOT NULL) AS with_file,
                    count(*) FILTER (WHERE s3_key_medium IS NOT NULL) AS with_medium,
                    coalesce(sum(bytes) FILTER (WHERE s3_key_small IS NOT NULL), 0) AS source_bytes,
                    count(*) FILTER (WHERE match_source = 'manual') AS manual,
                    max(synced_at) AS last_synced
-              FROM shared.place_photo GROUP BY country ORDER BY country""")
+              FROM shared.place_photo GROUP BY country ORDER BY country""", MASTER_TENANT_ID)
         covers = {r["country"]: (r["n"], r["with_cover"]) for r in await conn.fetch(
             """SELECT country, count(*) AS n, count(cover_image_url) AS with_cover
                  FROM shared.destinations GROUP BY country""")}
+        # AA-1127 (C1, S283 UI audit): the base is the served tours (live Master Content + live source, the rule
+        # Places and TripPlanner use), not every active raw row (917 against Places' 844); covered counts the same set
         tours = {r["country"]: r["n"] for r in await conn.fetch(
-            """SELECT country, count(*) AS n FROM silver_aa_internal.raw_tours
-                WHERE source_status = 'active' AND deleted_at IS NULL GROUP BY country""")}
+            "SELECT country, count(*) AS n FROM (" + SERVED_TOURS_SQL + ") s GROUP BY country", MASTER_TENANT_ID)}
         job = await conn.fetchrow(
             """SELECT id, status, created_at, finished_at, result, error FROM shared.job
                 WHERE kind = 'photo_sync' ORDER BY created_at DESC LIMIT 1""")

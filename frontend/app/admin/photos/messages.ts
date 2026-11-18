@@ -38,7 +38,7 @@ export const PH = defineMessages(
     photosSynced: "Photos synced",
     syncedSub: (inS3: number, folders: number) => `${inS3} stored in S3 · ${folders} Drive folders`,
     toursWithPhotos: "Tours with photos",
-    toursSub: (covered: number, active: number) => `${covered} of ${active} active tours`,
+    toursSub: (covered: number, active: number) => `${covered} of ${active} live tours`,
     matchedToTour: "Matched to a tour",
     matchedSub: (manual: number, unmatched: number) => `${manual} assigned by hand · ${unmatched} unmatched`,
     placeCovers: "Place covers",

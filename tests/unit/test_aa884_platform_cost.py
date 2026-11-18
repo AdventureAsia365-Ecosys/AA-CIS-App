@@ -254,7 +254,7 @@ def test_provider_family():
     # Jev is logged as provider "typesafe" (shared/llm_client/decide.py): it must land on the Jev row, not "other".
     assert [pc.provider_family(p) for p in ("bedrock", "bedrock-satellite", "openai", "jev", None, "typesafe",
                                             "TypeSafe", "anthropic")] == \
-        ["bedrock", "bedrock", "openai", "jev", "other", "jev", "jev", "other"]
+        ["bedrock", "bedrock", "openai", "jev", "other", "jev", "jev", "anthropic"]   # AA-1127 C2: its own family
 
 
 @pytest.mark.asyncio

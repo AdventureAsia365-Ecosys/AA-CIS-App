@@ -9,7 +9,8 @@
   "exclude": [
    {"glob": "tests/*", "reason": "tests: complexity ratchet covers product code; tests still count for file size"},
    {"glob": "*conftest.py", "reason": "pytest fixtures"},
-   {"glob": "api/migrations/*", "reason": "migrations are append-only history"}
+   {"glob": "api/migrations/*", "reason": "migrations are append-only history"},
+   {"glob": "api/services/delivery_engine.py", "reason": "vendored byte copy of the root collector's delivery engine (AA-1135, api/services/delivery_engine.lock.json); its complexity is measured in AA-Ecosys"}
   ]
  },
  "typescript": {
@@ -33,6 +34,7 @@
    {"glob": "*.generated.*.ts", "reason": "generated (services/quality/lint.py writes it)"},
    {"glob": "*.d.ts", "reason": "type declarations"},
    {"glob": "api/migrations/*", "reason": "migrations are append-only history"},
+   {"glob": "api/services/delivery_engine.py", "reason": "vendored byte copy of the root collector's delivery engine (AA-1135); sized in AA-Ecosys"},
    {"glob": "*/fixtures/*", "reason": "test fixtures (recorded data)"},
    {"glob": "*/snapshots/*", "reason": "test snapshots (generated)"},
    {"glob": ".agents/*", "reason": "vendored agent skills"},
