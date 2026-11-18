@@ -11,13 +11,15 @@
 // page being read, or the first group. Opening a page (a link, a shared URL) opens its group. While a search query is
 // typed, every group with a match opens and shows only the matching pages; folding one during the search lasts until
 // the query changes and is not remembered.
+// AA-1132: when the manifest lists the generated "What changed in docs" page (root build_docs_reader.py rule 14), a
+// link to it sits above the groups (it also stays in its own group, Reference).
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { ChevronRight, Lock } from "lucide-react";
+import { ChevronRight, History, Lock } from "lucide-react";
 import { Button, EmptyState, K, Pressable, mono, sans, useT } from "../../_kit";
 import { M } from "./messages";
 import { DOC_NAV_MESSAGES, DOC_TYPE_MESSAGES } from "@/lib/docsReader.messages";
-import { DOC_NAV_GROUPS, matchesFilter, type DocEntry, type DocNav } from "@/lib/docsReader";
+import { DOC_NAV_GROUPS, docsChangesPage, matchesFilter, type DocEntry, type DocNav } from "@/lib/docsReader";
 import {
   DOC_GROUPS_STORAGE_KEY,
   defaultOpenGroups,
@@ -192,6 +194,34 @@ function DocGroup({
   );
 }
 
+/** AA-1132: the link to the generated "What changed in docs" page, or nothing when the manifest does not list it. */
+function ChangesLink({ pages, current, onOpen }: { pages: DocEntry[]; current: string | null; onOpen: (path: string) => void }) {
+  const t = useT(M);
+  const changes = useMemo(() => docsChangesPage(pages), [pages]);
+  if (!changes) return null;
+  const selected = changes.path === current;
+  return (
+    <a
+      href={`/admin/docs?path=${encodeURIComponent(changes.path)}`}
+      onClick={(e) => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+        e.preventDefault();
+        onOpen(changes.path);
+      }}
+      aria-current={selected ? "page" : undefined}
+      data-testid="docs-changes-link"
+      style={{
+        display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderTop: `1px solid ${K.line}`,
+        fontFamily: sans, fontSize: 13, fontWeight: 600, textDecoration: "none",
+        color: selected ? K.ink : K.accentDeep, background: selected ? K.accentTint : "transparent",
+      }}
+    >
+      <History size={14} aria-hidden="true" style={{ flexShrink: 0 }} />
+      {t("whatChanged")}
+    </a>
+  );
+}
+
 // ── list ────────────────────────────────────────────────────────────────────────────────────────
 
 /** The open groups, remembered per viewer; the open page's group opens each time a new page is opened. */
@@ -286,6 +316,7 @@ export function DocsList({
           </Button>
         </span>
       </div>
+      <ChangesLink pages={pages} current={current} onOpen={onOpen} />
       <nav aria-label={t("groupsAria")} style={{ maxHeight: isPhone ? "none" : "calc(100vh - 330px)", overflowY: "auto", paddingBottom: 8 }}>
         {searchPanel ? (
           searchPanel

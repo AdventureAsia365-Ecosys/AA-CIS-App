@@ -8,12 +8,15 @@
 // GitHub for admins only, and only while the bundle names a public repo (lib/docsReader.ts githubLinks). The catalog id
 // and path sit in a muted line under the facts. A page with `known_issue` shows it first as a warning (tech lead S283
 // c-s283-docs-reader-access: the reader opens to all staff once the wrong staff pages are fixed or carry a banner).
+// AA-1132: the facts line says "Last changed <date>" (bundle `last_changed`, else the newest `history` item), a page the
+// docs sync engine flags shows a "Needs review" badge, and the collapsible "Page history" list follows (DocHistory.tsx).
 
 import { ExternalLink, Lock } from "lucide-react";
 import { Badge, K, RADIUS, mono, useFormat, useT, type Tone } from "../../_kit";
 import { M } from "./messages";
+import { DocHistory, NeedsReviewBadge } from "./DocHistory";
 import { DOC_NAV_MESSAGES, DOC_TYPE_MESSAGES } from "@/lib/docsReader.messages";
-import { navOf, ownerLabel, readingMinutes, type DocEntry, type DocGithubLinks } from "@/lib/docsReader";
+import { lastChangedDate, navOf, ownerLabel, readingMinutes, type DocEntry, type DocGithubLinks } from "@/lib/docsReader";
 
 const STATUS_TONE: Record<string, Tone> = {
   active: "success",
@@ -85,6 +88,7 @@ function Badges({ page }: { page: DocEntry }) {
         </Badge>
       )}
       {page.generated && <Badge tone="neutral">{t("generated")}</Badge>}
+      <NeedsReviewBadge page={page} />
     </>
   );
 }
@@ -93,13 +97,13 @@ function Badges({ page }: { page: DocEntry }) {
 function Facts({ page, markdown, hasVietnamese }: { page: DocEntry; markdown: string; hasVietnamese: boolean }) {
   const t = useT(M);
   const { formatDate } = useFormat();
-  const changed = page.last_changed;
+  const changed = lastChangedDate(page);
   const facts: React.ReactNode[] = [
     page.owner && <span key="owner">{t("ownerLabel", ownerLabel(page.owner))}</span>,
     page.last_reviewed && <span key="rev">{t("reviewedOn", page.last_reviewed)}</span>,
-    changed?.date && (
-      <span key="upd" title={changed.sha.slice(0, 12)} data-testid="docs-updated">
-        {t("updatedOn", formatDate(changed.date))}
+    changed && (
+      <span key="upd" title={page.last_changed?.sha.slice(0, 12)} data-testid="docs-updated">
+        {t("lastChangedOn", formatDate(changed))}
       </span>
     ),
     <span key="min">{t("minutesRead", readingMinutes(markdown))}</span>,
@@ -125,13 +129,15 @@ function GithubLinks({ links }: { links: DocGithubLinks | null }) {
 }
 
 export function DocHeader({
-  page, title, markdown, links, hasVietnamese,
+  page, title, markdown, links, hasVietnamese, github,
 }: {
   page: DocEntry;
   title: string;
   markdown: string;
   links: DocGithubLinks | null;
   hasVietnamese: boolean;
+  /** The bundle's public repo ("<org>/<repo>", source.github), for the history links; null while it is private. */
+  github?: string | null;
 }) {
   const t = useT(M);
   return (
@@ -154,6 +160,7 @@ export function DocHeader({
         </span>
         <GithubLinks links={links} />
       </div>
+      <DocHistory page={page} github={github} />
     </header>
   );
 }

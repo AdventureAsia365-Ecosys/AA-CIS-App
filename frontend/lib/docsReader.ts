@@ -32,7 +32,15 @@ export type DocEntry = {
   nav_derived?: boolean | null;           // the group came from the folder
   known_issue?: string | null;            // banner: the page has known errors and is being fixed
   last_changed?: { sha: string; date: string } | null;   // the file's last commit
+  // AA-1132 (root build_docs_reader.py rule 13 + the docs sync engine). Optional: an older API answer has none of them.
+  history?: DocHistoryItem[];             // newest first: the commits that touched the file
+  needs_review?: boolean | null;          // a code dependency of the page changed after the page's last change
+  needs_review_reason?: string | null;    // why, when the bundle says
 };
+
+/** AA-1132: one commit of a page's history. A redacted line (a change to pages the reader may not open) has no sha
+ *  and no PR. */
+export type DocHistoryItem = { sha: string | null; date: string; subject: string; pr: number | null };
 
 export type DocNav = "start" | "guides" | "operations" | "architecture" | "reference" | "legal-security";
 /** AA-1133: the sidebar groups in display order (root frontmatter.schema.json `nav`). */
@@ -169,6 +177,62 @@ export function githubLinks(source: DocSource, path: string, canEdit: boolean): 
     history: `${base}/commits/${ref}/${file}`,
     edit: canEdit ? `${base}/edit/${ref}/${file}` : null,
   };
+}
+
+// ── page history and review flag (AA-1132) ──────────────────────────────────────────────────────
+
+/** The generated "What changed in docs" page of the bundle (root build_docs_reader.py rule 14). */
+export const DOCS_CHANGES_PATH = "docs/generated/docs-changes.md";
+export const DOCS_CHANGES_ID = "CAT-00-docs-changes";
+
+const GIT_SHA = /^[0-9a-f]{7,40}$/;
+
+function historySha(v: unknown): string | null {
+  return typeof v === "string" && GIT_SHA.test(v) ? v : null;
+}
+
+function historyPr(v: unknown): number | null {
+  return typeof v === "number" && Number.isInteger(v) && v > 0 ? v : null;
+}
+
+function historyItem(raw: unknown): DocHistoryItem | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.date !== "string" || !r.date || typeof r.subject !== "string") return null;
+  return { sha: historySha(r.sha), date: r.date, subject: r.subject.trim(), pr: historyPr(r.pr) };
+}
+
+/** A page's history items that have a usable shape, newest first as the API sends them; [] when absent. */
+export function pageHistory(page: { history?: unknown }): DocHistoryItem[] {
+  if (!Array.isArray(page.history)) return [];
+  return page.history.map(historyItem).filter((i): i is DocHistoryItem => i !== null);
+}
+
+/** The date of the page's last change: `last_changed`, else the newest history item; null when neither is known. */
+export function lastChangedDate(page: DocEntry): string | null {
+  const own = page.last_changed?.date;
+  if (typeof own === "string" && own) return own;
+  return pageHistory(page)[0]?.date ?? null;
+}
+
+/** GitHub links of a history item (commit, pull request) in the bundle's public repo; null parts when the bundle names
+ *  no public repo (`source.github`, like the Source / History links) or the item has no sha / PR. */
+export function historyLinks(item: DocHistoryItem, github: string | null | undefined): { commit: string | null; pr: string | null } {
+  if (!github || !/^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/.test(github)) return { commit: null, pr: null };
+  const base = `https://github.com/${github}`;
+  return { commit: item.sha ? `${base}/commit/${item.sha}` : null, pr: item.pr ? `${base}/pull/${item.pr}` : null };
+}
+
+/** The review flag of a page: null unless the bundle marks it `needs_review` true; then its reason, if any. */
+export function needsReview(page: DocEntry): { reason: string | null } | null {
+  if (page.needs_review !== true) return null;
+  const reason = typeof page.needs_review_reason === "string" ? page.needs_review_reason.trim() : "";
+  return { reason: reason || null };
+}
+
+/** The "What changed in docs" page when the manifest lists it (by path, else by catalog id). */
+export function docsChangesPage(pages: DocEntry[]): DocEntry | undefined {
+  return pages.find((p) => p.path === DOCS_CHANGES_PATH) ?? pages.find((p) => p.id === DOCS_CHANGES_ID);
 }
 
 // ── code blocks (AA-1133) ───────────────────────────────────────────────────────────────────────

@@ -269,6 +269,7 @@ function Reader({
         markdown={body}
         links={githubLinks(data.source, pagePath, role === "admin")}
         hasVietnamese={choice.available.includes("vi") && choice.lang !== "vi"}
+        github={data.source.github}
       />
       <ReaderColumns toc={toc}>
           <MarkdownView
