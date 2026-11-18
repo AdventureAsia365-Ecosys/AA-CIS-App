@@ -76,6 +76,37 @@ def test_catalogue_has_no_unallowlisted_violation(catalog):
         + rules.format_findings(result.violations))
 
 
+# AA-1112: shared CIS-side entries this replay cannot use, because conftest builds the object differently from Dev.
+# They are still checked on the Dev dump (AA-CIS-Infra db/check_rls_allowlist.py). One line each: why the replay misses.
+REPLAY_MISSES = {
+    ("a", "retired.acp_output_rules"): "no repo migration creates the table: conftest's X1 stand-in has no tenant_id",
+    ("a", "shared.tenant_tripplanner_site"): "conftest skips 379; test_aa1038_migration_379 applies it and undoes it",
+}
+
+
+def test_replay_misses_name_shared_cis_side_entries():
+    for rule, key in REPLAY_MISSES:
+        assert key in rules.ALLOWLIST.get(rule, {}) and rules.cis_side(rule, key), (rule, key)
+
+
+def test_cis_side_entries_are_used(catalog):
+    """AA-1112: an entry for a CIS object that matches nothing in the replay is stale (the table was dropped, the grant
+    revoked, the object fixed): remove it in the same PR. Entries for other owners' objects are checked on the Dev dump
+    (AA-CIS-Infra db/check_rls_allowlist.py)."""
+    result = rules.check(catalog, rules.merge_allowlists(rules.ALLOWLIST, CI_ONLY_ALLOWLIST))
+    stale = [(r, k) for r, k in result.stale
+             if k in rules.ALLOWLIST.get(r, {}) and rules.cis_side(r, k) and (r, k) not in REPLAY_MISSES]
+    assert not stale, (f"stale RLS allowlist entries (AA-1112): {stale}. Remove them from "
+                       "rls_catalogue_rules.ALLOWLIST and copy the file to AA-CIS-Infra db/.")
+
+
+def test_replay_misses_are_still_missed(catalog):
+    """A REPLAY_MISSES entry the replay now uses belongs on the normal path: remove it from REPLAY_MISSES."""
+    result = rules.check(catalog, rules.merge_allowlists(rules.ALLOWLIST, CI_ONLY_ALLOWLIST))
+    used = set(REPLAY_MISSES) - set(result.stale)
+    assert not used, f"REPLAY_MISSES entries the replay uses now: {sorted(used)}"
+
+
 def test_ci_only_entries_are_used(catalog):
     """A CI-only entry that no longer matches anything here is dead weight: remove it."""
     result = rules.check(catalog, rules.merge_allowlists(rules.ALLOWLIST, CI_ONLY_ALLOWLIST))

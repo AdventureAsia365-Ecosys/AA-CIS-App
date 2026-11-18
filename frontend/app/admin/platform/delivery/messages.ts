@@ -49,7 +49,6 @@ export const DELIVERY = defineMessages(
     mainRed: (h: string) => `Red for ${h}`,
     mainUnknown: "No run seen",
     historyFrom: (d: string) => `history complete from ${d}`,
-    window: (days: number) => `Last ${days} days`,
     // app tab sections
     secTimeline: "Deploys",
     secTimelineDesc: "Each deploy of the app (newest first): runs of one commit that overlap count once.",
@@ -172,7 +171,6 @@ export const DELIVERY = defineMessages(
     mainRed: (h: string) => `Đỏ ${h}`,
     mainUnknown: "Chưa thấy lượt chạy",
     historyFrom: (d: string) => `lịch sử đủ từ ${d}`,
-    window: (days: number) => `${days} ngày gần nhất`,
     secTimeline: "Các lần deploy",
     secTimelineDesc: "Mỗi lần deploy của app (mới nhất trước): các lượt chạy cùng một commit chồng nhau tính là một.",
     secSegments: "Lead time tốn ở đâu",

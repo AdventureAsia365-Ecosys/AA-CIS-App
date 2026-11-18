@@ -8,6 +8,9 @@
 // header: few events, never compared with prod benchmarks.
 //
 // AA-1125: two more tabs, Merge queue and Git map (ActivityTabs.tsx), each loading its own section of the summary.
+// AA-1135: one range picker for every tab (?range=7d|28d|90d|custom&from=&to=; presets from the collector, a custom
+// range recomputed by the API), card sorting (?sort=), the DORA trend chart, the delivery flow diagram and the charts
+// of RangeCharts.tsx.
 //
 // API (backend api/routers/admin_platform_delivery.py; BFF /api/admin/platform/delivery, admin only — lib/rbac.ts):
 //   GET /api/admin/platform/delivery[?refresh=1][&section=queue|git]
@@ -16,7 +19,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BookOpen, ExternalLink, GitBranch, RefreshCw, SlidersHorizontal } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Bar, BarChart, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
   Badge, Button, CHART_TOOLTIP, DataTable, EmptyState, ErrorState, InfoTip, K, KpiTile, PageFrame, PageHeader, Section,
@@ -30,7 +33,11 @@ import {
   type ChangeRow, type DeliveryApp, type DeliveryResp, type DeployRow, type FlakyRow, type MetricKey, type MetricStatus,
   type WorkflowRow,
 } from "@/lib/deliveryMetrics";
+import {
+  doraNumber, parseRange, rangeQuery, sortCards, statusRank, withRange, type RangeChoice, type RangeMeta,
+} from "@/lib/deliveryRange";
 import { GitMapTab, MergeQueueTab } from "./ActivityTabs";
+import { AppTrend, FlowDiagram, RangeBar, SortPicker, TrendCompare, WindowLabel, useCardSort } from "./RangeCharts";
 import { ACTIVITY } from "./activity.messages";
 import { DELIVERY } from "./messages";
 
@@ -112,7 +119,8 @@ function AppCard({ app, t, open }: { app: DeliveryApp; t: DT; open: (id: string)
     <Section testId={`delivery-card-${app.id}`} style={{ borderColor: border }}
       title={<span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>{app.name}</span>}
       description={<span style={small}><Ext href={repoUrl(app.repo)}>{app.repo}</Ext>
-        {app.complete_since && <> · {t("historyFrom", app.complete_since)}</>}</span>}
+        {app.complete_since && <> · {t("historyFrom", app.complete_since)}</>}
+        <WindowLabel window={app.window} clipOnly testId={`delivery-card-window-${app.id}`} /></span>}
       actions={<Button size="sm" variant="secondary" onClick={() => open(app.id)} testId={`delivery-open-${app.id}`}>
         {t("viewApp")}</Button>}>
       <div style={{ display: "grid", gap: 8 }}>
@@ -124,9 +132,17 @@ function AppCard({ app, t, open }: { app: DeliveryApp; t: DT; open: (id: string)
 }
 
 function Overview({ data, t, open }: { data: DeliveryResp; t: DT; open: (id: string) => void }) {
+  const [sort, setSort] = useCardSort(CARD_METRICS);
+  const apps = sortCards(data.apps, sort, (a) => statusRank(worstStatus(a)), doraNumber,
+    (m) => Boolean(data.thresholds?.[m as Exclude<MetricKey, "main">]?.higher_is_better));
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 340px), 1fr))", gap: 14 }}>
-      {data.apps.map((a) => <AppCard key={a.id} app={a} t={t} open={open} />)}
+    <div style={grid}>
+      <SortPicker value={sort} onChange={setSort} metrics={CARD_METRICS.map((m) => ({ key: m, label: t(m) }))} />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 340px), 1fr))", gap: 14 }}
+        data-testid="delivery-cards">
+        {apps.map((a) => <AppCard key={a.id} app={a} t={t} open={open} />)}
+      </div>
+      <TrendCompare apps={data.apps} />
     </div>
   );
 }
@@ -351,10 +367,12 @@ function AppTab({ app, t }: { app: DeliveryApp; t: DT }) {
     <div style={grid} data-testid={`delivery-app-${app.id}`}>
       <div style={{ ...small, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
         <Ext href={repoUrl(app.repo)}><GitBranch size={12} /> {app.repo}</Ext>
-        <span>{t("window", app.window.days)}</span>
+        <WindowLabel window={app.window} testId={`delivery-window-${app.id}`} />
         {app.complete_since && <span>{t("historyFrom", app.complete_since)}</span>}
       </div>
       <Kpis app={app} t={t} />
+      <FlowDiagram app={app} stepLabel={(s) => t(s as Parameters<DT>[0])} />
+      <AppTrend app={app} />
       <DeploysSection app={app} t={t} />
       <SegmentsSection app={app} t={t} />
       <CiSection app={app} t={t} />
@@ -367,13 +385,14 @@ function AppTab({ app, t }: { app: DeliveryApp; t: DT }) {
 
 // ── page ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-function useDelivery() {
+function useDelivery(choice: RangeChoice) {
   const qc = useQueryClient();
-  const q = useQuery({ queryKey: KEY, queryFn: () => apiGetDelivery(false), staleTime: 60_000 });
+  const key = [...KEY, rangeQuery(choice)];
+  const q = useQuery({ queryKey: key, queryFn: () => apiGetDelivery(choice, false), staleTime: 60_000, retry: false });
   const refresh = useMutation({
-    mutationFn: () => apiGetDelivery(true),
+    mutationFn: () => apiGetDelivery(choice, true),
     onSuccess: (d) => {
-      qc.setQueryData(KEY, d);
+      qc.setQueryData(key, d);
       // AA-1125: the Merge queue and Git map tabs read the same (now re-read) summary
       void qc.invalidateQueries({ queryKey: [...KEY, "queue"] });
       void qc.invalidateQueries({ queryKey: [...KEY, "git"] });
@@ -383,8 +402,15 @@ function useDelivery() {
   return { q, refresh, error, busy: q.isFetching || refresh.isPending };
 }
 
-function apiGetDelivery(refresh: boolean): Promise<DeliveryResp> {
-  return apiGet<DeliveryResp>(refresh ? `${DELIVERY_PATH}?refresh=1` : DELIVERY_PATH);
+function apiGetDelivery(choice: RangeChoice, refresh: boolean): Promise<DeliveryResp> {
+  return apiGet<DeliveryResp>(withRange(refresh ? `${DELIVERY_PATH}?refresh=1` : DELIVERY_PATH, choice));
+}
+
+/** The newest `range` the API answered (the picker keeps its bounds while a refused range shows its error). */
+function useLastMeta(meta: RangeMeta | undefined): RangeMeta | null {
+  const [last, setLast] = useState<RangeMeta | null>(null);
+  if (meta && meta !== last) setLast(meta);   // stored during render (React: state from the previous render)
+  return meta ?? last;
 }
 
 function Description({ data, t }: { data: DeliveryResp | undefined; t: DT }) {
@@ -416,9 +442,16 @@ function HeaderActions({ t, busy, onRefresh }: { t: DT; busy: boolean; onRefresh
 
 function LoadError({ error, t, onRetry }: { error: Error; t: DT; onRetry: () => void }) {
   const status = (error as { status?: number }).status;
+  // AA-1135: a refused or paused range is told under the range picker, not as a page error
+  if (status === 409 || status === 422) return null;
   return status === 404
     ? <EmptyState icon={<ExternalLink size={18} />} title={t("notPublished")} />
     : <ErrorState message={`${t("loadError")}: ${error.message}`} onRetry={onRetry} />;
+}
+
+function rangeError(error: Error | null): string | null {
+  const status = (error as { status?: number } | null)?.status;
+  return error && (status === 409 || status === 422) ? error.message : null;
 }
 
 // AA-1125: the two activity tabs sit after Overview; their keys are never an app id.
@@ -432,7 +465,8 @@ function Content({ data, t }: { data: DeliveryResp; t: DT }) {
   const active = asked === QUEUE_TAB || asked === GIT_TAB || data.apps.some((a) => a.id === asked) ? asked : "overview";
   const app = data.apps.find((a) => a.id === active);
   // a tab change drops the inner choices of the activity tabs (repo, period, directory)
-  const open = (id: string) => setMany({ app: id === "overview" ? null : id, repo: null, period: null, dir: null });
+  const open = (id: string) => setMany({ app: id === "overview" ? null : id, repo: null, period: null, dir: null,
+    sort: null });
   return (
     <div style={grid}>
       <Tabs ariaLabel={t("title")} active={active} onChange={open} testId="delivery-tabs" tabs={[
@@ -449,8 +483,11 @@ function Content({ data, t }: { data: DeliveryResp; t: DT }) {
 
 export default function DeliveryPage() {
   const t = useDeliveryT();
-  const { q, refresh, error, busy } = useDelivery();
+  const { get } = useUrlFilters();
+  const choice = parseRange(get);
+  const { q, refresh, error, busy } = useDelivery(choice);
   const data = q.data;
+  const meta = useLastMeta(data?.range);
   return (
     <PageFrame>
       <SkeletonStyle />
@@ -460,6 +497,7 @@ export default function DeliveryPage() {
         description={<Description data={data} t={t} />}
         actions={<HeaderActions t={t} busy={busy} onRefresh={() => refresh.mutate()} />}
       />
+      {(meta || rangeError(error)) && <RangeBar key={rangeQuery(choice)} meta={meta} error={rangeError(error)} />}
       {error && <LoadError error={error} t={t} onRetry={() => void q.refetch()} />}
       {!data && !error && <KpiTile label={t("deployment_frequency")} value={undefined} />}
       {data && <Content data={data} t={t} />}
