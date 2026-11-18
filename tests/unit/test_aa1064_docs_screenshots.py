@@ -210,10 +210,11 @@ def test_wrong_signature_is_never_served(client, path, body, media_type):
     assert body not in res.content
 
 
-def test_non_admin_403_without_storage_reads(client):
+def test_unknown_role_403_without_storage_reads(client):
+    # AA-1133 B7: every staff role reads the docs; a role that is not a staff role reaches nothing.
     fake = FakeS3(_objects(DEFAULT))
     with _use(fake):
-        for role in ("viewer", "content", "tenant"):
+        for role in ("tenant", "nobody"):
             res = client.get(ASSET, params={"path": PNG_PATH, "encoding": "base64"},
                              headers={"X-Admin-Secret": SECRET, "x-admin-role": role})
             assert res.status_code == 403

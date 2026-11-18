@@ -26,7 +26,17 @@ export type DocEntry = {
   lang?: string;                          // "en" unless the page is a translation
   translation_of?: string | null;         // the English page's path when this page is a translation
   translations?: DocTranslation[];        // on an English page: its copies this caller may read, by lang
+  // AA-1133 (reader v2, root build_docs_reader.py rule 11). Optional: an older API answer has none of them.
+  nav?: DocNav | null;                    // sidebar group (front-matter `nav`, else derived from the folder)
+  nav_order?: number | null;              // position in the group, lower first
+  nav_derived?: boolean | null;           // the group came from the folder
+  known_issue?: string | null;            // banner: the page has known errors and is being fixed
+  last_changed?: { sha: string; date: string } | null;   // the file's last commit
 };
+
+export type DocNav = "start" | "guides" | "operations" | "architecture" | "reference" | "legal-security";
+/** AA-1133: the sidebar groups in display order (root frontmatter.schema.json `nav`). */
+export const DOC_NAV_GROUPS: DocNav[] = ["start", "guides", "operations", "architecture", "reference", "legal-security"];
 
 export type DocTranslation = { lang: string; path: string; title: string | null };
 
@@ -34,10 +44,13 @@ export type DocTranslation = { lang: string; path: string; title: string | null 
 // PNG / WebP screenshot a published page links (rule 10).
 export type DocAsset = { repo: string; path: string };
 
+export type DocSource = { repo: string | null; sha: string | null; ref: string | null; github?: string | null };
+
 export type DocsManifestResp = {
   generated_at: string | null;
   rule: string | null;
-  source: { repo: string | null; sha: string | null; ref: string | null };
+  source: DocSource;
+  search?: { available: boolean };   // AA-1133: the bundle carries a search index
   pages: DocEntry[];
   assets?: DocAsset[];    // AA-697 / AA-1064: images (SVG, PNG, WebP) this caller may load (absent from an older API)
   counts: { shown: number; owner_only_shown: number; hidden_owner_only: number };
@@ -50,7 +63,7 @@ export type DocsManifestResp = {
 export type DocPageResp = {
   page: DocEntry;
   markdown: string;
-  source: { repo: string | null; sha: string | null; ref: string | null };
+  source: DocSource;
   generated_at: string | null;
 };
 
@@ -109,6 +122,112 @@ export function matchesFilter(p: DocEntry, f: DocFilter): boolean {
   const q = f.query.trim().toLowerCase();
   if (!q) return true;
   return [p.title, p.id, p.path, p.description ?? ""].some((s) => s.toLowerCase().includes(q));
+}
+
+// ── sidebar (AA-1133) ───────────────────────────────────────────────────────────────────────────
+
+/** The sidebar group of a page: its `nav`, or "" when the API sent none (an older bundle: grouped by folder then). */
+export function navOf(p: DocEntry): DocNav | "" {
+  return p.nav && (DOC_NAV_GROUPS as string[]).includes(p.nav) ? p.nav : "";
+}
+
+/** Pages grouped by sidebar group in DOC_NAV_GROUPS order; inside a group by nav_order (pages without one after),
+ *  then folder, then title. Null when no page carries a group (an older bundle: the caller groups by folder). */
+export function groupByNav(pages: DocEntry[]): { section: string; pages: DocEntry[] }[] | null {
+  if (!pages.some((p) => navOf(p))) return null;
+  const order = (p: DocEntry) => (typeof p.nav_order === "number" ? p.nav_order : 1000);
+  const groups = new Map<string, DocEntry[]>();
+  for (const p of pages) {
+    const g = navOf(p) || "reference";
+    const list = groups.get(g);
+    if (list) list.push(p);
+    else groups.set(g, [p]);
+  }
+  return DOC_NAV_GROUPS.filter((g) => groups.has(g)).map((g) => ({
+    section: g,
+    pages: [...(groups.get(g) ?? [])].sort(
+      (a, b) => order(a) - order(b) || sectionOf(a.path).localeCompare(sectionOf(b.path)) || a.title.localeCompare(b.title),
+    ),
+  }));
+}
+
+// ── GitHub links (AA-1133; tech lead S283: Source and History for every reader, Edit for admins) ───────────────
+
+export type DocGithubLinks = { source: string; history: string; edit: string | null };
+
+/** The page's GitHub links, or null when the bundle names no public repo (the repo went private, or an older bundle).
+ *  Source is the file at the published commit; History and Edit follow the branch the bundle was built from. */
+export function githubLinks(source: DocSource, path: string, canEdit: boolean): DocGithubLinks | null {
+  const repo = source.github;
+  if (!repo || !/^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/.test(repo) || !path) return null;
+  const file = path.split("/").map(encodeURIComponent).join("/");
+  const ref = source.ref && /^[A-Za-z0-9._/-]+$/.test(source.ref) ? source.ref : "master";
+  const sha = source.sha && /^[0-9a-f]{7,40}$/.test(source.sha) ? source.sha : ref;
+  const base = `https://github.com/${repo}`;
+  return {
+    source: `${base}/blob/${sha}/${file}`,
+    history: `${base}/commits/${ref}/${file}`,
+    edit: canEdit ? `${base}/edit/${ref}/${file}` : null,
+  };
+}
+
+// ── code blocks (AA-1133) ───────────────────────────────────────────────────────────────────────
+
+const CODE_LANG_LABEL: Record<string, string> = {
+  bash: "Bash", sh: "Shell", shell: "Shell", zsh: "Shell", console: "Console", python: "Python", py: "Python",
+  sql: "SQL", hcl: "HCL", terraform: "Terraform", yaml: "YAML", yml: "YAML", json: "JSON", ts: "TypeScript",
+  typescript: "TypeScript", tsx: "TSX", js: "JavaScript", javascript: "JavaScript", diff: "Diff", text: "Text",
+  markdown: "Markdown", md: "Markdown", http: "HTTP", toml: "TOML", ini: "INI", dockerfile: "Dockerfile",
+};
+
+/** The language label of a fenced block from its code element's class list ("language-bash" -> "Bash"); "" when the
+ *  block names no language. An unknown language shows as typed (letters, digits, + and - only, at most 20). */
+export function codeLanguage(className: unknown): string {
+  const classes = Array.isArray(className) ? className.map(String) : typeof className === "string" ? className.split(/\s+/) : [];
+  const tag = classes.find((c) => c.startsWith("language-"));
+  if (!tag) return "";
+  const lang = tag.slice("language-".length).toLowerCase();
+  if (!/^[a-z0-9+#-]{1,20}$/.test(lang)) return "";
+  return CODE_LANG_LABEL[lang] ?? lang;
+}
+
+// ── search (AA-1133; backend GET /admin/docs/search) ─────────────────────────────────────────────
+
+export type DocSnippetSegment = { text: string; hit: boolean };
+export type DocSearchSection = { heading: string; slug: string; snippet: DocSnippetSegment[] };
+export type DocSearchResult = {
+  repo: string; path: string; lang: string; id: string; title: string; type: string; nav: DocNav | null;
+  access: DocAccess; sections: DocSearchSection[];
+};
+export type DocSearchResp = {
+  query: string; terms: string[]; results: DocSearchResult[]; total_pages: number; source_sha: string | null;
+};
+
+/** Server search runs from this many typed characters (the API refuses a shorter query). */
+export const DOC_SEARCH_MIN_CHARS = 2;
+
+export function searchUrl(query: string, limit = 20): string {
+  return `/api/admin/docs/search?q=${encodeURIComponent(query.trim())}&limit=${limit}`;
+}
+
+/** The reader URL a search hit opens: the page, at the section's heading when it has one. */
+export function hitHref(r: { path: string }, slug: string): string {
+  return `/admin/docs?path=${encodeURIComponent(r.path)}${slug ? `#doc-${encodeURIComponent(slug)}` : ""}`;
+}
+
+// ── page facts (AA-1133) ────────────────────────────────────────────────────────────────────────
+
+/** "tech-lead" -> "Tech lead": a role slug as a label (company docs name roles, not people). */
+export function ownerLabel(owner: string | null | undefined): string {
+  if (!owner) return "";
+  const words = owner.replace(/[-_]+/g, " ").trim();
+  return words ? words[0].toUpperCase() + words.slice(1) : "";
+}
+
+/** Minutes to read a Markdown body (about 220 words a minute, at least 1). */
+export function readingMinutes(markdown: string): number {
+  const words = markdown.split(/\s+/).filter(Boolean).length;
+  return Math.max(1, Math.round(words / 220));
 }
 
 /** The folder a page lives in, for grouping the list: docs/ops/runbooks/x.md -> "ops/runbooks"; docs/x.md -> "docs". */
@@ -253,8 +372,11 @@ export type TocItem = { level: 2 | 3; text: string; slug: string };
 
 /** Every ATX heading of a Markdown body (fenced code blocks skipped) with its 1-based line and a unique slug. The
  * renderer looks the slug up by the heading node's start line, so the ids and the table of contents always agree. */
-export function outline(markdown: string): Heading[] {
+export function outline(markdown: string, seed: string[] = []): Heading[] {
   const slugger = new Slugger();
+  // Headings removed from the body (the H1 the page header shows) still take their slug first, so the ids
+  // stay the ones the search index computed on the whole page (root tools/docs/docs_search_index.py).
+  for (const text of seed) slugger.slug(text);
   const out: Heading[] = [];
   let fence: string | null = null;
   markdown.split("\n").forEach((line, i) => {
@@ -273,11 +395,33 @@ export function outline(markdown: string): Heading[] {
   return out;
 }
 
+/** AA-1133: the body without its first heading when that is an H1 (the page header shows the title instead), and the
+ *  H1's text; the body unchanged and null otherwise. Front-matter is already stripped by the builder. */
+export function splitLeadingH1(markdown: string): { body: string; h1: string | null } {
+  const lines = markdown.split("\n");
+  const i = lines.findIndex((l) => l.trim() !== "");
+  const m = i >= 0 ? lines[i].match(/^ {0,3}#\s+(.+?)\s*#*\s*$/) : null;
+  if (!m) return { body: markdown, h1: null };
+  return { body: [...lines.slice(0, i), ...lines.slice(i + 1)].join("\n"), h1: headingText(m[1]) };
+}
+
 /** The h2 / h3 outline for the page's table of contents. */
 export function tableOfContents(markdown: string): TocItem[] {
   return outline(markdown)
     .filter((h) => h.level === 2 || h.level === 3)
     .map((h) => ({ level: h.level as 2 | 3, text: h.text, slug: h.slug }));
+}
+
+// AA-1133 (S284 review): the sticky "On this page" column sits beside the text only when the reader itself has room
+// for it. The choice follows the reader's own width (the admin sidebar and the docs list take their share first), not
+// the viewport: market docs sites keep the text about 650-750px wide next to a right-hand table of contents.
+export const DOC_TOC_COLUMN = 210;
+export const DOC_TOC_GAP = 28;
+export const DOC_TEXT_MIN_WITH_TOC = 660;
+
+/** True when a reader `width` px wide keeps at least DOC_TEXT_MIN_WITH_TOC px of text beside the sticky contents. */
+export function tocColumnFits(width: number): boolean {
+  return Number.isFinite(width) && width - DOC_TOC_COLUMN - DOC_TOC_GAP >= DOC_TEXT_MIN_WITH_TOC;
 }
 
 /** "a1b2c3d4e5f6…" -> first 12 characters, "" when unknown. */

@@ -9,7 +9,7 @@
 //   6. the reserved Plans & add-ons slot is hidden while its page does not exist;
 //   7. next.config.ts serves the moves; no link in the app still points at an old URL;
 //   8. every nav label has an English and a Vietnamese row (nav.messages.ts);
-//   9. a content worker sees the AA Catalogue group only;
+//   9. a content worker sees the AA Catalogue group only (and, AA-1133, Platform › Docs);
 //  10. AA-1039 R6 slice 3: the AI & spend group (AI gateway, one Spend page) and the Writing Lab (stages, Writing
 //      memory moved under it), their moves and the query merge of a move whose target names a tab;
 //  11. AA-1039 R6 rest: Tenant 360 as a route (old ?tenant= links replaced), Catalogue settings without its tenant and
@@ -193,7 +193,10 @@ test("8. every nav label has an English and a Vietnamese row", () => {
 test("9. a content worker sees the AA Catalogue group only; the viewer sees its read pages", () => {
   for (const role of ["content"]) {
     const groups = ADMIN_IA.filter((g) => g.items.some((i) => !i.hidden && canSeeNavItem(role, i))).map((g) => g.label);
-    assert.deepEqual(groups, ["AA Catalogue"], role);
+    // AA-1133 B7: plus the Docs reader, every staff role's page (the only Platform item it sees)
+    assert.deepEqual(groups, ["AA Catalogue", "Platform"], role);
+    const platform = ADMIN_IA.find((g) => g.label === "Platform").items.filter((i) => canSeeNavItem(role, i));
+    assert.deepEqual(platform.map((i) => i.href), ["/admin/docs"], role);
   }
   // AA-1035: the reviewer alias is gone (CIS 375): the value opens no page at all
   assert.deepEqual(visible.filter((i) => canSeeNavItem("reviewer", i)), []);

@@ -342,8 +342,9 @@ def client(monkeypatch):
         main.app.state.pool = old
 
 
-@pytest.mark.parametrize("role,status,reader", [("admin", 200, True), ("finance", 200, False),
-                                                ("ai_ops", 200, False), ("viewer", 403, None),
+# AA-1133 B7: every staff role may open /admin/docs now, so the guide links to the reader for finance and ai_ops too.
+@pytest.mark.parametrize("role,status,reader", [("admin", 200, True), ("finance", 200, True),
+                                                ("ai_ops", 200, True), ("viewer", 403, None),
                                                 ("content", 403, None)])
 def test_roles_and_the_reader_flag(client, role, status, reader):
     http, calls = client

@@ -35,24 +35,26 @@ EXPECTED_PERMS = {
                      "a4.unpublish", "quality.write", "content.settings.write", "catalog.read", "tenant_content.read",
                      "lab.read", "wave.run", "notifications.read",
                      "reference_price.read", "reference_price.write",   # AA-1091
-                     "learn.preview"},   # AA-1105 (AA Academy drafts)
+                     "learn.preview",   # AA-1105 (AA Academy drafts)
+                     "docs.read"},      # AA-1133 B7: every staff role reads /admin/docs
     "content": {"content.read", "content.write", "review.act", "catalog.read", "notifications.read",
-                "reference_price.read"},   # AA-1091
+                "reference_price.read", "docs.read"},   # AA-1091; AA-1133
     "tenant_qa": {"content.read", "catalog.read", "tenant_content.read", "quality.write", "a4.unpublish", "lab.read",
-                  "notifications.read"},
+                  "notifications.read", "docs.read"},
     # slice 2: + read-only view-as of the own book (tenant.view_as) and the bell (notifications.read)
     # close-out: + the Tenant QA reads of the own book (tenant_content.book.read)
     "customer_success": {"tenant.book.read", "tenant.book.account.read", "tenant.book.write", "tenant.member.write",
                          "tenant.member.resend", "tenant.view_as", "notifications.read", "tenant_content.book.read",
                          # AA-1091: the customer-service team enters the tours' reference prices
-                         "reference_price.read", "reference_price.write"},
+                         "reference_price.read", "reference_price.write", "docs.read"},
     # S267 fix pass: support only sends a non-owner invitation again (no tenant.member.write); slice 2: + view-as
-    "support": {"tenant.book.read", "tenant.member.resend", "tenant.view_as", "notifications.read"},
-    "finance": {"billing.read", "billing.write", "spend.read", "notifications.read", "reference_price.read"},
+    "support": {"tenant.book.read", "tenant.member.resend", "tenant.view_as", "notifications.read", "docs.read"},
+    "finance": {"billing.read", "billing.write", "spend.read", "notifications.read", "reference_price.read",
+                "docs.read"},
     # slice 2: the logged Writing Lab read of tenant text (lab.tenant_text.read, never tenant_content.read)
     "ai_ops": {"content.read", "catalog.read", "ai.admin", "spend.read", "spend.write", "lab.read",
-               "lab.tenant_text.read", "notifications.read"},
-    "viewer": {"content.read", "notifications.read"},
+               "lab.tenant_text.read", "notifications.read", "docs.read"},
+    "viewer": {"content.read", "notifications.read", "docs.read"},
 }
 
 
@@ -116,8 +118,11 @@ def _any(allowed: set[str], *prefixes: str, methods: tuple[str, ...] = ()) -> li
 # ── the "may not" column of clarifications.md section 3 ───────────────────────────────────────────────────────────
 
 ADMIN_ONLY_AREAS = ("/admin/platform/staff", "/admin/platform/audit", "/admin/platform/alert-recipients",
-                    "/admin/job-runner/erasure", "/admin/data-model", "/admin/docs", "/admin/overview",
+                    "/admin/job-runner/erasure", "/admin/data-model", "/admin/overview",
                     "/admin/reports")
+# AA-1133 B7: the docs reader is every staff role's (the feedback view stays admin, the viewer cannot post:
+# test_every_role_reads_the_docs).
+DOCS_READS = ("GET /admin/docs/asset", "GET /admin/docs/manifest", "GET /admin/docs/page", "GET /admin/docs/search")
 
 # AA-1035 R2 close-out (root ADR 0019 d4): the CRM L1 console reads of the book. The desk roles read, never write;
 # support never the account reads (usage, entitlements).
@@ -193,9 +198,18 @@ def test_customer_success_writes_its_book_and_support_does_not(route):
     assert route not in _allowed("support")
 
 
+@pytest.mark.parametrize("role", ROLES)
+def test_every_role_reads_the_docs(role):
+    allowed = _allowed(role)
+    assert set(DOCS_READS) <= allowed
+    assert ("POST /admin/docs/feedback" in allowed) is (role != "viewer")
+    assert ("GET /admin/docs/feedback" in allowed) is (role == "admin")
+
+
 def test_support_only_sends_invitations_again():
     writes = _any(_allowed("support"), "/admin", methods=("POST", "PUT", "PATCH", "DELETE"))
     assert writes == [
+        "POST /admin/docs/feedback",                               # AA-1133: page feedback (every non-viewer role)
         "POST /admin/tenants/{tenant_id}/members/{membership_id}/invitation/send",
         "POST /admin/tenants/{tenant_id}/view-as",                 # slice 2: read-only view-as (own book + pool)
         "POST /admin/view-as/sessions/{session_id}/end",
