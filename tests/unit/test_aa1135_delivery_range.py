@@ -140,12 +140,49 @@ def test_child_process_plumbing(monkeypatch):
     echo = "import sys, json; d = json.load(sys.stdin); print(json.dumps({'echo': d['start']}))"
     monkeypatch.setattr(dr, "_worker_argv", lambda: [sys.executable, "-c", echo])
     assert asyncio.run(dr._run_worker({"start": "x"})) == {"echo": "x"}
-    monkeypatch.setattr(dr, "_worker_argv", lambda: [sys.executable, "-c", "import sys; sys.exit(3)"])
+    monkeypatch.setattr(dr, "_worker_argv", lambda: [sys.executable, "-c", "import sys; sys.exit(1)"])
     with pytest.raises(dr.RangeFailed):
         asyncio.run(dr._run_worker({}))
     monkeypatch.setattr(dr, "_worker_argv", lambda: [sys.executable, "-c", "print('not json')"])
     with pytest.raises(dr.RangeFailed):
         asyncio.run(dr._run_worker({}))
+
+
+def _missing_one_event(key: str):
+    """A day file that lost one event (a collector upload that failed after its cache kept the event)."""
+    raw = _read_fixture(key)
+    if raw is None or not key.endswith("2026/03/18.ndjson"):
+        return raw
+    return ("".join(line + "\n" for line in raw.decode("utf-8").splitlines()[1:])).encode("utf-8")
+
+
+def test_day_files_out_of_step_with_the_summary_are_refused(monkeypatch):
+    """The data parity: day files that do not rebuild the summary's store (definitions.store_fingerprint) never give
+    numbers; the child exits OUT_OF_STEP and the parent refuses with 409 out_of_step."""
+    assert SUMMARY["definitions"]["store_fingerprint"]
+    want = SUMMARY["apps"][0]["ranges"]["d7"]["window"]
+    payload = dr._payload(SUMMARY, engine.ts(want["requested_start"]), engine.ts(want["end"]), "bucket",
+                          "docs-reader/delivery")
+    with pytest.raises(engine.StoreMismatch):
+        worker.run(payload, _missing_one_event)
+    err = io.StringIO()
+    with patch.object(worker, "_s3_reader", lambda bucket: _missing_one_event), patch.object(sys, "stderr", err):
+        assert worker.main(io.StringIO(json.dumps(payload)), io.StringIO()) == worker.OUT_OF_STEP == dr.OUT_OF_STEP
+    assert err.getvalue().startswith("StoreMismatch")
+    monkeypatch.setattr(dr, "_worker_argv", lambda: [sys.executable, "-c", f"import sys; sys.exit({dr.OUT_OF_STEP})"])
+    with pytest.raises(dr.RangeRefused) as e:
+        asyncio.run(dr._run_worker({}))
+    assert (e.value.status, e.value.code) == (409, "out_of_step")
+
+
+def test_out_of_step_answers_409_and_presets_still_work(client, monkeypatch):
+    real = dr._run_worker
+    monkeypatch.setattr(dr, "_worker_argv", lambda: [sys.executable, "-c", f"import sys; sys.exit({dr.OUT_OF_STEP})"])
+    res, _ = _get(client, params={"range": "custom", "from": "2026-03-14", "to": "2026-03-20"}, run=real)
+    assert res.status_code == 409 and "out of step" in res.json()["detail"]
+    assert dr.cached_ranges() == 0
+    res, _ = _get(client, params={"range": "7d"}, run=real)
+    assert res.status_code == 200
 
 
 # ── presets ──────────────────────────────────────────────────────────────────────────────────────────────────────

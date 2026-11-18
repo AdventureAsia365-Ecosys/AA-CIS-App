@@ -9,7 +9,8 @@ custom range and a preset of the same window give the same numbers:
   * refused (RangeRefused 422) when to is before from, longer than the setting cis.delivery.custom_range_max_days,
     starting before the stored history (definitions.store_from) or ending after the newest collection;
   * paused (409) while the published engine sha256 differs from this copy's (a collector change not synced yet) or
-    the summary predates AA-1135 (no store_from);
+    the summary predates AA-1135 (no store_from); refused (409 out_of_step) when the day files do not rebuild the
+    store the summary was computed from (its definitions.store_fingerprint; the child exits OUT_OF_STEP);
   * computed in a child process (api/services/delivery_range_worker.py: the events take about 250 MB while computing,
     given back to the system when the child exits), one computation at a time;
   * cached per (summary generated_at, from, to) in this process: the newest cis.delivery.custom_range_cache_entries
@@ -31,6 +32,7 @@ from typing import Any, Optional
 import structlog
 
 from api.services import delivery_engine as engine
+from api.services.delivery_range_worker import OUT_OF_STEP
 from services.reports import delivery_settings as ds
 from shared import settings
 
@@ -138,6 +140,10 @@ async def _run_worker(payload: dict) -> dict:
         proc.kill()
         await proc.wait()
         raise RangeFailed("The custom range took too long") from e
+    if proc.returncode == OUT_OF_STEP:
+        logger.warning("delivery_range_out_of_step", error=err.decode(errors="replace")[:300])
+        raise RangeRefused(409, "out_of_step", "The collector's day files are out of step with its summary; custom "
+                           "ranges come back after its next full upload. The presets work.")
     if proc.returncode != 0:
         logger.warning("delivery_range_worker_failed", rc=proc.returncode, error=err.decode(errors="replace")[:300])
         raise RangeFailed("The custom range could not be computed")

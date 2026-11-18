@@ -8,7 +8,10 @@ so a custom range and a preset of the same window can never give different numbe
   * the summary carries `definitions.engine_sha256` (this file's sha256) and the collector's `config`;
   * CIS refuses a custom range while its copy's sha256 differs from the published one (sync with
     tools/delivery/sync_engine.py, which also writes the copy's lock file);
-  * tools/delivery/test_delivery_metrics.py pins custom == preset on the fixture (the parity test).
+  * tools/delivery/test_delivery_metrics.py pins custom == preset on the fixture (the parity test);
+  * the summary also carries `definitions.store_fingerprint` (per repo: the event count and a sha256 of the store the
+    presets were computed from); `custom_range` refuses (StoreMismatch) day files that do not rebuild exactly that
+    store (a failed upload, a lost Actions cache), so the code and the data both match.
 
 Pure computation: standard library only, no network, no file other than the store files of `Store`. Every number
 follows the definitions of docs/guides/delivery-metrics.md (DEFINITIONS_VERSION).
@@ -123,6 +126,10 @@ class Store:
         self.events[e["id"]] = e
         if e.get("time"):
             self.touched_days.add(e["time"][:10])
+        # an event that moved to another day is rewritten out of its old day's file too (AA-1135: the day files
+        # rebuild exactly the store, see store_fingerprint)
+        if old is not None and old.get("time") and old["time"][:10] != (e.get("time") or "")[:10]:
+            self.touched_days.add(old["time"][:10])
         return True
 
     def repo_state(self, repo: str) -> dict:
@@ -1434,6 +1441,7 @@ def summarize(
             "store_days": cfg["store_days"],
             "store_from": store_start(cfg, now).isoformat(),
             "engine_sha256": engine_sha256(),
+            "store_fingerprint": store_fingerprint(store.events.values(), store_cut(cfg, now)),
         },
         "collection": collection or {},
         "apps": [app_summary(cfg, app, store, now) for app in cfg["apps"]],
@@ -1456,9 +1464,45 @@ def store_start(cfg: dict, now: datetime) -> date:
     return now.date() - timedelta(days=cfg["store_days"])
 
 
+def store_cut(cfg: dict, now: datetime) -> datetime:
+    """The first instant the event store keeps (midnight UTC of store_start)."""
+    return datetime.combine(store_start(cfg, now), datetime.min.time(), timezone.utc)
+
+
+def store_days(cfg: dict, now: datetime) -> list[str]:
+    """Every day (YYYY-MM-DD) of the store of a summary computed at `now`, oldest first."""
+    return [d.isoformat() for d in _days(store_start(cfg, now), now.date())]
+
+
 def day_keys(cfg: dict, now: datetime) -> list[str]:
     """The day files (relative to the delivery prefix) that hold the store of a summary computed at `now`."""
-    return [f"events/{d:%Y/%m/%d}.ndjson" for d in _days(store_start(cfg, now), now.date())]
+    return [f"events/{d[:4]}/{d[5:7]}/{d[8:10]}.ndjson" for d in store_days(cfg, now)]
+
+
+class StoreMismatch(ValueError):
+    """The day files do not rebuild the store the summary was computed from (a failed upload, a lost cache)."""
+
+
+def store_fingerprint(events: Iterable[dict], keep_from: datetime) -> dict[str, dict]:
+    """Per repo, the events kept from `keep_from` on: their count and a sha256 of their canonical JSON lines in
+    (time, id) order (the format of the day files). The summary publishes it; custom_range compares the store it
+    rebuilt from the day files and refuses a difference instead of serving numbers that disagree with a preset."""
+    cut = iso(keep_from) or ""
+    by_repo: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
+    for e in events:
+        t = e.get("time") or ""
+        if t < cut:
+            continue
+        repo = str((e.get("attributes") or {}).get("vcs.repository.name") or "")
+        by_repo[repo].append((t, e["id"], json.dumps(e, sort_keys=True, separators=(",", ":"))))
+    out: dict[str, dict] = {}
+    for repo in sorted(by_repo):
+        h = hashlib.sha256()
+        for _t, _id, line in sorted(by_repo[repo]):
+            h.update(line.encode("utf-8"))
+            h.update(b"\n")
+        out[repo] = {"events": len(by_repo[repo]), "sha256": h.hexdigest()}
+    return out
 
 
 def load_events(files: Iterable[Optional[str]]) -> dict[str, dict]:
@@ -1497,7 +1541,13 @@ def custom_range(summary: dict, events: dict[str, dict], a: datetime, b: datetim
     if now is None:
         raise ValueError("summary without generated_at")
     store = Store(events, state_from_summary(summary))
-    store.prune(datetime.combine(store_start(cfg, now), datetime.min.time(), timezone.utc))
+    cut = store_cut(cfg, now)
+    store.prune(cut)
+    want = (summary.get("definitions") or {}).get("store_fingerprint")
+    got = store_fingerprint(store.events.values(), cut)
+    if want != got:
+        off = sorted(r for r in set(want or {}) | set(got) if (want or {}).get(r) != got.get(r))
+        raise StoreMismatch(f"the day files do not rebuild the summary's event store (repos: {', '.join(off) or '-'})")
     apps = []
     for app in cfg["apps"]:
         ctx = app_context(cfg, app, store, now)

@@ -13,7 +13,8 @@
            collector publishes, or a custom range of whole UTC days recomputed from the collector's day files
            (api/services/delivery_range.py). 422 for a range that cannot be (reversed, too long for the setting
            cis.delivery.custom_range_max_days, outside the stored history), 409 while custom ranges are paused (the
-           CIS engine copy differs from the collector's, or the preset is not published yet), 503 when the
+           CIS engine copy differs from the collector's, the preset is not published yet, or the day files do not
+           rebuild the summary's event store: out_of_step), 503 when the
            computation fails. The answer's `range` says the window served and what the date picker may offer.
 
 Read only. The summary comes from the root repo workflow "Delivery metrics" through S3

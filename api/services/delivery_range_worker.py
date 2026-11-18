@@ -11,7 +11,10 @@ It reads the collector's daily event files of the stored history (docs-reader/de
 GET each, read only, the same grant as the summary) and recomputes with the byte copy of the collector's engine
 (api/services/delivery_engine.py), so the numbers equal a preset of the same window. A separate process because the
 store is about 50 MB of events (some 250 MB in memory while it computes): the memory goes back to the system when the
-child exits, never stays in the API process. Exit 0 with the answer, 1 with a one-line error on stderr.
+child exits, never stays in the API process. Exit 0 with the answer, 1 with a one-line error on stderr, OUT_OF_STEP (3)
+when the day files do not rebuild the store the summary was computed from (engine.StoreMismatch: the summary's
+definitions.store_fingerprint differs; a failed upload or a lost collector cache), so the parent refuses the range
+instead of serving numbers that disagree with a preset.
 """
 from __future__ import annotations
 
@@ -23,6 +26,7 @@ from typing import Any, Callable, Optional
 from api.services import delivery_engine as engine
 
 READERS = 8  # parallel GETs of the day files (about 100 files)
+OUT_OF_STEP = 3  # exit code: the day files are out of step with the summary (engine.StoreMismatch)
 
 
 def run(payload: dict, read: Callable[[str], Optional[bytes]]) -> dict:
@@ -54,6 +58,9 @@ def main(stdin: Any = None, stdout: Any = None) -> int:
     try:
         payload = json.load(stdin)
         out = run(payload, _s3_reader(payload["bucket"]))
+    except engine.StoreMismatch as err:  # the parent answers 409
+        print(f"StoreMismatch: {str(err)[:300]}", file=sys.stderr)
+        return OUT_OF_STEP
     except Exception as err:  # the parent logs the type and answers 503
         print(f"{type(err).__name__}: {str(err)[:300]}", file=sys.stderr)
         return 1
