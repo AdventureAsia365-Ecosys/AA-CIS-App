@@ -1,4 +1,4 @@
--- Migration 447: AA-1127 (S284, UI audit batch S1) — one ledger for tour rewrites: shared.v_tenant_monthly_usage counts
+-- Migration 452: AA-1127 (S284, UI audit batch S1) — one ledger for tour rewrites: shared.v_tenant_monthly_usage counts
 -- the month's rewrites from shared.tenant_rewrite_usage, the counter the rewrite quota already reads and enforces.
 --
 -- Why. The S283 UI audit (root docs/audits/2026-11-17-S283-fe-audit, agency rows 18-19, 24) found two rewrite counters
@@ -18,7 +18,7 @@
 --      body unchanged. Skipped (NOTICE) when a relation the view reads, or gold_aa_internal.tenant_tour_versions,
 --      is absent (the CI test DB keeps its old view, as with 233 / 439).
 --   2. GRANT SELECT to cis_app (the view is recreated).
---   3. Register 447.
+--   3. Register 452.
 --
 -- Behaviour on apply. The studio dashboard, the Billing tab, the admin tenant list, Tenant 360 and the overage now show
 -- the quota's number. A tenant whose month had tenant edits sees a lower "rewrites" count and, past the quota, a lower
@@ -30,9 +30,10 @@
 -- reads a new column; the code PR of this batch only filters the dashboard's daily rewrite line the same way.
 -- DM-7.1: no new table.
 --
--- Number. 446 (AA-1126) is the newest CIS migration on main: 447 is the owner main max + 1. If it differs at merge,
--- renumber (git grep '447_' and '447' here, in tests/integration/test_aa1127_migration_447.py and
--- docs/implementation-notes/AA-1127.md).
+-- Number. 447 (AA-1126) is the newest CIS migration on main; the S284 wave holds 448 (delivery range settings) and
+-- 449-451 (stage free text, connection cap views), so this batch is 452-453 and merges after them (the preflight refuses
+-- a gap). If the owner main max + 1 differs at merge, renumber (git grep '452_' and '452' here, in
+-- tests/integration/test_aa1127_migration_452.py, the code PR's comments and docs/implementation-notes/AA-1127.md).
 --
 -- Locks. DROP / CREATE VIEW (AccessExclusive on the view only). lock_timeout 5s. Idempotent, one transaction,
 -- self-registering.
@@ -48,7 +49,7 @@ SET LOCAL statement_timeout = '1min';
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM shared.schema_versions WHERE version = '439') THEN
-        RAISE EXCEPTION 'migration 447: apply 439 first';
+        RAISE EXCEPTION 'migration 452: apply 439 first';
     END IF;
 END $$;
 
@@ -65,7 +66,7 @@ BEGIN
                         'shared.tenant_api_usage', 'shared.llm_call_log']) AS r
      WHERE to_regclass(r) IS NULL;
     IF missing IS NOT NULL THEN
-        RAISE NOTICE 'migration 447: % absent; v_tenant_monthly_usage left as is', missing;
+        RAISE NOTICE 'migration 452: % absent; v_tenant_monthly_usage left as is', missing;
         RETURN;
     END IF;
 
@@ -137,12 +138,12 @@ BEGIN
         'Per-tenant usage for the current billing month (one row per tenant): the live content plan''s price and '
         'overage rates from shared.plan and the resolved quotas (content.rewrite, api.calls_monthly; NULL = no quota) '
         'since 439 (AA-1116), tours rewritten = the rewrite quota counter shared.tenant_rewrite_usage for the current '
-        'UTC month (447, AA-1127; every tour version of the month before), API calls, quota %, overage, real LLM cost, '
+        'UTC month (452, AA-1127; every tour version of the month before), API calls, quota %, overage, real LLM cost, '
         'plan_key, billing_currency, price_vnd_monthly, overage_rate_usd_per_1k_calls.'
     $c$;
     EXECUTE $c$
     COMMENT ON COLUMN shared.v_tenant_monthly_usage.tours_rewritten IS
-        'AA-1127 (447): the month''s accepted tour rewrite requests, read from shared.tenant_rewrite_usage (the counter '
+        'AA-1127 (452): the month''s accepted tour rewrite requests, read from shared.tenant_rewrite_usage (the counter '
         'GET /v1/quota reads and trigger_rewrite increments). A tenant''s own inline edit is not a rewrite.'
     $c$;
     EXECUTE $c$
@@ -158,7 +159,7 @@ BEGIN
      WHERE table_schema = 'shared' AND table_name = 'v_tenant_monthly_usage'
        AND column_name IN ('tours_rewritten', 'tours_overage');
     IF got IS DISTINCT FROM 'tours_rewritten:bigint,tours_overage:bigint' THEN
-        RAISE EXCEPTION 'migration 447: v_tenant_monthly_usage rewrite columns are %', got;
+        RAISE EXCEPTION 'migration 452: v_tenant_monthly_usage rewrite columns are %', got;
     END IF;
     SELECT string_agg(column_name, ',' ORDER BY ordinal_position) INTO got
       FROM information_schema.columns
@@ -168,12 +169,12 @@ BEGIN
        'price_usd_monthly,overage_rate_usd_per_tour,billing_month,tours_rewritten,api_calls_used,'
        'quota_tours_pct,quota_calls_pct,tours_overage,overage_usd,llm_cost_usd,plan_key,billing_currency,'
        'price_vnd_monthly,overage_rate_usd_per_1k_calls' THEN
-        RAISE EXCEPTION 'migration 447: v_tenant_monthly_usage columns are %', got;
+        RAISE EXCEPTION 'migration 452: v_tenant_monthly_usage columns are %', got;
     END IF;
 END $mig$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('447', now(), 'AA-1127: v_tenant_monthly_usage.tours_rewritten reads the rewrite quota counter '
+VALUES ('452', now(), 'AA-1127: v_tenant_monthly_usage.tours_rewritten reads the rewrite quota counter '
                       '(shared.tenant_rewrite_usage), one ledger for quota, billing and overage')
 ON CONFLICT (version) DO NOTHING;
 

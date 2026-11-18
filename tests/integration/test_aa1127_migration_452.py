@@ -1,10 +1,10 @@
-"""AA-1127 (S284, UI audit batch S1) — migration 447 against real Postgres: one ledger for tour rewrites.
+"""AA-1127 (S284, UI audit batch S1) — migration 452 against real Postgres: one ledger for tour rewrites.
 
 shared.v_tenant_monthly_usage.tours_rewritten (GET /v1/billing, the admin tenant list, Tenant 360, the overage) reads the
 rewrite quota counter shared.tenant_rewrite_usage for the current UTC month, the row GET /v1/quota reads and
 trigger_rewrite increments. A tenant's own inline edit (a tenant_edit version) is no rewrite and is not billed.
 
-The CI test DB has no gold_aa_internal.tenant_tour_versions (447 skips there, as 233 / 439): every test runs the file
+The CI test DB has no gold_aa_internal.tenant_tour_versions (452 skips there, as 233 / 439): every test runs the file
 inside a transaction with a stand-in for that table, and rolls back. Invented names only.
 """
 import os
@@ -17,8 +17,8 @@ import pytest
 sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 
-M447 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
-                    "447_aa1127_usage_view_rewrite_ledger.sql")
+M452 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
+                    "452_aa1127_usage_view_rewrite_ledger.sql")
 COLUMNS = ("tenant_id,tenant_name,plan_tier,slug,tours_quota_monthly,api_calls_quota_monthly,price_usd_monthly,"
            "overage_rate_usd_per_tour,billing_month,tours_rewritten,api_calls_used,quota_tours_pct,quota_calls_pct,"
            "tours_overage,overage_usd,llm_cost_usd,plan_key,billing_currency,price_vnd_monthly,"
@@ -26,7 +26,7 @@ COLUMNS = ("tenant_id,tenant_name,plan_tier,slug,tours_quota_monthly,api_calls_q
 
 
 def _body():
-    with open(M447, encoding="utf-8") as f:
+    with open(M452, encoding="utf-8") as f:
         return "\n".join(line for line in f.read().splitlines() if line.strip() not in ("BEGIN;", "COMMIT;"))
 
 
@@ -42,7 +42,7 @@ def cur():
                       "CREATE TABLE gold_aa_internal.tenant_tour_versions (id uuid PRIMARY KEY DEFAULT "
                       "gen_random_uuid(), tenant_id uuid NOT NULL, edit_source text NOT NULL DEFAULT 'ai_generated', "
                       "created_at timestamptz NOT NULL DEFAULT now())")
-        k.execute("DELETE FROM shared.schema_versions WHERE version = '447'")
+        k.execute("DELETE FROM shared.schema_versions WHERE version = '452'")
         k.execute(_body())
         k.execute(_body())          # idempotent
         yield k
@@ -84,7 +84,7 @@ def test_columns_and_registration(cur):
     cur.execute("SELECT string_agg(column_name, ',' ORDER BY ordinal_position) AS c FROM information_schema.columns "
                 "WHERE table_schema = 'shared' AND table_name = 'v_tenant_monthly_usage'")
     assert cur.fetchone()[0] == COLUMNS
-    cur.execute("SELECT count(*) AS n FROM shared.schema_versions WHERE version = '447'")
+    cur.execute("SELECT count(*) AS n FROM shared.schema_versions WHERE version = '452'")
     assert cur.fetchone()[0] == 1
 
 
