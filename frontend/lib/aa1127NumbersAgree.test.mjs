@@ -23,10 +23,12 @@ test("Need a look follows the row badge: an idle LLM or guard row is not counted
 
 test("Supply content: one blockers list drives the box and the Publish button", () => {
   const src = readFileSync(new URL("../app/admin/supply-content/SupplyContentDetail.tsx", import.meta.url), "utf8");
-  assert.match(src, /const draftBlockers = draft \? publishBlockers\(entity, draft, media, st\.words\) : \[\];/);
+  assert.match(src, /const draftBlockers = draftBlockersOf\(entity, draft, media, st\.words\);/);
+  assert.match(src, /return draft \? publishBlockers\(entity, draft, media, words\) : \[\];/);
   assert.match(src, /<Blockers items=\{draftBlockers\} \/>/);
   assert.match(src, /disabled=\{draftBlockers\.length > 0\}/);
   assert.equal((src.match(/publishBlockers\(entity, draft,/g) || []).length, 1);
+  assert.match(src, /title=\{whenBlocked\(draftBlockers, t\("publishBlockedTitle"\)\)\}/);
 });
 
 test("Tenant 360: the Tours label reads the API total and the tab pages on the server", () => {

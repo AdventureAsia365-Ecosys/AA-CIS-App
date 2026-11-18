@@ -65,6 +65,7 @@ import {
   type RefItem,
   type RefPage,
   type RefStatus,
+  type Counts,
 } from "@/lib/referencePrices";
 import { RM } from "./messages";
 
@@ -175,12 +176,13 @@ export default function ReferencePricesConsole() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [t, canWrite]);
 
+  const c: Partial<Counts> = counts ?? {};
   const kpis: { key: RefFilter; label: string; hint: string; value: number | undefined; tone: Tone }[] = [
-    { key: "no_price", label: t("kNoPrice"), hint: t("kNoPriceHint"), value: counts?.no_price, tone: "danger" },
-    { key: "suggested", label: t("kSuggested"), hint: t("kSuggestedHint"), value: counts?.suggested, tone: "info" },
-    { key: "needs_review", label: t("kReview"), hint: t("kReviewHint"), value: counts?.needs_review, tone: "warning" },
-    { key: "parsed", label: t("kParsed"), hint: t("kParsedHint"), value: counts?.parsed, tone: "neutral" },
-    { key: "confirmed", label: t("kConfirmed"), hint: t("kConfirmedHint"), value: counts?.confirmed, tone: "success" },
+    { key: "no_price", label: t("kNoPrice"), hint: t("kNoPriceHint"), value: c.no_price, tone: "danger" },
+    { key: "suggested", label: t("kSuggested"), hint: t("kSuggestedHint"), value: c.suggested, tone: "info" },
+    { key: "needs_review", label: t("kReview"), hint: t("kReviewHint"), value: c.needs_review, tone: "warning" },
+    { key: "parsed", label: t("kParsed"), hint: t("kParsedHint"), value: c.parsed, tone: "neutral" },
+    { key: "confirmed", label: t("kConfirmed"), hint: t("kConfirmedHint"), value: c.confirmed, tone: "success" },
   ];
 
   const small = { minHeight: 32, padding: "5px 8px", fontSize: 12.5, width: "auto", maxWidth: "100%" } as const;

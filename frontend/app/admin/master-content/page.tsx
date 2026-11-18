@@ -197,23 +197,18 @@ function masterStatusBadge(ms: string, t: T) {
   return null;
 }
 
+// AA-1127 (C1): one reading of the status (lib/brandAudit.ts); "fixed" used to fall through to "—"
+const AUDIT_LOOK = { pass: ["successSoft", "success", "auditPass"], fixed: ["amberSoft", "amber", "auditFixed"],
+  flagged: ["dangerSoft", "danger", "auditFlagged"], manual: ["amberSoft", "amber", "auditManual"] } as const;
 function BrandAuditBadge({ status, fixPassApplied, codes }: { status: string | null; fixPassApplied: boolean; codes?: string[] }) {
   const t = useT(M);
-  // AA-1127 (C1): one reading of the status (lib/brandAudit.ts); "fixed" used to fall through to "—"
   const kind = brandAuditKind(status, fixPassApplied);
-  if (kind === "pass") return (
-    <span style={{ padding: "2px 7px", borderRadius: 10, background: K.successSoft, color: K.success, fontSize: 11, fontWeight: 600 }}>{t("auditPass")}</span>
+  if (!kind) return <span style={{ color: K.muted2, fontSize: 11 }}>—</span>;
+  const [bg, fg, word] = AUDIT_LOOK[kind];
+  const coded = (kind === "fixed" || kind === "flagged") && !!codes?.length;
+  return (
+    <span title={coded ? codes?.join(", ") : undefined} style={{ padding: "2px 7px", borderRadius: 10, background: K[bg], color: K[fg], fontSize: 11, fontWeight: 600, cursor: coded ? "help" : "default" }}>{t(word)}</span>
   );
-  if (kind === "fixed") return (
-    <span title={codes?.join(", ")} style={{ padding: "2px 7px", borderRadius: 10, background: K.amberSoft, color: K.amber, fontSize: 11, fontWeight: 600, cursor: codes?.length ? "help" : "default" }}>{t("auditFixed")}</span>
-  );
-  if (kind === "flagged") return (
-    <span title={codes?.join(", ")} style={{ padding: "2px 7px", borderRadius: 10, background: K.dangerSoft, color: K.danger, fontSize: 11, fontWeight: 600, cursor: codes?.length ? "help" : "default" }}>{t("auditFlagged")}</span>
-  );
-  if (kind === "manual") return (
-    <span style={{ padding: "2px 7px", borderRadius: 10, background: K.amberSoft, color: K.amber, fontSize: 11, fontWeight: 600 }}>{t("auditManual")}</span>
-  );
-  return <span style={{ color: K.muted2, fontSize: 11 }}>—</span>;
 }
 
 // ── Score Bar ─────────────────────────────────────────────────────────────────

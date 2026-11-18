@@ -484,9 +484,9 @@ function toursTotal(d: TenantDetails): number {
   return d.pagination?.total ?? d.rewritten_tours.length;
 }
 /** AA-1127: the runs list is the newest-N window when it is full ("Pipeline (latest 20)"), else a real count. */
-function pipelineCount(d: TenantDetails): { latest: boolean; n: number } {
+function pipelineCount(d: TenantDetails): { key: "tabPipelineLatest" | "tabPipeline"; n: number } {
   const shown = d.summary.pipeline_runs_shown;
-  return shown != null && d.pipeline_runs.length >= shown ? { latest: true, n: shown } : { latest: false, n: d.pipeline_runs.length };
+  return shown != null && d.pipeline_runs.length >= shown ? { key: "tabPipelineLatest", n: shown } : { key: "tabPipeline", n: d.pipeline_runs.length };
 }
 
 export function TenantDetail({ tenant, onChanged }: {
@@ -553,7 +553,7 @@ export function TenantDetail({ tenant, onChanged }: {
   const ALL_TABS: { key: DTab; label: string }[] = [
     { key: "tours",   label: tr("tabTours", toursTotal(data)) },
     ...(isInternal
-      ? [{ key: "pipeline" as DTab, label: pipelineRuns.latest ? tr("tabPipelineLatest", pipelineRuns.n) : tr("tabPipeline", pipelineRuns.n) }]
+      ? [{ key: "pipeline" as DTab, label: tr(pipelineRuns.key, pipelineRuns.n) }]
       : [{ key: "activity" as DTab, label: tr("tabActivity", activity.length) }]
     ),
     { key: "api",   label: tr("tabApi") },
