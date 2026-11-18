@@ -129,3 +129,27 @@ def test_manifest_route_serves_the_fields():
     assert [h["pr"] for h in listed["history"]] == [875, None]
     assert (listed["needs_review"], listed["needs_review_reason"]) == (True, "The kite route changed.")
     assert "unknown_field" not in listed
+
+
+ROOT_FORM = {"since": "2026-11-18T13:17:02+07:00", "count": 2,
+             "changes": [{"entry": "root-docs-reader", "repo": "AA-Ecosys", "sha": "d" * 40,
+                          "date": "2026-11-18T15:20:29+07:00", "files": 1},
+                         {"entry": "cis-docs-api", "repo": "AA-CIS-App", "sha": "e" * 40,
+                          "date": "2026-11-18T15:30:00+07:00", "files": 3}]}
+
+
+def test_root_bundle_object_form_flags_the_page_with_a_reason():
+    """S284 live: the root bundle writes needs_review as {since, count, changes} (rule 15), not a boolean."""
+    flag, reason = docs_page_history.clean_review({"needs_review": ROOT_FORM})
+    assert flag is True
+    assert reason == ("2 code changes since 2026-11-18: root-docs-reader (AA-Ecosys), cis-docs-api (AA-CIS-App)")
+
+
+@pytest.mark.parametrize("obj, expected", [
+    ({"count": 0, "changes": []}, (False, None)),
+    ({"changes": [{"entry": "x", "repo": "R"}]}, (True, "1 code change: x (R)")),
+    ({"count": 1, "since": "not a date", "changes": "nope"}, (True, "1 code change")),
+    ({"count": 3, "changes": [{"entry": "123456789012"}]}, (True, "3 code changes: [redacted-account-id]")),
+])
+def test_root_bundle_object_form_shapes(obj, expected):
+    assert docs_page_history.clean_review({"needs_review": obj}) == expected
