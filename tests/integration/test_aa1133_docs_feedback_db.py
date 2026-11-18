@@ -33,6 +33,8 @@ async def conn():
     tr = c.transaction()
     await tr.start()
     try:
+        # The replayed test DB has no runtime schema grants (Dev has them): grant USAGE for this transaction only.
+        await c.execute("GRANT USAGE ON SCHEMA acp_shared TO cis_app")
         await c.execute("SET LOCAL ROLE cis_app")
         yield c
     finally:
