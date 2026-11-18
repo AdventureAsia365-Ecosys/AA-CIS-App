@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from api.routers import v1_tours
+from api.services import rewrite_ledger
 
 pytestmark = pytest.mark.usefixtures("seeded_plans")
 
@@ -22,9 +23,9 @@ def _norm(sql: str) -> str:
 
 
 def test_rewrite_sources_leave_tenant_edits_out():
-    assert v1_tours.REWRITE_EDIT_SOURCES == ("ai_generated", "re_rewrite")
-    assert v1_tours.REWRITE_EDIT_SOURCES_SQL == "('ai_generated', 're_rewrite')"
-    assert "tenant_edit" not in v1_tours.REWRITE_EDIT_SOURCES_SQL
+    assert rewrite_ledger.REWRITE_EDIT_SOURCES == ("ai_generated", "re_rewrite")
+    assert rewrite_ledger.REWRITE_EDIT_SOURCES_SQL == "('ai_generated', 're_rewrite')"
+    assert "tenant_edit" not in rewrite_ledger.REWRITE_EDIT_SOURCES_SQL
 
 
 def test_the_counter_is_written_only_by_the_rewrite_quota_helper():
@@ -49,7 +50,7 @@ async def test_quota_reads_the_counter_for_the_month_key_the_rewrite_writes():
     out = await v1_tours.get_quota(request, tenant={"sub": "tenant-1"})
     sql, tenant_id, month = conn.fetchval.await_args.args
     assert "FROM shared.tenant_rewrite_usage" in sql and tenant_id == "tenant-1"
-    assert month == v1_tours._current_year_month_and_reset()[0]
+    assert month == rewrite_ledger.current_year_month_and_reset()[0]
     assert (out["rewrites_used"], out["rewrites_remaining"], out["tours_per_month"]) == (2, 198, 200)
 
 

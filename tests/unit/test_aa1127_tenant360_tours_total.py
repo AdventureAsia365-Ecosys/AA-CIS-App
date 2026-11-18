@@ -9,6 +9,7 @@ import inspect
 import re
 
 from api.routers import admin
+from api.services import tenant360_lists as t360
 
 
 def _src() -> str:
@@ -17,8 +18,8 @@ def _src() -> str:
 
 def test_the_tenant_branch_pages_on_the_server_and_lists_what_the_total_counts():
     src = _src()
-    branch = src[src.index("SELECT ttv.id, NULL::uuid AS tour_id"):]
-    branch = branch[:branch.index('""", tenant_id, page_size, (page - 1) * page_size)')]
+    assert "await conn.fetch(_t360.TENANT_VERSIONS_PAGE_SQL, tenant_id, page_size, (page - 1) * page_size)" in src
+    branch = re.sub(r"\s+", " ", t360.TENANT_VERSIONS_PAGE_SQL)
     assert "LIMIT $2 OFFSET $3" in branch
     assert "LEFT JOIN gold_aa_internal.published_tours pt" in branch
     assert "WHERE ttv.tenant_id = $1" in branch
@@ -29,6 +30,6 @@ def test_the_tenant_branch_pages_on_the_server_and_lists_what_the_total_counts()
 
 def test_the_runs_window_is_one_value_the_ui_reads():
     src = _src()
-    assert "ORDER BY started_at DESC LIMIT $2" in src and "tenant_id, PIPELINE_RUNS_SHOWN)" in src
-    assert '"pipeline_runs_shown": PIPELINE_RUNS_SHOWN' in src
-    assert admin.PIPELINE_RUNS_SHOWN == 20
+    assert "ORDER BY started_at DESC LIMIT $2" in src and "tenant_id, _t360.PIPELINE_RUNS_SHOWN)" in src
+    assert '"pipeline_runs_shown": _t360.PIPELINE_RUNS_SHOWN' in src
+    assert t360.PIPELINE_RUNS_SHOWN == 20

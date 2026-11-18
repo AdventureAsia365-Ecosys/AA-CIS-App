@@ -14,6 +14,8 @@ from api.core.secret_compare import secrets_equal
 from services.tenant_account import billing_terms
 from services.tenant_account import plans as tenant_plans
 from api.routers._billing import no_plan_usage, usage_row_to_dict
+from api.services.rewrite_ledger import (REWRITE_EDIT_SOURCES_SQL,  # AA-1127: one rewrite ledger
+                                         current_year_month_and_reset as _current_year_month_and_reset)
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from api.routers._served import annotate as _annotate_served, refuse_http as _refuse_not_served
 from shared import settings as platform_settings
@@ -396,14 +398,6 @@ async def browse_pool(
 #     `rewrite_over_quota` so it stays visible.
 
 
-def _current_year_month_and_reset() -> tuple:
-    """(year_month 'YYYY-MM' string, first-of-next-month date) in UTC."""
-    import datetime as _dt_quota
-    now_utc = _dt_quota.datetime.now(_dt_quota.timezone.utc)
-    next_month = (now_utc.replace(day=1) + _dt_quota.timedelta(days=32)).replace(day=1)
-    return now_utc.strftime("%Y-%m"), next_month
-
-
 async def _get_tenant_plan_limit(conn, tenant_id: str) -> tuple:
     """(plan_tier str, tours_quota_monthly int) — plan read live from shared.tenants, not the
     JWT's own plan_tier claim (same rationale AA-432 established for rate_limit_rpm/is_active: a
@@ -418,13 +412,6 @@ async def _get_tenant_plan_limit(conn, tenant_id: str) -> tuple:
     return str(row["plan"]), int(row["quota"])
 
 
-# AA-1127 (S1, S283 UI audit): ONE ledger for rewrites. The month's rewrite count is the counter below
-# (shared.tenant_rewrite_usage, incremented only by _check_and_consume_rewrite_quota in trigger_rewrite): GET /v1/quota
-# reads it, and since CIS 447 shared.v_tenant_monthly_usage.tours_rewritten (GET /v1/billing, the admin tenant list,
-# Tenant 360, the billed overage) reads the same row. A tenant's own inline edit (edit_source 'tenant_edit') is not a
-# rewrite: the dashboard's per-day rewrite line counts only the versions a rewrite made.
-REWRITE_EDIT_SOURCES = ("ai_generated", "re_rewrite")
-REWRITE_EDIT_SOURCES_SQL = "(" + ", ".join(f"'{s}'" for s in REWRITE_EDIT_SOURCES) + ")"
 OVER_QUOTA_SETTING = "cis.billing.rewrite_over_quota_mode"   # S279 thresholds L1: soft (default) | hard
 
 
