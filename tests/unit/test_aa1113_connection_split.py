@@ -74,3 +74,34 @@ def test_the_provider_budget_key_is_compiled_with_an_empty_default():
     d = settings.definition(split.PROVIDER_BUDGET_KEY)
     assert d.value_type == "json" and d.default_value == {} and d.enforced is True
     assert (d.min_value, d.max_value) == (0, 1_000_000)
+
+
+def test_an_alert_only_cis_share_is_not_called_ok():
+    # The CIS gateway refuses only when the connection's policy is a hard stop; hard_stop false = alert only.
+    row = split.split_row("zz-conn", provider_budget=100, cis_share=50, crm_share=30, cis_hard_stop=False)
+    assert row["state"] == split.UNBOUNDED and row["state"] != split.OK
+    assert row["uncapped_apps"] == ["cis"] and row["alert_only_apps"] == ["cis"]
+    assert row["cis_hard_stop"] is False and row["cis_share_usd"] == 50.0 and row["over_allocated"] is False
+
+
+def test_an_alert_only_cis_share_above_the_budget_is_still_over_allocated():
+    row = split.split_row("zz-conn", provider_budget=100, cis_share=80, crm_share=30, cis_hard_stop=False)
+    assert row["state"] == split.OVER_ALLOCATED and row["alert_only_apps"] == ["cis"]
+
+
+def test_a_hard_stop_cis_share_is_a_limit():
+    row = split.split_row("zz-conn", provider_budget=100, cis_share=50, crm_share=30, cis_hard_stop=True)
+    assert row["state"] == split.OK and row["uncapped_apps"] == [] and row["alert_only_apps"] == []
+
+
+def test_no_cis_share_is_never_alert_only():
+    row = split.split_row("zz-conn", provider_budget=100, cis_share=None, crm_share=30, cis_hard_stop=False)
+    assert row["uncapped_apps"] == ["cis"] and row["alert_only_apps"] == []
+
+
+def test_split_rows_reads_the_hard_stop_per_connection_and_defaults_to_a_hard_stop():
+    out = split.split_rows([("zz-a", 50), ("zz-b", 50)], {"zz-a": Decimal(100), "zz-b": Decimal(100)},
+                           {"zz-a": Decimal(30), "zz-b": Decimal(30)}, {"zz-a": False})
+    rows = {r["connection_key"]: r for r in out["rows"]}
+    assert rows["zz-a"]["state"] == split.UNBOUNDED and rows["zz-a"]["alert_only_apps"] == ["cis"]
+    assert rows["zz-b"]["state"] == split.OK and rows["zz-b"]["cis_hard_stop"] is True
