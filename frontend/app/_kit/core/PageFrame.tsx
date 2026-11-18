@@ -22,6 +22,10 @@
 // flex column with a 20px gap, so sections need no margins of their own. Without them (the default, "full") the
 // frame renders its children as before, so existing pages do not change.
 //
+// AA-1131 (S283 UI audit, batch K1): the <main> of both variants is `position: relative`, so it is the containing block
+// of anything absolutely positioned inside the page (an `sr-only` file input, a popover): such an element now scrolls
+// and clips with the frame instead of making the document taller (Booking service page at 390 px: two scroll bars).
+//
 // `data-kit-frame` marks the frame for the automated visual job (root ADR 0016 decision 9: a page without it fails).
 import type { CSSProperties, ReactNode } from "react";
 import { PageHeader } from "./primitives";
@@ -49,7 +53,7 @@ export function PageFrame({
   if (variant === "split") {
     return (
       <main className="aa-admin-split" data-testid={testId} data-kit-frame="split"
-        style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", overflowY: "auto", ...style }}>
+        style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", overflowY: "auto", position: "relative", ...style }}>
         {children}
       </main>
     );
@@ -58,7 +62,7 @@ export function PageFrame({
   const maxWidth = typeof width === "number" ? width : width === "full" ? undefined : FRAME_MAX[width];
   return (
     <main className={`aa-admin-main${className ? ` ${className}` : ""}`} data-testid={testId} data-kit-frame="page"
-      style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: "auto", padding: "28px 36px 56px", ...style }}>
+      style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: "auto", position: "relative", padding: "28px 36px 56px", ...style }}>
       {column ? (
         <div data-kit-frame-column="" style={{
           display: "flex", flexDirection: "column", gap: 20, minWidth: 0, maxWidth, margin: "0 auto", width: "100%",

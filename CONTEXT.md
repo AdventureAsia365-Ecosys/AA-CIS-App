@@ -191,6 +191,12 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     **AA-1040:** variant `narration` (a traveller reading what the AI wrote when they asked for it: TripPlanner trip
     narration, EU AI Act Art. 50(1)) and `form="badge"`: the short "AI-assisted" pill (`aiBadgeText`) for cards and
     rows, a `<span role="note">` whose accessible name and tooltip are the variant's sentence (Content studio).
+    **AA-1131 (S283 UI audit K1):** `dataTableRows.tsx` (a DataTable row with `onRowClick` is a tab stop that opens on
+    Enter / Space, with the kit focus ring; the page-size select is named "Rows per page"), `Drawer` is a named modal
+    dialog (title or `ariaLabel`) with initial focus (`initialFocusRef`), a focus trap and focus return,
+    `PageHeaderStyles.tsx` (the PageHeader layout rules, no longer copied into each app's CSS), and the PageFrame
+    `<main>` is `position: relative`. The visual job checks accessible names (`tests/e2e/helpers/a11yNames.ts`: kit
+    controls on every page, every control on the gallery) and drives the gallery's table + drawer from the keyboard.
     `check-kit-copy.mjs`, **`eslint-kit.mjs`** (AA-994 S1c, see "Kit lint" below), `MANIFEST.json` and **`tokens.css`** (AA-994 S1b: the one `--aa-*` token set of every
     frontend — light and dark palettes, `--aa-scrim` / `--aa-hero-bg`, shadows, `--aa-font-*` as
     `var(--font-*, "<family>")`, and the type / radius / space / z / motion scales from TripPlanner AA-995;
@@ -4655,7 +4661,11 @@ S283: the judge may be a **pinned claim instrument** (`judge.instrument`, `servi
 AA-1048 chain R1 fire then two-step v7, ADVISORY (v7 missed one AA-1048 bar), judging every sentence of each output and
 counting the flagged claims (`fail_claims_per_item`); R2 then skips its kappa block and judges the whole fixed sample.
 A file may fix its sample as a rule (`sample`: n GATE items by a seeded hash of the id, drawn from the registered
-golden version). The registered null run is `w5-null-t9-blog-v7`.
+golden version). The registered null run is `w5-null-t9-blog-v7-g150` (S284: golden aa729@1.5.0, 12 t9_blog GATE
+items; it supersedes `w5-null-t9-blog-v7`, whose 1.4.0 had 6). Its control A is the newest finished **reverify** run of
+the writer on that golden version, of no release or an active one (a reverify of a fixed sample regenerates the control
+of every sample item), paired on its regenerated controls only, never its candidate rows, so B == A by configuration;
+without one, or with a control missing, the run refuses at $0.
 _Avoid_: A/B test (a proof has a fixed pre-registered rule), experiment.
 
 **Scope (writing memory)**:

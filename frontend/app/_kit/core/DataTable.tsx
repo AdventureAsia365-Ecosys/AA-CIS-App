@@ -25,6 +25,8 @@
 // column's label row label in phone card mode (an actions column: the button says what it does). `paginate={false}` shows every row and no pager,
 // for a page that loads more rows itself (keyset "load older") — one paging mechanism, not two.
 //
+// AA-1131: with `onRowClick` a row is a keyboard target (dataTableRows.tsx); the page-size select is named.
+//
 // S280 (AA-1096): `searchText` (row → extra text the search matches: a slug, an id), `searchLabel` (the box's accessible
 // name) and `initialSearch` (the box's text on mount); dataTableSearch.ts.
 //
@@ -57,6 +59,7 @@ import { KIT_MESSAGES } from "./kit.messages";
 import { useT } from "./useI18n";
 import { deleteView, listViews, saveView, type SavedView } from "./savedViews";
 import { searchBoxText, searchFilterState, searchOptions, searchQueryOf } from "./dataTableSearch";
+import { DataTableStyles, rowOpenProps } from "./dataTableRows";
 
 type PersistedState = {
   sorting: SortingState;
@@ -403,6 +406,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
 
   return (
     <div style={{ fontFamily: sans, position: "relative" }}>
+      <DataTableStyles />
       {/* Toolbar */}
       <div
         style={{
@@ -602,7 +606,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                 key={row.id}
                 data-testid={rowTestId ? rowTestId(row.original) : "kit-datatable-row"}
                 data-kit-row=""
-                onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+                {...rowOpenProps(onRowClick, row.original)}
                 style={{
                   border: `1px solid ${row.getIsSelected() ? K.accentBorder : K.line}`,
                   borderRadius: RADIUS.lg,
@@ -731,8 +735,8 @@ export function DataTable<T>(props: DataTableProps<T>) {
                 <tr
                   key={row.id}
                   data-testid={rowTestId ? rowTestId(row.original) : "kit-datatable-row"}
-                data-kit-row=""
-                  onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+                  data-kit-row=""
+                  {...rowOpenProps(onRowClick, row.original)}
                   style={{
                     background: row.getIsSelected() ? K.accentTint : "transparent",
                     cursor: onRowClick ? "pointer" : undefined,
@@ -789,19 +793,13 @@ export function DataTable<T>(props: DataTableProps<T>) {
               )}
             </span>
             <select
+              aria-label={t("rowsPerPage")} data-kit-page-size=""
               value={effPageSize}
               onChange={(e) =>
                 sp ? sp.onChange(0, Number(e.target.value)) : setPageSizeState(Number(e.target.value))
               }
-              style={{
-                padding: "4px 8px",
-                borderRadius: RADIUS.sm,
-                border: `1px solid ${K.line}`,
-                fontSize: 12,
-                fontFamily: sans,
-                color: K.ink3,
-                cursor: "pointer",
-              }}
+              style={{ padding: "4px 8px", borderRadius: RADIUS.sm, border: `1px solid ${K.line}`, fontSize: 12,
+                fontFamily: sans, color: K.ink3, cursor: "pointer" }}
             >
               {pageSizeOptions.map((n) => (
                 <option key={n} value={n}>

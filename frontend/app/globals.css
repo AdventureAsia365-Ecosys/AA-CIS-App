@@ -225,19 +225,8 @@ body {
   .aa-topbar-spacer { display: block !important; }
 }
 
-/* AA-883 (S241 polish) — kit PageHeader. The text block takes the free space and the actions sit
-   right-aligned beside it. On a phone, a header that has a description AND actions
-   (`aa-page-header--stack`) gives the text the full row so the actions drop under it, left aligned.
-   CSS, not a JS media query, so the server HTML is already right on a phone (no hydration shift). */
-.aa-page-header-text { flex: 1 1 240px; }
-.aa-page-header-actions { justify-content: flex-end; max-width: 100%; }
-
-@media (max-width: 767px) {
-  .aa-page-header--stack > .aa-page-header-text { flex-basis: 100%; }
-  /* The full row too, so a long action row (As of + Refresh + Export CSV on Data coverage) wraps
-     instead of running past the screen edge (S252 UI verify at 390px). */
-  .aa-page-header--stack > .aa-page-header-actions { justify-content: flex-start; flex-basis: 100%; min-width: 0; }
-}
+/* AA-883 (S241 polish) — the kit PageHeader layout (text beside the actions; a header with a description AND actions
+   stacks on a phone) moved into the kit itself in AA-1131: core/primitives.tsx PAGE_HEADER_CSS, hoisted once. */
 
 
 /* Kit GuidePanel (S252): the guide fills the page width like every other panel. Wide screens: a sticky "On this

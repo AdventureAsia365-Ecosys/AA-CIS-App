@@ -22,6 +22,7 @@ import { K, RADIUS, sans } from "./tokens";
 import { ButtonStyles, BUTTON_CLASS, rovingTarget } from "./Buttons";
 import { KIT_MESSAGES } from "./kit.messages";
 import { useT } from "./useI18n";
+import { PageHeaderStyles } from "./PageHeaderStyles";
 
 // ── Breadcrumb (AA-831) ───────────────────────────────────────────────────────
 // One-line "<root> / <title>" crumb for a shell top bar. The root and separator never shrink; the
@@ -419,79 +420,78 @@ export function PageHeader({
   description?: React.ReactNode;
   actions?: React.ReactNode;
 }) {
-  // On a phone a header with a description puts its actions on their own row under the text, left
-  // aligned (S241 UI verify: on /admin/platform/staff the description was squeezed into ~250px
-  // beside Refresh). Without a description the actions still sit beside a short title. The switch
-  // is the `aa-page-header--stack` rule in globals.css (< 768px), not a JS media query, so the
-  // server HTML already has the phone layout (no shift on hydration). The text block's `flex` and
-  // the actions' `justify-content` live in those classes because an inline style would win over them.
+  // Description AND actions = the "stack" kind (its actions get their own row on a phone, S241). Layout: CSS classes
+  // (PageHeaderStyles.tsx, AA-1131), so the server HTML is right on a phone and an inline style never wins over it.
   const stack = !!description && !!actions;
   return (
-    <div
-      className={stack ? "aa-page-header aa-page-header--stack" : "aa-page-header"}
-      style={{
-        display: "flex",
-        alignItems: "flex-start",
-        justifyContent: "space-between",
-        gap: 16,
-        marginBottom: 20,
-        fontFamily: sans,
-        // Wrap on narrow screens so the actions drop below the title instead of overlapping it
-        // (AA-752: at 390px the title and the action buttons were colliding).
-        flexWrap: "wrap",
-      }}
-    >
-      <div className="aa-page-header-text" style={{ minWidth: 0 }}>
-        {breadcrumbs && breadcrumbs.length > 0 && (
-          <div
+    <>
+      <PageHeaderStyles />
+      <div
+        className={stack ? "aa-page-header aa-page-header--stack" : "aa-page-header"}
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: 16,
+          marginBottom: 20,
+          fontFamily: sans,
+          // Wrap on narrow screens so the actions drop below the title instead of overlapping it
+          // (AA-752: at 390px the title and the action buttons were colliding).
+          flexWrap: "wrap",
+        }}
+      >
+        <div className="aa-page-header-text" style={{ minWidth: 0 }}>
+          {breadcrumbs && breadcrumbs.length > 0 && (
+            <div
+              style={{
+                display: "flex",
+                gap: 6,
+                fontSize: 12,
+                color: K.muted2,
+                marginBottom: 6,
+                // S252 — a long last crumb (a tour title) wraps instead of widening the page.
+                flexWrap: "wrap",
+                minWidth: 0,
+                overflowWrap: "anywhere",
+              }}
+            >
+              {breadcrumbs.map((b, i) => (
+                <span key={i} style={{ display: "inline-flex", gap: 6, minWidth: 0 }}>
+                  {b.href ? (
+                    <a href={b.href} style={{ color: K.muted, textDecoration: "none" }}>
+                      {b.label}
+                    </a>
+                  ) : (
+                    <span>{b.label}</span>
+                  )}
+                  {i < breadcrumbs.length - 1 && <span>/</span>}
+                </span>
+              ))}
+            </div>
+          )}
+          <h1
             style={{
-              display: "flex",
-              gap: 6,
-              fontSize: 12,
-              color: K.muted2,
-              marginBottom: 6,
-              // S252 — a long last crumb (a tour title) wraps instead of widening the page.
-              flexWrap: "wrap",
-              minWidth: 0,
-              overflowWrap: "anywhere",
+              margin: 0,
+              fontFamily: "'Fahkwang', 'Poppins', Georgia, serif",
+              fontSize: 24,
+              fontWeight: 600,
+              color: K.ink,
+              letterSpacing: "-0.01em",
             }}
           >
-            {breadcrumbs.map((b, i) => (
-              <span key={i} style={{ display: "inline-flex", gap: 6, minWidth: 0 }}>
-                {b.href ? (
-                  <a href={b.href} style={{ color: K.muted, textDecoration: "none" }}>
-                    {b.label}
-                  </a>
-                ) : (
-                  <span>{b.label}</span>
-                )}
-                {i < breadcrumbs.length - 1 && <span>/</span>}
-              </span>
-            ))}
+            {title}
+          </h1>
+          {description && (
+            <div style={{ fontSize: 13, color: K.muted, marginTop: 6 }}>{description}</div>
+          )}
+        </div>
+        {actions && (
+          <div className="aa-page-header-actions" style={{ display: "flex", gap: 8, flexShrink: 0, alignItems: "center", flexWrap: "wrap" }}>
+            {actions}
           </div>
         )}
-        <h1
-          style={{
-            margin: 0,
-            fontFamily: "'Fahkwang', 'Poppins', Georgia, serif",
-            fontSize: 24,
-            fontWeight: 600,
-            color: K.ink,
-            letterSpacing: "-0.01em",
-          }}
-        >
-          {title}
-        </h1>
-        {description && (
-          <div style={{ fontSize: 13, color: K.muted, marginTop: 6 }}>{description}</div>
-        )}
       </div>
-      {actions && (
-        <div className="aa-page-header-actions" style={{ display: "flex", gap: 8, flexShrink: 0, alignItems: "center", flexWrap: "wrap" }}>
-          {actions}
-        </div>
-      )}
-    </div>
+    </>
   );
 }
 
