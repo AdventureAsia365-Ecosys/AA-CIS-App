@@ -19,7 +19,10 @@ from api.routers.admin_pipeline._engine import _execute_run_tour
 async def _refuse_locked(request: Request, tour_ids: List[str]) -> List[str]:
     """AA-1146: the tours among ``tour_ids`` whose Master a person locked (a published hand edit)."""
     from services.content_generation import human_lock
-    async with request.app.state.pool.acquire() as conn:
+    pool = getattr(getattr(getattr(request, "app", None), "state", None), "pool", None)
+    if pool is None:      # a direct call without the app (tests): nothing to read
+        return []
+    async with pool.acquire() as conn:
         return sorted((await human_lock.locks_of(conn, [t for t in tour_ids if _is_uuid(t)])).keys())
 
 
