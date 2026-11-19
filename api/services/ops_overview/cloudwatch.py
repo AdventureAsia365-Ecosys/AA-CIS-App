@@ -13,7 +13,8 @@ Sources (acc2, us-west-1; read-only IAM on the CIS task role, AA-CIS-Infra modul
   overview comes from its own health check (``platform_apps._crm_card``, the probe /admin/platform/apps already runs)
   plus these alarms, through ``app_health.overall_status``.
 - Alarms: every alarm whose name starts with an app's prefix (``aa-cis-<env>-``, ``aa-booking-<env>-``,
-  ``aa-tripplanner-<env>-``, ``aa-crm-<env>-``; shared platform: ``aa-ecosys-<env>-``, ``aa-identity-<env>-``, ``aa-email-<env>-``).
+  ``aa-tripplanner-<env>-``, ``aa-crm-<env>-``; shared platform: ``aa-ecosys-<env>-``, ``aa-identity-<env>-``,
+  ``aa-email-<env>-``).
   ``TargetTracking-*`` (ECS autoscaling, normal "AlarmLow") never matches a prefix and is skipped explicitly too.
 
 Cost: one GetMetricData call = 16 metrics ($0.01 per 1,000 metrics → $0.00016), DescribeAlarms is free. Called only

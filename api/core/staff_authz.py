@@ -462,10 +462,8 @@ POLICY: dict[tuple[str, str], Any] = {
     ("PATCH", "/admin/tours/{tour_id}/restore"): CONTENT_WRITE,
     # admin — the notification bell (Topbar, every staff role)
     # AA-1035 slice 2: its own capability (every role holds it); each role sees only its rows (admin.py
-    # notification_scope). The viewer still never marks a row read (READ_ONLY_ROLES).
-    # AA-1127 C3: the admin shell's read-only hint (api/routers/admin_session.py), every staff role like the bell.
-    ("GET", "/admin/session"): NOTIFICATIONS_READ,
-    ("GET", "/admin/notifications"): NOTIFICATIONS_READ,
+    # notification_scope). The viewer still never marks a row read (READ_ONLY_ROLES). AA-1127 C3: + the shell's hint.
+    ("GET", "/admin/session"): NOTIFICATIONS_READ, ("GET", "/admin/notifications"): NOTIFICATIONS_READ,
     ("GET", "/admin/notifications/count"): NOTIFICATIONS_READ,
     ("PUT", "/admin/notifications/read-all"): NOTIFICATIONS_READ,
     ("PUT", "/admin/notifications/{notif_id}/read"): NOTIFICATIONS_READ,

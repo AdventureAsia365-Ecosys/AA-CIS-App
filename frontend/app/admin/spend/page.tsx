@@ -1006,12 +1006,8 @@ function CostOperationsInner() {
                     <Eyebrow style={{ marginBottom: 0 }}>{t("awsVsEst")}</Eyebrow>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                       {ceCheckMsg && <span style={{ fontSize: 11.5, color: K.muted2 }}>{ceCheckMsg}</span>}
-                      {/* AA-1127 C3: a paid Cost Explorer call; hidden in a read-only session. */}
-                      <WriteOnly>
-                        <Button size="sm" variant="secondary" onClick={runCostExplorerCheck} disabled={ceChecking}>
-                          {ceChecking ? t("refreshing") : t("refreshAws")}
-                        </Button>
-                      </WriteOnly>
+                      <WriteOnly>{/* AA-1127 C3: paid Cost Explorer call, hidden when read-only */}<Button size="sm"
+                        variant="secondary" onClick={runCostExplorerCheck} disabled={ceChecking}>{ceChecking ? t("refreshing") : t("refreshAws")}</Button></WriteOnly>
                     </div>
                   </div>
 
