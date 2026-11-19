@@ -145,6 +145,10 @@ export function filtersFromSearch(search: string): ListFilters {
   };
 }
 
+export function anyFilter(f: ListFilters): boolean {
+  return !!(f.status || f.type || f.hasDraft);
+}
+
 /** One server page of the list (filters and paging run on the server, lesson S218). */
 export function listUrl(f: ListFilters, pageIndex: number, pageSize: number): string {
   const q = new URLSearchParams();

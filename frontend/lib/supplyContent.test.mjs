@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  anyFilter,
   bookingHref,
   detailHref,
   factRows,
@@ -47,6 +48,8 @@ test("the list URL carries the filters and the server page", () => {
   assert.equal(listUrl({ status: "", type: "", hasDraft: "1" }, 0, 25),
     "/api/admin/supply-content?has_draft=1&limit=25&offset=0");
   assert.equal(detailHref("abc-1"), "/admin/supply-content/abc-1");
+  assert.equal(anyFilter({ status: "", type: "", hasDraft: "" }), false);
+  assert.equal(anyFilter({ status: "", type: "", hasDraft: "0" }), true);
 });
 
 test("photo state follows the publish rule", () => {

@@ -34,6 +34,7 @@ import {
   ENTITY_TYPES,
   STATUS_TONE,
   NO_FILTERS,
+  anyFilter,
   detailHref,
   filtersFromSearch,
   listUrl,
@@ -123,28 +124,9 @@ export default function SupplyContentList() {
 
   const refresh = () => { void qc.invalidateQueries({ queryKey: LIST_KEY }); };
   const counts = list.data?.by_status ?? {};
-  const filtered = !!(filters.status || filters.type || filters.hasDraft);
+  const filtered = anyFilter(filters);
 
-  const filterBar = (
-    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", minWidth: 0 }}>
-      <Select aria-label={t("contentStatus")} value={filters.status}
-        onChange={(e) => setFilter("status", e.target.value as ContentStatus | "")} style={selectStyle}>
-        <option value="">{t("anyStatus")}</option>
-        {CONTENT_STATUSES.map((s) => <option key={s} value={s}>{st.status[s]} ({counts[s] ?? 0})</option>)}
-      </Select>
-      <Select aria-label={t("type")} value={filters.type}
-        onChange={(e) => setFilter("type", e.target.value as EntityType | "")} style={selectStyle}>
-        <option value="">{t("hotelsAndServices")}</option>
-        {ENTITY_TYPES.map((et) => <option key={et} value={et}>{t("typePlural", st.type[et])}</option>)}
-      </Select>
-      <Select aria-label={t("openDraft")} value={filters.hasDraft}
-        onChange={(e) => setFilter("hasDraft", e.target.value as DraftFilter)} style={selectStyle}>
-        <option value="">{t("anyDraft")}</option>
-        <option value="1">{t("withOpenDraft")}</option>
-        <option value="0">{t("withoutOpenDraft")}</option>
-      </Select>
-    </div>
-  );
+  const filterBar = <FilterBar filters={filters} counts={counts} onChange={setFilter} />;
 
   return (
     <PageFrame>
@@ -182,6 +164,36 @@ export default function SupplyContentList() {
         tableMinWidth={640}
       />
     </PageFrame>
+  );
+}
+
+/** The list filters: content status (with its count), type, and open draft (the My work drafts tile, AA-1156). */
+function FilterBar({ filters, counts, onChange }: {
+  filters: ListFilters;
+  counts: ListPage["by_status"];
+  onChange: <F extends keyof ListFilters>(key: F, value: ListFilters[F]) => void;
+}) {
+  const t = useT(SC);
+  const st = useSupplyText();
+  return (
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", minWidth: 0 }}>
+      <Select aria-label={t("contentStatus")} value={filters.status}
+        onChange={(e) => onChange("status", e.target.value as ContentStatus | "")} style={selectStyle}>
+        <option value="">{t("anyStatus")}</option>
+        {CONTENT_STATUSES.map((s) => <option key={s} value={s}>{st.status[s]} ({counts[s] ?? 0})</option>)}
+      </Select>
+      <Select aria-label={t("type")} value={filters.type}
+        onChange={(e) => onChange("type", e.target.value as EntityType | "")} style={selectStyle}>
+        <option value="">{t("hotelsAndServices")}</option>
+        {ENTITY_TYPES.map((et) => <option key={et} value={et}>{t("typePlural", st.type[et])}</option>)}
+      </Select>
+      <Select aria-label={t("openDraft")} value={filters.hasDraft}
+        onChange={(e) => onChange("hasDraft", e.target.value as DraftFilter)} style={selectStyle}>
+        <option value="">{t("anyDraft")}</option>
+        <option value="1">{t("withOpenDraft")}</option>
+        <option value="0">{t("withoutOpenDraft")}</option>
+      </Select>
+    </div>
   );
 }
 

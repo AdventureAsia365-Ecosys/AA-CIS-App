@@ -99,7 +99,8 @@ def diff(base: Optional[dict], draft: Optional[dict]) -> list[str]:
 # (list_entities) and the My work tiles (status_summary, AA-1156), so a tile counts exactly the rows the page lists
 # for the same filter. An open draft is a version with status 'draft', whatever the entity's content_status: a redraft
 # of published or stale content keeps the entity's status (only a 'draft' entity moves to 'in_review').
-OPEN_DRAFT_SQL = "EXISTS (SELECT 1 FROM shared.supply_content_version v WHERE v.entity_id = e.id AND v.status = 'draft')"
+OPEN_DRAFT_SQL = ("EXISTS (SELECT 1 FROM shared.supply_content_version v "
+                  "WHERE v.entity_id = e.id AND v.status = 'draft')")
 LIST_FILTER_SQL = ("($1::text IS NULL OR e.content_status = $1) AND ($2::text IS NULL OR e.entity_type = $2) "
                    f"AND ($3::boolean IS NULL OR $3 = {OPEN_DRAFT_SQL})")
 
