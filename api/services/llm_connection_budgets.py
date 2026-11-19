@@ -38,7 +38,7 @@ logger = structlog.get_logger()
 
 NOT_MIGRATED = "the connection budget rows need database migrations 455 and 456"
 AUDIT_ACTION = "llm_connection_budget_changed"
-CRM_APP = "crm"
+CRM_APP = rules.CRM_APP
 CRM_SHARES_PATH = "/llm/connection-shares"
 CRM_NOT_SENT, CRM_IN_SYNC, CRM_DIFFERS, CRM_UNKNOWN = "not_sent", "in_sync", "differs", "unknown"
 

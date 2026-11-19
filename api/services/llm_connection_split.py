@@ -132,6 +132,10 @@ def split_rows(connections: Iterable[tuple[str, Any]], provider_budgets: Mapping
 # API's checks before a save; the database refuses the same over-allocation on its own.
 
 REMAINDER_APP = "cis"
+CRM_APP = "crm"
+# The apps whose own gateway enforces their share on their own ledger, from the copy CIS sends them (the CRM, root
+# ADR 0008a): on a connection with a total, no share means no spend. Every other share app spends in the CIS ledger.
+OWN_LEDGER_APPS = (CRM_APP,)
 REASON_MIN, REASON_MAX = 20, 500        # the Settings rule (CIS 455 CHECK)
 USD_MAX = Decimal("1000000")            # the bound of monthly_budget_usd and of the provider budget setting
 CENT = Decimal("0.01")
@@ -217,9 +221,20 @@ def plan_edit(apps: Iterable[str], before_total: Optional[Decimal], before_share
 
 
 def effective_caps(total: Optional[Decimal], shares: Mapping[str, Optional[Decimal]]) -> dict:
-    """{app: its cap} for the tighten-only check: cis = the remainder, an app = its share (None = no share of its own:
-    it spends inside the remainder, which the cis entry bounds). Pure."""
+    """{app: its real cap} for the tighten-only check: cis = the remainder, an app = its share. What "no share" means
+    depends on where the app's spend is counted, so it is one rule for every app, not a CRM special case:
+
+    - an app that spends inside the CIS ledger (TripPlanner today): no share = it spends inside the remainder, which
+      the cis entry bounds, so its own entry is None;
+    - an app with its own ledger (``OWN_LEDGER_APPS``: its gateway enforces the copy CIS sends it): on a connection
+      with a total, no share = a cap of 0 (the copy says "0.00" and its gateway blocks the connection), so its entry
+      is 0. Giving it a share is then a raise and removing one a cut. Without a total CIS sends it nothing for the
+      connection (its own fallback applies), so the entry stays None. Pure."""
     caps = {a: (None if v is None else float(v)) for a, v in shares.items()}
+    if total is not None:
+        for app in OWN_LEDGER_APPS:
+            if app in caps and caps[app] is None:
+                caps[app] = 0.0
     left = remainder(total, shares)
     caps[REMAINDER_APP] = None if left is None else float(left)
     caps["total"] = None if total is None else float(total)

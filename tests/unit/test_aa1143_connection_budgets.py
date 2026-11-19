@@ -66,6 +66,15 @@ def test_effective_caps_and_the_crm_order():
     assert not rules.crm_tightens(D("5"), D("8")) and not rules.crm_tightens(None, D("1"))
 
 
+def test_an_own_ledger_app_without_a_share_has_a_cap_of_zero():
+    # The CRM's copy says 0.00 for a connection with a total and no CRM share: its real cap is 0, not "no cap".
+    # TripPlanner spends inside the CIS remainder, so it stays None; without a total nothing is sent, so None too.
+    caps = rules.effective_caps(D("100"), {"crm": None, "tripplanner": None})
+    assert caps == {"crm": 0.0, "tripplanner": None, "cis": 100.0, "total": 100.0}
+    assert rules.effective_caps(None, {"crm": None})["crm"] is None
+    assert rules.OWN_LEDGER_APPS == (budgets.CRM_APP,)
+
+
 def test_the_crm_copy_names_every_connection_with_a_total():
     rows = {"zz-a": {None: {"budget_usd": D("100")}, "crm": {"budget_usd": D("5")}},
             "zz-b": {None: {"budget_usd": D("20")}}, "zz-c": {"tripplanner": {"budget_usd": D("1")}}}
@@ -226,6 +235,30 @@ async def test_a_tighten_only_role_may_not_raise_any_part(world):
     out = await budgets.save(FakePool(world), "Bearer zz", "zz-a", total=90, reason=REASON, actor="admin:zz",
                              role="ai_ops")
     assert out["cis_remainder_usd"] == 85.0
+
+
+@pytest.mark.asyncio
+async def test_a_tighten_only_role_may_not_give_the_crm_a_first_share(world):
+    # No CRM row on zz-a = the CRM may not spend there (its copy says 0.00): a share is a raise from 0, refused even
+    # though the total stays the same and the CIS part goes down.
+    del world["rows"][("zz-a", "crm")]
+    with pytest.raises(PermissionError) as e:
+        await budgets.save(FakePool(world), "Bearer zz", "zz-a", shares={"crm": 1}, reason=REASON, actor="admin:zz",
+                           role="ai_ops")
+    assert "crm" in str(e.value) and world["inserted"] == []
+    out = await budgets.save(FakePool(world), "Bearer zz", "zz-a", shares={"crm": 1}, reason=REASON, actor="admin:zz",
+                             role="admin")
+    assert out["shares"]["crm"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_a_tighten_only_role_may_remove_the_crm_share(world):
+    # Removing the CRM share is a cut to 0; with the total cut by the same amount the CIS part does not go up either.
+    out = await budgets.save(FakePool(world), "Bearer zz", "zz-a", total=95, shares={"crm": None}, reason=REASON,
+                             actor="admin:zz", role="ai_ops")
+    assert out["shares"]["crm"] is None and out["cis_remainder_usd"] == 95.0
+    puts = [e for e in world["log"] if e[0] == "crm" and e[1] == "PUT"]
+    assert puts[0][3]["shares"] == [{"connection_key": "zz-a", "share_usd": "0.00"}]
 
 
 @pytest.mark.asyncio
