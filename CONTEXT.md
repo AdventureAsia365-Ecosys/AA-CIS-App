@@ -4794,6 +4794,14 @@ in-graph judge and T2's QA gate count; `writer_requests_per_object`: the writer-
 claim judge adds tens of calls per object. A draft's `plan` also lists what its registration would refuse
 (`registration_problems`: the minimum sample in force) and blocks a sample item the claim judge cannot read (no stored
 control, or over the evidence cap).
+S285 **golden carry** (`services/writer_proof/null_carry.py`): when no null run of the proof's golden version passes,
+the null gate accepts a registered non_inferior null run pinned to an EARLIER version of the same golden set with the
+same judge (model, connection, instrument) if every GATE item of the null run's writer is byte-identical in the proof's
+version (same sample ids on GATE, every stored column of `shared.eval_golden_item` but its ids, and its
+`shared.eval_golden_split` row) and the null run's resolved sample is among them; the shared inputs count too unless
+the writer's judge source never reads them (T9). It never carries back to an earlier version. The plan reports
+`null_run.rule` (`same_golden_version` | `golden_carry`), `golden_carried_from`, `items_compared` and `sample_items`;
+a run that cannot be carried is named in the blocking line with what differs. `same_instrument` stays strict.
 _Avoid_: A/B test (a proof has a fixed pre-registered rule), experiment.
 
 **Scope (writing memory)**:
