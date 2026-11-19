@@ -129,7 +129,8 @@ async def run(ctx: JobContext) -> Optional[dict]:
     models = make_models(ctx.pool, budget, await stage_models(ctx.pool))
     result = await dedupe_run.run(ctx.pool, mode=mode, country=p.get("country") or None, models=models,
                                   job_id=ctx.job_id, progress=ctx.progress)
-    ctx.add_cost(round(models.cost_usd, 6))
+    # models.cost_usd is LLM spend: each call wrote its llm_call_log row with the job id, which is the job's cost
+    # (AA-1051 follow-up: ctx.add_cost here counted it twice); it stays in the log line below
     if models.stopped == "budget":
         await maybe_alert(ctx.pool, budget, reason="place_dedupe stopped by its per-run budget")
     logger.info("place_dedupe_done", mode=mode, model_calls=models.calls, model_cost_usd=round(models.cost_usd, 6),

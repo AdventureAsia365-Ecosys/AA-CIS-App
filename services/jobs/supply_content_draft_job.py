@@ -115,7 +115,7 @@ async def run(ctx: JobContext) -> dict:
         draft, usage = await asyncio.to_thread(writer.draft_content, entity["entity_type"], facts)
     except writer.DraftUnusable as exc:
         raise NonRetryable(f"draft unusable: {exc}") from exc
-    ctx.add_cost(usage["cost_usd"])
+    # the writer's llm_call_log row (job id bound) is the job's cost; the run budget is charged here (AA-1051 follow-up)
     budget.charge(usage["cost_usd"])
 
     usable = {r["media_id"] for r in await ctx.pool.fetch(USABLE_PHOTOS_SQL, entity["id"])}

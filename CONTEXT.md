@@ -1611,7 +1611,10 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   - Job cost (AA-652 follow-up, migration 177): the worker binds the job id around each handler
     (`call_log.bind_job`), so every `llm_call_log` row the job causes carries `job_id`. Shown cost
     = `shared.job.cost_usd` (non-LLM spend the handler reports, e.g. DataForSEO) + the sum of
-    those log rows, computed on read (`queue.LLM_COST_SQL`).
+    those log rows, computed on read (`queue.LLM_COST_SQL`). `JobContext.add_cost` takes non-LLM spend only
+    (DataForSEO, Geoapify, Cost Explorer): an LLM or embedding cost passed there counted twice (AA-1051 follow-up,
+    S286); a per-job cap reads the ledger with `JobContext.llm_spend()`. Guard: an AST allow-list of the `add_cost`
+    sites, `tests/unit/test_aa1051_add_cost_non_llm_only.py`.
   - Admin: `/admin/jobs` page, API `/admin/job-runner/*`. (`/admin/jobs/{id}` is still the older
     `shared.pipeline_jobs` poll for A1 run-tour.) The page lists with `fields=summary` (S241:
     payload/result come back null; the drawer reads them from `GET /jobs/{id}`) and polls every 30 s

@@ -466,8 +466,7 @@ async def run_mine(pool, ctx, *, trigger: str, max_calls: int = cfg.MINE_MAX_CAL
         month.charge(draft.cost_usd)
         run_budget.charge(draft.cost_usd)
         result["cost_usd"] = round(result["cost_usd"] + draft.cost_usd, 6)
-        if ctx is not None:
-            ctx.add_cost(draft.cost_usd)
+        if ctx is not None:     # the job's cost comes from the draft's llm_call_log row (AA-1051 follow-up)
             await ctx.progress(calls=result["calls"], cost_usd=result["cost_usd"])
         if draft.is_none:
             result["none"] += 1
