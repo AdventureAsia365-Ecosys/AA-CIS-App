@@ -13,13 +13,18 @@ no new parser. An edit (PATCH /v1/tours/versions/{id}, action=edit) is checked a
 * sets a key that is not wording (WORDING_FIELDS): duration, price, inclusions, a day list ... (``field``);
 * changes the day structure of the itinerary: another set of "Day N" markers than the base itinerary (``days``);
 * brings a figure the base never states: "3 days" where AA says 4, "$450", "5 hours", "07:30" (``figure``); a
-  duration spelled out ("a two-day walk", "three nights") is read as its figure;
+  duration spelled out ("a two-day walk", "three nights") is read as its figure. A day / night / week figure is
+  checked against the Master's length (``master_length``) and the figures AA wrote (the version, the Master) only,
+  never the raw source (S285 live check: a raw "10 days" let "This ten-day trek" through on a seven-day Master);
 * names a place the base never names, in the highlights or the itinerary (``place``); the place base is the parent's
   highlights and itinerary plus the Master and raw texts, never the parent's name / summary / SEO lines, so a place
   first slipped into the summary (where places are free) cannot clear it for the itinerary in a second edit;
 * drops or adds a "not included" item group (flights, visa, tips, meals ...) (``not_included``);
-* newly says an item group is included that the source excludes, or that no base text names outside a "not
-  included" line ("flights included", "visa included") (``included``).
+* newly says an item group is included that the source excludes, or that the Master does not state as included
+  (the version or the Master text says it is included, or the raw inclusions list names it; "international flights"
+  needs international or all flights there) ("flights included", "visa included") (``included``). Naming the item
+  elsewhere ("fly to the coast") never clears a claim (S285 live check: "International flights included." went
+  through).
 
 Kept free: every sentence that keeps those facts, dropping a figure or a place (less detail is not a different
 tour), reordering, tone, brand words in the name / subtitle / summary / SEO lines (places are checked only where a
@@ -42,7 +47,7 @@ from typing import Any, Iterable, Optional
 import structlog
 
 from services.acp_content_writing.hygiene import fold, phrase_tokens, proper_nouns
-from services.content_generation.day_parse import source_day_markers
+from services.content_generation.day_parse import parse_duration, source_day_markers
 from services.quality import s1_facts
 
 logger = structlog.get_logger()
@@ -73,6 +78,14 @@ _INCLUDED_RE = re.compile(r"\binclud(?:e|es|ed|ing)\b|\bcover(?:s|ed)?\b|\bprovi
 # exceptions an inclusion claim carries ("everything is covered except the visa": the visa is not claimed).
 _CLAUSE_SPLIT_RE = re.compile(r";|\bbut\b|\bwhile\b|\bwhereas\b", re.I)
 _EXCEPT_RE = re.compile(r"\bexcept\b|\bother\s+than\b|\bapart\s+from\b|\bbesides\b", re.I)
+# S285 live check: the units of the tour's length. A figure in one of them is checked against the Master's duration
+# and the texts AA wrote (the version and the Master), never the raw source: a raw text that says "10 days" (another
+# departure, a visa rule) let "This ten-day trek" through on a seven-day Master.
+LENGTH_UNITS = ("day", "night", "week")
+# The scope words of an inclusion claim: "international flights included" is not cleared by "domestic flights".
+_SCOPE_RE = re.compile(r"\b(international|domestic|internal|inbound|outbound)\b[^\S\n]+(?:[\w-]+[^\S\n]+)?$", re.I)
+_SCOPE_OF = {"international": "international", "inbound": "international", "outbound": "international",
+             "domestic": "domestic", "internal": "domestic"}
 
 
 @dataclass(frozen=True)
@@ -167,45 +180,101 @@ def _clauses(text: str) -> list[str]:
             if c.strip()]
 
 
-def _claimed_included(texts: Iterable[str]) -> set[str]:
-    """The item groups the texts say are included: a clause (up to any "except") that has an inclusion verb and is
-    neither a "not included" nor an optional one."""
-    out: set[str] = set()
+def _scoped_groups(text: str) -> set[tuple[str, str]]:
+    """(item group, scope) of every item ``text`` names; the scope is "international" / "domestic" when a scope word
+    stands right before the item ("international flights", "domestic return flights"), else "" (the whole group)."""
+    out: set[tuple[str, str]] = set()
+    for group, rx in s1_facts._ITEM_RES.items():
+        for m in rx.finditer(text or ""):
+            scope = _SCOPE_RE.search(text[max(0, m.start() - 40):m.start()])
+            out.add((group, _SCOPE_OF[scope.group(1).lower()] if scope else ""))
+    return out
+
+
+def _claims(texts: Iterable[str]) -> set[tuple[str, str]]:
+    """(group, scope) of every item the texts say is included: a clause (up to any "except") that has an inclusion
+    verb and is neither a "not included" nor an optional one."""
+    out: set[tuple[str, str]] = set()
     for text in texts:
         for clause in _clauses(text):
             if (_INCLUDED_RE.search(clause) and not s1_facts._NOT_INCLUDED_RE.search(clause)
                     and not s1_facts._OPTIONAL_RE.search(clause)):
-                out.update(s1_facts.item_groups(clause))
+                out |= _scoped_groups(clause)
     return out
 
 
-def _excluded_groups(base_texts: Iterable[str], source_exclusions: str) -> set[str]:
-    """The item groups the base excludes: every unconditional line of the raw exclusions ("meals not mentioned in the
-    itinerary" depends on the itinerary) and every "not included" sentence of the base texts."""
-    out = {g for line in s1_facts.item_lines(source_exclusions) if not s1_facts._CONDITIONAL_RE.search(line)
-           for g in s1_facts.item_groups(line)}
-    return out | _not_included(base_texts)
+def _listed(source_inclusions: str) -> set[tuple[str, str]]:
+    """(group, scope) of every line of the raw inclusions list (its lines carry no "included" word), optional and
+    "not included" lines left out."""
+    return {pair for line in s1_facts.item_lines(source_inclusions)
+            if not s1_facts._NOT_INCLUDED_RE.search(line) and not s1_facts._OPTIONAL_RE.search(line)
+            for pair in _scoped_groups(line)}
 
 
-def _mentioned_groups(texts: Iterable[str]) -> set[str]:
-    """The item groups the texts name in a clause that is not a "not included" one."""
-    return {g for text in texts for sent in s1_facts.sentences(text) for clause in _CLAUSE_SPLIT_RE.split(sent)
-            if not s1_facts._NOT_INCLUDED_RE.search(clause) for g in s1_facts.item_groups(clause)}
+def _excluded(texts: Iterable[str], source_exclusions: str) -> set[tuple[str, str]]:
+    """(group, scope) the base excludes: every unconditional line of the raw exclusions ("meals not mentioned in the
+    itinerary" depends on the itinerary) and every "not included" clause of the texts. Any excluded meal excludes
+    "meals" (a page saying "meals included" would contradict it)."""
+    out = {pair for line in s1_facts.item_lines(source_exclusions) if not s1_facts._CONDITIONAL_RE.search(line)
+           for pair in _scoped_groups(line)}
+    for text in texts:
+        for sent in s1_facts.sentences(text):
+            for clause in _CLAUSE_SPLIT_RE.split(sent):
+                if s1_facts._NOT_INCLUDED_RE.search(clause):
+                    out |= _scoped_groups(clause)
+    if any(g in s1_facts.MEAL_GROUPS for g, _scope in out):
+        out.add(("meals", ""))
+    return out
 
 
-def _check_included(changed_texts: list[str], parent_texts: list[str], base_texts: list[str],
-                    source_exclusions: str) -> list[Locked]:
-    """A new inclusion claim is locked when the base excludes the group ("flights included" where the source lists
-    flights as excluded; "meals included" where it excludes any meal) or no base text names it outside a "not
-    included" line. A claim the version already makes is kept (it was checked when it was written)."""
-    new_claims = _claimed_included(changed_texts) - _claimed_included(parent_texts)
+def _covers(pairs: set[tuple[str, str]], group: str, scope: str) -> bool:
+    """``pairs`` state the item: the same group with the same scope, or with no scope (all of the group)."""
+    return (group, scope) in pairs or (group, "") in pairs
+
+
+def _check_included(changed_texts: list[str], parent_texts: list[str], master_texts: list[str],
+                    source_inclusions: str, excluded_texts: list[str], source_exclusions: str) -> list[Locked]:
+    """A new inclusion claim is locked unless the Master states it: the version or the Master text says the item is
+    included, or the raw inclusions list names it (with the same scope, or the whole group). It is locked as well when
+    the base excludes it ("flights included" where the source lists flights as excluded; "meals included" where it
+    excludes any meal; an unscoped claim against any scoped exclusion). Naming the item elsewhere ("fly to the
+    coast", "drive back") never clears a claim (S285 live check: "International flights included." went through).
+    A claim the version already makes is kept (it was checked when it was written)."""
+    new_claims = _claims(changed_texts) - _claims(parent_texts)
     if not new_claims:
         return []
-    excluded = _excluded_groups(parent_texts + base_texts, source_exclusions)
-    if excluded & set(s1_facts.MEAL_GROUPS):
-        excluded.add("meals")
-    known = _mentioned_groups(parent_texts + base_texts)
-    return [Locked("content", "included", g) for g in sorted(new_claims) if g in excluded or g not in known]
+    excluded = _excluded(parent_texts + excluded_texts, source_exclusions)
+    support = _claims(parent_texts + master_texts) | _listed(source_inclusions)
+    out = set()
+    for group, scope in new_claims:
+        clash = _covers(excluded, group, scope) or (not scope and any(g == group for g, _s in excluded))
+        if clash or not _covers(support, group, scope):
+            out.add(group)
+    return [Locked("content", "included", g) for g in sorted(out)]
+
+
+def master_length(master_itinerary: str, parent_itinerary: str, duration: str) -> set[tuple[str, str]]:
+    """The (number, unit) figures that state the Master's length: its day count (the last "Day N" of the Master
+    itinerary, else of the version's; the raw duration only when neither has day markers, both ends of a range), its
+    nights (the raw duration's when it gives the same day count, else one fewer) and its weeks when the days are whole
+    weeks."""
+    dur = parse_duration(duration)
+    marked = _day_numbers(master_itinerary) or _day_numbers(parent_itinerary)
+    if marked:
+        days = [max(marked)]
+    elif dur.range:
+        days = list(dur.range)
+    else:
+        days = [dur.day_count] if dur.day_count else []
+    out: set[tuple[str, str]] = set()
+    for d in days:
+        out.add((str(d), "day"))
+        nights = dur.nights if dur.nights and (dur.range or dur.day_count == d) else d - 1
+        if nights > 0:
+            out.add((str(nights), "night"))
+        if d % 7 == 0:
+            out.add((str(d // 7), "week"))
+    return out
 
 
 def _check_days(parent: dict, new: dict, master_itinerary: str) -> list[Locked]:
@@ -218,10 +287,11 @@ def _check_days(parent: dict, new: dict, master_itinerary: str) -> list[Locked]:
 
 
 def _check_field(field: str, text: str, base_figures: set, base_places: set[str], base_words: set[str],
-                 lower: set[str]) -> list[Locked]:
+                 lower: set[str], length_base: set) -> list[Locked]:
     out = []
     for number, unit, span in _figures(text):
-        if not _figure_known(number, unit, base_figures):
+        known = (number, unit) in length_base if unit in LENGTH_UNITS else _figure_known(number, unit, base_figures)
+        if not known:
             out.append(Locked(field, "figure", span))
     if field in PLACE_FIELDS:
         for key, name in _places(text, lower).items():
@@ -231,16 +301,26 @@ def _check_field(field: str, text: str, base_figures: set, base_places: set[str]
 
 
 def check_edit(parent: dict, edited: dict, base_texts: Iterable[str], master_itinerary: str = "",
-               source_exclusions: str = "") -> tuple[dict, list[Locked]]:
+               source_exclusions: str = "", *, master_texts: Optional[Iterable[str]] = None,
+               source_inclusions: str = "", duration: str = "") -> tuple[dict, list[Locked]]:
     """(new content, locked facts) of an agency edit of ``parent`` (the version it edits). ``base_texts``: the Master
-    and raw source texts the tour's facts come from; ``source_exclusions``: the raw exclusions field, whose item groups
-    the copy may also say are not included (and may never say are included). An empty locked list means the edit may
-    be saved."""
+    and raw source texts the tour's facts come from; ``master_texts``: the Master's own texts among them (None: every
+    base text but the exclusions); ``source_exclusions`` / ``source_inclusions``: the raw lists (the copy may say an
+    excluded item is not included, never that it is included; a listed item may be called included); ``duration``: the
+    raw duration (the Master's length when no itinerary has day markers). An empty locked list means the edit may be
+    saved."""
     new, locked = merge_edit(parent, edited)
     source = [t for t in base_texts if t]
+    excl = (source_exclusions or "").strip()
+    # The raw exclusions list names its groups without a "not included" word: never a base of an inclusion.
+    positive = [t for t in source if t.strip() != excl]
+    master = [t for t in master_texts if t] if master_texts is not None else positive
     parent_texts = [text_of(parent.get(f)) for f in WORDING_FIELDS]
     base = "\n".join(parent_texts + source)
     base_figures = {(n, u) for n, u, _s in _figures(base)}
+    # The tour's length: the Master's duration, or a day / night / week figure AA wrote (the version, the Master).
+    length_base = ({(n, u) for n, u, _s in _figures("\n".join(parent_texts + master)) if u in LENGTH_UNITS}
+                   | master_length(master_itinerary, text_of(parent.get("itineraries")), duration))
     # Places: only where a place is a fact (the parent's highlights / itinerary) plus the Master and raw texts.
     place_base = "\n".join([text_of(parent.get(f)) for f in PLACE_FIELDS] + source)
     base_words = _words(place_base)
@@ -248,7 +328,7 @@ def check_edit(parent: dict, edited: dict, base_texts: Iterable[str], master_iti
     base_places = set(_places(place_base, lower))
     changed = [f for f in WORDING_FIELDS if text_of(new.get(f)) != text_of(parent.get(f))]
     for f in changed:
-        locked += _check_field(f, text_of(new.get(f)), base_figures, base_places, base_words, lower)
+        locked += _check_field(f, text_of(new.get(f)), base_figures, base_places, base_words, lower, length_base)
     if "itineraries" in changed:
         locked += _check_days(parent, new, master_itinerary)
     if changed:
@@ -256,10 +336,8 @@ def check_edit(parent: dict, edited: dict, base_texts: Iterable[str], master_iti
         now = _not_included(text_of(new.get(f)) for f in WORDING_FIELDS)
         allowed = was | _not_included(source) | set(s1_facts.item_groups(source_exclusions))
         locked += [Locked("content", "not_included", g) for g in sorted((was - now) | (now - allowed))]
-        # The raw exclusions list names its groups without a "not included" word: never a base of an inclusion.
-        excl = (source_exclusions or "").strip()
-        positive = [t for t in source if t.strip() != excl]
-        locked += _check_included([text_of(new.get(f)) for f in changed], parent_texts, positive, source_exclusions)
+        locked += _check_included([text_of(new.get(f)) for f in changed], parent_texts, master, source_inclusions,
+                                  positive, source_exclusions)
     return new, locked
 
 
@@ -293,6 +371,10 @@ BASE_SQL = """
 """
 
 
+# The Master's own texts in BASE_SQL (an inclusion claim and a length figure need the Master, not the raw source).
+MASTER_KEYS = ("aa_name", "aa_subtitle", "aa_summary", "aa_description", "aa_highlights", "aa_itineraries")
+
+
 def content_dict(value: Any) -> dict:
     """rewritten_content as a dict (asyncpg returns jsonb as text without a codec); {} when unreadable."""
     if isinstance(value, str):
@@ -309,7 +391,9 @@ async def check_against_base(conn, published_tour_id: Any, parent: dict, edited:
     row = dict(row) if row else {}
     texts = [text_of(v) for v in row.values()]
     return check_edit(parent, edited, texts, master_itinerary=text_of(row.get("aa_itineraries")),
-                      source_exclusions=text_of(row.get("exclusions")))
+                      source_exclusions=text_of(row.get("exclusions")),
+                      master_texts=[text_of(row.get(k)) for k in MASTER_KEYS],
+                      source_inclusions=text_of(row.get("inclusions")), duration=text_of(row.get("duration")))
 
 
 async def audit(pool, *, tenant_id: str, actor: str, version_id: str, details: dict) -> None:
@@ -326,5 +410,6 @@ async def audit(pool, *, tenant_id: str, actor: str, version_id: str, details: d
                        error=str(exc)[:200])
 
 
-__all__ = ["BASE_SQL", "FACT_LOCKED", "Locked", "MESSAGE", "PLACE_FIELDS", "WORDING_FIELDS", "audit", "audit_changes",
-           "check_against_base", "check_edit", "content_dict", "merge_edit", "refusal", "text_of"]
+__all__ = ["BASE_SQL", "FACT_LOCKED", "LENGTH_UNITS", "Locked", "MASTER_KEYS", "MESSAGE", "PLACE_FIELDS",
+           "WORDING_FIELDS", "audit", "audit_changes", "check_against_base", "check_edit", "content_dict",
+           "master_length", "merge_edit", "refusal", "text_of"]

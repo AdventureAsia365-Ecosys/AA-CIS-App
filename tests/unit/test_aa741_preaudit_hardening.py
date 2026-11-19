@@ -148,7 +148,8 @@ def _rewrite_call(conn):
     conn.transaction = MagicMock(return_value=_Txn())
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(pool=_pool(conn))))
     body = v1_tours.RewriteRequest(rewrite_language="en-US", seo_mode="standard")
-    return v1_tours.trigger_rewrite("pt-1", body, request, {"sub": "t-1"})
+    # A UUID path id: the route answers 404 for anything else before any database work (AA-1144, S285).
+    return v1_tours.trigger_rewrite("00000000-0000-4000-8000-000000000741", body, request, {"sub": "t-1"})
 
 
 def _charged(conn) -> bool:

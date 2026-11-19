@@ -4411,8 +4411,11 @@ change what the tour is. `services/content_generation/t2_fact_lock.py` checks th
 the Master (`published_tours.aa_*`) and the raw source with the FactSheet extractors (`services/quality/s1_facts.py`):
 a non-wording key, another day structure, a figure the base never states (a spelled-out duration such as "a two-day
 walk" counts), a new place in the highlights or itinerary (checked against the parent's highlights / itinerary and the
-Master / raw texts only, never the parent's free-wording fields), a dropped / added "not included" item group, or a
-new "included" claim for a group the source excludes or never names is a 422 `fact_locked` (`{code, message, locked:
+Master / raw texts only, never the parent's free-wording fields), a day / night / week figure other than the Master's
+length or one AA wrote (the version, the Master; never the raw texts), a dropped / added "not included" item group, or
+a new "included" claim the Master does not state (the version / Master text says it is included or the raw inclusions
+list names it, with the same scope: "international flights" is not cleared by domestic ones) or the source excludes
+is a 422 `fact_locked` (`{code, message, locked:
 [{field, fact, value}]}`). The edit is laid over the version (fields it does not send are kept); `edited_by_user` is the member from
 the token. Every edit and refusal writes `tenant_tour_version.edited` / `.edit_refused` (field + old / new sha256, no
 text) on MAIN after the transaction, best effort; the agency sees both in Account › Activity.
