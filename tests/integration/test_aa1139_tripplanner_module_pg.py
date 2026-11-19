@@ -53,11 +53,11 @@ async def _tenant(conn, *, tripplanner=True, status=None) -> str:
     await conn.execute("INSERT INTO shared.tenants (tenant_id, name, slug, plan_tier, posts_per_week, rate_limit_rpm, "
                        "is_active, kind) VALUES ($1::uuid, 'Fernhollow Trails synthetic', $2, "
                        "'starter'::plan_tier_enum, 3, 60, true, 'agency')", tid, f"zz1139-{tid[:12]}")
-    if status:
-        await conn.execute("UPDATE shared.tenants SET account_status = $2 WHERE tenant_id = $1::uuid", tid, status)
     if tripplanner:
         await conn.execute("INSERT INTO shared.tenant_subscription (tenant_id, product, plan_key, status, updated_by) "
                            "VALUES ($1::uuid, 'tripplanner', 'tripplanner.hosted', 'active', 'test:aa1139')", tid)
+    if status:
+        await conn.execute("UPDATE shared.tenants SET account_status = $2 WHERE tenant_id = $1::uuid", tid, status)
     return tid
 
 
