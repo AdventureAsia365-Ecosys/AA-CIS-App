@@ -91,10 +91,10 @@ export const T360 = defineMessages(
     noSocial: "no social pieces",
     perPieceByChannel: "$ per piece by channel",
     noPieceCalls: "No piece-linked LLM calls this month",
-    noPieceCallsBody: "Nothing in llm_call_log is linked to a T9/T10 content piece since the 1st.",
+    noPieceCallsBody: "No AI call of this month is linked to a content piece yet.",
     costByStage: "Cost by stage",
     noSpend: "No LLM spend this month",
-    noSpendBody: "Nothing in llm_call_log for this tenant since the 1st.",
+    noSpendBody: "No AI spend for this agency since the 1st of the month.",
     costFootnote: (unlinked: string) =>
       `${unlinked} this month is not linked to a content piece (T2 rewrites, planning, angle generation). Revenue = the plan's full monthly price + overage, not prorated; margin is revenue minus LLM cost only.`,
     // Quality
@@ -217,10 +217,10 @@ export const T360 = defineMessages(
     noSocial: "không có bài mạng xã hội",
     perPieceByChannel: "$ mỗi bài theo kênh",
     noPieceCalls: "Tháng này không có lượt gọi LLM nào gắn với bài",
-    noPieceCallsBody: "Từ ngày 1 tới nay không có gì trong llm_call_log gắn với một bài nội dung T9/T10.",
+    noPieceCallsBody: "Chưa có lần gọi AI nào trong tháng này gắn với một bài nội dung.",
     costByStage: "Chi phí theo bước",
     noSpend: "Tháng này chưa có chi phí LLM",
-    noSpendBody: "Từ ngày 1 tới nay không có gì trong llm_call_log cho đại lý này.",
+    noSpendBody: "Đại lý này chưa có chi phí AI nào từ ngày 1 của tháng.",
     costFootnote: (unlinked: string) =>
       `${unlinked} tháng này không gắn với bài nội dung nào (viết lại T2, lập kế hoạch, tạo góc tiếp cận). Doanh thu = giá đầy đủ của gói trong tháng + vượt mức, không chia theo ngày; biên lợi nhuận chỉ là doanh thu trừ chi phí LLM.`,
     colGate: "Cổng",

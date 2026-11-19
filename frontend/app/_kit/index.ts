@@ -65,6 +65,8 @@ export {
 export { I18nProvider, useLang, useSetLang, useT, useLocalized, useFormat } from "./core/useI18n";
 export { KIT_MESSAGES } from "./core/kit.messages";
 export { LangSwitch } from "./core/LangSwitch";
+// AA-1127 C3 — the read-only session hint (the shell provides it from GET /admin/session; pages hide write controls).
+export { ReadOnlyProvider, useReadOnly, WriteOnly, ReadOnlyNote } from "./core/ReadOnly";
 export { AiNotice, type AiNoticeForm } from "./core/AiNotice";
 export {
   AI_BADGE_MESSAGES, AI_NOTICE_MESSAGES, AI_NOTICE_VARIANTS, aiBadgeText, aiNoticeText, type AiNoticeVariant,

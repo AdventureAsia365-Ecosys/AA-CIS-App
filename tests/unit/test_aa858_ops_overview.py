@@ -145,6 +145,7 @@ def test_fetch_alarms_maps_prefixes_skips_target_tracking_and_paginates():
         stub.add_response("describe_alarms", {"MetricAlarms": [
             _alarm("aa-tripplanner-dev-browse-errors", "OK"),
             _alarm("aa-identity-dev-breakglass-token-issued", "ALARM"),
+            _alarm("aa-crm-dev-api-5xx-rate", "ALARM"),
             _alarm("someone-elses-alarm", "ALARM"),
         ], "CompositeAlarms": []})
         out, calls = cloudwatch.fetch_alarms(client, ENV)
@@ -154,6 +155,21 @@ def test_fetch_alarms_maps_prefixes_skips_target_tracking_and_paginates():
     assert out["booking"] == {"total": 1, "no_data": 1, "firing": []}
     assert out["tripplanner"]["total"] == 1 and not out["tripplanner"]["firing"]
     assert out["shared"]["total"] == 1 and out["shared"]["firing"][0]["name"].startswith("aa-identity-dev-")
+    assert out["crm"]["total"] == 1 and out["crm"]["firing"][0]["name"] == "aa-crm-dev-api-5xx-rate"
+
+
+def test_crm_is_a_probe_source_with_no_metric_query():
+    """AA-1127 C3: the Partner CRM has an overview tile, but no traffic metric (alarms + its own health check)."""
+    crm = next(s for s in cloudwatch.app_sources(ENV) if s.app == "crm")
+    assert crm.kind == "probe" and crm.names == () and crm.alarm_prefixes == ("aa-crm-dev-",)
+    assert not any(q["Id"].startswith("q_crm_") for q in cloudwatch.metric_queries(cloudwatch.app_sources(ENV), ENV))
+    start, _ = cloudwatch.window(NOW)
+    apps = {a["app"]: a for a in cloudwatch.parse_health([], cloudwatch.app_sources(ENV), start)}
+    assert apps["crm"]["kind"] == "probe" and apps["crm"]["requests"] is None and apps["crm"]["hourly"] == []
+    assert apps["crm"]["has_data"] is False and apps["crm"]["label"] == "Partner CRM"
+    state, reason = cloudwatch.app_state(apps["crm"], {"firing": []})
+    assert state == "unknown" and "health check" in reason
+    assert cloudwatch.app_state(apps["crm"], {"firing": [{"name": "x"}]})[0] == "alarm"
 
 
 @pytest.mark.parametrize("app,alarms,expected", [
@@ -187,7 +203,7 @@ def test_collect_health_alarms_denied_keeps_metrics():
     assert out["status"] == "ok" and out["alarms_error"] == "not_permitted"
     cis = next(a for a in out["apps"] if a["app"] == "cis")
     assert cis["requests"] == 9 and cis["state"] == "ok" and cis["alarms"] is None
-    assert [a["app"] for a in out["apps"]] == ["cis", "tripplanner", "booking"]
+    assert [a["app"] for a in out["apps"]] == ["cis", "tripplanner", "booking", "crm"]
 
 
 def test_collect_health_firing_alarm_sets_state():

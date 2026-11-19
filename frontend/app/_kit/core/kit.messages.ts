@@ -2,7 +2,7 @@
 // app/_kit/core/kit.messages.ts
 // AA-994 — the kit core components' own text (DataTable, Modal, Drawer, Toast, primitives, GuidePanel, LangSwitch,
 // and since S4a FilterBar, DateField, RowMenu, ConfirmModal, KpiTile, DateText; since S6a the form Field; since
-// AA-804 TraceTimeline and LatencyStrip; since S264 NavGroup), English and Vietnamese. Every app that renders an
+// AA-804 TraceTimeline and LatencyStrip; since S264 NavGroup; since AA-1127 ReadOnlyNote), English and Vietnamese. Every app that renders an
 // I18nProvider gets these in its UI language; outside a provider they are English.
 
 import { defineMessages } from "./i18n";
@@ -91,6 +91,7 @@ export const KIT_MESSAGES = defineMessages(
     showGroup: (label: string) => `Show ${label}`,
     hideGroup: (label: string) => `Hide ${label}`,
     groupBadge: (n: number) => `${n} in this group`,
+    readOnlySession: "Read-only session: actions that change data are hidden.",
   },
   {
     language: "Ngôn ngữ",
@@ -175,5 +176,6 @@ export const KIT_MESSAGES = defineMessages(
     showGroup: (label: string) => `Mở ${label}`,
     hideGroup: (label: string) => `Thu gọn ${label}`,
     groupBadge: (n: number) => `${n} trong nhóm này`,
+    readOnlySession: "Phiên chỉ đọc: các thao tác thay đổi dữ liệu được ẩn.",
   },
 );

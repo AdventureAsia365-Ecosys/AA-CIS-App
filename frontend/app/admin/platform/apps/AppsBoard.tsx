@@ -367,11 +367,17 @@ function TrafficLine({ traffic }: { traffic: AppTraffic | null }) {
       borderRadius: RADIUS.md, background: K.bg, minWidth: 0,
     }} title={t("trafficTitle", src, (traffic.resources ?? []).join(" + "), traffic.window_hours ?? 24)}>
       <span style={{ color: K.body, fontWeight: 600 }}>{t("lastHours", traffic.window_hours ?? 24)}</span>
-      <span>{t("requests", (traffic.requests ?? 0).toLocaleString("en-US"))}</span>
-      <span style={{ color: traffic.errors ? K.danger : K.muted }}>
-        {t("serverErrors", (traffic.errors ?? 0).toLocaleString("en-US"))}
-      </span>
-      <span>{t("within95", fmtMs(traffic.p95_ms))}</span>
+      {traffic.kind === "probe" ? (
+        <span>{t("noTrafficNumbers")}</span>
+      ) : (
+        <>
+          <span>{t("requests", (traffic.requests ?? 0).toLocaleString("en-US"))}</span>
+          <span style={{ color: traffic.errors ? K.danger : K.muted }}>
+            {t("serverErrors", (traffic.errors ?? 0).toLocaleString("en-US"))}
+          </span>
+          <span>{t("within95", fmtMs(traffic.p95_ms))}</span>
+        </>
+      )}
       {traffic.alarms_total != null && (
         <span style={{ color: traffic.alarms_firing ? K.danger : K.muted }}>
           {traffic.alarms_firing ? t("alarmsFiring", traffic.alarms_firing) : t("alarmsQuiet", traffic.alarms_total)}

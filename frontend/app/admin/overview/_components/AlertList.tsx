@@ -6,12 +6,18 @@
 // item may shrink below its longest word), the date never breaks inside itself, and on a phone the row stacks
 // (badge, key, date one under the other). Desktop keeps the one-line row; it wraps instead of overflowing when the
 // card is narrow.
+// AA-1127 C3 (S283 UI audit): the row leads with the readable `payload.message` the API already sends ("Jev
+// (TypeSafe) credit is running low: …") on its own full-width line; the event code, the entity and the date follow,
+// for the engineer on duty.
+import { alertMessage } from "@/lib/overviewAlerts";
 import { Badge, K, type Tone, useFormat, useIsPhone } from "../../../_kit";
 
 export interface OverviewAlert {
   event_type: string;
   entity_type: string | null;
   entity_id: string | null;
+  /** JSON string (or object) from shared.notifications; its `message` is the readable line. */
+  payload?: unknown;
   created_at: string;
 }
 
@@ -44,6 +50,12 @@ export function AlertList({ alerts }: { alerts: OverviewAlert[] }) {
             borderRadius: 8,
           }}
         >
+          {alertMessage(a.payload) && (
+            <span data-testid="overview-alert-message"
+              style={{ flexBasis: "100%", minWidth: 0, overflowWrap: "anywhere", fontSize: 13, color: K.ink }}>
+              {alertMessage(a.payload)}
+            </span>
+          )}
           <span style={{ maxWidth: "100%", minWidth: 0, overflowWrap: "anywhere" }}>
             <Badge tone={alertTone(a.event_type)} dot>
               {a.event_type}

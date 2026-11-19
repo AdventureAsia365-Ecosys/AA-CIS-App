@@ -40,7 +40,7 @@ import { PageFrame,
   Badge, Button, ConfirmModal, DataTable, Drawer, ErrorState, GuidePanel, K, PageHeader, StatusBadge, TableSkeleton,
   Tabs, apiGet, mono, useFormat, useLocalized, useT, useToast, type ColumnDef,
   Input, Select, Textarea,
-  LinkButton, useAdminIdentity,
+  LinkButton, ReadOnlyNote, WriteOnly, useAdminIdentity,
 } from "../../../_kit";
 import { can } from "@/lib/rbac";
 import {
@@ -534,15 +534,18 @@ export default function WritingMemory() {
         actions={<>
           <Button variant="ghost" onClick={() => qc.invalidateQueries({ queryKey: ["wm"] })}>
             <RefreshCw size={14} /> {t("refresh")}</Button>
-          <Button variant="ghost" onClick={() => run("backfill", true)} disabled={!!busy}
-            title={t("backfillDryRunTitle")}>
-            {t("backfillDryRun")}</Button>
-          <Button onClick={() => run("backfill")} disabled={!!busy}>{t("backfillSignals")}</Button>
-          <Button onClick={() => run("fact_filter")} disabled={!!busy}>{t("runFactFilter")}</Button>
-          <Button variant="ghost" onClick={() => run("r0_baseline")} disabled={!!busy} title={t("r0BaselineTitle")}>
-            {t("r0Baseline")}</Button>
-          <Button variant="primary" onClick={() => setConfirmMine(true)} disabled={!!busy} title={mine.title}>
-            <Play size={14} /> {t("mineRules")}</Button>
+          {/* AA-1127 C3: the run and paid buttons only for a session that may write (the API refuses the rest). */}
+          <WriteOnly fallback={<ReadOnlyNote testId="wm-read-only" />}>
+            <Button variant="ghost" onClick={() => run("backfill", true)} disabled={!!busy}
+              title={t("backfillDryRunTitle")}>
+              {t("backfillDryRun")}</Button>
+            <Button onClick={() => run("backfill")} disabled={!!busy}>{t("backfillSignals")}</Button>
+            <Button onClick={() => run("fact_filter")} disabled={!!busy}>{t("runFactFilter")}</Button>
+            <Button variant="ghost" onClick={() => run("r0_baseline")} disabled={!!busy} title={t("r0BaselineTitle")}>
+              {t("r0Baseline")}</Button>
+            <Button variant="primary" onClick={() => setConfirmMine(true)} disabled={!!busy} title={mine.title}>
+              <Play size={14} /> {t("mineRules")}</Button>
+          </WriteOnly>
         </>} />
       {loggedRead && (
         <div role="note" data-testid="wm-logged-read"

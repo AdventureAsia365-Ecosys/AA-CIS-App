@@ -127,11 +127,11 @@ export const TEN = defineMessages(
     loadFailed: "Failed to load",
     piecesWritten: "Content pieces written",
     published: "Published",
-    socialNoteA:
-      "Detailed per-piece Atom/Segment/Route/Slate usage breakdown is pending the 06/07/08 merge decision — this tab will grow once that's resolved. In the meantime, see",
+    // AA-1127 C3 (S283 UI audit): the old note said a merge decision was pending and Trace could not filter by tenant;
+    // both stopped being true (the decision is closed, Trace has a Tenant filter).
+    socialNoteA: "Every piece of this agency, step by step (Write/Gate → Review → Publish), is in",
     contentTrace: "Content Trace",
-    socialNoteB:
-      "for the full Write/Gate → Review → Publish detail (filterable by Tour, not yet by this Tenant directly from there).",
+    socialNoteB: "(opens filtered to this agency).",
     // detail panel
     detailsLoadError: "Failed to load details",
     tabTours: (n: number) => `Tours (${n})`,
@@ -162,13 +162,13 @@ export const TEN = defineMessages(
     unlimited: "Unlimited",
     noPlan: "No plan attached",
     pricePerMo: "Price / mo",
-    llmCostMtd: "LLM cost (MTD, llm_call_log)",
+    llmCostMtd: "AI cost (this month)",
     overage: "Overage",
     overageTours: (usd: string, n: number) => `${usd} (${n} tours)`,
     toursQuota: "Tours quota",
     apiCallsQuota: "API calls quota",
     billingNote:
-      "LLM cost = this calendar month's spend in llm_call_log for this tenant (Jev included, shadow runs excluded). Per-stage cost, $/piece and margin: Cost tab. Invoices are not built yet.",
+      "AI cost = this calendar month's AI spend for this agency, from the AI calls log (Jev included, shadow runs excluded). Per-stage cost, $/piece and margin: Cost tab. Invoices are not built yet.",
     // gate telemetry
     loadingQuality: "Loading quality…",
     telemetryLoadError: "Failed to load gate telemetry",
@@ -350,11 +350,9 @@ export const TEN = defineMessages(
     loadFailed: "Tải thất bại",
     piecesWritten: "Bài nội dung đã viết",
     published: "Đã đăng",
-    socialNoteA:
-      "Bảng chi tiết mức dùng Atom/Segment/Route/Slate theo từng bài đang chờ quyết định gộp 06/07/08 — tab này sẽ mở rộng khi việc đó được giải quyết. Trong lúc chờ, xem",
+    socialNoteA: "Từng bài của đại lý này, theo từng bước (Viết/Cổng → Duyệt → Đăng), có ở",
     contentTrace: "Content Trace",
-    socialNoteB:
-      "để có đầy đủ chi tiết Viết/Cổng → Duyệt → Đăng (lọc được theo Tour, chưa lọc trực tiếp theo đại lý này ở đó).",
+    socialNoteB: "(mở sẵn bộ lọc theo đại lý này).",
     detailsLoadError: "Không tải được chi tiết",
     tabTours: (n: number) => `Tour (${n})`,
     tabPipeline: (n: number) => `Pipeline (${n})`,
@@ -383,13 +381,13 @@ export const TEN = defineMessages(
     unlimited: "Không giới hạn",
     noPlan: "Chưa gắn gói",
     pricePerMo: "Giá / tháng",
-    llmCostMtd: "Chi phí LLM (từ đầu tháng, llm_call_log)",
+    llmCostMtd: "Chi phí AI (tháng này)",
     overage: "Vượt mức",
     overageTours: (usd: string, n: number) => `${usd} (${n} tour)`,
     toursQuota: "Hạn mức tour",
     apiCallsQuota: "Hạn mức lượt gọi API",
     billingNote:
-      "Chi phí LLM = chi phí của tháng dương lịch này trong llm_call_log cho đại lý này (gồm Jev, không gồm các lượt chạy bóng). Chi phí theo bước, $/bài và biên lợi nhuận: tab Chi phí. Hoá đơn chưa được xây dựng.",
+      "Chi phí AI = chi phí AI của tháng dương lịch này cho đại lý này, theo nhật ký gọi AI (gồm Jev, không gồm các lượt chạy bóng). Chi phí theo bước, $/bài và biên lợi nhuận: tab Chi phí. Hoá đơn chưa được xây dựng.",
     loadingQuality: "Đang tải chất lượng…",
     telemetryLoadError: "Không tải được số liệu cổng",
     noGateActivity: "Đại lý này chưa có hoạt động qua cổng nào.",

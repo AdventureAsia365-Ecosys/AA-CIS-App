@@ -8,8 +8,12 @@ Sources (acc2, us-west-1; read-only IAM on the CIS task role, AA-CIS-Infra modul
   and ``Latency`` p95 over the window.
 - TripPlanner: ``AWS/Lambda`` ``FunctionName`` = ``aa-tripplanner-<env>-browse`` and ``-assembly``: ``Invocations``,
   ``Errors``, ``Throttles`` (Sum, hourly) and ``Duration`` p95; the two functions are summed, p95 = the slower one.
+- Partner CRM (AA-1127 C3): no traffic metrics (its API sits behind the ALB, whose target-group dimension is not
+  derivable from the environment name), so kind ``probe``: no GetMetricData query, only its alarms. Its status on the
+  overview comes from its own health check (``platform_apps._crm_card``, the probe /admin/platform/apps already runs)
+  plus these alarms, through ``app_health.overall_status``.
 - Alarms: every alarm whose name starts with an app's prefix (``aa-cis-<env>-``, ``aa-booking-<env>-``,
-  ``aa-tripplanner-<env>-``; shared platform: ``aa-ecosys-<env>-``, ``aa-identity-<env>-``, ``aa-email-<env>-``).
+  ``aa-tripplanner-<env>-``, ``aa-crm-<env>-``; shared platform: ``aa-ecosys-<env>-``, ``aa-identity-<env>-``, ``aa-email-<env>-``).
   ``TargetTracking-*`` (ECS autoscaling, normal "AlarmLow") never matches a prefix and is skipped explicitly too.
 
 Cost: one GetMetricData call = 16 metrics ($0.01 per 1,000 metrics → $0.00016), DescribeAlarms is free. Called only
@@ -49,8 +53,8 @@ def region() -> str:
 class AppSource:
     app: str
     label: str
-    kind: str                         # "apigw" | "lambda"
-    names: tuple[str, ...]            # API names or function names
+    kind: str                         # "apigw" | "lambda" | "probe" (no metrics: health check + alarms only)
+    names: tuple[str, ...]            # API names or function names (empty for "probe")
     alarm_prefixes: tuple[str, ...]
 
 
@@ -60,6 +64,7 @@ def app_sources(env: str) -> tuple[AppSource, ...]:
         AppSource("tripplanner", "TripPlanner", "lambda",
                   (f"aa-tripplanner-{env}-browse", f"aa-tripplanner-{env}-assembly"), (f"aa-tripplanner-{env}-",)),
         AppSource("booking", "Booking", "apigw", (f"aa-booking-{env}-api",), (f"aa-booking-{env}-",)),
+        AppSource("crm", "Partner CRM", "probe", (), (f"aa-crm-{env}-",)),
     )
 
 
@@ -147,6 +152,9 @@ def parse_health(results: list[dict], sources: tuple[AppSource, ...], start: dat
     hour_keys = [(start + i * HOUR).isoformat() for i in range(hours)]
     apps = []
     for src in sources:
+        if src.kind == "probe":
+            apps.append(_probe_app(src))
+            continue
         sums = _APIGW_SUMS if src.kind == "apigw" else _LAMBDA_SUMS
         totals = {key: 0.0 for key, _ in sums}
         hourly = {h: {"requests": 0.0, "errors": 0.0} for h in hour_keys}
@@ -182,6 +190,15 @@ def parse_health(results: list[dict], sources: tuple[AppSource, ...], start: dat
         }
         apps.append(app)
     return apps
+
+
+def _probe_app(src: AppSource) -> dict:
+    """An app with no traffic metrics (kind ``probe``): the same keys, numbers None, no hourly series."""
+    return {
+        "app": src.app, "label": src.label, "kind": src.kind, "resources": list(src.names),
+        "has_data": False, "partial": False, "requests": None, "errors": None, "error_rate_pct": None,
+        "client_errors": None, "throttles": None, "p95_ms": None, "hourly": [],
+    }
 
 
 def fetch_alarms(client: Any, env: str) -> tuple[dict, int]:
@@ -227,6 +244,8 @@ def app_state(app: dict, alarms: Optional[dict]) -> tuple[str, str]:
     if firing:
         n = len(firing)
         return "alarm", f"{n} alarm{'s' if n > 1 else ''} firing"
+    if app.get("kind") == "probe":
+        return "unknown", "Traffic numbers are not collected for this app; its health check and alarms decide"
     if not app.get("has_data"):
         return "unknown", "No metrics available"
     rate = app.get("error_rate_pct")

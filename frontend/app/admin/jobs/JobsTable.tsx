@@ -9,7 +9,7 @@
 import { useMemo } from "react";
 import type { SortingState } from "@tanstack/react-table";
 import {
-  K, mono, Button, Badge, type ColumnDef, DataTable, StatusBadge, useFormat, useT, Input, Select,
+  K, mono, Button, Badge, type ColumnDef, DataTable, StatusBadge, useFormat, useLang, useT, Input, Select,
 } from "../../_kit";
 import { JOBS } from "./messages";
 import {
@@ -80,6 +80,7 @@ export default function JobsTable(props: JobsTableProps) {
     onRowClick, onAct, loading, error, onRetry,
   } = props;
   const t = useT(JOBS);
+  const lang = useLang();
   const { formatDateTime: fmtTime } = useFormat();
 
   const inputStyle: React.CSSProperties = {
@@ -171,7 +172,7 @@ export default function JobsTable(props: JobsTableProps) {
     {
       accessorKey: "cost_usd",
       header: t("colCost"),
-      cell: (c) => <span style={{ fontFamily: mono }}>{usd(c.row.original.cost_usd)}</span>,
+      cell: (c) => <span style={{ fontFamily: mono }}>{usd(c.row.original.cost_usd, undefined, lang)}</span>,
     },
     {
       id: "created_at",
@@ -203,7 +204,7 @@ export default function JobsTable(props: JobsTableProps) {
       },
     },
   ];
-  }, [now, etas, maxReleases, busyId, kinds, onAct, t, fmtTime]);
+  }, [now, etas, maxReleases, busyId, kinds, onAct, t, fmtTime, lang]);
 
   // Reflect the server sort to the DataTable so the sorted-arrow shows on the active column, and
   // translate a header click back into a (sort, dir) the page sends to the API. Column ids outside

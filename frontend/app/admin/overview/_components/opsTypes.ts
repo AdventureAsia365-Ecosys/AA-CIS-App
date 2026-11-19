@@ -21,14 +21,15 @@ export interface AlarmBucket {
 }
 
 export interface AppHealth {
-  app: "cis" | "tripplanner" | "booking";
+  /** AA-1127 C3: Partner CRM ("crm") has kind "probe": no traffic numbers, its health check and alarms decide. */
+  app: "cis" | "tripplanner" | "booking" | "crm";
   label: string;
-  kind: "apigw" | "lambda";
+  kind: "apigw" | "lambda" | "probe";
   resources: string[];
   has_data: boolean;
   partial: boolean;
-  requests: number;
-  errors: number;
+  requests: number | null;
+  errors: number | null;
   error_rate_pct: number | null;
   client_errors: number | null;
   throttles: number | null;

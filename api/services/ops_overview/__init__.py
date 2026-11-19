@@ -33,7 +33,7 @@ COST_TTL_S = 900
 SOURCES = {
     "health": "AWS CloudWatch (main account, us-west-1): API Gateway Count/5XXError/4XXError/Latency for the CIS and "
               "Booking APIs, Lambda Invocations/Errors/Throttles/Duration for TripPlanner, and alarm states by name "
-              "prefix",
+              "prefix (Partner CRM: alarms only, its status from its own health check)",
     "tripplanner": "tripplanner.v_ops_traffic_daily (TripPlanner contract view, tp-015) and shared.llm_call_log "
                    "stage tp_search_embed",
     "booking": "booking.v_ops_funnel_daily and booking.v_ops_case_status (Booking contract views, bk-017)",
