@@ -1,4 +1,3 @@
-import uuid as _uuid_mod
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -19,6 +18,7 @@ from api.services.rewrite_ledger import (REWRITE_EDIT_SOURCES_SQL,  # AA-1127: o
                                          current_year_month_and_reset as _current_year_month_and_reset)
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
 from api.routers._served import annotate as _annotate_served, refuse_http as _refuse_not_served
+from api.routers._path_ids import require_uuid as _require_uuid  # AA-1144 S285: a non-UUID path id is a 404
 from shared import settings as platform_settings
 from shared import tour_liveness as _tl
 from shared.tour_liveness import TourNotServedError, live_source_sql
@@ -53,16 +53,6 @@ _DURATION_DAYS_SQL = (
     r"COALESCE(substring(lower(COALESCE(rt.duration, '')) FROM '(\d{1,4})\s*-?\s*days?')::int,"
     r" CASE WHEN lower(COALESCE(rt.duration, '')) ~ '(hour|half[ -]day|day trip|same day|full day)' THEN 1 END)"
 )
-
-
-def _require_uuid(value: str, detail: str) -> str:
-    """404 ``detail`` for a path id that is not a UUID (S285 live check: GET /v1/tours/mine reached the
-    ``/{tour_id}`` catch-all and the ``$1::uuid`` cast answered 500). Returns the value unchanged."""
-    try:
-        _uuid_mod.UUID(str(value))
-    except ValueError:
-        raise HTTPException(status_code=404, detail=detail) from None
-    return value
 
 
 def get_tenant(credentials: HTTPAuthorizationCredentials = Depends(security), request: Request = None):
@@ -947,9 +937,7 @@ async def get_tour_full(
             raise HTTPException(status_code=401, detail="Invalid or expired token")
     else:
         raise HTTPException(status_code=401, detail="Not authenticated")
-
     _require_uuid(tour_id, "Tour not found")
-
     if is_admin:
         # AA-859 MAIN exception (plan D2): the staff review path is outside the tenant boundary.
         pool = request.app.state.pool
