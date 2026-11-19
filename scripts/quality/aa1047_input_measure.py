@@ -241,7 +241,8 @@ async def _facts_left_out(conn, keys: set) -> dict:
 
     out = {}
     for tenant_id, country in sorted(keys, key=lambda k: (k[0], k[1] or "")):
-        rows = await conn.fetch(writer_facts._FACTS_QUERY, UUID(tenant_id), country)
+        rows = await conn.fetch(writer_facts._FACTS_QUERY, UUID(tenant_id), country,
+                                list(writer_facts.AGENCY_FACT_KINDS))
         picked = writer_facts.pick_facts([dict(r) for r in rows])
         out[(tenant_id, country)] = len(picked) - len(writer_facts.budget_facts(picked))
     return out

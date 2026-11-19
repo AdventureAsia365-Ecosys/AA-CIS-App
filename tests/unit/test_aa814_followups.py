@@ -24,8 +24,8 @@ _T2 = {"tour": _TOUR, "seo": {}, "few_shots": [], "subtitle_focus": "standard", 
 _A1 = {"tour": _TOUR, "seo": {}, "few_shots": [], "subtitle_focus": "standard", "is_tenant_rewrite": False}
 
 
-def _fact(fact_id, scope, title, body, country="Bhutan", provenance="Rate sheet"):
-    return {"fact_id": fact_id, "scope": scope, "tenant_id": TENANT if scope == "tenant" else None, "kind": "price",
+def _fact(fact_id, scope, title, body, country="Bhutan", provenance="Rate sheet", kind="price"):
+    return {"fact_id": fact_id, "scope": scope, "tenant_id": TENANT if scope == "tenant" else None, "kind": kind,
             "title": title, "body": body, "stated_on": None, "valid_until": None, "provenance": provenance,
             "country": country, "updated_at": None}
 
@@ -71,17 +71,19 @@ async def test_switch_off_reads_nothing_and_keeps_the_source():
 @pytest.mark.asyncio
 async def test_switch_on_puts_the_picked_facts_on_a_copy_of_the_source(monkeypatch):
     monkeypatch.setenv("T2_FACTS", "on")
-    rows = [_fact("fact_p1", "platform", "Tour price", "From USD 3,100 per person"),
-            _fact("fact_t1", "tenant", "Tour price", "From USD 2,950 per person"),
+    rows = [_fact("fact_p1", "platform", "Deposit", "30% at booking", kind="booking_terms"),
+            _fact("fact_t1", "tenant", "Deposit", "20% at booking", kind="booking_terms"),
+            _fact("fact_t2", "tenant", "Tour price", "From USD 2,950 per person"),
             _fact("fact_p2", "platform", "Best season", "March to May and September to November")]
     pool, conn = _pool(rows)
     tour, diag = await t2_facts.with_facts(pool, _TOUR, TENANT)
     assert "facts" not in _TOUR
-    # the tenant's own price replaces the platform price on the same subject (facts.pick_facts)
-    assert tour["facts"] == ("- Tour price: From USD 2,950 per person\n"
+    # the tenant's own booking terms replace the platform's on the same subject (facts.pick_facts); AA-1144 (D7): its
+    # older own price fact never reaches the writer
+    assert tour["facts"] == ("- Deposit: 20% at booking\n"
                              "- Best season: March to May and September to November")
     assert diag == {"mode": "on", "facts": 2, "tenant_facts": 1, "chars": len(tour["facts"])}
-    assert conn.fetch.call_args.args[1:] == (uuid.UUID(TENANT), "Bhutan")
+    assert conn.fetch.call_args.args[1:] == (uuid.UUID(TENANT), "Bhutan", ["booking_terms"])
 
 
 @pytest.mark.asyncio
