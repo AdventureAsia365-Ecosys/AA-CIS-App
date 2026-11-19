@@ -24,10 +24,9 @@ import { Plus, ShieldCheck } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import {
   Badge, Button, ConfirmModal, DataTable, Drawer, ErrorState, K, Modal, TableSkeleton, apiGet,
-  mono, useAdminIdentity, useFormat, useT, useToast, type ColumnDef,
+  mono, useFormat, useT, useToast, type ColumnDef,
   Input, Select, Textarea,
 } from "../../../_kit";
-import { can } from "@/lib/rbac";
 import { TenantSelect, useTenants } from "../../_components/TenantSelect";
 import {
   EVIDENCE_NEEDED, RELEASE_STATUSES, WM_API, WRITERS, actorLabel, checkTone,
@@ -37,6 +36,7 @@ import {
 } from "@/lib/writingMemory";
 import { CHECK_CODE_MESSAGES, EVIDENCE_WORD_MESSAGES } from "@/lib/writingMemory.messages";
 import { CHECK_VERDICT, R, RELEASE_STATUS } from "./releases.messages";
+import { useWmAdmin } from "./useWmAdmin";
 import { useWmText } from "./useWmText";
 
 const SLOTS = [["r0", "slotR0"], ["eval", "slotEval"], ["shadow", "slotShadow"]] as const;
@@ -524,7 +524,7 @@ export default function ReleasesTab() {
   const status = useT(RELEASE_STATUS);
   const wm = useWmText();
   const { formatDateTime } = useFormat();
-  const canAdmin = can(useAdminIdentity().role, "ai.admin");
+  const canAdmin = useWmAdmin(); // AA-1127 C3: ai.admin and a session that may write
   const tenants = useTenants();
   // Owner: "Platform", the tenant's name (else its slug), or "Tenant" + the short id when the list does not know it.
   const { byId, label } = tenants;

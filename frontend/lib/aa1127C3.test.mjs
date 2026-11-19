@@ -34,9 +34,30 @@ test("the kit core carries the read-only context; the CIS shell provides it from
 
 test("run, save and paid buttons sit behind WriteOnly on Writing memory, Usage and Spend", () => {
   const wm = read("app/admin/lab/writing-memory/WritingMemory.tsx");
-  const gated = wm.slice(wm.indexOf("<WriteOnly"), wm.indexOf("</WriteOnly>"));
+  const header = wm.indexOf("<WriteOnly fallback=");
+  const gated = wm.slice(header, wm.indexOf("</WriteOnly>", header));
   for (const key of ["backfillDryRun", "backfillSignals", "runFactFilter", "r0Baseline", "mineRules"]) {
     assert.ok(gated.includes(`t("${key}")`), key);
+  }
+  // The tabs gate their run / write / paid controls on canAdmin; a read-only session must not get it from the role
+  // cookie alone (the Dev E2E identity's role is admin, the API answers 403 e2e_read_only).
+  const hook = read("app/admin/lab/writing-memory/useWmAdmin.ts");
+  assert.match(hook, /useReadOnly\(\)/);
+  assert.match(hook, /can\(role, "ai\.admin"\) && !readOnly/);
+  for (const tab of ["MetricsTab", "ExemplarsTab", "ReleasesTab", "ClaimLabelsTab"]) {
+    const src = read(`app/admin/lab/writing-memory/${tab}.tsx`);
+    assert.match(src, /const canAdmin = useWmAdmin\(\);/, tab);
+    assert.doesNotMatch(src, /can\(useAdminIdentity\(\)\.role/, `${tab}: no role-only canAdmin`);
+  }
+  // The Signals tab verdict buttons and the rule drawer's edit / reject / R0 / activate / roll back sit in WriteOnly.
+  const between = (src, a, b) => src.slice(src.indexOf(a), src.indexOf(b));
+  const signals = between(wm, "function SignalsTab(", "function LintBadges(");
+  const gatedSignals = between(signals, "<WriteOnly>", "</WriteOnly>");
+  for (const key of ["markPass", "markFail"]) assert.ok(gatedSignals.includes(`t("${key}")`), key);
+  const drawer = between(wm, "function RuleDrawer(", "function CandidatesTab(");
+  const gatedDrawer = [...drawer.matchAll(/<WriteOnly>([\s\S]*?)<\/WriteOnly>/g)].map((m) => m[1]).join("\n");
+  for (const key of ["edit", "reject", "runR0", "activateL0", "rollBack"]) {
+    assert.ok(gatedDrawer.includes(`t("${key}")`), key);
   }
   const usage = read("app/admin/usage/UsageExplorer.tsx");
   assert.ok(usage.slice(usage.indexOf("<WriteOnly>"), usage.indexOf("</WriteOnly>")).includes('t("saveView")'));
