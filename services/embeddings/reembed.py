@@ -16,7 +16,7 @@ Three modes, all for ONE column of ``shared.embedding_column``:
   serving vector also empties its shadow: trigger ``<column>__shadow_reset`` on CIS 329's function, so updated rows
   are re-read like new ones). Stops before a page whose estimate would cross ``cost_cap_usd`` (result
   ``stopped: cost_cap``), or after ``max_rows``. The cap covers the whole JOB: ``already_spent``
-  (the job's llm_call_log rows, ``queue.llm_spend``, kept across retries and releases) counts against it.
+  (the job's llm_call_log rows, ``JobContext.llm_spend``, kept across retries and releases) counts against it.
   ``complete`` only when no row with a vector lacks a shadow vector, blank-text rows included (the swap refuses them
   too): their keys come back in ``blank_keys`` (runbook: purge or fix them).
 - ``probe``: one embedding of a few words in the target space (its deployments must be enabled), so the fallback model
@@ -205,8 +205,8 @@ async def fill(pool, column_key: str, *, cost_cap_usd: float, batch_size: Option
         cast = cast_for(await _shadow_type(conn, col, shadow), target.dimension)
     upd = sources.update_sql(col, shadow, cast)
 
-    # The cap is the job's: what earlier attempts of this job spent (their llm_call_log rows, queue.llm_spend) counts
-    # against it. The job's cost is that ledger, never a handler add_cost (AA-1051 follow-up: it counted twice).
+    # The cap is the job's: what earlier attempts of this job spent (their llm_call_log rows, JobContext.llm_spend)
+    # counts against it. The job's cost is that ledger, never a handler add_cost (AA-1051 follow-up: it counted twice).
     prior = max(0.0, float(already_spent or 0.0))
     spent, written, blank, calls = 0.0, 0, 0, 0
     blank_keys: list[list[str]] = []

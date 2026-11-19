@@ -30,7 +30,8 @@ but six handlers also passed their LLM spend to it.
   in its log line, the result's `cost_usd` fields): only the `add_cost` reporting went.
 - **The re-embed cap across retries now reads the ledger.** `fill(already_spent=)` used `ctx.cost_usd` (the handler
   part, which held the LLM spend through `add_cost`). With no `add_cost` that part is 0, so the job passes
-  `queue.llm_spend(pool, job_id)` (new helper: the job's `llm_call_log` sum, every attempt) instead. `fill()` lost its
+  `ctx.llm_spend()` (new `JobContext` method: the job's `llm_call_log` sum, every attempt; on `JobContext`, not in
+  `queue.py`, whose code-health line baseline may not grow) instead. `fill()` lost its
   `add_cost` parameter.
 - **Contract written down**: `JobContext.add_cost` docstring says non-LLM spend only and points at the guard.
 - **Guard**: `tests/unit/test_aa1051_add_cost_non_llm_only.py` scans `api/`, `services/`, `shared/` with `ast` for
@@ -47,7 +48,7 @@ but six handlers also passed their LLM spend to it.
 
 ## Changed
 
-- `shared/jobs/registry.py` (docstring), `shared/jobs/queue.py` (`llm_spend`), the seven handler sites above,
+- `shared/jobs/registry.py` (`add_cost` docstring, `JobContext.llm_spend`), the seven handler sites above,
   `services/embeddings/reembed.py` (`add_cost` parameter removed, docs), tests.
 
 ## Tradeoffs

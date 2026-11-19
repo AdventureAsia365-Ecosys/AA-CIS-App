@@ -118,7 +118,8 @@ async def test_writing_memory_jobs_count_their_llm_spend_once(pool, kinds):
         assert row["progress"]["cost_stamp"]["llm_usd"] == pytest.approx(LEDGER)
         got = await queue.get(pool, job_id)
         assert got["cost_usd"] == pytest.approx(LEDGER) and got["llm_cost_usd"] == pytest.approx(LEDGER)
-        assert await queue.llm_spend(pool, job_id) == pytest.approx(LEDGER)
+        job = queue._to_job(await pool.fetchrow("SELECT * FROM shared.job WHERE id = $1::uuid", job_id))
+        assert await registry.JobContext(pool, job).llm_spend() == pytest.approx(LEDGER)
 
 
 @pytest.mark.asyncio
@@ -139,4 +140,5 @@ async def test_non_llm_spend_still_adds_to_the_ledger_once(pool, kinds):
 @pytest.mark.asyncio
 async def test_llm_spend_of_a_job_without_rows_is_zero(pool):
     job_id, _ = await queue.enqueue(pool, "aa1051_mixed", {})
-    assert await queue.llm_spend(pool, job_id) == 0.0
+    job = queue._to_job(await pool.fetchrow("SELECT * FROM shared.job WHERE id = $1::uuid", job_id))
+    assert await registry.JobContext(pool, job).llm_spend() == 0.0

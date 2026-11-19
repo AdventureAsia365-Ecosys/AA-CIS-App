@@ -187,8 +187,14 @@ class JobContext:
         tagged with the job id (the worker binds it, call_log.bind_job), and the runner adds that ledger sum to
         shared.job.cost_usd at each save (AA-1078 cost stamp). Passing an LLM result's cost here counts it twice
         (AA-1051 follow-up, S286: the W5 proofs showed exactly twice the ledger). A cap that needs the job's LLM
-        spend so far reads ``queue.llm_spend``. Guard: tests/unit/test_aa1051_add_cost_non_llm_only.py."""
+        spend so far reads ``llm_spend()``. Guard: tests/unit/test_aa1051_add_cost_non_llm_only.py."""
         self.cost_usd += float(usd or 0.0)
+
+    async def llm_spend(self) -> float:
+        """The job's LLM spend so far: its shared.llm_call_log rows, every attempt (AA-1051 follow-up: what a per-job
+        cap counts, since a handler no longer reports LLM spend through add_cost)."""
+        sql = f"SELECT {queue._ledger_sum_sql('$1::uuid')}::float"
+        return float(await self.pool.fetchval(sql, str(self.job.id)) or 0.0)
 
     async def progress(self, **fields: Any) -> None:
         """Merges `fields` into the job's progress (shown on the Jobs page) and saves the cost."""
