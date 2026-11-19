@@ -55,6 +55,8 @@ TENANT_VISIBLE_ACTIONS: dict[str, tuple[str, str]] = {
     "tenant.tour_retirement_settings_changed": ("account", "Changed the discontinued tour setting"),  # AA-1039 (S276)
     "tour.rewrite_triggered": ("tours", "Requested a tour rewrite"),
     "tenant_tour_version.exported": ("tours", "Downloaded a tour"),
+    "tenant_tour_version.edited": ("tours", "Edited a tour"),  # AA-1144 (D8): the wording of the agency's copy
+    "tenant_tour_version.edit_refused": ("tours", "Tour edit refused: it changed a tour fact"),  # AA-1144 (D8)
     "integration.disconnected": ("account", "Disconnected a channel"),
     "fact.created": ("content", "Added a fact"),  # AA-814 — Content studio › Facts (the tenant's own facts)
     "fact.updated": ("content", "Edited a fact"),
