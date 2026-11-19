@@ -16,6 +16,10 @@
 // UI kit + react-query; view state in the URL (tab, filters, page) like the Jobs page.
 // API: /admin/content-quality/* via the BFF.
 // AA-994: every string comes from messages.ts / drawer.messages.ts (English default, Vietnamese when picked).
+// AA-1127 C4 (S283 UI audit): the QA sub-nav is a row above the content (no 200 px column), the blocking and warning
+// gates share one column and the title is capped at 240 px, so every column fits the pane at 1440; the filters wrap
+// inside 390 px; the kit table search is off (it searched only the page on screen; the page's own box asks the
+// server); dates use the kit format of the UI language.
 
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
@@ -26,7 +30,7 @@ import type { TenantRef } from "@/lib/tenants";
 import SocialContentSubNav, { SocialContentSplit } from "../../_components/SocialContentSubNav";
 import {
   K, mono,
-  Badge, DataTable, PageHeader, StatusBadge, Tabs, ToastProvider, apiGet, useT,
+  Badge, DataTable, PageHeader, StatusBadge, Tabs, ToastProvider, apiGet, useFormat, useT,
   type ColumnDef,
   PageFrame,
   Input, Select,
@@ -36,7 +40,7 @@ import PieceDrawer from "./PieceDrawer";
 import { LabelBadge } from "./PieceLabel";
 import TourVersionDrawer from "./TourVersionDrawer";
 import {
-  LABEL_NAMES, fmtTime, usd,
+  LABEL_NAMES, usd,
   type GateStat, type Paged, type PieceLabelValue, type PieceRow, type PiecesPage, type TenantStat,
   type VersionRow,
 } from "./shared";
@@ -84,6 +88,11 @@ function writeView(v: View) {
 
 const inputStyle: React.CSSProperties = {
   fontSize: 12, padding: "6px 8px", border: `1px solid ${K.line}`, borderRadius: 6, background: K.card, color: K.ink3,
+  maxWidth: "100%",
+};
+/** The filter row of a tab: wraps, and never wider than the table (390 px). */
+const filterRow: React.CSSProperties = {
+  display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", minWidth: 0, maxWidth: "100%",
 };
 
 function GateChips({ gates, tone }: { gates: string[]; tone: "danger" | "warning" }) {
@@ -92,6 +101,17 @@ function GateChips({ gates, tone }: { gates: string[]; tone: "danger" | "warning
   return (
     <span style={{ display: "inline-flex", gap: 4, flexWrap: "wrap" }}>
       {gates.map((g) => <span key={g} title={g}><Badge tone={tone} dot={false}>{gateLabel(g)}</Badge></span>)}
+    </span>
+  );
+}
+
+/** AA-1127 C4: blocking fails, then warnings, in one bounded column (both stay on screen at 1440). */
+function GateResults({ failed, flagged }: { failed: string[]; flagged: string[] }) {
+  if (!failed.length && !flagged.length) return <span style={{ color: K.muted }}>—</span>;
+  return (
+    <span style={{ display: "flex", flexDirection: "column", gap: 4, maxWidth: 260 }}>
+      {failed.length > 0 && <GateChips gates={failed} tone="danger" />}
+      {flagged.length > 0 && <GateChips gates={flagged} tone="warning" />}
     </span>
   );
 }
@@ -109,6 +129,7 @@ function PiecesTab({ view, update, tenants }: { view: View; update: (p: Partial<
   const labelName = useT(LABEL_NAME);
   const status = useT(STATUS);
   const { gateFilter } = useCqText();
+  const { formatDateTime } = useFormat();
   const qs = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(view.page * PAGE_SIZE),
                                    sort: view.sort, sort_dir: view.dir });
   if (view.tenant) qs.set("tenant_id", view.tenant);
@@ -124,14 +145,14 @@ function PiecesTab({ view, update, tenants }: { view: View; update: (p: Partial<
   const labelsEnabled = !!data?.labels_enabled;
   const columns = useMemo<ColumnDef<PieceRow, unknown>[]>(() => [
     { id: "created_at", accessorKey: "created_at", header: t("colWritten"),
-      cell: (c) => <span style={{ whiteSpace: "nowrap", color: K.muted }}>{fmtTime(c.row.original.created_at)}</span> },
+      cell: (c) => <span style={{ whiteSpace: "nowrap", color: K.muted }}>{formatDateTime(c.row.original.created_at)}</span> },
     { id: "tenant", accessorKey: "tenant_name", header: t("colTenant") },
     { id: "channel", accessorKey: "channel", header: t("colChannel") },
     // AA-863 — under the title: the Segment the piece was written for and its seed place · country,
     // with a warning badge when the seed does not fit the Subject (SeedLine).
     { id: "title", accessorKey: "title", header: t("colTitleSeed"), enableSorting: false,
       cell: (c) => (
-        <span style={{ display: "block", maxWidth: 320, minWidth: 0 }}>
+        <span style={{ display: "block", maxWidth: 240, minWidth: 0 }}>
           <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.row.original.title ?? ""}>{c.row.original.title ?? "—"}</span>
           <SeedLine seed={c.row.original.seed} showSegment />
         </span>
@@ -151,15 +172,13 @@ function PiecesTab({ view, update, tenants }: { view: View; update: (p: Partial<
           </span>
         );
       } } as ColumnDef<PieceRow, unknown>] : []),
-    { id: "failed_gates", header: t("colBlockingFails"), enableSorting: false,
-      cell: (c) => <GateChips gates={c.row.original.failed_gates} tone="danger" /> },
-    { id: "flag_gates", header: t("colWarnings"), enableSorting: false,
-      cell: (c) => <GateChips gates={c.row.original.flag_gates} tone="warning" /> },
+    { id: "gates", header: t("colGateResults"), enableSorting: false,
+      cell: (c) => <GateResults failed={c.row.original.failed_gates} flagged={c.row.original.flag_gates} /> },
     { id: "attempt", accessorKey: "attempt_number", header: t("colAttempt"),
       cell: (c) => <span style={{ fontFamily: mono }}>{c.row.original.attempt_number}</span> },
     { id: "cost_usd", accessorKey: "cost_usd", header: t("colCost"),
       cell: (c) => <span style={{ fontFamily: mono }}>{usd(c.row.original.cost_usd)}</span> },
-  ], [labelsEnabled, t]);
+  ], [labelsEnabled, t, formatDateTime]);
   const sorting: SortingState = [{ id: view.sort, desc: view.dir === "desc" }];
   return (
     <DataTable<PieceRow>
@@ -170,11 +189,12 @@ function PiecesTab({ view, update, tenants }: { view: View; update: (p: Partial<
                           onChange: (pageIndex) => update({ page: pageIndex }) }}
       pageSize={PAGE_SIZE} manualSorting sorting={sorting}
       onSortingChange={(next) => { const s = next[0]; update(s ? { sort: s.id, dir: s.desc ? "desc" : "asc", page: 0 } : { sort: "created_at", dir: "desc", page: 0 }); }}
-      enableCsv csvFilename="content-quality-pieces" stickyHeader maxBodyHeight="calc(100vh - 380px)" tableMinWidth={1100}
+      enableCsv csvFilename="content-quality-pieces" stickyHeader maxBodyHeight="calc(100vh - 380px)" tableMinWidth={1040}
+      searchable={false}
       emptyTitle={t("piecesEmpty")} emptyDescription={t("piecesEmptyDesc")}
       onRowClick={(r) => update({ piece: r.piece_id })}
       toolbarExtra={
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={filterRow}>
           <Input value={view.q} onChange={(e) => update({ q: e.target.value, page: 0 })} placeholder={t("searchPieces")}
                  aria-label={t("searchPiecesAria")} style={{ ...inputStyle, minWidth: 180 }} />
           <TenantFilter value={view.tenant} onChange={(tenant) => update({ tenant, page: 0 })} tenants={tenants} />
@@ -220,6 +240,7 @@ function TenantFilter({ value, onChange, tenants }: { value: string; onChange: (
 function VersionsTab({ view, update, tenants }: { view: View; update: (p: Partial<View>) => void; tenants: TenantStat[] }) {
   const t = useT(M);
   const { bindingLabel } = useCqText();
+  const { formatDateTime } = useFormat();
   const qs = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(view.page * PAGE_SIZE) });
   if (view.tenant) qs.set("tenant_id", view.tenant);
   if (view.q) qs.set("q", view.q);
@@ -228,7 +249,7 @@ function VersionsTab({ view, update, tenants }: { view: View; update: (p: Partia
     queryFn: () => apiGet<Paged<VersionRow>>(`/api/admin/content-quality/tour-versions?${qs}`, { admin: true }),
   });
   const columns = useMemo<ColumnDef<VersionRow, unknown>[]>(() => [
-    { accessorKey: "created_at", header: t("colWritten"), cell: (c) => <span style={{ color: K.muted, whiteSpace: "nowrap" }}>{fmtTime(c.row.original.created_at)}</span> },
+    { accessorKey: "created_at", header: t("colWritten"), cell: (c) => <span style={{ color: K.muted, whiteSpace: "nowrap" }}>{formatDateTime(c.row.original.created_at)}</span> },
     { accessorKey: "tenant_name", header: t("colTenant") },
     { accessorKey: "tour_name", header: t("colTour") },
     { accessorKey: "version_number", header: t("colVersion") },
@@ -245,16 +266,16 @@ function VersionsTab({ view, update, tenants }: { view: View; update: (p: Partia
       } },
     { accessorKey: "escalations", header: t("colEscalations") },
     { accessorKey: "cost_usd", header: t("colCost"), cell: (c) => <span style={{ fontFamily: mono }}>{usd(c.row.original.cost_usd)}</span> },
-  ], [t, bindingLabel]);
+  ], [t, bindingLabel, formatDateTime]);
   return (
     <DataTable<VersionRow>
       data={data?.data ?? []} columns={columns} tableId="admin-content-quality-versions" getRowId={(r) => r.id}
       loading={isLoading} error={error ? String(error) : null} onRetry={() => refetch()}
       serverPagination={{ pageIndex: view.page, pageSize: PAGE_SIZE, total: data?.total ?? 0, onChange: (i) => update({ page: i }) }}
-      pageSize={PAGE_SIZE} enableCsv csvFilename="content-quality-t2" stickyHeader tableMinWidth={980}
+      pageSize={PAGE_SIZE} enableCsv csvFilename="content-quality-t2" stickyHeader tableMinWidth={980} searchable={false}
       emptyTitle={t("versionsEmpty")} onRowClick={(r) => update({ version: r.id })}
       toolbarExtra={
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={filterRow}>
           <Input value={view.q} onChange={(e) => update({ q: e.target.value, page: 0 })} placeholder={t("searchTour")} aria-label={t("searchToursAria")} style={inputStyle} />
           <TenantFilter value={view.tenant} onChange={(tenant) => update({ tenant, page: 0 })} tenants={tenants} />
         </div>
@@ -317,7 +338,7 @@ function Page() {
   return (
     <PageFrame>
       <PageHeader title={t("title")} description={t("description")} />
-      <SocialContentSplit gap={16}>
+      <SocialContentSplit gap={16} stack>
         <SocialContentSubNav active="content_quality" />
         {/* width/maxWidth 100%: in the phone column layout (SocialContentSplit < 980px) a flex-start child would
             shrink-wrap to its widest row and overflow the page (UI smoke, 390px). */}

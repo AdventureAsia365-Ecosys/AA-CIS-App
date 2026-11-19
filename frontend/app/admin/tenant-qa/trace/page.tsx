@@ -50,6 +50,10 @@
 // AA-575 also extends AA-572's Gate/Retry/Created-at-only sort to every column — see `sortValue()`
 // below.
 //
+// AA-1127 C4 (S283 UI audit): the filters are the kit FilterField (a <label>, so every control has a name) and the
+// dates the kit DateField; the filter bar and the stat tiles sit in the content column under the QA sub-nav, like the
+// sibling QA pages, and `?tenant=<id>` (Tenant 360's Social tab link) opens the page filtered to that tenant.
+//
 // AA-560 — "Force unpublish" added to the Publish section of the row accordion (published rows
 // only). This is the old `/admin/a4-oversight` (Cross-Tenant Oversight) page's one mutating
 // action, moved here after a STEP0 gap-check found that page's Publish Log section's WRITE half
@@ -64,7 +68,8 @@
 // rows of the page on screen. Seven columns instead of ten so the table fits its pane at 1440 (it scrolled sideways
 // from Status on, with Topic and Angle squeezed): Tenant / tour in one column, the publish state under Status, the
 // retries under Gates; Topic and Angle keep a readable minimum width and every text column wraps.
-import { useState, useCallback, useMemo } from "react";
+import { Suspense, useState, useCallback, useMemo } from "react";
+import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Radio } from "lucide-react";
 import SocialContentSubNav, { SocialContentSplit } from "../../_components/SocialContentSubNav";
@@ -72,7 +77,7 @@ import { fetchJson, EmptyState, ErrorState } from "../../_components/auditPanels
 import { TenantSelect } from "../../_components/TenantSelect";
 import {
   PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT, Badge, K, LoadingScreen, Section, mono,
-  sans, type Tone, Button, DataTable, Drawer, Input, Select, type ColumnDef,
+  sans, type Tone, Button, DataTable, DateField, Drawer, FilterField, Select, type ColumnDef,
 } from "../../../_kit";
 import { CHANNEL, TRACE } from "./messages";
 import {
@@ -160,10 +165,16 @@ function useChannelLabel(): (code: string) => string {
   return (code) => (!code ? t("all") : Object.hasOwn(CHANNEL.en, code) ? t(code) : code);
 }
 
+// useSearchParams (the `?tenant=` deep link) needs a Suspense boundary for `next build`.
 export default function ContentTracePage() {
+  return <Suspense fallback={null}><ContentTrace /></Suspense>;
+}
+
+function ContentTrace() {
   const t = useT(TRACE);
   const channelLabel = useChannelLabel();
-  const [tenantId, setTenantId] = useState("");
+  const initialTenant = useSearchParams().get("tenant") ?? "";
+  const [tenantId, setTenantId] = useState(initialTenant);
   const [channel, setChannel] = useState("");
   const [status, setStatus] = useState("");
   const [published, setPublished] = useState("");
@@ -241,45 +252,6 @@ export default function ContentTracePage() {
             title={t("title")}
             description={t("description")}
           />
-
-          {/* Filter bar — Tenant is the primary lens ("All" is a real, always-valid choice, never
-              a placeholder that must be replaced before the table shows anything). */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 16 }}>
-            {/* AA-919 S254: the shared admin tenant picker (active tenants, by name; "" = All tenants). */}
-            <TenantSelect inline value={tenantId} onChange={setTenantId} placeholder={t("allTenants")} />
-            <FilterField label={t("channel")}>
-              <Select value={channel} onChange={e => setChannel(e.target.value)} style={{ ...selectStyle, minWidth: 140 }}>
-                {CHANNEL_OPTIONS.map(o => <option key={o.value} value={o.value}>{channelLabel(o.value)}</option>)}
-              </Select>
-            </FilterField>
-            <FilterField label={t("status")}>
-              <Select value={status} onChange={e => setStatus(e.target.value)} style={{ ...selectStyle, minWidth: 140 }}>
-                {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{t(o.label)}</option>)}
-              </Select>
-            </FilterField>
-            <FilterField label={t("published")}>
-              <Select value={published} onChange={e => setPublished(e.target.value)} style={{ ...selectStyle, minWidth: 130 }}>
-                {PUBLISHED_OPTIONS.map(o => <option key={o.value} value={o.value}>{t(o.label)}</option>)}
-              </Select>
-            </FilterField>
-            <FilterField label={t("from")}>
-              <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ ...selectStyle, cursor: "text" }} />
-            </FilterField>
-            <FilterField label={t("to")}>
-              <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ ...selectStyle, cursor: "text" }} />
-            </FilterField>
-          </div>
-
-          {/* AA-572 point 2 — tenant stat header, same tile shape 01-Atomize's own header stat
-              bar uses (mirrored inline rather than inventing a differently-shaped one). */}
-          {!loading && !error && rows && (
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 14 }}>
-              <StatTile label={t("totalPieces")} value={stats.total} />
-              {stats.byChannel.map(([ch, count]) => (
-                <StatTile key={ch} label={channelLabel(ch)} value={count} />
-              ))}
-            </div>
-          )}
         </PageFrameHeader>
 
         {/* AA-572 point 6 — `overflowX: "auto"` lives HERE (the real, single scrolling ancestor:
@@ -291,11 +263,50 @@ export default function ContentTracePage() {
             it doesn't reintroduce that bug: this outer div stays the only scrolling ancestor, and
             the table's `<th position:sticky>` still resolves against it unchanged. */}
         <PageFrameBody scroll style={{ overflowX: "auto" }}>
-          <SocialContentSplit>
+          <SocialContentSplit gap={16} stack>
             {/* AA-1039 (S266) — the Tenant content QA sub-nav (Content quality · Content Trace · Review log ·
                 Slate), real links (see SocialContentSubNav.tsx). */}
             <SocialContentSubNav active="content_trace" />
             <div style={{ flex: 1, minWidth: 0 }}>
+              {/* Filter bar — Tenant is the primary lens ("All" is a real, always-valid choice, never a placeholder
+                  that must be replaced before the table shows anything). AA-1127 C4: kit FilterField / DateField. */}
+              <div data-testid="content-trace-filters"
+                style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", minWidth: 0, marginBottom: 12 }}>
+                {/* AA-919 S254: the shared admin tenant picker (active tenants, by name; "" = All tenants). */}
+                <TenantSelect inline value={tenantId} onChange={setTenantId} placeholder={t("allTenants")} />
+                <FilterField label={t("channel")}>
+                  <Select value={channel} onChange={e => setChannel(e.target.value)} style={{ ...selectStyle, minWidth: 140 }}>
+                    {CHANNEL_OPTIONS.map(o => <option key={o.value} value={o.value}>{channelLabel(o.value)}</option>)}
+                  </Select>
+                </FilterField>
+                <FilterField label={t("status")}>
+                  <Select value={status} onChange={e => setStatus(e.target.value)} style={{ ...selectStyle, minWidth: 140 }}>
+                    {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{t(o.label)}</option>)}
+                  </Select>
+                </FilterField>
+                <FilterField label={t("published")}>
+                  <Select value={published} onChange={e => setPublished(e.target.value)} style={{ ...selectStyle, minWidth: 130 }}>
+                    {PUBLISHED_OPTIONS.map(o => <option key={o.value} value={o.value}>{t(o.label)}</option>)}
+                  </Select>
+                </FilterField>
+                <FilterField label={t("from")} as="div">
+                  <DateField value={dateFrom} onChange={setDateFrom} max={dateTo || undefined} aria-label={t("from")} />
+                </FilterField>
+                <FilterField label={t("to")} as="div">
+                  <DateField value={dateTo} onChange={setDateTo} min={dateFrom || undefined} aria-label={t("to")} />
+                </FilterField>
+              </div>
+
+              {/* AA-572 point 2 — tenant stat header, same tile shape 01-Atomize's own header stat
+                  bar uses (mirrored inline rather than inventing a differently-shaped one). */}
+              {!loading && !error && rows && (
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+                  <StatTile label={t("totalPieces")} value={stats.total} />
+                  {stats.byChannel.map(([ch, count]) => (
+                    <StatTile key={ch} label={channelLabel(ch)} value={count} />
+                  ))}
+                </div>
+              )}
               {loading ? (
                 <LoadingScreen message={t("loading")} />
               ) : error ? (
@@ -356,16 +367,6 @@ function StatTile({ label, value }: { label: string; value: number }) {
     <div style={{ background: K.card, border: `1px solid ${K.line}`, borderRadius: 8, padding: "6px 12px", minWidth: 92 }}>
       <div style={{ fontSize: 10, color: K.muted, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
       <div style={{ fontFamily: mono, fontSize: 15, fontWeight: 600, color: K.ink }}>{value}</div>
-    </div>
-  );
-}
-
-function FilterField({ label, children }: { label: string; children: React.ReactNode }) {
-  const t = useT(TRACE);
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-      <span style={{ fontSize: 11.5, color: K.muted }}>{t("filterLabel", label)}</span>
-      {children}
     </div>
   );
 }

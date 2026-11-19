@@ -12,7 +12,7 @@ export default function TenantQaSlatePage() {
   return (
     <PageFrame>
       <PageHeader title={t("title")} description={t("description")} />
-      <SocialContentSplit gap={16}>
+      <SocialContentSplit gap={16} stack>
         <SocialContentSubNav active="slate" />
         {/* width/maxWidth 100%: in the phone column layout a flex-start child would shrink-wrap to its widest row
             (the Slate table's nowrap Seed line) and overflow the page (S241 AA-863). */}

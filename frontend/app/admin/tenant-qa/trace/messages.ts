@@ -28,7 +28,6 @@ export const TRACE = defineMessages(
     emptyTitle: "No content pieces match these filters",
     emptyBody:
       "Nothing has been written yet for this combination of tenant/channel/status/date — try widening a filter, or 'All tenants' to check whether the data exists elsewhere.",
-    filterLabel: (label: string) => `${label}:`,
     colTopic: "Topic",
     colTenantTour: "Tenant / tour",
     colAngle: "Angle chosen",
@@ -99,7 +98,6 @@ export const TRACE = defineMessages(
     emptyTitle: "Không có mẩu nội dung nào khớp bộ lọc",
     emptyBody:
       "Chưa có gì được viết cho tổ hợp tenant/kênh/trạng thái/ngày này — hãy nới một bộ lọc, hoặc chọn 'Mọi tenant' để xem dữ liệu có ở nơi khác không.",
-    filterLabel: (label: string) => `${label}:`,
     colTopic: "Chủ đề",
     colTenantTour: "Tenant / tour",
     colAngle: "Góc viết đã chọn",

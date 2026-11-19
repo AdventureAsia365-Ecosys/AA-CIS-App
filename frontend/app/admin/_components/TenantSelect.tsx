@@ -45,8 +45,10 @@ export function TenantName({ id, style }: { id: string | null | undefined; style
 // The kit Input / Select draw the box; these set the width only (AA-1006).
 const fieldStyle: React.CSSProperties = { width: "100%" };
 // Filter bars: a compact box (kit size "sm") that grows with the names, never wider than the bar.
-const inlineFieldStyle: React.CSSProperties = { width: "auto", minWidth: 180 };
-const inlineSearchStyle: React.CSSProperties = { width: 170 };
+// AA-1127 C4 (S283 UI audit): an `auto` select is as wide as its longest tenant name (482 px at 390 on Content quality);
+// capped so a filter row wraps instead of scrolling sideways, and the search box fits its placeholder.
+const inlineFieldStyle: React.CSSProperties = { width: "auto", minWidth: 180, maxWidth: "min(100%, 280px)" };
+const inlineSearchStyle: React.CSSProperties = { width: 200, maxWidth: "100%" };
 // The label stays for screen readers when a toolbar shows no visible labels (`hideLabel`).
 const srOnly: React.CSSProperties = {
   position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0 0 0 0)",

@@ -10,6 +10,9 @@
 //     links (lib/adminIa.ts holds the same hrefs for the sidebar; root ADR 0019 d13 separates the AA store from
 //     tenant-written content).
 // `active` picks the area: a catalogue section key shows the catalogue list, a QA key the QA list.
+// AA-1127 C4 (S283 UI audit): the QA list repeats the sidebar's Tenant content QA links, so it is a row above the content
+// at every width (it took a 200 px column and pushed the Content quality table's gate columns off screen at 1440);
+// the QA pages render their split with `stack`. The catalogue list keeps its column (in-page tab state).
 import Link from "next/link";
 import { Puzzle, Layers, TrendingUp, GitBranch, FileStack, Radio, BarChart3, ShieldAlert, ShieldCheck } from "lucide-react";
 import { useT } from "../../_kit/core/useI18n";
@@ -46,8 +49,8 @@ export default function SocialContentSubNav({ active, onSelectSection }: {
   const t = useT(M);
   // < 980px the sub-nav is a sideways-scrolling row above the content (it was a `<style>` media query on a class,
   // AA-1006: the kit inline preset has no className, so the breakpoint is a hook).
-  const narrow = useMediaQuery(SPLIT_QUERY);
   const catalogue = isSection(active);
+  const narrow = useMediaQuery(SPLIT_QUERY) || !catalogue;
   const itemStyle = (on: boolean): React.CSSProperties => ({
     display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 7,
     background: on ? K.accentTint : "transparent",
@@ -92,8 +95,13 @@ const SPLIT_QUERY = "(max-width: 980px)";
 /** The sub-nav + content split of the Atoms & routes and Tenant content QA pages: a row on desktop; < 980px a column
  *  whose children take the full width (S241 AA-863: a child sized to its fit-content width let a table's min-content
  *  push the column wider than the page). */
-export function SocialContentSplit({ gap = 20, children }: { gap?: number; children: React.ReactNode }) {
-  const narrow = useMediaQuery(SPLIT_QUERY);
+export function SocialContentSplit({ gap = 20, stack = false, children }: {
+  gap?: number;
+  /** AA-1127 C4: always a column (the Tenant content QA pages, whose sub-nav is a row at every width). */
+  stack?: boolean;
+  children: React.ReactNode;
+}) {
+  const narrow = useMediaQuery(SPLIT_QUERY) || stack;
   return (
     <div style={{ display: "flex", gap, flexDirection: narrow ? "column" : "row", alignItems: narrow ? "stretch" : "flex-start" }}>
       {children}

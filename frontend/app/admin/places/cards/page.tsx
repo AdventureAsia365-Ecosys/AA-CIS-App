@@ -210,6 +210,8 @@ function PlaceCardsTable({ view, update }: { view: View; update: (p: Partial<Vie
       loading={isLoading} error={error ? String(error) : null} onRetry={() => refetch()}
       serverPagination={{ pageIndex: view.page, pageSize: PAGE_SIZE, total: data?.total ?? 0, onChange: (i) => update({ page: i }) }}
       pageSize={PAGE_SIZE} tableMinWidth={900}
+      // AA-1127 C4: server-paged; the toolbar's place search asks the server, the kit search saw one page only.
+      searchable={false}
       emptyTitle={t("cardsEmpty")} emptyDescription={t("cardsEmptyDesc")}
       toolbarExtra={
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>

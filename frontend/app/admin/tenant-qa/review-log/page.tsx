@@ -532,7 +532,7 @@ export default function PlatformStatsPage() {
         </PageFrameHeader>
 
         <PageFrameBody scroll style={{ overflowX: "auto" }}>
-          <SocialContentSplit>
+          <SocialContentSplit gap={16} stack>
             <SocialContentSubNav active="review_log" />
             <div style={{ flex: 1, minWidth: 0 }}>
               <ReviewLogSection />

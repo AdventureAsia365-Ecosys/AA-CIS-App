@@ -142,7 +142,7 @@ export default function TenantQaCompliancePage() {
   return (
     <PageFrame>
       <PageHeader title={t("title")} description={t("description")} />
-      <SocialContentSplit gap={16}>
+      <SocialContentSplit gap={16} stack>
         <SocialContentSubNav active="compliance" />
         <div style={{ flex: 1, minWidth: 0, width: "100%", maxWidth: "100%" }}>
           <Tabs variant="underline" tabs={tabs} active={state} onChange={(k) => setState(k as StateTab)}
