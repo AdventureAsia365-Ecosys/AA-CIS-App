@@ -1,7 +1,7 @@
 """AA-1144 (S285 decision D8) — PATCH /v1/tours/versions/{id} edit against real Postgres, as aa_app_user.
 
-  - the tenant pool reads the AA Master of the tour (CIS 239 master read, replayed by conftest) for the fact base: a version without an
-    itinerary is checked against the Master's days, so adding a day is a 422 fact_locked and nothing is inserted;
+  - the tenant pool reads the AA Master of the tour (CIS 239 master read, replayed by conftest) for the fact base: a
+    version without an itinerary is checked against the Master's days, so adding a day is a 422 fact_locked and nothing is inserted;
   - a wording edit inserts the merged content (the version's itinerary kept) with the member from the token as
     edited_by_user, and one acp_shared.audit_log row (tenant_tour_version.edited, hashes only) is written on the main
     pool after the tenant transaction; a refused edit writes tenant_tour_version.edit_refused.
