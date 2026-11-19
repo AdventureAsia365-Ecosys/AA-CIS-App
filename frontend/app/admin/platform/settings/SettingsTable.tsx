@@ -14,6 +14,8 @@
 // replaces the area tabs: "All N" first (picked by default), then one chip per area with matches and its count
 // (lib searchAreaCounts); a chip shows only that area's matches (lib matchesInArea). Clearing the query returns to the
 // area tabs, and the next search starts again on "All".
+// AA-1127 (S285 live evidence at 390 px): while searching, the Area column sits right after the Setting column, so the
+// setting stays the card title on a phone (lib/aa1127Overflow390.test.mjs).
 
 import { Search } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -89,10 +91,14 @@ export function SettingsTable({ app, settings, initialArea, initialQuery, column
     if (q.trim() === "") setSearchArea(null);
   };
   const searching = query.trim() !== "";
+  // AA-1127 (S285, 390 px): the Area column goes after the Setting column, not before it. On a phone the kit table's
+  // first column is the card title, so an Area-first search put the whole setting cell (label, what, key) in a
+  // right-aligned label/value row that it could not fit (Platform › Settings +58 px on the TripPlanner search).
   const cols = useMemo<ColumnDef<SettingItem, unknown>[]>(() => searching ? [
+    ...columns.slice(0, 1),
     { id: "area", header: t("colArea"), accessorKey: "area",
       cell: ({ getValue }) => <Badge tone="neutral" dot={false}>{areaName(String(getValue()))}</Badge> },
-    ...columns,
+    ...columns.slice(1),
   ] : columns, [searching, columns, t, areaName]);
   if (groups.length === 0) return null;
   const activeArea = groups.some((g) => g.area === area) ? area : groups[0].area;

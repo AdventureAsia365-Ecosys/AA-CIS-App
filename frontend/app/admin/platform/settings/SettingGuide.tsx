@@ -11,6 +11,8 @@
 //   change dialog shows it above the inputs, and under the input the same line for the value being typed.
 // - ActorName: the staff member's name or e-mail, the actor id in the tooltip.
 // The guide comes from the API in English and Vietnamese (CIS 416, lib/settingsRegistry guideFor); kit only.
+// AA-1127 (S285, 390 px): the cell never asks for more than its column ("min(240px, 100%)") and the label and the key
+// (one long dotted token) wrap anywhere, so a phone card never cuts them on the right.
 
 import { ChevronDown, ChevronRight, Info } from "lucide-react";
 import { useState, type ReactNode } from "react";
@@ -117,10 +119,10 @@ export function SettingCell({ item, badges, extra, valueOf }: {
   const t = useT(SETTINGS);
   const [open, setOpen] = useState(false);
   return (
-    <div style={{ display: "grid", gap: 4, minWidth: 240, maxWidth: 460 }}>
-      <strong style={{ fontSize: 13 }}>{item.label}</strong>
+    <div style={{ display: "grid", gap: 4, minWidth: "min(240px, 100%)", maxWidth: 460 }}>
+      <strong style={{ fontSize: 13, overflowWrap: "anywhere" }}>{item.label}</strong>
       {!open && <GuideSummary item={item} />}
-      <span style={{ ...small, fontFamily: mono, fontSize: 11 }}>{item.key}</span>
+      <span style={{ ...small, fontFamily: mono, fontSize: 11, overflowWrap: "anywhere" }}>{item.key}</span>
       {badges}
       {extra}
       <span data-testid={`settings-explain-${item.key}`}>

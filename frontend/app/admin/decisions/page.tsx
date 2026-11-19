@@ -664,8 +664,9 @@ export default function DecisionsPage() {
             </>
           )}
 
+          {/* AA-1127 (S285, 390 px): the colour legend wraps (one row of 8 pills was 276 px wider than a phone). */}
           {tab !== "guide" && (
-            <div style={{ marginTop: 22, fontSize: 12, color: K.muted, display: "flex", alignItems: "center", gap: 6 }}>
+            <div data-testid="decisions-legend" style={{ marginTop: 22, fontSize: 12, color: K.muted, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
               <BookOpen size={13} /> {t("colours")} {ZONES.map(z => <ZonePill key={z} z={z} />)} {t("modes")} {(["off", "shadow", "enforce"] as Mode[]).map(m => <ModePill key={m} m={m} />)}
             </div>
           )}

@@ -1448,7 +1448,7 @@ export interface AppProfile {
   updated_by: string | null;
   /** The central LLM cap llm/app:<app> (Budgets tab), when one exists. */
   central_cap: { per_day_usd: number | null; per_month_usd: number | null; hard_stop: boolean } | null;
-  /** True for the app whose gateway acts on the profile today (CIS). */
+  /** True for an app whose gateway acts on the profile today (cis, tripplanner, crm: api ENFORCED_APPS). */
   enforced_here: boolean;
 }
 
