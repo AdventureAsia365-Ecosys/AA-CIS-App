@@ -63,7 +63,7 @@ def _req(conn):
     return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(pool=_OneConnPool(conn))))
 
 
-async def _review_row(conn, status: str, created_at=None):
+async def _review_row(conn, status: str, created_at=None) -> uuid.UUID:
     tour = uuid.uuid4()
     await conn.execute(
         "INSERT INTO silver_aa_internal.raw_tours (tour_id, tenant_id, batch_id, src_name, country, duration, "
@@ -77,6 +77,7 @@ async def _review_row(conn, status: str, created_at=None):
         "INSERT INTO silver_aa_internal.review_queue (tour_id, generated_content_id, tenant_id, failure_summary, "
         "score_overall, review_status, created_at) VALUES ($1, $2, $3, 'LOW_SCORE', 4.0, $4, COALESCE($5, now()))",
         tour, gc, MASTER, status, created_at)
+    return tour
 
 
 _VERSION_SQL = (
@@ -202,9 +203,8 @@ async def test_the_oldest_time_is_the_oldest_waiting_item(conn):
 @pytest.mark.asyncio
 async def test_a_trashed_source_leaves_the_review_tile_like_the_page(conn, monkeypatch):
     """AA-986 L1: a pending row whose source is no longer live is hidden from the page, so not counted either."""
-    await _review_row(conn, "pending")
+    tour = await _review_row(conn, "pending")
     before = (await _summary(conn, "content"))["review_waiting"].count
-    tour = await conn.fetchval("SELECT tour_id FROM silver_aa_internal.review_queue ORDER BY created_at DESC LIMIT 1")
     await conn.execute("UPDATE silver_aa_internal.raw_tours SET deleted_at = now() WHERE tour_id = $1", tour)
     tiles = await _summary(conn, "content")
     assert tiles["review_waiting"].count == before - 1
