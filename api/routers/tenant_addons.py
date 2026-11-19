@@ -23,6 +23,22 @@ the scope, 503 key set or configuration unavailable. ``/tenant`` is neither a st
 middleware, no tenant role middleware, no tenant rate limiter. The API Gateway route ``/tenant/v1/{tenant_v1_proxy+}``
 (ANY, AA-CIS-Infra) already carries these paths. Errors use the contract Problem body ``{error, message[, reason]}``.
 Runs on the main pool (cis_app): CIS 374 grants the table to cis_app only. 503 while CIS 374 is not applied.
+
+AA-1139 (contract 1.1): the TripPlanner module of the agency app, same client and scope. The CRM checks the person's
+agency role (reading: owner and agent; writing: owner) and names the member; CIS applies the Tenant 360 editor's
+checks (``services/tenant_account/tripplanner_site.py``):
+
+  GET  /tenant/v1/tenants/{tenant_id}/tripplanner                 the planner addresses, the custom domains and their
+                                                                  state, the lead route (stored and in force), the
+                                                                  theme, the locale and the AI sessions quota
+  PUT  /tenant/v1/tenants/{tenant_id}/tripplanner/lead-route      {"lead_channel": none | webhook | email,
+                                                                  "lead_webhook_url"?, "lead_email"?, "crm_member_id"}
+  PUT  /tenant/v1/tenants/{tenant_id}/tripplanner/appearance      {"theme": {token: "#rrggbb"}, "locale": en | vi,
+                                                                  "crm_member_id"}
+
+A write needs an active Trip planner (409 ``tripplanner_not_active``) and a tenant that is not closing (409
+``tenant_offboarded``); a value the editor refuses is 422 with ``reason`` (the code, which names the field). Audited as
+``crm-member:<id>`` (``tenant.tripplanner_lead_route_changed`` / ``tenant.tripplanner_appearance_changed``).
 """
 from __future__ import annotations
 
@@ -39,6 +55,7 @@ from api.core import m2m_auth
 from api.core.m2m_auth import M2MProblem
 from api.routers.v1_account_addons import AddOnList, AddOnRequestCreated
 from services.tenant_account import addon_requests as ar
+from services.tenant_account import tripplanner_site as tp_site
 from services.tenant_account.plans import PlanError
 from services.tenant_membership.reader import ACQUIRE_TIMEOUT_S, parse_tenant_id
 
@@ -133,3 +150,130 @@ async def request_tenant_add_on(tenant_id: str, request: Request,
                 created=created)
     return JSONResponse(status_code=201 if created else 200, content={"created": created, "request": row},
                         headers={"Cache-Control": NO_STORE})
+
+
+# ── AA-1139: the TripPlanner module of the agency app (contract 1.1) ──────────────────────────────────────────────
+
+class PlannerAddresses(BaseModel):
+    url: str
+    domains: list[str]
+    launcher: bool
+
+
+class PlannerDomain(BaseModel):
+    domain: str
+    status: Literal["pending", "validating", "attaching", "active", "failed"]
+
+
+class PlannerLeadRoute(BaseModel):
+    lead_channel: Literal["none", "webhook", "email"]
+    lead_webhook_url: Optional[str] = None
+    lead_email: Optional[str] = None
+    effective_channel: Literal["crm", "webhook", "email", "none"]
+    updated_at: Optional[str] = None
+
+
+class TripPlannerModule(BaseModel):
+    active: bool
+    in_service: bool
+    planner: Optional[PlannerAddresses] = None
+    domains: list[PlannerDomain]
+    crm_core: bool
+    lead_route: PlannerLeadRoute
+    theme: dict[str, str]
+    locale: Literal["en", "vi"]
+    ai_sessions_monthly: Optional[int] = None
+
+
+class TenantLeadRouteIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    lead_channel: Literal["none", "webhook", "email"]
+    lead_webhook_url: Optional[str] = Field(None, max_length=tp_site.WEBHOOK_URL_MAX + 100)
+    lead_email: Optional[str] = Field(None, max_length=tp_site.EMAIL_MAX + 100)
+    crm_member_id: uuid.UUID
+
+
+class TenantAppearanceIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    theme: dict[str, str] = Field(max_length=len(tp_site.THEME_TOKENS))
+    locale: Literal["en", "vi"]
+    crm_member_id: uuid.UUID
+
+
+def _editor_refused(e: tp_site.LeadRouteError) -> M2MProblem:
+    if e.status == 404:
+        return M2MProblem(404, "not_found", "No tenant has this id.", reason="tenant_not_found")
+    if e.status == 409:
+        return M2MProblem(409, "conflict", e.message, reason=e.code[:40])
+    return M2MProblem(422, "invalid", e.message, reason=e.code[:40])   # the code names the field (lead_email_...)
+
+
+async def _module(conn, key: str) -> dict:
+    body = await tp_site.module_view(conn, key)
+    if body is None:
+        raise M2MProblem(404, "not_found", "No tenant has this id.", reason="tenant_not_found")
+    return TripPlannerModule.model_validate(body).model_dump()
+
+
+@router.get("/tenants/{tenant_id}/tripplanner", responses={200: {"model": TripPlannerModule}})
+async def get_tenant_tripplanner(tenant_id: str, request: Request,
+                                 caller: m2m_auth.M2MCaller = Depends(require_addons)) -> Response:
+    """The agency's Trip planner as its module page shows it (addresses, domains, lead route, theme, locale, quota)."""
+    key = _tenant(tenant_id)
+    try:
+        async with _pool(request).acquire(timeout=ACQUIRE_TIMEOUT_S) as conn:
+            body = await _module(conn, key)
+    except DB_DOWN as exc:
+        raise _unavailable(exc) from exc
+    logger.info("tenant_tripplanner_served", client_id=caller.client_id, tenant_id=key)
+    return JSONResponse(content=body, headers={"Cache-Control": NO_STORE})
+
+
+async def _body(request: Request, model: type[BaseModel], shape: str) -> Any:
+    try:
+        return model.model_validate_json(await request.body())
+    except ValidationError as exc:
+        raise M2MProblem(400, "invalid", f"The body must be {shape}.") from exc
+
+
+@router.put("/tenants/{tenant_id}/tripplanner/lead-route", responses={200: {"model": TripPlannerModule}})
+async def put_tenant_tripplanner_lead_route(tenant_id: str, request: Request,
+                                            caller: m2m_auth.M2MCaller = Depends(require_addons)) -> Response:
+    """Set where the planner's leads go when the agency has no CRM (the agency owner, relayed by the CRM)."""
+    key = _tenant(tenant_id)
+    body = await _body(request, TenantLeadRouteIn, '{"lead_channel": none | webhook | email, "lead_webhook_url"?, '
+                       '"lead_email"?, "crm_member_id": uuid}')
+    actor = f"{ACTOR_PREFIX}{body.crm_member_id}"
+    try:
+        async with _pool(request).acquire(timeout=ACQUIRE_TIMEOUT_S) as conn:
+            await tp_site.set_agency_lead_route(conn, key, channel=body.lead_channel, webhook_url=body.lead_webhook_url,
+                                                email=body.lead_email, actor=actor)
+            out = await _module(conn, key)
+    except tp_site.LeadRouteError as e:
+        logger.info("tenant_tripplanner_route_refused", client_id=caller.client_id, tenant_id=key, code=e.code)
+        raise _editor_refused(e) from None
+    except DB_DOWN as exc:
+        raise _unavailable(exc) from exc
+    logger.info("tenant_tripplanner_route_set", client_id=caller.client_id, tenant_id=key, channel=body.lead_channel)
+    return JSONResponse(content=out, headers={"Cache-Control": NO_STORE})
+
+
+@router.put("/tenants/{tenant_id}/tripplanner/appearance", responses={200: {"model": TripPlannerModule}})
+async def put_tenant_tripplanner_appearance(tenant_id: str, request: Request,
+                                            caller: m2m_auth.M2MCaller = Depends(require_addons)) -> Response:
+    """Set the planner's theme (brand colours) and language (the agency owner, relayed by the CRM)."""
+    key = _tenant(tenant_id)
+    body = await _body(request, TenantAppearanceIn, '{"theme": {token: "#rrggbb"}, "locale": en | vi, '
+                       '"crm_member_id": uuid}')
+    actor = f"{ACTOR_PREFIX}{body.crm_member_id}"
+    try:
+        async with _pool(request).acquire(timeout=ACQUIRE_TIMEOUT_S) as conn:
+            await tp_site.set_appearance(conn, key, theme=body.theme, locale=body.locale, actor=actor)
+            out = await _module(conn, key)
+    except tp_site.LeadRouteError as e:
+        logger.info("tenant_tripplanner_appearance_refused", client_id=caller.client_id, tenant_id=key, code=e.code)
+        raise _editor_refused(e) from None
+    except DB_DOWN as exc:
+        raise _unavailable(exc) from exc
+    logger.info("tenant_tripplanner_appearance_set", client_id=caller.client_id, tenant_id=key, locale=body.locale)
+    return JSONResponse(content=out, headers={"Cache-Control": NO_STORE})

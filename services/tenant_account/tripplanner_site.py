@@ -19,6 +19,19 @@ here refuses such a target when it is written:
 
 Routes: ``api/routers/admin_tenant_subscription.py`` (GET / PUT ``/admin/tenants/{id}/tripplanner-site/lead-route``).
 A refusal is :class:`LeadRouteError` (status 422 with the field it is about; 404 / 409 for the tenant).
+
+AA-1139 (the TripPlanner module of the agency app; contract tenant.addons.v1 1.1, ``api/routers/tenant_addons.py``):
+the agency's owner edits the same route from the agency app through the CRM (actor ``crm-member:<id>``), with the same
+checks, plus the planner's appearance:
+
+* :func:`email_problem` also refuses an address whose domain is plainly internal (``*.local``, ``*.internal``,
+  ``localhost`` ... the webhook host rule, ``lead_email_not_public``), for staff and agency alike;
+* :func:`validate_appearance` / :func:`set_appearance` — the theme (only the kit's brand tokens,
+  :data:`THEME_TOKENS`, each ``#rrggbb``; an empty object = the kit's colours) and the locale (en | vi), audited
+  ``tenant.tripplanner_appearance_changed``;
+* :func:`module_view` — what the module page shows: the planner addresses (``planner_site``), every custom domain with
+  its state, the stored route and the channel leads take now (``crm`` while ``crm.core`` is live, as the CIS 390 view
+  resolves it), the theme, the locale and the month's AI sessions quota (``tp.ai_sessions``; null = no limit).
 """
 from __future__ import annotations
 
@@ -56,6 +69,7 @@ URL_INVALID = "lead_webhook_url_invalid"
 URL_NOT_PUBLIC = "lead_webhook_url_not_public"
 EMAIL_REQUIRED = "lead_email_required"
 EMAIL_INVALID = "lead_email_invalid"
+EMAIL_NOT_PUBLIC = "lead_email_not_public"
 MESSAGES = {
     URL_REQUIRED: "A webhook route needs the agency's https URL.",
     URL_TOO_LONG: f"The webhook URL is longer than {WEBHOOK_URL_MAX} characters.",
@@ -66,6 +80,8 @@ MESSAGES = {
                     "reserved IP, or an internal host name). Use the agency's public https endpoint.",
     EMAIL_REQUIRED: "An e-mail route needs the agency's address.",
     EMAIL_INVALID: f"Enter one e-mail address of the agency (at most {EMAIL_MAX} characters).",
+    EMAIL_NOT_PUBLIC: "The e-mail address has an internal domain (such as .local or .internal). Use an address the "
+                      "agency receives mail at on the internet.",
 }
 
 
@@ -177,8 +193,12 @@ def webhook_url_problem(url: str) -> Optional[str]:
 
 
 def email_problem(email: str) -> Optional[str]:
+    """None when ``email`` may be stored as a tenant's lead address: the CIS 390 CHECK's shape and length, and a
+    domain that is not plainly internal (the webhook host rule, :func:`host_is_internal_name`; AA-1139)."""
     if len(email) > EMAIL_MAX or not _EMAIL_SHAPE.fullmatch(email):
         return EMAIL_INVALID
+    if host_is_internal_name(email.rsplit("@", 1)[1]):
+        return EMAIL_NOT_PUBLIC
     return None
 
 
@@ -274,3 +294,142 @@ async def set_lead_route(conn, tenant_id: str, *, channel: Any, webhook_url: Any
                                                              "after": {k: after[k] for k in keys}})))
     has_tp = bool(await conn.fetchval(HAS_TRIPPLANNER_SQL, tenant_id))
     return {"tenant_id": tenant_id, "has_tripplanner": has_tp, **after}
+
+
+# ── AA-1139: the agency app's TripPlanner module ────────────────────────────────────────────────────────────────
+
+APPEARANCE_CHANGED = AdminTenantAuditAction.TRIPPLANNER_APPEARANCE_CHANGED
+# The kit tokens a tenant theme may set (frontend/app/_kit/core/brandTheme.ts BRAND_TOKENS; the CIS 379 CHECK accepts
+# any token-shaped name, this editor only those the brand layer uses).
+THEME_TOKENS = ("accent", "accent-deep", "accent-soft", "accent-tint", "accent-border", "on-accent")
+LOCALES = ("en", "vi")
+_HEX = re.compile(r"#[0-9a-fA-F]{6}")
+
+ACTIVE_TP_SQL = """
+    SELECT EXISTS (SELECT 1 FROM shared.tenant_subscription
+                    WHERE tenant_id = $1::uuid AND product = 'tripplanner' AND status <> 'canceled') AS active
+"""
+APPEARANCE_SQL = """
+    SELECT theme, locale, updated_at, updated_by FROM shared.tenant_tripplanner_site WHERE tenant_id = $1::uuid
+"""
+UPSERT_APPEARANCE_SQL = """
+    INSERT INTO shared.tenant_tripplanner_site (tenant_id, theme, locale, updated_by)
+    VALUES ($1::uuid, $2::jsonb, $3, $4)
+    ON CONFLICT (tenant_id) DO UPDATE
+       SET theme = EXCLUDED.theme, locale = EXCLUDED.locale, updated_by = EXCLUDED.updated_by, updated_at = now()
+"""
+MODULE_SQL = """
+    SELECT t.account_status IN ('trial', 'active', 'past_due') AS in_service,
+           EXISTS (SELECT 1 FROM shared.v_tenant_entitlement_resolved r
+                    WHERE r.tenant_id = t.tenant_id AND r.feature_key = 'crm.core') AS crm_core,
+           (SELECT r.limit_value FROM shared.v_tenant_entitlement_resolved r
+             WHERE r.tenant_id = t.tenant_id AND r.feature_key = 'tp.ai_sessions' LIMIT 1) AS ai_sessions_monthly,
+           ARRAY(SELECT jsonb_build_object('domain', d.domain, 'status', d.status)
+                   FROM shared.tenant_tripplanner_domain d
+                  WHERE d.tenant_id = t.tenant_id AND d.status <> 'removing'
+                  ORDER BY d.domain) AS domains
+      FROM shared.tenants t
+     WHERE t.tenant_id = $1::uuid
+"""
+
+
+def validate_appearance(theme: Any, locale: Any) -> tuple[dict, str]:
+    """The theme and locale to store, or :class:`LeadRouteError` (422 with the field). The theme: an object of
+    :data:`THEME_TOKENS` -> ``#rrggbb`` (stored lower-case; an empty object = the kit's own colours)."""
+    if locale not in LOCALES:
+        raise LeadRouteError("locale_invalid", "locale", message="locale is en or vi.")
+    if not isinstance(theme, dict):
+        raise LeadRouteError("theme_invalid", "theme", message="theme is an object of brand token -> #rrggbb.")
+    out: dict[str, str] = {}
+    for key, value in theme.items():
+        if key not in THEME_TOKENS:
+            raise LeadRouteError("theme_token_unknown", "theme",
+                                 message=f"theme names only these tokens: {', '.join(THEME_TOKENS)}.")
+        if not isinstance(value, str) or not _HEX.fullmatch(value):
+            raise LeadRouteError("theme_colour_invalid", "theme", message="each theme colour is #rrggbb.")
+        out[key] = value.lower()
+    return out, locale
+
+
+def _appearance(row: Any) -> dict:
+    if row is None:
+        return {"theme": {}, "locale": "en"}
+    theme = row["theme"]
+    if isinstance(theme, str):
+        theme = json.loads(theme)
+    return {"theme": dict(theme or {}), "locale": row["locale"]}
+
+
+async def _require_active_planner(conn, tenant_id: str) -> None:
+    status = await conn.fetchval(TENANT_LOCK_SQL, tenant_id)
+    if status is None:
+        raise LeadRouteError("tenant_not_found", status=404, message="no tenant with this id")
+    if status in ("offboarding", "closed"):
+        raise LeadRouteError("tenant_offboarded", status=409, message="the account is closing")
+    if not await conn.fetchval(ACTIVE_TP_SQL, tenant_id):
+        raise LeadRouteError("tripplanner_not_active", status=409, message="the agency has no Trip planner add-on")
+
+
+async def set_appearance(conn, tenant_id: str, *, theme: Any, locale: Any, actor: str) -> dict:
+    """Validate and store the planner's theme and locale (creating the site row with the table's defaults when absent;
+    the lead route is kept); audited with before / after. Only for a tenant with an active Trip planner."""
+    theme_v, locale_v = validate_appearance(theme, locale)
+    async with conn.transaction():
+        await conn.execute("SELECT set_config('aa.actor', $1, true)", actor)
+        await _require_active_planner(conn, tenant_id)
+        before = _appearance(await conn.fetchrow(APPEARANCE_SQL + " FOR UPDATE", tenant_id))
+        await conn.execute(UPSERT_APPEARANCE_SQL, tenant_id, json.dumps(theme_v), locale_v, actor[:64])
+        after = _appearance(await conn.fetchrow(APPEARANCE_SQL, tenant_id))
+        await write_audit_log(conn, tenant_id=tenant_id, actor=actor, action=APPEARANCE_CHANGED,
+                              resource_type="tenant", resource_id=tenant_id,
+                              details={"before": before, "after": after})
+    return after
+
+
+async def set_agency_lead_route(conn, tenant_id: str, *, channel: Any, webhook_url: Any, email: Any,
+                                actor: str) -> dict:
+    """The agency owner's edit of the route (AA-1139): :func:`set_lead_route` with the same checks, for a tenant with
+    an active Trip planner only."""
+    validate_route(channel, webhook_url, email)
+    await _require_active_planner(conn, tenant_id)
+    return await set_lead_route(conn, tenant_id, channel=channel, webhook_url=webhook_url, email=email, actor=actor)
+
+
+async def module_view(conn, tenant_id: str, *, planner_origin: Optional[str] = None) -> Optional[dict]:
+    """The TripPlanner module of the agency app (contract tenant.addons.v1 1.1 ``TripPlannerModule``); None for no
+    tenant. ``active`` false (no live Trip planner subscription) still answers the rest, so the page can say why."""
+    from services.tenant_account import planner_site  # local: planner_site reads the environment at call time
+
+    row = await conn.fetchrow(MODULE_SQL, tenant_id)
+    if row is None:
+        return None
+    active = bool(await conn.fetchval(ACTIVE_TP_SQL, tenant_id))
+    route = _route(await conn.fetchrow(ROUTE_SQL, tenant_id))
+    crm_core = bool(row["crm_core"])
+    stored = route["lead_channel"]
+    if crm_core:
+        effective = "crm"
+    elif stored == "webhook" and route["lead_webhook_url"]:
+        effective = "webhook"
+    elif stored == "email" and route["lead_email"]:
+        effective = "email"
+    else:
+        effective = "none"
+    planner = await planner_site.read(conn, tenant_id, in_service=bool(row["in_service"])) if active else None
+    domains = []
+    for d in row["domains"] or ():
+        item = json.loads(d) if isinstance(d, str) else dict(d)
+        domains.append({"domain": str(item["domain"]), "status": str(item["status"])})
+    quota = row["ai_sessions_monthly"]
+    return {
+        "active": active,
+        "in_service": bool(row["in_service"]),
+        "planner": planner,
+        "domains": domains,
+        "crm_core": crm_core,
+        "lead_route": {"lead_channel": stored, "lead_webhook_url": route["lead_webhook_url"],
+                       "lead_email": route["lead_email"], "effective_channel": effective,
+                       "updated_at": route["updated_at"]},
+        **_appearance(await conn.fetchrow(APPEARANCE_SQL, tenant_id)),
+        "ai_sessions_monthly": int(quota) if quota is not None else None,
+    }

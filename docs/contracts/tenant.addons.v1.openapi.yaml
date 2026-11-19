@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: tenant.addons.v1 (AA-CIS-App → AA-Partner CRM; an agency's add-ons and its add-on requests)
-  version: "1.0"
+  version: "1.1"
   description: >-
     CIS shared is the master of the tenant account and of the agency's add-on requests (shared.tenant_addon_request,
     CIS 374; root ADR 0019 d7, AA-1036 R3): an agency asks for an add-on (CRM, Trip planner), AA staff approve or
@@ -17,11 +17,20 @@ info:
     tenant in 24 hours (429 too_many_requests); an optional note of at most 500 characters. The note is the agency's
     own text and decision_note the reason AA staff wrote for the agency; no staff actor, plan key, job id, price or
     billing field crosses. tenant_id is the CIS tenant id, which is the CRM agency id. Auth: M2M token of the aa-m2m
-    pool, client = AA-Partner (CRM), scope cis.tenant/addons (both operations).
+    pool, client = AA-Partner (CRM), scope cis.tenant/addons (every operation).
+    1.1 (AA-1139, the TripPlanner module of the agency app) adds the agency's Trip planner as the CRM's module page
+    shows it and lets the agency owner change it: the planner addresses (hosted URL, active custom domains, launcher),
+    every custom domain with its state, the lead route (the stored channel and target, and the channel leads take now:
+    crm while the CRM add-on is live, as catalog.v_tenant_tripplanner_v1 resolves it), the theme (the kit's brand
+    tokens, each #rrggbb), the locale and the AI sessions quota a month (tp.ai_sessions, null = no limit). The CRM
+    checks who may read (owner, agent) and write (owner) and names the member; CIS applies the checks of its Tenant
+    360 editor (an https webhook URL whose host can be public, an e-mail address whose domain is not internal, the
+    brand tokens only) and audits the write as the CRM member. A write needs an active Trip planner (409
+    tripplanner_not_active). Usage, leads and the webhook signing key are TripPlanner's (lead.submitted.v1 1.1).
   x-aa-contract: tenant.addons.v1
   x-aa-producer: AA-CIS-App
   x-aa-consumers: [AA-Partner]
-  x-aa-issues: [AA-1036]
+  x-aa-issues: [AA-1036, AA-1139]
 servers:
   - url: /tenant/v1
 security:
@@ -78,6 +87,79 @@ paths:
         "409": {$ref: "#/components/responses/Problem"}
         "429": {$ref: "#/components/responses/Problem"}
         "503": {$ref: "#/components/responses/Problem"}
+  /tenants/{tenant_id}/tripplanner:
+    parameters:
+      - name: tenant_id
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      operationId: getTenantTripPlanner
+      summary: The agency's Trip planner as its module page shows it (1.1)
+      responses:
+        "200":
+          description: The module
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/TripPlannerModule"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
+  /tenants/{tenant_id}/tripplanner/lead-route:
+    parameters:
+      - name: tenant_id
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    put:
+      operationId: putTenantTripPlannerLeadRoute
+      summary: Set where the planner's leads go while the agency has no CRM add-on (the agency owner; 1.1)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/TripPlannerLeadRouteIn"}
+      responses:
+        "200":
+          description: The module after the change
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/TripPlannerModule"}
+        "400": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "409": {$ref: "#/components/responses/Problem"}
+        "422": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
+  /tenants/{tenant_id}/tripplanner/appearance:
+    parameters:
+      - name: tenant_id
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    put:
+      operationId: putTenantTripPlannerAppearance
+      summary: Set the planner's theme and language (the agency owner; 1.1)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/TripPlannerAppearanceIn"}
+      responses:
+        "200":
+          description: The module after the change
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/TripPlannerModule"}
+        "400": {$ref: "#/components/responses/Problem"}
+        "401": {$ref: "#/components/responses/Problem"}
+        "403": {$ref: "#/components/responses/Problem"}
+        "404": {$ref: "#/components/responses/Problem"}
+        "409": {$ref: "#/components/responses/Problem"}
+        "422": {$ref: "#/components/responses/Problem"}
+        "503": {$ref: "#/components/responses/Problem"}
 components:
   securitySchemes:
     m2m:
@@ -87,7 +169,8 @@ components:
         clientCredentials:
           tokenUrl: https://m2m-auth.example.invalid/oauth2/token
           scopes:
-            cis.tenant/addons: Read an agency's add-ons and request one on behalf of its CRM owner
+            cis.tenant/addons: Read an agency's add-ons and request one on behalf of its CRM owner; read and change
+              its Trip planner (1.1)
   responses:
     Problem:
       description: Error
@@ -109,7 +192,11 @@ components:
           description: >-
             CIS's stable refusal code where the status has more than one cause (as tenant.membership.v1): 409
             already_subscribed or tenant_not_in_service, 429 too_many_requests, 400 unknown_product or note_too_long,
-            404 tenant_not_found. A consumer shows an unknown reason as a generic refusal.
+            404 tenant_not_found. 1.1: 409 tripplanner_not_active or tenant_offboarded; 422 (error invalid) the
+            editor's code, which names the field: lead_channel_invalid, lead_webhook_url_required / _too_long /
+            _not_https / _invalid / _not_public, lead_email_required / _invalid / _not_public, theme_invalid,
+            theme_token_unknown, theme_colour_invalid, locale_invalid. A consumer shows an unknown reason as a generic
+            refusal.
         message: {type: string, maxLength: 500}
     Product:
       type: string
@@ -199,3 +286,103 @@ components:
       properties:
         created: {type: boolean}
         request: {$ref: "#/components/schemas/AddOnRequest"}
+    BrandToken:
+      type: string
+      enum: [accent, accent-deep, accent-soft, accent-tint, accent-border, on-accent]
+      description: A kit token the planner's brand layer themes (AA-CIS-App frontend/app/_kit/core/brandTheme.ts).
+    Theme:
+      type: object
+      maxProperties: 6
+      propertyNames: {$ref: "#/components/schemas/BrandToken"}
+      additionalProperties:
+        type: string
+        pattern: "^#[0-9a-f]{6}$"
+      description: Brand token -> colour (stored lower case). Empty = the kit's own colours.
+    PlannerAddresses:
+      type: object
+      additionalProperties: false
+      required: [url, domains, launcher]
+      properties:
+        url: {type: string, format: uri, description: "The hosted planner, <TripPlanner origin>/<slug>/plan"}
+        domains:
+          type: array
+          items: {type: string}
+          description: The agency's active custom planner hosts, sorted.
+        launcher: {type: boolean, description: The plan includes the launcher snippet (tp.launcher).}
+    PlannerDomain:
+      type: object
+      additionalProperties: false
+      required: [domain, status]
+      properties:
+        domain: {type: string}
+        status:
+          type: string
+          enum: [pending, validating, attaching, active, failed]
+          description: The custom host's state (a host being removed is not listed).
+    PlannerLeadRoute:
+      type: object
+      additionalProperties: false
+      required: [lead_channel, lead_webhook_url, lead_email, effective_channel, updated_at]
+      properties:
+        lead_channel:
+          type: string
+          enum: [none, webhook, email]
+          description: The stored route, used while the agency has no CRM add-on.
+        lead_webhook_url: {type: [string, "null"], maxLength: 500}
+        lead_email: {type: [string, "null"], maxLength: 254}
+        effective_channel:
+          type: string
+          enum: [crm, webhook, email, none]
+          description: Where a lead goes now (crm while the CRM add-on is live; none = the planner refuses leads).
+        updated_at: {type: [string, "null"], format: date-time}
+    TripPlannerModule:
+      type: object
+      additionalProperties: false
+      required: [active, in_service, planner, domains, crm_core, lead_route, theme, locale, ai_sessions_monthly]
+      properties:
+        active: {type: boolean, description: The agency has a Trip planner subscription that is not canceled.}
+        in_service: {type: boolean}
+        planner:
+          oneOf:
+            - {$ref: "#/components/schemas/PlannerAddresses"}
+            - {type: "null"}
+          description: Null unless active, in service and hosted (tp.hosted).
+        domains:
+          type: array
+          items: {$ref: "#/components/schemas/PlannerDomain"}
+        crm_core: {type: boolean, description: The CRM add-on is live (leads go to the CRM).}
+        lead_route: {$ref: "#/components/schemas/PlannerLeadRoute"}
+        theme: {$ref: "#/components/schemas/Theme"}
+        locale:
+          type: string
+          enum: [en, vi]
+        ai_sessions_monthly:
+          type: [integer, "null"]
+          minimum: 0
+          description: The plan's AI sessions a month (tp.ai_sessions); null = no limit. TripPlanner counts the use.
+    TripPlannerLeadRouteIn:
+      type: object
+      additionalProperties: false
+      required: [lead_channel, crm_member_id]
+      properties:
+        lead_channel:
+          type: string
+          enum: [none, webhook, email]
+        lead_webhook_url: {type: [string, "null"], maxLength: 600}
+        lead_email: {type: [string, "null"], maxLength: 354}
+        crm_member_id:
+          type: string
+          format: uuid
+          description: The CRM owner the CRM checked; the audit actor crm-member:<id>.
+    TripPlannerAppearanceIn:
+      type: object
+      additionalProperties: false
+      required: [theme, locale, crm_member_id]
+      properties:
+        theme: {$ref: "#/components/schemas/Theme"}
+        locale:
+          type: string
+          enum: [en, vi]
+        crm_member_id:
+          type: string
+          format: uuid
