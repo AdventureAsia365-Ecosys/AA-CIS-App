@@ -7,7 +7,9 @@
 // Nothing renders when the tour has no sheet draft or the API is not ready (503 before the database update).
 
 import { useCallback, useEffect, useState } from "react";
-import { K, Badge, Button, DataTable, useAdminIdentity, useT, useToast, type ColumnDef } from "../../_kit";
+import {
+  K, Badge, Button, DataTable, useAdminIdentity, useT, useToast, type ColumnDef, type Translator,
+} from "../../_kit";
 import { can } from "@/lib/rbac";
 import { D } from "./tourDraft.messages";
 
@@ -26,6 +28,20 @@ function errText(body: unknown, fallback: string): string {
   if (typeof d === "string") return d;
   const m = (d as { message?: unknown } | undefined)?.message;
   return typeof m === "string" ? m : fallback;
+}
+
+const NOTE = { fontSize: 12, color: K.muted, margin: "0 0 8px" } as const;
+
+function FactNotes({ state, draft, t }: { state: FactState; draft: FactDraft; t: Translator<typeof D.en> }) {
+  const changesPrice = draft.fields.some(f => f.field === "price_raw");
+  return (
+    <>
+      <p style={NOTE}>{t("factIntro", draft.author, draft.reason)}</p>
+      {draft.stale.length > 0 && <p style={{ ...NOTE, color: K.danger }}>{t("factStale")}</p>}
+      {state.two_person_publish && <p style={NOTE}>{t("twoPerson")}</p>}
+      {changesPrice && !state.price_editable && <p style={NOTE}>{t("factPriceNeedsRole")}</p>}
+    </>
+  );
 }
 
 function useFactDraft(tourId: string) {
@@ -50,7 +66,6 @@ export default function TourFactDraft({ tourId }: { tourId: string }) {
   const [busy, setBusy] = useState(false);
   const draft = state?.draft;
   if (!state || !draft) return null;
-  const changesPrice = draft.fields.some(f => f.field === "price_raw");
 
   async function act(method: "POST" | "DELETE", ok: string) {
     setBusy(true);
@@ -69,32 +84,23 @@ export default function TourFactDraft({ tourId }: { tourId: string }) {
     { id: "current", header: t("factNow"), accessorFn: f => show(f.current) },
     { id: "after", header: t("factNew"), accessorFn: f => show(f.after) },
   ];
-  const canPublish = can(role, "content.publish") || can(role, "review.act");
-  const canDiscard = can(role, "content.write");
+  const discard = () => { if (confirm(t("factDiscardConfirm"))) act("DELETE", t("factDiscarded")); };
   return (
     <div style={{ border: `1px solid ${K.line}`, borderRadius: 8, padding: "12px 16px", marginBottom: 16 }}>
       <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: K.muted,
         marginBottom: 6 }}>{t("factTitle")}</div>
-      <p style={{ fontSize: 12, color: K.muted, margin: "0 0 8px" }}>{t("factIntro", draft.author, draft.reason)}</p>
-      {draft.stale.length > 0 && <p style={{ fontSize: 12, color: K.danger, margin: "0 0 8px" }}>{t("factStale")}</p>}
-      {state.two_person_publish && <p style={{ fontSize: 12, color: K.muted, margin: "0 0 8px" }}>{t("twoPerson")}</p>}
-      {changesPrice && !state.price_editable && (
-        <p style={{ fontSize: 12, color: K.muted, margin: "0 0 8px" }}>{t("factPriceNeedsRole")}</p>
-      )}
+      <FactNotes state={state} draft={draft} t={t} />
       <DataTable<FactField> tableId="tour-fact-draft" data={draft.fields} columns={columns} getRowId={f => f.field}
         searchable={false} paginate={false} compact />
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
-        {canPublish && (
+        {can(role, "content.publish") || can(role, "review.act") ? (
           <Button variant="primary" disabled={busy || draft.stale.length > 0} onClick={() => act("POST", t("factPublished"))}>
             {t("factPublish")}
           </Button>
-        )}
-        {canDiscard && (
-          <Button variant="secondary" disabled={busy}
-            onClick={() => { if (confirm(t("factDiscardConfirm"))) act("DELETE", t("factDiscarded")); }}>
-            {t("factDiscard")}
-          </Button>
-        )}
+        ) : null}
+        {can(role, "content.write") ? (
+          <Button variant="secondary" disabled={busy} onClick={() => discard()}>{t("factDiscard")}</Button>
+        ) : null}
       </div>
     </div>
   );

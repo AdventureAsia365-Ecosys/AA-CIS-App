@@ -181,11 +181,7 @@ async def _revalidate_tour(content_id: str) -> dict:
                     "message": "The text changed while the checks ran: run them again on the saved text"}
         # AA-1047 W1: the re-validation graph's REPORT-mode final contract (its last node), with the gate's outcome
         # (passed = approvable) and the stored text's sha; best-effort, never fails the re-validation.
-        _reval_fc = result.get("final_contract")
-        if isinstance(_reval_fc, dict):
-            _reval_fc = _fcon.stamp_stored(_reval_fc, _fcon.tour_text_sha(initial_state.get("generated") or {}),
-                                         actual="approved" if passed else "hitl")
-            await _fc_store.attach_s1(conn, content_id, _reval_fc)
+        await _attach_contract(conn, content_id, result.get("final_contract"), initial_state, passed)
 
         published_repointed = _rowcount(repointed)
         logger.info("revalidate_tour_done", content_id=content_id,
@@ -200,6 +196,14 @@ async def _revalidate_tour(content_id: str) -> dict:
         }
     finally:
         await conn.close()
+
+
+async def _attach_contract(conn, content_id: str, reval_fc, initial_state: dict, passed: bool) -> None:
+    """AA-1047 W1: the re-validation's REPORT-mode final contract with the gate's outcome and the stored text's sha."""
+    if isinstance(reval_fc, dict):
+        reval_fc = _fcon.stamp_stored(reval_fc, _fcon.tour_text_sha(initial_state.get("generated") or {}),
+                                      actual="approved" if passed else "hitl")
+        await _fc_store.attach_s1(conn, content_id, reval_fc)
 
 
 class _StaleText(Exception):
