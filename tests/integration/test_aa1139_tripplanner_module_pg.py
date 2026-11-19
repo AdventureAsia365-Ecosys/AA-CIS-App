@@ -100,8 +100,9 @@ async def test_writes_are_audited_as_the_member_and_keep_each_other(conn):
                               "FROM shared.tenant_tripplanner_site WHERE tenant_id = $1::uuid", tid)
     assert (row["locale"], row["lead_channel"], row["updated_by"]) == ("vi", "webhook", ACTOR)
     assert "2a6f97" in row["theme"]
+    # One transaction: both rows have the same now() and id is a uuid, so chain_seq is the write order.
     actions = [r["action"] for r in await conn.fetch(
-        "SELECT action, actor FROM acp_shared.audit_log WHERE tenant_id = $1 ORDER BY created_at, id", tid)]
+        "SELECT action FROM acp_shared.audit_log WHERE tenant_id = $1 ORDER BY chain_seq NULLS LAST, created_at", tid)]
     assert actions == [tp.APPEARANCE_CHANGED, tp.LEAD_ROUTE_CHANGED]
     actors = {r["actor"] for r in await conn.fetch("SELECT actor FROM acp_shared.audit_log WHERE tenant_id = $1", tid)}
     assert actors == {ACTOR}
@@ -126,6 +127,6 @@ async def test_refusals_write_nothing(conn):
     with pytest.raises(tp.LeadRouteError) as e:
         await tp.set_appearance(conn, tid, theme={"background": "#ffffff"}, locale="en", actor=ACTOR)
     assert e.value.code == "theme_token_unknown"
-    n = await conn.fetchval("SELECT count(*) AS n FROM shared.tenant_tripplanner_site WHERE tenant_id = ANY($1::uuid[])",
-                            [no_planner, closing, tid])
+    n = await conn.fetchval("SELECT count(*) AS n FROM shared.tenant_tripplanner_site "
+                            "WHERE tenant_id = ANY($1::uuid[])", [no_planner, closing, tid])
     assert n == 0
