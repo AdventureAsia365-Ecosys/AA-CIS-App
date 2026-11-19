@@ -145,7 +145,7 @@ async def test_every_tile_counts_what_its_target_page_lists(conn, monkeypatch):
     before = {k: t.count for k, t in (await _summary(conn, "admin")).items()}
     for status in ("pending", "pending", "approved", "rejected"):
         await _review_row(conn, status)
-    for status in ("in_review", "draft", "draft", "published"):
+    for status in ("in_review", "draft", "draft", "stale"):
         await _supply(conn, status)
     await _aa_item(conn, publish=False)
     await _aa_item(conn, publish=True)
