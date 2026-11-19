@@ -56,7 +56,7 @@ def test_actions_follow_the_capability_of_each_route(monkeypatch):
     monkeypatch.setitem(staff_authz.ROLE_PERMS, "money-only", perms)
     out = router_mod.page_access(_principal("money-only"))
     assert out["read_only"] is False
-    assert {k for k, v in out["actions"].items() if v} == {"budgets", "jev_credit", "credit"}
+    assert {k for k, v in out["actions"].items() if v} == {"budgets", "jev_credit", "credit", "connection_budgets"}
 
 
 def test_the_credit_view_writes_share_one_answer():
