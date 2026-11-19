@@ -18,6 +18,7 @@ import {
   type StaffClientKind,
 } from "./cognito";
 import { adminVerifyCache, verifyStaffToken } from "./auth-server";
+import { isTransientStatus, loginErrorFor } from "./loginErrors";
 import { isStaffRole } from "./rbac";
 import {
   POST_LOGIN_PATH,
@@ -77,7 +78,7 @@ export async function handleCallback(request: NextRequest, kind: StaffClientKind
   if (!verified.ok || !isStaffRole(verified.role)) {
     console.warn(`[auth] cognito callback: verify-admin refused client=${kind} status=${verified.ok ? "role" : verified.status}`);
     // A backend that did not answer (timeout, 5xx) is not a refusal: say so instead of "no access".
-    const response = toLogin(request, !verified.ok && isTransientStatus(verified.status) ? "backend" : "no_access");
+    const response = toLogin(request, loginErrorFor(verified));
     clearOAuthTx(response);
     clearStaffSessionCookies(response);
     return noStore(response);
@@ -87,15 +88,6 @@ export async function handleCallback(request: NextRequest, kind: StaffClientKind
   clearOAuthTx(response);
   setStaffSessionCookies(response, kind, tokens, { role: verified.role, name: verified.name });
   return noStore(response);
-}
-
-/**
- * A verify-admin answer that says nothing about the user: no answer at all (timeout / network, status 0)
- * or a backend error (5xx, e.g. the C3 JWKS or directory answering 503, or ECS mid-deploy). Only a real
- * refusal (401/403, or any other 4xx) ends a session.
- */
-function isTransientStatus(status: number): boolean {
-  return status === 0 || status >= 500;
 }
 
 type ApplyCookies = (response: NextResponse) => void;

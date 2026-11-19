@@ -2718,7 +2718,8 @@ answers 409 for any Dev-only E2E row (A10b, A10d) on a tenant that is not synthe
   `<prod>/login`, registered on both staff clients); the Topbar follows only that URL or `/login`
   (`lib/staffLogout.ts`), so the next sign-in asks for a new email code.
 - A sign-in completes only after `/auth/verify-admin` accepts the token; a refusal lands on
-  `/login?error=no_access` with no session cookies.
+  `/login?error=no_access` with no session cookies (AA-1111: a 403 `mfa_required` lands on `/login?error=mfa_required`,
+  "sign in again with your password and authenticator code"; `lib/loginErrors.ts`).
 
 **Verification (backend).** `api/core/identity_verifier.py` (app-neutral, to be copied byte-identical into
 AA-Booking) + `api/core/identity_config.py` (CIS surface) + `api/core/staff_identity.py` (resolver):
@@ -2735,6 +2736,15 @@ AA-Booking) + `api/core/identity_config.py` (CIS surface) + `api/core/staff_iden
 - role = the highest `cis-*` group (`GROUP_ROLES` order; `admin` first, `content` last); no `cis-*` group → 403 even with `booking-*`
   groups; a different DB role is logged as `staff_role_drift`, not denied; inactive or unknown row → 401;
   verifier/JWKS/directory outage → 503. Lookups are cached 60 s per `(iss, sub)`.
+- **Administrator MFA (AA-1111 S2, root ADR 0006c, CIS 459; `api/core/staff_mfa.py`).** After the resolver,
+  `staff_identity.authenticate` (so both the bearer middleware and `/auth/verify-admin`) checks an administrator
+  session (role `admin`, or the owner flag) for an authenticator code: the verified access token's Cognito `amr`
+  claim must hold `otp` (password + TOTP gives `["pwd", "otp", "mfa"]`; an e-mail code gives `["email_otp"]`). While
+  the platform setting `cis.platform.admin_mfa_required` (Platform › Settings, area platform, maker-checker, no env
+  override, default off) is on, a session without it is refused 403 `mfa_required`; off, it is served and logged
+  `staff_admin_mfa_check outcome=would_refuse` (`satisfied` when the code was used; one line per identity and
+  outcome per 10 minutes). Other CIS roles, the capped Preview viewer and the Dev-only read-only E2E identities are
+  never checked. Enrolment and the switch-on order: AA-CIS-Infra `docs/runbooks/staff-admin-mfa.md`.
 - `api/middleware/staff_bearer.py` (registered right after the rate limiter) handles every staff path: a
   verified Cognito Bearer **overwrites** `x-admin-role` / `x-admin-user-id` from the verified principal
   (client copies dropped), sets the `current_staff` contextvar and strips `Authorization`; an invalid
