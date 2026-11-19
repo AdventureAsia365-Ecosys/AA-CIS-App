@@ -16,7 +16,7 @@
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useMemo, useState, useSyncExternalStore } from "react";
+import { useMemo, useState } from "react";
 import {
   Badge,
   Button,
@@ -45,18 +45,12 @@ import {
   type ListRow,
   type SupplyWords,
 } from "@/lib/supplyContent";
+import { useLinkFilters } from "../_components/useLinkFilters";
 import { SC } from "./messages";
 import { useSupplyText } from "./useSupplyText";
 
 export const LIST_KEY = ["supply-content-list"] as const;
 const NO_FILTERS: ListFilters = { status: "", type: "" };
-const noopSubscribe = () => () => {};
-
-/** AA-1156: the filters a link opened the page with (?status=, the My work tiles), read once hydrated so the server
- *  render and the first client render agree (the Place cards pattern); empty on the server. */
-function initialFilters(hydrated: boolean): ListFilters {
-  return hydrated ? filtersFromSearch(window.location.search) : NO_FILTERS;
-}
 const PAGE_SIZES = [25, 50, 100];
 
 async function getJson<T>(url: string, w: SupplyWords): Promise<T> {
@@ -73,10 +67,8 @@ export default function SupplyContentList() {
   const { formatDateTime } = useFormat();
   const qc = useQueryClient();
   const router = useRouter();
-  const hydrated = useSyncExternalStore(noopSubscribe, () => true, () => false);
-  // null until the user picks a filter; before that the URL's filters (AA-1156)
-  const [edited, setEdited] = useState<ListFilters | null>(null);
-  const filters = edited ?? initialFilters(hydrated);
+  // AA-1156: a link may open the list filtered (?status=, the My work tiles)
+  const [filters, setFilters] = useLinkFilters(filtersFromSearch, NO_FILTERS);
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(PAGE_SIZES[0]);
 
@@ -93,7 +85,7 @@ export default function SupplyContentList() {
   });
 
   const setFilter = <F extends keyof ListFilters>(key: F, value: ListFilters[F]) => {
-    setEdited({ ...filters, [key]: value });
+    setFilters({ ...filters, [key]: value });
     setPageIndex(0);
   };
 

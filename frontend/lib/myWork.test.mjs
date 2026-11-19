@@ -62,9 +62,9 @@ test("4. tileHref and knownTiles", () => {
 });
 
 test("5. the target pages read the tile's filter, or open on it by default", () => {
-  assert.match(read("app/admin/supply-content/SupplyContentList.tsx"), /initialFilters\(hydrated\)/);
+  assert.match(read("app/admin/supply-content/SupplyContentList.tsx"), /useLinkFilters\(filtersFromSearch, /);
   assert.match(read("lib/supplyContent.ts"), /export function filtersFromSearch/);
-  assert.match(read("app/admin/aa-content/AaContentConsole.tsx"), /filtersFromSearch\(/);
+  assert.match(read("app/admin/aa-content/AaContentConsole.tsx"), /useLinkFilters\(filtersFromSearch, /);
   assert.match(read("app/admin/places/cards/page.tsx"), /status: p\.get\("status"\)/);
   assert.match(read("app/admin/review/page.tsx"), /useState\("pending"\)/);
   assert.match(read("app/admin/tenant-qa/compliance/page.tsx"), /useState<StateTab>\("open"\)/);

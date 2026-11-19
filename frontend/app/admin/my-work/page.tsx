@@ -25,60 +25,66 @@ const KEY = ["my-work-summary"] as const;
 
 export default function MyWorkPage() {
   const t = useT(MY_WORK);
-  const { formatDateTime } = useFormat();
   const qc = useQueryClient();
-  const role = useAdminIdentity().role;
   const q = useQuery({ queryKey: KEY, queryFn: () => apiGet<MyWorkSummary>(MY_WORK_API), retry: false });
   const refresh = () => { void qc.invalidateQueries({ queryKey: KEY }); };
   const tiles = knownTiles(q.data);
-  const total = totalWaiting(tiles.map((x) => x.tile));
-  // Until Booking grants come with the session (a later slice), the content roles (content.write) get the link.
-  const showBooking = can(role, "content.write");
+
+  let body: React.ReactNode;
+  if (q.isError) body = <ErrorState message={(q.error as Error)?.message || t("loadError")} onRetry={refresh} />;
+  else if (q.data && tiles.length === 0) body = <EmptyState title={t("nothing")} description={t("nothingDesc")} />;
+  else body = <ContentBand data={q.data} tiles={tiles} />;
 
   return (
     <PageFrame>
       <PageHeader
         title={t("title")}
         description={t("description")}
-        actions={
-          <span style={{ display: "inline-flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-            {showBooking && (
-              <a href={appPageUrl("booking", "/")} title={t("bookingLinkTitle")} data-testid="my-work-booking-link"
-                style={{
-                  display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12.5, fontWeight: 600,
-                  color: K.accentDeep, textDecoration: "none", whiteSpace: "nowrap", fontFamily: sans,
-                }}>
-                {t("bookingLink")} <ExternalLink size={12} />
-              </a>
-            )}
-            <Button variant="secondary" size="sm" onClick={refresh} disabled={q.isFetching}>
-              <RefreshCw size={13} /> {q.isFetching ? t("refreshing") : t("refresh")}
-            </Button>
-          </span>
-        }
+        actions={<HeaderActions fetching={q.isFetching} onRefresh={refresh} />}
       />
-
-      {q.isError ? (
-        <ErrorState message={(q.error as Error)?.message || t("loadError")} onRetry={refresh} />
-      ) : q.data && tiles.length === 0 ? (
-        <EmptyState title={t("nothing")} description={t("nothingDesc")} />
-      ) : (
-        <Section
-          title={t("contentBand")}
-          description={q.data
-            ? `${total ? t("totalWaiting", total) : t("allClear")} ${t("updated", formatDateTime(q.data.generated_at))}`
-            : t("contentBandDesc")}
-          testId="my-work-content"
-        >
-          <div style={grid}>
-            {q.data
-              ? tiles.map(({ tile, def }) => (
-                <Tile key={tile.key} tile={tile} def={def} now={Date.parse(q.data!.generated_at)} />))
-              : [0, 1, 2, 3].map((i) => <KpiTile key={i} label="" value={undefined} />)}
-          </div>
-        </Section>
-      )}
+      {body}
     </PageFrame>
+  );
+}
+
+/** "Booking: My work" (content roles, until the Booking grant comes with the session) and Refresh. */
+function HeaderActions({ fetching, onRefresh }: { fetching: boolean; onRefresh: () => void }) {
+  const t = useT(MY_WORK);
+  const role = useAdminIdentity().role;
+  return (
+    <span style={{ display: "inline-flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+      {can(role, "content.write") && (
+        <a href={appPageUrl("booking", "/")} title={t("bookingLinkTitle")} data-testid="my-work-booking-link"
+          style={bookingLink}>
+          {t("bookingLink")} <ExternalLink size={12} />
+        </a>
+      )}
+      <Button variant="secondary" size="sm" onClick={onRefresh} disabled={fetching}>
+        <RefreshCw size={13} /> {fetching ? t("refreshing") : t("refresh")}
+      </Button>
+    </span>
+  );
+}
+
+/** The Content band: the tiles (skeletons while loading) and a line with the total and when it was counted. */
+function ContentBand({ data, tiles }: { data?: MyWorkSummary; tiles: ReturnType<typeof knownTiles> }) {
+  const t = useT(MY_WORK);
+  const { formatDateTime } = useFormat();
+  const total = totalWaiting(tiles.map((x) => x.tile));
+  const summary = total ? t("totalWaiting", total) : t("allClear");
+  return (
+    <Section
+      title={t("contentBand")}
+      description={data ? `${summary} ${t("updated", formatDateTime(data.generated_at))}` : t("contentBandDesc")}
+      testId="my-work-content"
+    >
+      <div style={grid}>
+        {data
+          ? tiles.map(({ tile, def }) => (
+            <Tile key={tile.key} tile={tile} def={def} now={Date.parse(data.generated_at)} />))
+          : [0, 1, 2, 3].map((i) => <KpiTile key={i} label="" value={undefined} />)}
+      </div>
+    </Section>
   );
 }
 
@@ -110,6 +116,11 @@ function Tile({ tile, def, now }: { tile: MyWorkTile; def: MyWorkTileDef; now: n
 
 const grid: React.CSSProperties = {
   display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 220px), 1fr))", minWidth: 0,
+};
+
+const bookingLink: React.CSSProperties = {
+  display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12.5, fontWeight: 600,
+  color: K.accentDeep, textDecoration: "none", whiteSpace: "nowrap", fontFamily: sans,
 };
 
 const tileLink: React.CSSProperties = { display: "block", minWidth: 0, color: "inherit", textDecoration: "none" };
