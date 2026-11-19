@@ -29,6 +29,23 @@
 --      Triggers raw_tour_revision_append_only (BEFORE UPDATE / DELETE per row, BEFORE TRUNCATE): refuse both.
 --      "Which fields did a person edit" (T1: they win over an Excel re-import) is answered from this table: a field
 --      named in a staff_edit row (or decided "current" in an excel_merge row) after the tour's last import.
+--   1b. silver_aa_internal.raw_tour_fact_draft: an Excel re-import merged field by field is a DRAFT of the source
+--      tour's facts (AA-1146 T1: "the result is a draft"), not a write into raw_tours. It goes live only through the
+--      publish gate (POST /admin/tours/{id}/fact-draft/publish: the two-person rule, a stale check against the values
+--      it was merged from, price edits only with reference_price.write); a discard keeps it as history.
+--        id            bigint identity
+--        tour_id       the raw tour (no foreign key, same reason as raw_tour_revision)
+--        staging_id    the upload_staging row it came from (that row is removed by the decision; no foreign key)
+--        fields        the field names the draft changes (text[], 1..32 names)
+--        before, after jsonb objects {field: value}: the tour's values when merged, the values publishing writes
+--        resolutions   {field: "incoming" | "current"} for the hand-edited fields a person decided ({} when none)
+--        author        who merged: admin:<admin_users.id>, admin or machine (1..64 characters)
+--        reason        why, 3..500 characters (required)
+--        status        draft | published | discarded; one open draft per tour (partial unique index)
+--        decided_by, decided_at   who published or discarded it, and when (NULL while it is a draft)
+--        revision_num  the raw_tour_revision row its publish wrote (NULL otherwise)
+--        created_at    now()
+--      cis_app may SELECT, INSERT and UPDATE it (the status moves; no DELETE: it is history).
 --   2. silver_aa_internal.generated_content, four nullable columns (the wording version of AA-1146):
 --        origin              llm (a writer run) | human (a person's draft); NULL = rows written before this file
 --                            (read as llm, or human when human_edited)
@@ -43,18 +60,19 @@
 --        human_lock_at, human_lock_by, human_lock_reason: set when a person publishes a hand-edited version; while set,
 --        the automatic exits (an S1 run's auto publish, a wave rerun, the recompose path, the legacy Lambda) leave the
 --        Master as it is and log why; a person clears it (POST /admin/tours/{id}/unlock, master.admin).
---   4. GRANT cis_app SELECT, INSERT on the new table (no UPDATE / DELETE: append-only).
+--   4. GRANT cis_app SELECT, INSERT on raw_tour_revision (no UPDATE / DELETE: append-only); SELECT, INSERT, UPDATE on
+--      raw_tour_fact_draft (no DELETE).
 --   5. Register 457.
 --
--- PII (DM-6.1). raw_tour_revision.before / after hold source tour fields (supplier text: names, prices, itineraries;
--- no personal data of travellers); reason is staff typed (pii:free_text). actor / author_id are staff ids, never an
--- e-mail.
+-- PII (DM-6.1). raw_tour_revision.before / after and raw_tour_fact_draft.before / after hold source tour fields
+-- (supplier text: names, prices, itineraries; no personal data of travellers); reason is staff typed (pii:free_text).
+-- actor / author / author_id / decided_by are staff ids, never an e-mail.
 --
--- Retention (DM-7.1). raw_tour_revision: kept while its tour exists (the history of a source record, like the audit
--- log), no deletion job; row in root data standards Part B section 7, in the root PR of this change (merged before the
--- Infra copy). The new columns follow their table's retention.
+-- Retention (DM-7.1). raw_tour_revision and raw_tour_fact_draft: kept while their tour exists (the history of a source
+-- record, like the audit log), no deletion job; rows in root data standards Part B section 7, in the root PR of this
+-- change (merged before the Infra copy). The new columns follow their table's retention.
 --
--- Class: expand (root ADR 0017 d3): a new table with its constraints, index, trigger function and triggers; nullable
+-- Class: expand (root ADR 0017 d3): two new tables with their constraints, indexes, trigger function and triggers; nullable
 -- columns without default on two existing tables (generated_content ~2.4k rows, published_tours ~0.9k rows, far below
 -- EXPAND_MAX_ROWS; neither is a hot table), a grant to the owner's runtime role, comments and the registration. No
 -- CHECK on the new columns of the existing tables (a constraint on an existing table is contract): the API checks the
@@ -67,10 +85,11 @@
 -- Migration-only PR (MIG-4); the code PR reads the new columns only after a feature check (SQLSTATE 42703 / 42P01:
 -- versions and the lock are off, today's behaviour stays) and raises no readiness key.
 --
--- Behaviour on apply: none. The table is empty, every new column NULL; nothing reads them until the AA-1146 code ships.
+-- Behaviour on apply: none. The tables are empty, every new column NULL; nothing reads them until the AA-1146 code ships.
 --
 -- Rollback (a new forward migration, after the code PR is reverted): DROP TABLE silver_aa_internal.raw_tour_revision
--- and its function, DROP the seven columns (a destructive file, DRY RUN).
+-- and its function, DROP TABLE silver_aa_internal.raw_tour_fact_draft, DROP the seven columns (a destructive file,
+-- DRY RUN).
 --
 -- X1. One BEGIN … COMMIT block, no role switch. Migration Apply runs cis/ files as cis_owner, the owner of the
 -- silver_aa_internal and gold_aa_internal schemas and of both altered tables.
@@ -123,6 +142,40 @@ CREATE TRIGGER raw_tour_revision_no_truncate
     BEFORE TRUNCATE ON silver_aa_internal.raw_tour_revision
     FOR EACH STATEMENT EXECUTE FUNCTION silver_aa_internal.raw_tour_revision_append_only();
 
+CREATE TABLE IF NOT EXISTS silver_aa_internal.raw_tour_fact_draft (
+    id            bigint       GENERATED ALWAYS AS IDENTITY,
+    tour_id       uuid         NOT NULL,
+    staging_id    uuid,
+    fields        text[]       NOT NULL,
+    before        jsonb        NOT NULL,
+    after         jsonb        NOT NULL,
+    resolutions   jsonb        NOT NULL DEFAULT '{}'::jsonb,
+    author        text         NOT NULL,
+    reason        text         NOT NULL,
+    status        text         NOT NULL DEFAULT 'draft',
+    decided_by    text,
+    decided_at    timestamptz,
+    revision_num  integer,
+    created_at    timestamptz  NOT NULL DEFAULT now(),
+    CONSTRAINT raw_tour_fact_draft_pkey PRIMARY KEY (id),
+    CONSTRAINT raw_tour_fact_draft_fields_check CHECK (cardinality(fields) BETWEEN 1 AND 32),
+    CONSTRAINT raw_tour_fact_draft_before_check CHECK (jsonb_typeof(before) = 'object'),
+    CONSTRAINT raw_tour_fact_draft_after_check CHECK (jsonb_typeof(after) = 'object'),
+    CONSTRAINT raw_tour_fact_draft_resolutions_check CHECK (jsonb_typeof(resolutions) = 'object'),
+    CONSTRAINT raw_tour_fact_draft_author_check CHECK (char_length(author) BETWEEN 1 AND 64),
+    CONSTRAINT raw_tour_fact_draft_reason_check CHECK (char_length(reason) BETWEEN 3 AND 500),
+    CONSTRAINT raw_tour_fact_draft_status_check CHECK (status IN ('draft', 'published', 'discarded')),
+    CONSTRAINT raw_tour_fact_draft_decided_check CHECK (
+        (status = 'draft' AND decided_at IS NULL AND decided_by IS NULL)
+        OR (status <> 'draft' AND decided_at IS NOT NULL AND char_length(decided_by) BETWEEN 1 AND 64)),
+    CONSTRAINT raw_tour_fact_draft_revision_check CHECK (revision_num IS NULL OR status = 'published')
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS raw_tour_fact_draft_open_key
+    ON silver_aa_internal.raw_tour_fact_draft (tour_id) WHERE status = 'draft';
+CREATE INDEX IF NOT EXISTS raw_tour_fact_draft_tour_idx
+    ON silver_aa_internal.raw_tour_fact_draft (tour_id, created_at DESC);
+
 ALTER TABLE silver_aa_internal.generated_content ADD COLUMN IF NOT EXISTS origin text;
 ALTER TABLE silver_aa_internal.generated_content ADD COLUMN IF NOT EXISTS parent_version_num smallint;
 ALTER TABLE silver_aa_internal.generated_content ADD COLUMN IF NOT EXISTS edit_reason text;
@@ -142,6 +195,17 @@ COMMENT ON COLUMN silver_aa_internal.raw_tour_revision.reason IS
 COMMENT ON COLUMN silver_aa_internal.raw_tour_revision.actor IS
     'AA-1146 (457): admin:<admin_users.id> of the staff member (the audit actor format), admin or machine. Never an '
     'e-mail.';
+COMMENT ON TABLE silver_aa_internal.raw_tour_fact_draft IS
+    'AA-1146 T1 (CIS 457): an Excel re-import merged field by field into an existing tour, held as a draft of the '
+    'source facts until a person publishes it (POST /admin/tours/{id}/fact-draft/publish, the publish gate); one open '
+    'draft per tour; published and discarded drafts are kept as history.';
+COMMENT ON COLUMN silver_aa_internal.raw_tour_fact_draft.reason IS
+    'pii:free_text; AA-1146 (457): why the staff member merged the sheet (3..500 characters).';
+COMMENT ON COLUMN silver_aa_internal.raw_tour_fact_draft.author IS
+    'AA-1146 (457): admin:<admin_users.id> of the staff member who merged the sheet (the audit actor format), admin '
+    'or machine. Never an e-mail. The two-person publish rule compares it with the publisher.';
+COMMENT ON COLUMN silver_aa_internal.raw_tour_fact_draft.decided_by IS
+    'AA-1146 (457): admin:<admin_users.id> (or admin) of the person who published or discarded the draft.';
 COMMENT ON COLUMN silver_aa_internal.generated_content.origin IS
     'AA-1146 (457): llm (a writer run) or human (a person''s draft version); NULL on rows written before 457.';
 COMMENT ON COLUMN silver_aa_internal.generated_content.parent_version_num IS
@@ -160,9 +224,11 @@ COMMENT ON COLUMN gold_aa_internal.published_tours.human_lock_reason IS
     'pii:free_text; AA-1146 (457): the reason of the publish that set the lock.';
 
 GRANT SELECT, INSERT ON silver_aa_internal.raw_tour_revision TO cis_app;
+GRANT SELECT, INSERT, UPDATE ON silver_aa_internal.raw_tour_fact_draft TO cis_app;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('457', now(), 'AA-1146: raw_tour_revision, the draft fields of generated_content, the published_tours lock')
+VALUES ('457', now(), 'AA-1146: raw_tour_revision, raw_tour_fact_draft, the draft fields of generated_content, the '
+        'published_tours lock')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

@@ -1,4 +1,4 @@
-"""AA-1146 (S285) — CIS 457 (raw_tour_revision, the draft fields of generated_content, the published_tours lock) and
+"""AA-1146 (S285) — CIS 457 (raw_tour_revision, raw_tour_fact_draft, the draft fields of generated_content, the published_tours lock) and
 CIS 458 (the content publish settings). The conftest replays every migration. Each test runs in a transaction that is
 rolled back; invented tour ids, actors and text only."""
 import json
@@ -114,6 +114,51 @@ async def test_cis_app_may_read_and_insert_only(conn):
         "AND table_schema = 'silver_aa_internal' AND table_name = 'raw_tour_revision'")
     assert {r["p"] for r in privs} >= {"SELECT", "INSERT"}
     assert not {r["p"] for r in privs} & {"UPDATE", "DELETE"}
+
+
+FD = ("INSERT INTO silver_aa_internal.raw_tour_fact_draft (tour_id, fields, before, after, resolutions, author, reason) "
+      "VALUES ($1::uuid, $2::text[], $3::jsonb, $4::jsonb, $5::jsonb, $6, $7) RETURNING id")
+
+
+@pytest.mark.asyncio
+async def test_fact_draft_one_open_per_tour_and_its_decision(conn):
+    tour = str(uuid.uuid4())
+    args = (["duration"], json.dumps({"duration": "3 days"}), json.dumps({"duration": "4 days"}), "{}",
+            "admin:zz-merger", "zz supplier sent a new sheet")
+    fid = await conn.fetchval(FD, tour, *args)
+    assert await conn.fetchval("SELECT status FROM silver_aa_internal.raw_tour_fact_draft WHERE id = $1", fid) == "draft"
+    with pytest.raises(asyncpg.exceptions.UniqueViolationError):
+        async with conn.transaction():
+            await conn.fetchval(FD, tour, *args)
+    with pytest.raises(asyncpg.exceptions.CheckViolationError):        # a decision needs who and when
+        async with conn.transaction():
+            await conn.execute("UPDATE silver_aa_internal.raw_tour_fact_draft SET status = 'published' WHERE id = $1",
+                               fid)
+    await conn.execute("UPDATE silver_aa_internal.raw_tour_fact_draft SET status = 'published', decided_by = $2, "
+                       "decided_at = now(), revision_num = 1 WHERE id = $1", fid, "admin:zz-publisher")
+    assert await conn.fetchval(FD, tour, *args)                          # the tour may take a new draft now
+
+
+@pytest.mark.parametrize("fields,after,reason,author", [
+    ([], {}, "zz why", "admin:zz"),                                     # no field
+    (["duration"], [], "zz why", "admin:zz"),                           # after is not an object
+    (["duration"], {}, "zz", "admin:zz"),                               # reason too short
+    (["duration"], {}, "zz why", ""),                                   # no author
+])
+@pytest.mark.asyncio
+async def test_fact_draft_refuses_bad_rows(conn, fields, after, reason, author):
+    with pytest.raises(asyncpg.exceptions.CheckViolationError):
+        async with conn.transaction():
+            await conn.fetchval(FD, "00000000-0000-4000-8000-000000000002", fields, "{}", json.dumps(after), "{}",
+                                author, reason)
+
+
+@pytest.mark.asyncio
+async def test_cis_app_may_not_delete_a_fact_draft(conn):
+    privs = {r["p"] for r in await conn.fetch(
+        "SELECT privilege_type AS p FROM information_schema.role_table_grants WHERE grantee = 'cis_app' "
+        "AND table_schema = 'silver_aa_internal' AND table_name = 'raw_tour_fact_draft'")}
+    assert privs >= {"SELECT", "INSERT", "UPDATE"} and "DELETE" not in privs
 
 
 @pytest.mark.asyncio
