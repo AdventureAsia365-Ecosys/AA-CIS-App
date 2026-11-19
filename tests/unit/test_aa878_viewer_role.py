@@ -57,7 +57,9 @@ _VIEWER_POLICY_GETS = {("GET", "/admin/tenants/{tenant_id}/details"), ("GET", "/
                        ("GET", "/admin/quality/thresholds"),   # S279 L2: the score views' bands (content.read among them)
                        # AA-1133 B7: the docs reader (docs.read, every role); its feedback POST stays refused (a write)
                        ("GET", "/admin/docs/manifest"), ("GET", "/admin/docs/page"), ("GET", "/admin/docs/asset"),
-                       ("GET", "/admin/docs/search")}
+                       ("GET", "/admin/docs/search"),
+                       # AA-1127 C3: the session hint (notifications.read, every role) tells a viewer it is read-only
+                       ("GET", "/admin/session")}
 _ADMIN_GET_KEYS = sorted(k for k in POLICY if k[0] == "GET" and k not in _VIEWER_POLICY_GETS)
 
 
