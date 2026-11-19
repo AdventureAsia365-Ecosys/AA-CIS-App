@@ -293,18 +293,14 @@ POLICY: dict[tuple[str, str], Any] = {
     # admin_llm_ops — on-demand / scheduled spend + Jev probes (the Lambda ones are MACHINE_ROUTES)
     ("POST", "/admin/dfs-balance/check"): OPS_WRITE,
     ("POST", "/admin/cost-explorer/check"): SPEND_WRITE,
-    ("POST", "/admin/jev-canary/check"): OPS_WRITE,
-    ("POST", "/admin/jev/402-sweep"): OPS_WRITE,
+    ("POST", "/admin/jev-canary/check"): OPS_WRITE, ("POST", "/admin/jev/402-sweep"): OPS_WRITE,
     # admin_llm_ops — money reads (Cost Operations page, admin-only)
-    ("GET", "/admin/cost-explorer"): SPEND_READ,
-    ("GET", "/admin/dfs-balance"): SPEND_READ,
-    ("GET", "/admin/dfs-usage"): SPEND_READ,
-    ("GET", "/admin/dfs-usage/by-country"): SPEND_READ,
+    ("GET", "/admin/cost-explorer"): SPEND_READ, ("GET", "/admin/dfs-balance"): SPEND_READ,
+    ("GET", "/admin/dfs-usage"): SPEND_READ, ("GET", "/admin/dfs-usage/by-country"): SPEND_READ,
     ("GET", "/admin/dfs-usage/runs"): SPEND_READ,          # AA-665 C2 — DFS spend by job
     ("GET", "/admin/cost-ops/forecast"): SPEND_READ,       # AA-665 C3 — month-end forecast vs budget
     ("GET", "/admin/llm-usage/calls"): SPEND_READ,
-    ("GET", "/admin/llm-usage/tree"): SPEND_READ,
-    ("GET", "/admin/spend/daily"): SPEND_READ,
+    ("GET", "/admin/llm-usage/tree"): SPEND_READ, ("GET", "/admin/spend/daily"): SPEND_READ,
     # admin_llm_ops — primary vs shadow model cost (Settings › LLM Models, admin-only tab)
     ("GET", "/admin/llm-shadow/report"): SPEND_READ,
     # admin_llm_ops — market requests tenants made that no market covers (Tenants page, admin-only)
@@ -329,8 +325,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/ai-gateway/credit/check"): SPEND_WRITE,   # AA-1025 B5: the low-credit check now (bell + e-mail)
     ("GET", "/admin/ai-gateway/app-profiles"): SPEND_READ,           # AA-1025 H1a: the app profile of every app
     ("PATCH", "/admin/ai-gateway/app-profiles/{app}"): AI_ADMIN,     # AA-1025 H1a: AI on / off per app, audited
-    # AA-1143 (decision G3): one budget per LLM connection (total + per-app shares, CIS takes the remainder), audited
-    ("GET", "/admin/ai-gateway/connection-budgets"): SPEND_READ,
+    ("GET", "/admin/ai-gateway/connection-budgets"): SPEND_READ,     # AA-1143 (decision G3): budget rows, audited
     ("GET", "/admin/ai-gateway/connection-budgets/{connection_key}/history"): SPEND_READ,
     ("PUT", "/admin/ai-gateway/connection-budgets/{connection_key}"): SPEND_WRITE,
     ("POST", "/admin/ai-gateway/connection-budgets/crm-sync"): SPEND_WRITE,

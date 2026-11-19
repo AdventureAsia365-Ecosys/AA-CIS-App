@@ -91,35 +91,65 @@ export interface DraftCheck {
 }
 
 const cents = (v: number) => Math.round(v * 100);
+const sameCents = (a: number | null, b: number | null) => (a == null ? null : cents(a)) === (b == null ? null : cents(b));
+
+interface ShareScan {
+  shares: Record<string, number | null>;
+  sum: number;
+  typed: boolean;
+  errors: Partial<Record<string, DraftError>>;
+}
+
+/** The share fields: the changed ones (null = removed), their sum, and the bad amounts. Pure. */
+function scanShares(row: ConnectionBudgetRow, apps: string[], d: BudgetDraft): ShareScan {
+  const out: ShareScan = { shares: {}, sum: 0, typed: false, errors: {} };
+  for (const a of apps) {
+    const v = amount(d.shares[a] ?? "");
+    if (v === "bad") {
+      out.errors[a] = "amount";
+      out.typed = true;
+      continue;
+    }
+    if (!sameCents(v, row.shares[a]?.usd ?? null)) out.shares[a] = v;
+    out.sum += v ?? 0;
+  }
+  return out;
+}
+
+function totalError(total: number | null | "bad", remainder: number | null): DraftError | undefined {
+  if (total === "bad") return "amount";
+  if (total == null) return "totalRequired";
+  return remainder != null && remainder < 0 ? "overAllocated" : undefined;
+}
+
+function reasonOk(reason: string): boolean {
+  return reason.length >= REASON_MIN && reason.length <= REASON_MAX;
+}
+
+function totalChange(row: ConnectionBudgetRow, total: number | null | "bad"): number | null {
+  return typeof total === "number" && !sameCents(total, row.total?.usd ?? null) ? total : null;
+}
+
+function errorsOf(scan: ShareScan, tErr: DraftError | undefined, changed: boolean, reason: string) {
+  const errors: Partial<Record<string, DraftError>> = { ...scan.errors };
+  if (tErr) errors.total = tErr;
+  if (changed && !reasonOk(reason)) errors.reason = "reason";
+  return errors;
+}
 
 /** Check a draft against the row the way the API does (amounts 0..1000000 with cents, a total first, shares never
  * above the total, a reason of 20..500 characters) and build the PUT body with only what changed. Pure. */
 export function checkDraft(row: ConnectionBudgetRow, apps: string[], d: BudgetDraft): DraftCheck {
-  const errors: Partial<Record<string, DraftError>> = {};
   const total = amount(d.total);
-  if (total === "bad") errors.total = "amount";
-  else if (total == null) errors.total = "totalRequired";
-  const shares: Record<string, number | null> = {};
-  let sum = 0;
-  let typed = total === "bad";
-  for (const a of apps) {
-    const v = amount(d.shares[a] ?? "");
-    if (v === "bad") { errors[a] = "amount"; typed = true; continue; }
-    const before = row.shares[a]?.usd ?? null;
-    if ((v == null ? null : cents(v)) !== (before == null ? null : cents(before))) shares[a] = v;
-    sum += v ?? 0;
-  }
-  const remainder = typeof total === "number" ? (cents(total) - cents(sum)) / 100 : null;
-  if (remainder != null && remainder < 0) errors.total = "overAllocated";
-  const totalChanged = typeof total === "number" && (row.total == null || cents(total) !== cents(row.total.usd));
-  const changed = totalChanged || typed || Object.keys(shares).length > 0;
+  const scan = scanShares(row, apps, d);
+  const remainder = typeof total === "number" ? (cents(total) - cents(scan.sum)) / 100 : null;
+  const newTotal = totalChange(row, total);
+  const changed = newTotal != null || scan.typed || total === "bad" || Object.keys(scan.shares).length > 0;
   const reason = d.reason.trim();
-  if (changed && (reason.length < REASON_MIN || reason.length > REASON_MAX)) errors.reason = "reason";
+  const errors = errorsOf(scan, totalError(total, remainder), changed, reason);
   const ok = changed && Object.keys(errors).length === 0;
-  return {
-    body: ok ? { ...(totalChanged ? { total_usd: total as number } : {}), shares, reason } : null,
-    errors, remainder, changed,
-  };
+  const totalPart = newTotal != null ? { total_usd: newTotal } : {};
+  return { body: ok ? { ...totalPart, shares: scan.shares, reason } : null, errors, remainder, changed };
 }
 
 export type BudgetTone = "success" | "warning" | "danger" | "neutral";

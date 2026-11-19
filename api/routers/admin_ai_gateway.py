@@ -218,8 +218,7 @@ PAGE_WRITES: dict[str, tuple[str, str]] = {
     "connections": ("PATCH", "/admin/llm-connections/{connection_key}"),       # Connections view: on/off, limits
     "connection_test": ("POST", "/admin/llm-connections/{connection_key}/test"),
     "requeue": ("POST", "/admin/job-runner/jobs/retry-llm-denied"),            # Re-queue refused jobs (dry run too)
-    "routing": ("PATCH", "/admin/llm-config/{stage}"),
-    "catalog": ("PATCH", "/admin/llm-catalog/{model_key}"),
+    "routing": ("PATCH", "/admin/llm-config/{stage}"), "catalog": ("PATCH", "/admin/llm-catalog/{model_key}"),
     "budgets": ("PUT", "/admin/budgets/{provider}/{scope}"),
     "jev_credit": ("POST", "/admin/decisions/jev-credit/topups"),
     # AA-1025 B5 Credit view: add or delete an entry, Check now (all spend.write); its threshold save is `connections`
@@ -235,8 +234,7 @@ PAGE_WRITES: dict[str, tuple[str, str]] = {
     "batches": ("POST", "/admin/ai-gateway/batches"),
     # AA-1126 G2 Budgets › Spend controls: reset an app's anomaly breaker (ai.admin, not a tighten-only role)
     "anomaly_reset": ("POST", "/admin/ai-gateway/anomaly-breaker/{app}/reset"),
-    # AA-1143 Budgets › Connection budgets: a connection's total and the apps' shares, the CRM copy (spend.write)
-    "connection_budgets": ("PUT", "/admin/ai-gateway/connection-budgets/{connection_key}"),
+    "connection_budgets": ("PUT", "/admin/ai-gateway/connection-budgets/{connection_key}"),   # AA-1143 Budgets
 }
 
 

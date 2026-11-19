@@ -248,7 +248,9 @@ def test_route_policy():
 
 
 def test_the_cis_spend_counts_an_app_with_a_share_only_above_it():
-    sql = " ".join(cost_guard._CONNECTION_POOL_SPEND_SQL.split())
+    from shared import connection_pool_spend
+
+    sql = " ".join(connection_pool_spend.POOL_SPEND_SQL.split())
     assert "greatest(s.usd - b.budget_usd, 0)" in sql and "llm_connection_budget_current" in sql
 
 
@@ -282,6 +284,7 @@ async def test_a_managed_cis_cap_cannot_be_edited_on_the_connection():
             return self.answers.pop(0)
 
     with pytest.raises(llm_connections.ConnectionToggleRefused, match="Budgets"):
-        await llm_connections._refuse_managed_budget(Db(True, 1), "zz-a")
-    await llm_connections._refuse_managed_budget(Db(True, None), "zz-a")      # no total yet: editable
-    await llm_connections._refuse_managed_budget(Db(False, None), "zz-a")     # before CIS 455: editable
+        await llm_connections._refuse_managed_budget(Db(True, 1), "zz-a", ["monthly_budget_usd"])
+    await llm_connections._refuse_managed_budget(Db(True, None), "zz-a", ["monthly_budget_usd"])   # no total yet
+    await llm_connections._refuse_managed_budget(Db(False, None), "zz-a", ["monthly_budget_usd"])  # before CIS 455
+    await llm_connections._refuse_managed_budget(Db(True, 1), "zz-a", ["rpm_limit"])               # another field

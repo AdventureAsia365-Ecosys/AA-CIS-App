@@ -42,21 +42,30 @@ function Amount({ value, empty }: { value: number | null | undefined; empty: str
   return <span style={amountStyle}>{value == null ? empty : usd(value, 2)}</span>;
 }
 
-function ShareCell({ row, app }: { row: ConnectionBudgetRow; app: string }) {
+function ShareAmount({ row, app }: { row: ConnectionBudgetRow; app: string }) {
   const t = useT(M);
   const share = row.shares[app];
-  const spent = row.spend[app];
+  if (share != null) return <Amount value={share.usd} empty={t("notSet")} />;
+  return <span style={small}>{app === "crm" ? usd(0, 2) : t("inPool")}</span>;
+}
+
+function ShareNote({ row, app }: { row: ConnectionBudgetRow; app: string }) {
+  const t = useT(M);
+  if (app === "crm") {
+    if (row.crm_state === "in_sync") return null;
+    const money = (v: number | null) => (v == null ? "—" : usd(v, 2));
+    return <span style={small}>{t("crmCopy", money(row.crm_copy_usd), money(row.crm_setting_usd))}</span>;
+  }
+  const spent = row.spend[app] ?? 0;
+  return spent > 0 ? <span style={small}>{t("spent", usd(spent, 2))}</span> : null;
+}
+
+function ShareCell({ row, app }: { row: ConnectionBudgetRow; app: string }) {
   if (row.total == null) return <span style={small}>—</span>;
   return (
     <div style={{ display: "grid", gap: 2, justifyItems: "end" }}>
-      {share == null
-        ? <span style={small}>{app === "crm" ? usd(0, 2) : t("inPool")}</span>
-        : <Amount value={share.usd} empty={t("notSet")} />}
-      {app !== "crm" && spent != null && spent > 0 && <span style={small}>{t("spent", usd(spent, 2))}</span>}
-      {app === "crm" && row.crm_state !== "in_sync" && (
-        <span style={small}>{t("crmCopy", row.crm_copy_usd == null ? "—" : usd(row.crm_copy_usd, 2),
-          row.crm_setting_usd == null ? "—" : usd(row.crm_setting_usd, 2))}</span>
-      )}
+      <ShareAmount row={row} app={app} />
+      <ShareNote row={row} app={app} />
     </div>
   );
 }
@@ -222,42 +231,62 @@ function CrmSyncButton() {
   );
 }
 
+function Notices({ data, canEdit }: { data: ConnectionBudgetsResp | undefined; canEdit: boolean }) {
+  const t = useT(M);
+  const crmError = data?.crm?.copy_error;
+  const line = { ...small, padding: "8px 16px", margin: 0 } as const;
+  return (
+    <>
+      {!canEdit && data && <p role="status" style={line}>{t("readOnly")}</p>}
+      {crmError && <p role="status" style={{ ...line, color: K.amber }}>{t("crmError", crmError)}</p>}
+    </>
+  );
+}
+
+function BudgetsTable({ data, canEdit, tightenOnly }: {
+  data: ConnectionBudgetsResp | undefined; canEdit: boolean; tightenOnly: boolean;
+}) {
+  const t = useT(M);
+  const [editing, setEditing] = useState<ConnectionBudgetRow | null>(null);
+  const [viewing, setViewing] = useState<ConnectionBudgetRow | null>(null);
+  const apps = data?.apps ?? [];
+  const columns = useColumns(apps, canEdit ? setEditing : null, setViewing);
+  return (
+    <>
+      <Notices data={data} canEdit={canEdit} />
+      <DataTable<ConnectionBudgetRow>
+        tableId={SECTION_ID} data={data ? budgetOrder(data.rows) : []} columns={columns}
+        getRowId={(r) => r.connection_key} loading={!data} searchable={false} paginate={false} stickyHeader={false}
+        tableMinWidth={860} emptyTitle={t("empty")}
+      />
+      {editing && <BudgetEditor row={editing} apps={apps} tightenOnly={tightenOnly} onClose={() => setEditing(null)} />}
+      {viewing && <BudgetHistory row={viewing} onClose={() => setViewing(null)} />}
+    </>
+  );
+}
+
+const SECTION_ID = "ai-gateway-budgets-connection-budgets";
+
 export default function ConnectionBudgetsSection() {
   const t = useT(M);
   const access = usePageAccess();
   const q = useConnectionBudgets();
-  const [editing, setEditing] = useState<ConnectionBudgetRow | null>(null);
-  const [viewing, setViewing] = useState<ConnectionBudgetRow | null>(null);
   const data = q.data;
-  const apps = data?.apps ?? [];
   const canEdit = access.can("connection_budgets");
-  const columns = useColumns(apps, canEdit ? setEditing : null, setViewing);
-  const testId = "ai-gateway-budgets-connection-budgets";
-  if (q.error) {
+  if (q.error || (data && !data.ready)) {
     return (
-      <Section title={t("title")} description={t("help")} testId={testId}>
-        <ErrorState message={`${t("loadError")}: ${(q.error as Error).message}`} onRetry={() => q.refetch()} />
+      <Section title={t("title")} description={t("help")} testId={SECTION_ID}>
+        {q.error
+          ? <ErrorState message={`${t("loadError")}: ${(q.error as Error).message}`} onRetry={() => q.refetch()} />
+          : <p style={small}>{t("notReady")}</p>}
       </Section>
     );
   }
-  if (data && !data.ready) {
-    return <Section title={t("title")} description={t("help")} testId={testId}><p style={small}>{t("notReady")}</p></Section>;
-  }
-  const crmError = data?.crm?.copy_error;
+  const withCrm = canEdit && (data?.apps ?? []).includes("crm");
   return (
-    <Section title={t("title")} description={t("help")} padded={false} testId={testId}
-      actions={canEdit && apps.includes("crm") ? <CrmSyncButton /> : undefined}>
-      {!canEdit && data && <p role="status" style={{ ...small, padding: "8px 16px", margin: 0 }}>{t("readOnly")}</p>}
-      {crmError && <p role="status" style={{ ...small, color: K.amber, padding: "8px 16px", margin: 0 }}>
-        {t("crmError", crmError)}</p>}
-      <DataTable<ConnectionBudgetRow>
-        tableId={testId} data={data ? budgetOrder(data.rows) : []} columns={columns}
-        getRowId={(r) => r.connection_key} loading={!data} searchable={false} paginate={false} stickyHeader={false}
-        tableMinWidth={860} emptyTitle={t("empty")}
-      />
-      {editing && <BudgetEditor row={editing} apps={apps} tightenOnly={access.tightenOnly}
-        onClose={() => setEditing(null)} />}
-      {viewing && <BudgetHistory row={viewing} onClose={() => setViewing(null)} />}
+    <Section title={t("title")} description={t("help")} padded={false} testId={SECTION_ID}
+      actions={withCrm ? <CrmSyncButton /> : undefined}>
+      <BudgetsTable data={data} canEdit={canEdit} tightenOnly={access.tightenOnly} />
     </Section>
   );
 }

@@ -1334,10 +1334,8 @@ export interface PageAccess {
  *  only when the access read failed: the role cookie then decides, and the API still refuses what it must. */
 export const ACTION_CAPABILITY: Record<PageAction, "ai.admin" | "ops.write" | "spend.write"> = {
   provider_switch: "ai.admin", connections: "ai.admin",
-  connection_test: "ai.admin",
-  requeue: "ops.write",
-  routing: "ai.admin",
-  catalog: "ai.admin",
+  connection_test: "ai.admin", requeue: "ops.write",
+  routing: "ai.admin", catalog: "ai.admin",
   budgets: "spend.write",
   jev_credit: "spend.write",
   credit: "spend.write",

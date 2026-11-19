@@ -621,7 +621,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   The table's statement trigger refuses shares above the total and writes the remainder to `monthly_budget_usd`, so the
   CIS gateway keeps enforcing that column (no new read on the call path) and `PATCH /admin/llm-connections/{key}`
   refuses a direct edit of it on a connection with a total. The CIS month spend of a connection
-  (`cost_guard._CONNECTION_POOL_SPEND_SQL`) counts every app without its own share whole and an app with a share
+  (`shared/connection_pool_spend.py`) counts every app without its own share whole and an app with a share
   only above it. Edited on ONE screen, AI gateway › Budgets › Connection budgets (`GET / PUT
   /admin/ai-gateway/connection-budgets[/{key}]`, `…/{key}/history`, `POST …/crm-sync`;
   `api/services/llm_connection_budgets.py`, rules in `llm_connection_split.py`); the Connections drawer shows them

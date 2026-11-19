@@ -24,7 +24,7 @@ from typing import Optional
 
 import structlog
 
-from shared import settings as _settings
+from shared import connection_pool_spend, settings as _settings
 from shared.ai_budget_defaults import plan_budget_defaults
 
 logger = structlog.get_logger()
@@ -408,26 +408,6 @@ _CONNECTION_MONTH_SPEND_SQL = """
        AND created_at >= date_trunc('month', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'
      GROUP BY account
 """
-# AA-1143 (decision G3, CIS 455 / 456): the spend the CIS remainder pays for. monthly_budget_usd is the CIS remainder
-# of the connection's total (the budget rows' trigger writes it); an app of this ledger with its own share
-# (TripPlanner, once it has a row) pays its spend from that share, so only what it spent ABOVE its share counts here,
-# and every app without a share of its own (CIS, rows without app) counts whole: the rule of
-# catalog.v_llm_connection_cap_v2.cis_pool_spent_usd. Before CIS 455 (no view) the whole ledger counts, as before.
-_CONNECTION_POOL_SPEND_SQL = """
-    WITH spent AS (
-        SELECT account, coalesce(app, 'cis') AS app, coalesce(sum(cost_usd), 0) AS usd, count(*)::int AS calls
-          FROM shared.llm_call_log
-         WHERE account = ANY($1::text[])
-           AND created_at >= date_trunc('month', now() AT TIME ZONE 'utc') AT TIME ZONE 'utc'
-         GROUP BY account, coalesce(app, 'cis')
-    )
-    SELECT s.account,
-           sum(CASE WHEN b.app IS NULL THEN s.usd ELSE greatest(s.usd - b.budget_usd, 0) END) AS spent,
-           sum(s.calls)::int AS calls
-      FROM spent s
-      LEFT JOIN shared.llm_connection_budget_current b ON b.connection_key = s.account AND b.app = s.app
-     GROUP BY s.account
-"""
 _COST_POLICY_SQL = """
     SELECT connection_key, alert_pct, hard_stop, usage_secret_name, usage_scope_id, notes, updated_at, updated_by
       FROM shared.llm_connection_cost_policy
@@ -519,16 +499,10 @@ def policy_of(policies: dict, connection_key: str) -> ConnectionCostPolicy:
 
 
 async def connection_month_spend(conn, connection_keys: list[str]) -> dict[str, tuple[float, int]]:
-    """{connection_key: (USD, calls)} logged this UTC month (account = the key) that the CIS remainder pays for
-    (AA-1143: an app with its own share counts only above it); keys with no row are absent."""
+    """{connection_key: (USD, calls)} this UTC month the CIS remainder pays for (AA-1143, connection_pool_spend)."""
     if not connection_keys:
         return {}
-    try:
-        rows = await conn.fetch(_CONNECTION_POOL_SPEND_SQL, list(connection_keys))
-    except Exception as exc:  # noqa: BLE001 — UndefinedTableError before CIS 455: the whole ledger, as before
-        if type(exc).__name__ != "UndefinedTableError":
-            raise
-        rows = await conn.fetch(_CONNECTION_MONTH_SPEND_SQL, list(connection_keys))
+    rows = await connection_pool_spend.rows(conn, list(connection_keys), _CONNECTION_MONTH_SPEND_SQL)
     return {r["account"]: (float(r["spent"] or 0.0), int(r["calls"] or 0)) for r in rows}
 
 

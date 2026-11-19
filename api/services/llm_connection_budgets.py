@@ -269,6 +269,52 @@ def _loosened(role: Optional[str], before: dict, after: dict) -> None:
     settings_registry.refuse_loosening(role, before, after, caps=tuple(sorted(set(before) | set(after))))
 
 
+def _copy_after(rows: dict, connection_key: str, changes: list) -> dict[str, str]:
+    """The CRM copy after a save's changes (``crm_copy`` of the rows in force with the changes applied). Pure."""
+    new_rows = {k: dict(v) for k, v in rows.items()}
+    target = new_rows.setdefault(connection_key, {})
+    for app, new in changes:
+        if new is None:
+            target.pop(app, None)
+        else:
+            target[app] = {"budget_usd": new}
+    return crm_copy(new_rows)
+
+
+def _crm_first(apps: list, before_total, before_shares: dict, plan: dict) -> bool:
+    """Send the CRM copy BEFORE the CIS rows when the CRM's share goes down or the total goes down (the CRM is held to
+    the lower amount first); after them otherwise (CIS first takes its lower remainder). Pure."""
+    if CRM_APP not in apps:
+        return False
+    crm_change = next((new for app, new in plan["changes"] if app == CRM_APP), "unchanged")
+    if crm_change != "unchanged" and rules.crm_tightens(before_shares.get(CRM_APP), crm_change):
+        return True
+    return before_total is not None and plan["total"] < before_total
+
+
+async def _write_rows(conn, connection_key: str, plan: dict, text: str, actor: str, before: dict) -> None:
+    """One INSERT of the save's rows (the table's trigger checks them and writes the CIS remainder) and its audit
+    row, in one transaction."""
+    async with conn.transaction():
+        # One save at a time per connection: the version numbers below come from this read.
+        await conn.execute("SELECT pg_advisory_xact_lock(hashtext('llm_connection_budget:' || $1))", connection_key)
+        versions = {r["app"]: r["version"] for r in await conn.fetch(_VERSIONS_SQL, connection_key)}
+        apps_col = [app for app, _ in plan["changes"]]
+        usd_col = [new for _, new in plan["changes"]]
+        ver_col = [versions.get(app, 0) + 1 for app in apps_col]
+        try:
+            await conn.execute(_INSERT_SQL, connection_key, apps_col, usd_col, ver_col, text, actor[:128])
+        except asyncpg.exceptions.CheckViolationError as e:
+            raise rules.BudgetEditRefused("over_allocated", str(e).splitlines()[0]) from e
+        after = {"total": _f(plan["total"]), **{a: _f(v) for a, v in plan["shares"].items()},
+                 "cis_remainder": _f(plan["remainder"])}
+        await conn.execute(
+            "INSERT INTO acp_shared.audit_log (actor, action, resource_type, resource_id, details) "
+            "VALUES ($1, $2, $3, $4, $5::jsonb)",
+            actor[:64], AUDIT_ACTION, "llm_connection_budget", connection_key,
+            json.dumps({"reason": text, "before": before, "after": after}))
+
+
 async def save(pool: Any, authorization: Optional[str], connection_key: str, *, total: Any = None,
                shares: Optional[dict] = None, reason: Any, actor: str, role: Optional[str] = None) -> dict:
     """PUT /admin/ai-gateway/connection-budgets/{key}: change the total and / or some apps' shares in one audited save.
@@ -280,8 +326,7 @@ async def save(pool: Any, authorization: Optional[str], connection_key: str, *, 
     if total is None and not shares:
         raise rules.BudgetEditRefused("nothing_to_change", "nothing to change")
     async with pool.acquire() as conn:
-        registry = await conn_registry.fetch_connections(conn)
-        if connection_key not in registry:
+        if connection_key not in await conn_registry.fetch_connections(conn):
             raise LookupError(connection_key)
         apps = await share_apps(conn)
         rows = await current_rows(conn)
@@ -293,50 +338,21 @@ async def save(pool: Any, authorization: Optional[str], connection_key: str, *, 
             return {"connection_key": connection_key, "changed": False, "crm_sync": None}
         _loosened(role, rules.effective_caps(before_total, before_shares),
                   rules.effective_caps(plan["total"], plan["shares"]))
-        crm_change = next(((app, new) for app, new in plan["changes"] if app == CRM_APP), None)
-        new_rows = {k: dict(v) for k, v in rows.items()}
-        target = new_rows.setdefault(connection_key, {})
-        for app, new in plan["changes"]:
-            if new is None:
-                target.pop(app, None)
-            else:
-                target[app] = {"budget_usd": new}
-        copy_after = crm_copy(new_rows)
-        crm_first = (crm_change is not None and rules.crm_tightens(before_shares.get(CRM_APP), crm_change[1])) or (
-            before_total is not None and plan["total"] < before_total and CRM_APP in apps)
+        copy_after = _copy_after(rows, connection_key, plan["changes"])
+        crm_first = _crm_first(apps, before_total, before_shares, plan)
         if crm_first:
             err = await send_crm_copy(authorization, copy_after, reason=text)
             if err is not None:
                 raise CrmRefused(err)
-        async with conn.transaction():
-            # One save at a time per connection: the version numbers below come from this read.
-            await conn.execute("SELECT pg_advisory_xact_lock(hashtext('llm_connection_budget:' || $1))",
-                               connection_key)
-            versions = {r["app"]: r["version"] for r in await conn.fetch(_VERSIONS_SQL, connection_key)}
-            apps_col = [app for app, _ in plan["changes"]]
-            usd_col = [new for _, new in plan["changes"]]
-            ver_col = [versions.get(app, 0) + 1 for app in apps_col]
-            try:
-                await conn.execute(_INSERT_SQL, connection_key, apps_col, usd_col, ver_col, text, actor[:128])
-            except asyncpg.exceptions.CheckViolationError as e:
-                raise rules.BudgetEditRefused("over_allocated", str(e).splitlines()[0]) from e
-            await conn.execute(
-                "INSERT INTO acp_shared.audit_log (actor, action, resource_type, resource_id, details) "
-                "VALUES ($1, $2, $3, $4, $5::jsonb)",
-                actor[:64], AUDIT_ACTION, "llm_connection_budget", connection_key,
-                json.dumps({"reason": text,
-                            "before": {"total": _f(before_total), **{a: _f(v) for a, v in before_shares.items()},
-                                       "cis_remainder": _f(rules.remainder(before_total, before_shares))},
-                            "after": {"total": _f(plan["total"]), **{a: _f(v) for a, v in plan["shares"].items()},
-                                      "cis_remainder": _f(plan["remainder"])}}))
+        before = {"total": _f(before_total), **{a: _f(v) for a, v in before_shares.items()},
+                  "cis_remainder": _f(rules.remainder(before_total, before_shares))}
+        await _write_rows(conn, connection_key, plan, text, actor, before)
     conn_registry.invalidate()               # this process enforces the new remainder at once; others within the TTL
     connection_budget.invalidate()
-    crm_sync = None
+    crm_sync = {"sent": True, "error": None} if crm_first else None
     if CRM_APP in apps and not crm_first:
         err = await send_crm_copy(authorization, copy_after, reason=text)
         crm_sync = {"sent": err is None, "error": err}
-    elif crm_first:
-        crm_sync = {"sent": True, "error": None}
     return {"connection_key": connection_key, "changed": True, "total_usd": _f(plan["total"]),
             "shares": {a: _f(v) for a, v in plan["shares"].items()}, "cis_remainder_usd": _f(plan["remainder"]),
             "crm_sync": crm_sync}
