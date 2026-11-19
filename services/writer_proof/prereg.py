@@ -111,7 +111,8 @@ DIRECTIONS = ("lower", "higher")
 TARGET_OPS = ("<=", ">=", "==")
 # What decision.py / cost_report.py compute per object from the run (per item of arm B, or per paired item).
 COMPUTED_METRICS = ("item_fail_rate", "fail_claims_per_item", "fail_classes_per_item", "first_pass_yield",
-                    "hard_stops", "cost_per_object_usd", "requests_per_object", "writer_requests_per_object")
+                    "hard_stops", "cost_per_object_usd", "requests_per_object", "writer_requests_per_object",
+                    "writer_cost_per_object_usd")
 # Metrics a paired decision can read (a value per item on both arms).
 PAIRED_METRICS = ("item_fail_rate", "fail_claims_per_item", "fail_classes_per_item")
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
@@ -355,6 +356,18 @@ def _decision_problems(dec: Any, metrics: Any) -> list[str]:
     return p
 
 
+def registration_problems(doc: dict) -> list[str]:
+    """S285: what registering this draft as it stands would refuse ([] for a registered file): `problems` of the same
+    document with status registered (and a placeholder registrant and date when the draft names none), so a DRY plan
+    of a draft says before the registration PR whether the sample meets the minimum in force, the writer spread is
+    stated, and so on. Reads the settings registry like `problems`."""
+    if not isinstance(doc, dict) or doc.get("status") == "registered":
+        return []
+    trial = {**doc, "status": "registered", "registered_by": doc.get("registered_by") or "registration-preview",
+             "registered_on": doc.get("registered_on") or date.today().isoformat()}
+    return problems(trial)
+
+
 def from_doc(doc: dict, *, path: Optional[str] = None) -> Prereg:
     bad = problems(doc)
     if bad:
@@ -525,6 +538,7 @@ def draft(template: dict, *, items: list[dict], golden_version: str, n: Optional
 __all__ = ["COMPUTED_METRICS", "FORMAT", "LOCK_FILE", "PAIRED_METRICS", "PREREG_DIR", "Prereg", "PreregRefused",
            "SAMPLE_RULES", "gate_ids", "resolve",
            "TOTAL_CAP_SETTING", "min_items", "read_lock", "registered_files", "registered_lock_problem",
+           "registration_problems",
            "total_cap", "workflow_cap",
            "WORKFLOWS", "canonical", "draft", "from_doc", "load", "lock_problem", "path_for", "pick_sample",
            "problems", "require_registered", "sha256_of"]

@@ -13,6 +13,7 @@ from services.writer_proof import prereg as pr
 from services.writer_proof import price, runner, spend
 from services.writing_memory import config as cfg
 from services.writing_memory import r2
+from tests.unit.writer_proof.prereg_templates import t9_plain_improve
 
 GATE = sorted(f"zz-gate-{i:02d}" for i in range(12))
 WRITER_SD = 0.1        # the stated writer spread of d of a registered fixture (item_fail_rate units: no data floor)
@@ -29,8 +30,9 @@ def _pre(registered=True, noise=(), **over) -> pr.Prereg:
 
 
 def _t9(**over) -> pr.Prereg:
-    """A registered T9 proof powered for a large improvement (adequate on the unanimous R1 report)."""
-    d = json.loads(pr.path_for("w5-t9").read_text())
+    """A registered T9 proof powered for a large improvement (adequate on the unanimous R1 report). S285: built on the
+    plain-judge template (prereg_templates), the shipped w5-t9 draft now names the claim instrument."""
+    d = t9_plain_improve()
     d.update(status="registered", registered_by="tech_lead", registered_on="2026-11-20",
              golden_set={"name": "aa729", "version": "1.4.0"}, sample_ids=GATE, noise_sample_ids=[])
     d["power"] = {**d["power"], "effect_abs": 0.9, "writer_sd": WRITER_SD}

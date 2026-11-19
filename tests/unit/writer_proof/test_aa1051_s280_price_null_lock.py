@@ -188,8 +188,9 @@ def test_campaign_plans_every_proof_in_the_d12_order_and_sums_the_estimates(fake
     assert all(not r["ready_for_live"] for r in out["proofs"])          # drafts, and the null run has no power check
     assert all(r["stage"] == cfg.W5_STAGE for r in out["proofs"])
     assert out["d12_total_cap_usd"] == pr.total_cap() == 33.0 and out["fits_d12_total"]
-    # S283: only the registered null run (sample rule, claim instrument judge) is estimated; the drafts are not
-    assert {c.prereg_id for c in fakes["estimates"]} == {"w5-null-t9-blog-v7-g150"}   # S284: superseded v7
+    # S285: every proof is estimated: the registered null run (sample rule) and the drafts, which list their sample
+    assert {c.prereg_id for c in fakes["estimates"]} == set(runner.CAMPAIGN_ORDER)
+    assert all(r["judge"].startswith("aa1048-two-step-v7 (") for r in out["proofs"])   # one judge for the campaign
     assert out["proofs"][0]["judge"].startswith("aa1048-two-step-v7 (")
 
 
@@ -205,7 +206,7 @@ def test_a_registered_file_must_match_the_lock():
     assert "not in registered.lock.json" in pr.registered_lock_problem(pre, {})
     assert "edited after it was registered" in pr.registered_lock_problem(pre, {pre.id: "e" * 64})
     assert pr.registered_lock_problem(pre, {pre.id: pre.sha256}) is None
-    assert pr.registered_lock_problem(pr.load("w5-t9"), {}) is None                 # a draft is not locked
+    assert pr.registered_lock_problem(pr.load("w5-t2"), {}) is None                 # a draft is not locked
 
 
 def test_load_refuses_a_registered_file_outside_the_lock(tmp_path, monkeypatch):
@@ -352,8 +353,10 @@ def test_campaign_refreshes_the_settings_before_its_first_load(fakes, monkeypatc
 
 
 def test_campaign_counts_what_the_ledger_already_shows_against_the_d12_total(fakes):
-    out = asyncio.run(runner.campaign(_Pool({"total": 30.0, "workflow": 0.0, "rows": 3})))
-    assert out["spent_or_reserved_usd"] == 30.0 and out["fits_d12_total"]
+    # S285: the four proofs are estimated (2.0 each by the fake R2 estimate, or the instrument price when larger)
+    out = asyncio.run(runner.campaign(_Pool({"total": 20.0, "workflow": 0.0, "rows": 3})))
+    est = out["estimated_usd_max_total"]
+    assert out["spent_or_reserved_usd"] == 20.0 and out["fits_d12_total"] == (20.0 + est <= 33.0) and est <= 13.0
     out = asyncio.run(runner.campaign(_Pool({"total": 30.0, "workflow": 0.0, "rows": 3},
                                             jobs=[{"job_id": "job-1", "status": "running", "prereg_id": "w5-zz",
                                                    "workflow": "t2", "arm": "B", "cap_usd": 4.0, "key": "k"}])))
@@ -373,7 +376,8 @@ def test_null_gate_names_a_registered_null_run_it_had_to_ignore(fakes, tmp_path,
 def test_unloadable_registered_reports_a_registered_file_outside_the_lock(tmp_path, monkeypatch):
     pre = _pre()
     (tmp_path / f"{pre.id}.json").write_text(json.dumps(pre.doc))
-    (tmp_path / "w5-t9.json").write_text(json.dumps(pr.load("w5-t9").doc))          # a draft: not reported
+    draft = {**pr.load("w5-null-t9-blog").doc, "id": "w5-zz-draft"}                 # S285: no shipped id, which
+    (tmp_path / "w5-zz-draft.json").write_text(json.dumps(draft))                  # a later PR may register
     monkeypatch.setattr(pr, "PREREG_DIR", tmp_path)
     monkeypatch.setattr(pr, "LOCK_FILE", tmp_path / "registered.lock.json")
     got = pr.unloadable_registered("null")

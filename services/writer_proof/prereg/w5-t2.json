@@ -6,22 +6,36 @@
   "registered_by": null,
   "registered_on": null,
   "golden_set": {
-    "name": "aa729"
+    "name": "aa729",
+    "version": "1.5.0"
   },
   "eval_split": "gate",
-  "sample_ids": [],
+  "sample_ids": [
+    "t2-006",
+    "t2-013",
+    "t2-014",
+    "t2-018",
+    "t2-020"
+  ],
   "noise_sample_ids": [],
   "release_id": null,
   "judge": {
     "model_key": "gpt-6-luna-openai",
-    "connection": "openai-direct"
+    "connection": "openai-direct",
+    "instrument": "aa1048-two-step-v7",
+    "advisory": true
   },
   "metrics": [
     {
-      "name": "item_fail_rate",
+      "name": "fail_claims_per_item",
       "kind": "computed",
       "direction": "lower",
       "primary": true
+    },
+    {
+      "name": "item_fail_rate",
+      "kind": "computed",
+      "direction": "lower"
     },
     {
       "name": "writer_requests_per_object",
@@ -33,12 +47,26 @@
       }
     },
     {
-      "name": "cost_per_object_usd",
+      "name": "writer_cost_per_object_usd",
       "kind": "computed",
       "direction": "lower",
       "target": {
         "op": "<=",
         "value": 0.1
+      }
+    },
+    {
+      "name": "cost_per_object_usd",
+      "kind": "computed",
+      "direction": "lower"
+    },
+    {
+      "name": "hard_stops",
+      "kind": "computed",
+      "direction": "lower",
+      "target": {
+        "op": "<=",
+        "value": 0
       }
     },
     {
@@ -53,8 +81,8 @@
   ],
   "decision": {
     "rule": "non_inferior",
-    "metric": "item_fail_rate",
-    "margin_abs": 0.1,
+    "metric": "fail_claims_per_item",
+    "margin_abs": 4.0,
     "alpha": 0.05,
     "noise_se_k": 2.0
   },
@@ -65,9 +93,9 @@
   },
   "power": {
     "min_power": 0.8,
-    "writer_sd": null,
+    "writer_sd": 4.6,
     "claims_per_item": 59
   },
   "cap_usd": 5.0,
-  "note": "T2 proof (W5 item 4): 20 GATE tenant tours (>= 2 elephant, >= 3 thin-source), v2 effort high vs medium; control = the stored v1 re-judged at $0. Enforce findings after repair must be 0 and <= 25% of the v1 control (external until the claim instrument enforces)."
+  "note": "T2 proof (root ADR 0020 W5 item 4), re-drafted in S285 on the claim instrument judge. B = the current t2 writer (release_id null; a candidate release of the effort change goes in release_id when it exists), A = the stored control of each item. Sample: every non-trap t2 GATE item of aa729@1.5.0 (5). SHORT: the minimum in force (cis.quality.writer_proof_t2_min_items) is 20 and the S271 design asks for 20 tenant tours (>= 2 elephant, >= 3 thin-source): 15 more t2 samples whose ids fall on GATE must be labelled into a new golden version before this can be registered, and at n 5 the power is 0.50. Judge: the pinned AA-1048 claim instrument v7 (R1 fire, then the two-step v7c / v7j, gpt-6-luna-openai@openai-direct, 3 votes), ADVISORY (v7 was no_go by one stored violation, precision 0.73, recall 0.88), the same judge and golden version as the registered null run w5-null-t9-blog-v7-g150, which came out non_inferior in S284 (mean diff -0.25 flagged claims per blog, upper bound 0.43 against margin 4.0, n 12): runner.null_gate opens this proof only through it. Primary metric fail_claims_per_item, rule non_inferior, margin 4.0 flagged claims per tour (the null run's scale), writer_sd 4.6 (sqrt(2 x 10.3 x 59 / 60) rounded up; floor 3.2): power 0.95 at n 20, 0.50 at n 5. Targets on arm B: writer requests <= 2 and writer cost <= 0.1 USD per tour (the writer path's ledger rows: the t2 rewrite and its T3 QA gate; every row but the eval judge's), no hard stop, enforce findings after repair 0 and <= 25% of the v1 control (external until the claim instrument enforces). Cap 5 USD (D12); the run command uses 4.8."
 }

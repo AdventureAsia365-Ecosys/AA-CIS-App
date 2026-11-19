@@ -151,12 +151,13 @@ def targets(doc: dict, computed: dict[str, Optional[float]]) -> list[dict]:
 def computed_metrics(b_rows: list[dict], per_object: Optional[dict] = None) -> dict[str, Optional[float]]:
     """The arm-B values of the computed metrics: rates over the candidate rows with a verdict, and the cost /
     requests medians per object from cost_report.attribute (`per_object`: {result_id: {cost_usd, requests,
-    writer_requests}})."""
+    writer_requests, writer_cost_usd}}; S285: writer_cost_per_object_usd is the writer path's share, without the
+    eval judge's rows)."""
     cand = [r for r in b_rows if r.get("arm") == "candidate" and r.get("mode") == "regenerate"
             and r.get("verdict") in ("pass", "fail")]
     out: dict[str, Optional[float]] = {k: None for k in (
         "item_fail_rate", "fail_claims_per_item", "fail_classes_per_item", "first_pass_yield", "hard_stops",
-        "cost_per_object_usd", "requests_per_object", "writer_requests_per_object")}
+        "cost_per_object_usd", "requests_per_object", "writer_requests_per_object", "writer_cost_per_object_usd")}
     if cand:
         out["item_fail_rate"] = _r(mean(metric_of(r, "item_fail_rate") for r in cand))
         out["first_pass_yield"] = _r(1 - out["item_fail_rate"])
@@ -169,6 +170,8 @@ def computed_metrics(b_rows: list[dict], per_object: Optional[dict] = None) -> d
             out["cost_per_object_usd"] = _r(median(o["cost_usd"] for o in objs))
             out["requests_per_object"] = float(median(o["requests"] for o in objs))
             out["writer_requests_per_object"] = float(median(o["writer_requests"] for o in objs))
+            wc = [o["writer_cost_usd"] for o in objs if o.get("writer_cost_usd") is not None]
+            out["writer_cost_per_object_usd"] = _r(median(wc)) if wc else None
     return out
 
 

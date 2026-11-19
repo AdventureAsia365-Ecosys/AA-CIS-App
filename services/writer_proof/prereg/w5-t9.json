@@ -6,22 +6,43 @@
   "registered_by": null,
   "registered_on": null,
   "golden_set": {
-    "name": "aa729"
+    "name": "aa729",
+    "version": "1.5.0"
   },
   "eval_split": "gate",
-  "sample_ids": [],
+  "sample_ids": [
+    "t9b-006",
+    "t9b-008",
+    "t9b-013",
+    "t9b-014",
+    "t9b-019",
+    "t9b-020",
+    "t9b-024",
+    "t9b-025",
+    "t9b-028",
+    "t9b-029",
+    "t9b-033",
+    "t9b-034"
+  ],
   "noise_sample_ids": [],
   "release_id": null,
   "judge": {
     "model_key": "gpt-6-luna-openai",
-    "connection": "openai-direct"
+    "connection": "openai-direct",
+    "instrument": "aa1048-two-step-v7",
+    "advisory": true
   },
   "metrics": [
     {
-      "name": "item_fail_rate",
+      "name": "fail_claims_per_item",
       "kind": "computed",
       "direction": "lower",
       "primary": true
+    },
+    {
+      "name": "item_fail_rate",
+      "kind": "computed",
+      "direction": "lower"
     },
     {
       "name": "first_pass_yield",
@@ -33,7 +54,7 @@
       }
     },
     {
-      "name": "requests_per_object",
+      "name": "writer_requests_per_object",
       "kind": "computed",
       "direction": "lower",
       "target": {
@@ -42,12 +63,31 @@
       }
     },
     {
-      "name": "cost_per_object_usd",
+      "name": "writer_cost_per_object_usd",
       "kind": "computed",
       "direction": "lower",
       "target": {
         "op": "<=",
         "value": 0.25
+      }
+    },
+    {
+      "name": "cost_per_object_usd",
+      "kind": "computed",
+      "direction": "lower"
+    },
+    {
+      "name": "requests_per_object",
+      "kind": "computed",
+      "direction": "lower"
+    },
+    {
+      "name": "hard_stops",
+      "kind": "computed",
+      "direction": "lower",
+      "target": {
+        "op": "<=",
+        "value": 0
       }
     },
     {
@@ -70,9 +110,9 @@
     }
   ],
   "decision": {
-    "rule": "improve",
-    "metric": "item_fail_rate",
-    "margin_abs": 0.1,
+    "rule": "non_inferior",
+    "metric": "fail_claims_per_item",
+    "margin_abs": 4.0,
     "alpha": 0.05,
     "noise_se_k": 2.0
   },
@@ -83,10 +123,9 @@
   },
   "power": {
     "min_power": 0.8,
-    "writer_sd": null,
-    "claims_per_item": 60,
-    "effect_abs": 0.3
+    "writer_sd": 4.6,
+    "claims_per_item": 60
   },
   "cap_usd": 15.0,
-  "note": "T9 writer contract proof (W5 item 2): 12-15 GATE blogs, B = the current writers after W3 vs A = the stored finals, A' repeat arm on 6-8 noise items. First-pass yield target 50% (floor 30%). The improve rule is powered at a true drop of 0.3 in item_fail_rate (power.effect_abs, a proposal: it must exceed the 0.1 margin); 12 items may not reach 0.8 power, the power check says how many do. R2's T9 writer is the first draft only: requests and cost per object here are first-draft numbers; the full-loop numbers come from the W3 graph and are read from the ledger of its live pieces."
+  "note": "T9 writer contract proof (root ADR 0020 W5 item 2), re-drafted in S285 on the claim instrument judge. B = the current t9_blog writer (after W3, release_id null), A = the stored control of each item (the plan names the control run: it must be the frozen golden text or an eval run written before W3, never the S284 reverify, or B equals A). Sample: every non-trap t9_blog GATE item of aa729@1.5.0 (12 of 12, the same 12 the null run drew); no A' arm: the null run already measured the run-to-run spread on these 12 items with this writer and judge (sd of d about 1.4 flagged claims), and an A' arm (about 1.5 to 2 USD) could not move the allowance (2 x SE_noise about 1.2 < margin 4.0). Judge: the pinned AA-1048 claim instrument v7 (R1 fire, then the two-step v7c / v7j, gpt-6-luna-openai@openai-direct, 3 votes), ADVISORY (v7 was no_go by one stored violation, precision 0.73, recall 0.88), the same judge and golden version as the registered null run w5-null-t9-blog-v7-g150, which came out non_inferior in S284 (mean diff -0.25 flagged claims per blog, upper bound 0.43 against margin 4.0, n 12): runner.null_gate opens this proof only through it. Primary metric: unsupported claims flagged per blog (fail_claims_per_item): item_fail_rate saturates under a claim judge (0.92 on the null run), so it is reported only. Rule non_inferior, margin 4.0, writer_sd 4.6, claims_per_item 60: the null run's accepted scale (power 0.81 at n 12). An improve rule cannot be powered here: the null run flagged about 2.75 claims per blog on arm A, and the power model needs a true improvement of 4.0 claims at margin 1.0 to reach 0.8 at n 12. Targets on arm B: first_pass_yield >= 0.3 (a blog with no flagged claim; the null run's first drafts gave 0.083 with this judge), writer requests <= 5 and writer cost <= 0.25 USD per blog (the writer path's ledger rows, every row but the eval judge's: the instrument adds about 40 judge calls per blog, reported in requests_per_object and cost_per_object_usd), no hard stop, 0 contract violations and 0 unsupported trip promises in a human read of 10 (external). R2's T9 writer is the first draft only: the full-loop requests and cost come from the W3 graph's ledger. Cap 15 USD (D12); the run command uses 14.4 so the last writer item stays within 15."
 }
