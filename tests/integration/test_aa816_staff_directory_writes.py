@@ -248,9 +248,9 @@ async def test_sync_retires_a_content_creator_grant_against_postgres(env):
                                res.staff_id) == 0
     assert ("remove", email, "booking-content_creator") in cognito.calls
     assert not any(c[0] == "add" and c[2].startswith("booking-") for c in cognito.calls)
-    audit = await pool.fetch("SELECT action, details FROM acp_shared.audit_log WHERE resource_type = 'admin_user' "
-                             "AND resource_id = $1 ORDER BY created_at", res.staff_id)
-    retired = [json.loads(a["details"]) for a in audit if a["action"] == "staff.roles_changed"]
+    audit = await pool.fetch("SELECT details FROM acp_shared.audit_log WHERE resource_type = 'admin_user' "
+                             "AND resource_id = $1 AND action = 'staff.roles_changed'", res.staff_id)
+    retired = [json.loads(a["details"]) for a in audit]
     assert retired == [{"booking_role": {"before": "content_creator", "after": None},
                         "retired_booking_role": "content_creator"}]
 

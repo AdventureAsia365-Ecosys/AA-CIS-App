@@ -92,6 +92,13 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from api.core import e2e_staff, identity_config, staff_identity, view_as
 from api.services import staff_invite
+# The Staff page's presets and the retired Booking roles (AA-1031, AA-1091, AA-1150), re-exported for the callers.
+from api.services.staff_presets import (  # noqa: F401
+    CONTENT_OPS_CIS_ROLE, PRESET_BOOKING_ROLE, PRESET_BUSINESS_OWNER, PRESET_CIS_ROLE, PRESET_CONTENT_OPS,
+    PRESET_CRM_ROLE, PRESET_PLATFORM_OWNER, PRESET_PRICING_TEAM, PRESETS, PRICING_BOOKING_ROLE, PRICING_CIS_ROLE,
+    PRICING_FILL_CIS_ROLES, PRICING_KEEP_BOOKING_ROLES, PRICING_KEEP_CIS_ROLES, RETIRED_BOOKING_ROLES, preset_fields,
+    pricing_team,
+)
 from services.acp_shared.audit_log import write_audit_log
 
 logger = structlog.get_logger()
@@ -118,10 +125,6 @@ RETIRED_CIS_GROUPS: tuple[str, ...] = ("cis-reviewer",)
 # AA-1150 (lean staff roles step 1, S285 T13): content_creator is no longer assignable (the CHECK still allows it until
 # no grant holds it); "contracting" is shown as "Product & operations".
 BOOKING_ROLES: tuple[str, ...] = ("admin", "sales", "contracting", "finance")
-# AA-1150: Booking roles the directory no longer grants. A grant row that still holds one is retired by Sync (the row
-# is deleted in the same audited transaction) and its WORKFORCE group is removed like any other unwanted group (the
-# pool keeps the group until AA-CIS-Infra drops it; a missing group counts as removed).
-RETIRED_BOOKING_ROLES: tuple[str, ...] = ("content_creator",)
 APP_BOOKING = "booking"
 # AA-1031 (migration 330, staff_crm_grant_role_chk): the AA-Partner staff roles, a SET per person, and their WORKFORCE
 # groups (root ADR 0006b decision 6). Spelled out: the group names carry a hyphen the role codes do not.
@@ -131,33 +134,6 @@ CRM_ROLE_GROUPS = MappingProxyType({
     "support": "crm-support",                 # Support (/crm/staff/v1; also needs an owner grant in the CRM)
 })
 CRM_ROLES: tuple[str, ...] = tuple(CRM_ROLE_GROUPS)
-# AA-1031: the "Platform owner" preset of the Staff page: every admin role in CIS, Booking and the CRM, in one save.
-PRESET_PLATFORM_OWNER = "platform_owner"
-PRESET_CIS_ROLE = "admin"
-PRESET_BOOKING_ROLE = "admin"
-PRESET_CRM_ROLE = "platform_admin"
-# AA-1091 (S278): the "Pricing team" preset: what the customer-service team needs to enter prices in CIS (Reference
-# prices: reference_price.write, held by admin / content_lead / customer_success) and in Booking (supplier rates,
-# pricing rules, trip plan components and departures: Booking pricing.write / supply.write / trip_plan.write, held by
-# Booking admin / contracting). It is additive only: a role that already has those rights is kept, an empty slot (CIS
-# viewer, no Booking grant) is filled, and any other role (CIS finance, content, tenant_qa, support, ai_ops; Booking
-# sales, finance, content_creator) is NEVER replaced: one person holds one role per app, so the preset refuses with 409
-# preset_would_replace and the owner sets the roles by hand. CRM roles are untouched.
-PRESET_PRICING_TEAM = "pricing_team"
-# AA-1150 (lean staff roles step 1, tech lead S285): the three people-role presets of the Staff page. "Administrator"
-# is the platform_owner preset above (CIS admin + Booking admin + CRM Agency admin). "Business owner" = CIS admin +
-# Booking admin; CRM roles are left as they are (no read-only CRM role exists yet). "Content + Product & operations"
-# = CIS content_lead, NO Booking role and no CRM role (decision Q1: no interim Booking grant until custom roles). Every
-# preset leaves the owner flag (is_owner) alone, like the others.
-PRESET_BUSINESS_OWNER = "business_owner"
-PRESET_CONTENT_OPS = "content_ops"
-CONTENT_OPS_CIS_ROLE = "content_lead"
-PRESETS: tuple[str, ...] = (PRESET_PLATFORM_OWNER, PRESET_PRICING_TEAM, PRESET_BUSINESS_OWNER, PRESET_CONTENT_OPS)
-PRICING_CIS_ROLE = "customer_success"
-PRICING_KEEP_CIS_ROLES = frozenset({"admin", "content_lead", "customer_success"})
-PRICING_FILL_CIS_ROLES = frozenset({"viewer"})          # the read-only role: nothing is lost by raising it
-PRICING_BOOKING_ROLE = "contracting"
-PRICING_KEEP_BOOKING_ROLES = frozenset({"admin", "contracting"})
 
 # TEMPORARY (AA-816, S243 decision "option B"; root ADR 0006a): the ONE non-company address the directory accepts,
 # the SES inbound test mailbox the Cognito email-code E2E test reads its sign-in code from. Exact match only, CIS
@@ -813,18 +789,9 @@ def pricing_team_plan(old_role: Optional[str], old_booking: Optional[str], booki
     """AA-1091: ``(new_role, new_booking, booking_role)`` of the "Pricing team" preset for these current roles
     (``new_role`` None = CIS role kept, ``booking_role`` passed through = Booking grant kept). Additive only: raises
     StaffDirectoryError(409, preset_would_replace) naming each role it would have to replace."""
-    new_role, new_booking = None, None
-    lost: list[str] = []
-    if old_role not in PRICING_KEEP_CIS_ROLES:
-        if old_role is None or old_role in PRICING_FILL_CIS_ROLES:
-            new_role = PRICING_CIS_ROLE
-        else:
-            lost.append(f"CIS {old_role}")
-    if old_booking not in PRICING_KEEP_BOOKING_ROLES:
-        if old_booking is None or old_booking in RETIRED_BOOKING_ROLES:   # AA-1150: a retired grant gives nothing
-            booking_role = new_booking = PRICING_BOOKING_ROLE
-        else:
-            lost.append(f"Booking {old_booking}")
+    new_role, new_booking, lost = pricing_team(old_role, old_booking)
+    if new_booking is not None:
+        booking_role = new_booking
     if lost:
         raise StaffDirectoryError(
             409, "The Pricing team preset only adds roles and would replace " + " and ".join(lost)
@@ -838,29 +805,21 @@ async def change_roles(pool: Any, cognito: CognitoDirectory, *, actor_id: str, s
     """Set the CIS role, the Booking grant (``booking_role=None`` removes it) and/or the CRM roles (AA-1031: the
     whole set; ``[]`` removes every one). Cognito: add the new groups, then remove the old ones.
 
-    ``preset="platform_owner"`` (AA-1031, the Staff page's "Platform owner" preset) sets CIS ``admin`` and Booking
-    ``admin`` and adds CRM ``platform_admin`` to the roles already held, in one transaction and one audit row
-    (``details.preset``). ``preset="pricing_team"`` (AA-1091) gives CIS ``customer_success`` and Booking
-    ``contracting`` where the slot is empty (CIS viewer, no Booking grant), keeps a role that already has those
-    rights, refuses (409 ``preset_would_replace``) when it would replace any other role, and leaves the CRM roles as
-    they are. AA-1150, the lean people-role presets: ``preset="business_owner"`` sets CIS ``admin`` and Booking
-    ``admin`` and leaves the CRM roles as they are; ``preset="content_ops"`` ("Content + Product & operations") sets
-    CIS ``content_lead`` and removes the Booking grant and every CRM role (it replaces, so the self-demote and
-    last-owner guards apply). A preset cannot be combined with the other fields. The owner flag is never set here."""
+    A ``preset`` (:mod:`api.services.staff_presets`: platform_owner = "Administrator", business_owner, content_ops,
+    pricing_team) is applied in the same transaction with one audit row (``details.preset``); it cannot be combined
+    with the other fields, and the owner flag is never set here."""
     if preset is not None:
         if preset not in PRESETS:
             raise StaffDirectoryError(400, f"Unknown preset; the presets are {', '.join(PRESETS)}", "preset")
         if role is not _UNSET or booking_role is not _UNSET or crm_roles is not _UNSET:
             raise StaffDirectoryError(400, "A preset sets every role itself; send it alone", "preset_conflict")
-        if preset in (PRESET_PLATFORM_OWNER, PRESET_BUSINESS_OWNER):
-            role, booking_role = PRESET_CIS_ROLE, PRESET_BOOKING_ROLE
-        elif preset == PRESET_CONTENT_OPS:
-            role, booking_role, crm_roles = CONTENT_OPS_CIS_ROLE, None, []
+        fields = preset_fields(preset)   # AA-1150: a field the preset leaves out is kept
+        role, booking_role, crm_roles = (fields.get(k, _UNSET) for k in ("role", "booking_role", "crm_roles"))
     elif role is _UNSET and booking_role is _UNSET and crm_roles is _UNSET:
         raise StaffDirectoryError(400, "Nothing to change: give a CIS role, a Booking role and/or CRM roles", "empty")
     new_role = require_cis_role(role) if role is not _UNSET else None
     new_booking = require_booking_role(booking_role) if booking_role is not _UNSET else None
-    crm_given = preset == PRESET_PLATFORM_OWNER or crm_roles is not _UNSET   # content_ops set crm_roles = [] above
+    crm_given = preset == PRESET_PLATFORM_OWNER or crm_roles is not _UNSET
     asked_crm = require_crm_roles(crm_roles) if crm_roles is not _UNSET else ()
 
     async with pool.acquire() as conn:

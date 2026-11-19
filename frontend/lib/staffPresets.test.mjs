@@ -48,8 +48,11 @@ test("content_creator is retired: never offered, still named on an old grant", (
 });
 
 test("the backend lists the same roles and presets", () => {
-  const backend = readFileSync(join(FRONTEND, "..", "api", "services", "staff_directory.py"), "utf8");
-  assert.match(backend, /BOOKING_ROLES: tuple\[str, \.\.\.\] = \("admin", "sales", "contracting", "finance"\)/);
-  assert.match(backend, /RETIRED_BOOKING_ROLES: tuple\[str, \.\.\.\] = \("content_creator",\)/);
-  for (const p of PEOPLE_PRESETS) assert.ok(backend.includes(`"${p}"`), p);
+  const services = join(FRONTEND, "..", "api", "services");
+  const directory = readFileSync(join(services, "staff_directory.py"), "utf8");
+  const presets = readFileSync(join(services, "staff_presets.py"), "utf8");
+  assert.match(directory, /BOOKING_ROLES: tuple\[str, \.\.\.\] = \("admin", "sales", "contracting", "finance"\)/);
+  assert.match(presets, /RETIRED_BOOKING_ROLES: tuple\[str, \.\.\.\] = \("content_creator",\)/);
+  for (const p of PEOPLE_PRESETS) assert.ok(presets.includes(`"${p}"`), p);
+  assert.match(presets, /CONTENT_OPS_CIS_ROLE = "content_lead"/);
 });
