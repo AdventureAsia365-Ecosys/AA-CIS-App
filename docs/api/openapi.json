@@ -7722,6 +7722,119 @@
         "title": "PlanRetireIn",
         "type": "object"
       },
+      "PlannerAddresses": {
+        "properties": {
+          "domains": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Domains",
+            "type": "array"
+          },
+          "launcher": {
+            "title": "Launcher",
+            "type": "boolean"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "domains",
+          "launcher"
+        ],
+        "title": "PlannerAddresses",
+        "type": "object"
+      },
+      "PlannerDomain": {
+        "properties": {
+          "domain": {
+            "title": "Domain",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "validating",
+              "attaching",
+              "active",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "domain",
+          "status"
+        ],
+        "title": "PlannerDomain",
+        "type": "object"
+      },
+      "PlannerLeadRoute": {
+        "properties": {
+          "effective_channel": {
+            "enum": [
+              "crm",
+              "webhook",
+              "email",
+              "none"
+            ],
+            "title": "Effective Channel",
+            "type": "string"
+          },
+          "lead_channel": {
+            "enum": [
+              "none",
+              "webhook",
+              "email"
+            ],
+            "title": "Lead Channel",
+            "type": "string"
+          },
+          "lead_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Email"
+          },
+          "lead_webhook_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Webhook Url"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "lead_channel",
+          "effective_channel"
+        ],
+        "title": "PlannerLeadRoute",
+        "type": "object"
+      },
       "PlannerSite": {
         "description": "AA-1115: the agency's hosted Trip planner (an active tripplanner add-on whose plan includes tp.hosted).",
         "properties": {
@@ -11113,6 +11226,76 @@
         "title": "StudioAddOnState",
         "type": "object"
       },
+      "StudioAppearanceIn": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "enum": [
+              "en",
+              "vi"
+            ],
+            "title": "Locale",
+            "type": "string"
+          },
+          "theme": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "maxProperties": 6,
+            "title": "Theme",
+            "type": "object"
+          }
+        },
+        "required": [
+          "theme",
+          "locale"
+        ],
+        "title": "StudioAppearanceIn",
+        "type": "object"
+      },
+      "StudioLeadRouteIn": {
+        "additionalProperties": false,
+        "properties": {
+          "lead_channel": {
+            "enum": [
+              "none",
+              "webhook",
+              "email"
+            ],
+            "title": "Lead Channel",
+            "type": "string"
+          },
+          "lead_email": {
+            "anyOf": [
+              {
+                "maxLength": 354,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Email"
+          },
+          "lead_webhook_url": {
+            "anyOf": [
+              {
+                "maxLength": 600,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Webhook Url"
+          }
+        },
+        "required": [
+          "lead_channel"
+        ],
+        "title": "StudioLeadRouteIn",
+        "type": "object"
+      },
       "SubscriptionTermsIn": {
         "properties": {
           "agreed_currency": {
@@ -12566,6 +12749,79 @@
           "field"
         ],
         "title": "TourSentenceSuggestBody",
+        "type": "object"
+      },
+      "TripPlannerModule": {
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "ai_sessions_monthly": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ai Sessions Monthly"
+          },
+          "crm_core": {
+            "title": "Crm Core",
+            "type": "boolean"
+          },
+          "domains": {
+            "items": {
+              "$ref": "#/components/schemas/PlannerDomain"
+            },
+            "title": "Domains",
+            "type": "array"
+          },
+          "in_service": {
+            "title": "In Service",
+            "type": "boolean"
+          },
+          "lead_route": {
+            "$ref": "#/components/schemas/PlannerLeadRoute"
+          },
+          "locale": {
+            "enum": [
+              "en",
+              "vi"
+            ],
+            "title": "Locale",
+            "type": "string"
+          },
+          "planner": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlannerAddresses"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "theme": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Theme",
+            "type": "object"
+          }
+        },
+        "required": [
+          "active",
+          "in_service",
+          "domains",
+          "crm_core",
+          "lead_route",
+          "theme",
+          "locale"
+        ],
+        "title": "TripPlannerModule",
         "type": "object"
       },
       "TripReallocationConfirmRequest": {
@@ -61051,6 +61307,135 @@
         ]
       }
     },
+    "/tenant/v1/tenants/{tenant_id}/tripplanner": {
+      "get": {
+        "description": "The agency's Trip planner as its module page shows it (addresses, domains, lead route, theme, locale, quota).",
+        "operationId": "get_tenant_tripplanner_tenant_v1_tenants__tenant_id__tripplanner_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TripPlannerModule"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Tenant Tripplanner",
+        "tags": [
+          "tenant-addons"
+        ]
+      }
+    },
+    "/tenant/v1/tenants/{tenant_id}/tripplanner/appearance": {
+      "put": {
+        "description": "Set the planner's theme (brand colours) and language (the agency owner, relayed by the CRM).",
+        "operationId": "put_tenant_tripplanner_appearance_tenant_v1_tenants__tenant_id__tripplanner_appearance_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TripPlannerModule"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Tenant Tripplanner Appearance",
+        "tags": [
+          "tenant-addons"
+        ]
+      }
+    },
+    "/tenant/v1/tenants/{tenant_id}/tripplanner/lead-route": {
+      "put": {
+        "description": "Set where the planner's leads go when the agency has no CRM (the agency owner, relayed by the CRM).",
+        "operationId": "put_tenant_tripplanner_lead_route_tenant_v1_tenants__tenant_id__tripplanner_lead_route_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "title": "Tenant Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TripPlannerModule"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Tenant Tripplanner Lead Route",
+        "tags": [
+          "tenant-addons"
+        ]
+      }
+    },
     "/v1/account/activity": {
       "get": {
         "operationId": "list_activity_v1_account_activity_get",
@@ -61468,6 +61853,124 @@
           }
         ],
         "summary": "Turn automatic drafts of posts about a discontinued tour on or off (Content studio owner)",
+        "tags": [
+          "tenant-account"
+        ]
+      }
+    },
+    "/v1/account/tripplanner": {
+      "get": {
+        "operationId": "get_account_tripplanner_v1_account_tripplanner_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TripPlannerModule"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "The agency's Trip planner: addresses, domains, lead route, look, quota",
+        "tags": [
+          "tenant-account"
+        ]
+      }
+    },
+    "/v1/account/tripplanner/appearance": {
+      "put": {
+        "operationId": "put_account_tripplanner_appearance_v1_account_tripplanner_appearance_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudioAppearanceIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TripPlannerModule"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "The planner's brand colours and language (Content studio owner)",
+        "tags": [
+          "tenant-account"
+        ]
+      }
+    },
+    "/v1/account/tripplanner/lead-route": {
+      "put": {
+        "operationId": "put_account_tripplanner_lead_route_v1_account_tripplanner_lead_route_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudioLeadRouteIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TripPlannerModule"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Where the planner's leads go while the agency has no CRM (Content studio owner)",
         "tags": [
           "tenant-account"
         ]

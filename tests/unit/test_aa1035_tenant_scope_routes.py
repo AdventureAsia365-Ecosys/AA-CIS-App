@@ -33,6 +33,11 @@ TENANT_TOKEN_ROUTES: frozenset[tuple[str, str]] = frozenset({
     # its CRM owner's request; the CRM checks the owner role (api/routers/tenant_addons.py).
     ("GET", "/tenant/v1/tenants/{tenant_id}/add-ons"),
     ("POST", "/tenant/v1/tenants/{tenant_id}/add-on-requests"),
+    # AA-1139 (tenant.addons.v1 1.1): the agency app's TripPlanner module, same client, scope and guard
+    # (require_addons); the CRM checks the member's role (owner writes, owner and agent read).
+    ("GET", "/tenant/v1/tenants/{tenant_id}/tripplanner"),
+    ("PUT", "/tenant/v1/tenants/{tenant_id}/tripplanner/lead-route"),
+    ("PUT", "/tenant/v1/tenants/{tenant_id}/tripplanner/appearance"),
 })
 
 

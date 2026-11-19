@@ -173,6 +173,9 @@ class AdminTenantAuditAction:
     # (CIS 390 columns; services/tenant_account/tripplanner_site.py). details: before / after of the channel and its
     # targets (the agency's business URL / address, never a traveller's).
     TRIPPLANNER_LEAD_ROUTE_CHANGED = "tenant.tripplanner_lead_route_changed"
+    # AA-1139 — the agency app's TripPlanner module (the CRM owner, actor crm-member:<id>): the planner's theme and
+    # locale (services/tenant_account/tripplanner_site.py set_appearance). details: before / after (colours, a locale).
+    TRIPPLANNER_APPEARANCE_CHANGED = "tenant.tripplanner_appearance_changed"
     # AA-1090 R8 — Tenant 360 › Subscription: a custom host of the tenant's TripPlanner site added / removed / retried
     # (CIS 428; services/tenant_account/tripplanner_domain.py). details: domain id, the host, the job id, the status
     # before a removal or the failure code before a retry (an agency's business host, never personal data).

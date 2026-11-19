@@ -3310,8 +3310,22 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   The PUT refuses (422 with the field) a webhook URL that is not https, not the 390 CHECK's shape, or names a host that
   cannot be public: an IP literal outside global unicast (IPv4 / IPv6, mapped / NAT64 / 6to4 unwrapped, legacy IPv4
   spellings) or an internal name (one label, `localhost`, `*.local`, `*.internal` ...). No DNS lookup in CIS:
-  TripPlanner checks the resolved addresses again before storing a lead and before each POST. Still no editor for the
-  theme (set by a reviewed `run-script` on Dev until it ships).
+  TripPlanner checks the resolved addresses again before storing a lead and before each POST. Still no staff editor
+  for the theme (set by a reviewed `run-script` on Dev, or by the agency owner below).
+  **The agency app's module (AA-1139, contract tenant.addons.v1 1.1; `docs/implementation-notes/AA-1139.md`):** the
+  CRM relays its agency owner's edits over M2M (`api/routers/tenant_addons.py`, scope `cis.tenant/addons`): `GET
+  /tenant/v1/tenants/{id}/tripplanner` (planner addresses, every custom domain with its state but `removing`, the
+  stored route and the channel in force, theme, locale, the `tp.ai_sessions` quota), `PUT .../tripplanner/lead-route`
+  and `PUT .../tripplanner/appearance` (theme = the kit brand tokens of `brandTheme.ts` only, `#rrggbb`, stored lower
+  case; locale en | vi). The Tenant 360 editor's checks apply, plus an e-mail domain that is plainly internal is
+  refused (`lead_email_not_public`, for staff too); a write needs an active Trip planner (409 `tripplanner_not_active`)
+  and is audited as `crm-member:<id>` (`tenant.tripplanner_lead_route_changed` / `_appearance_changed`). Leads, usage
+  and the webhook key are TripPlanner's (lead.submitted.v1 1.1); CIS reads none of them for this. An agency WITHOUT
+  the CRM add-on has no CRM agency, so its Content studio owner edits the same route and look from the studio with its
+  own tenant token (`api/routers/v1_account_tripplanner.py`: `GET /v1/account/tripplanner`, `PUT .../lead-route`,
+  `PUT .../appearance`; every studio role reads, only the owner writes through the tenant role middleware, audited as
+  `membership:<id>`; no view-as access). That is where the e-mail / webhook route takes effect (`effective_channel`
+  is `crm` while `crm.core` is live).
   **R8 own domains (AA-1090, CIS 428 + 429, contract tenant.entitlements.v1 1.8; `docs/implementation-notes/AA-1090.md`):**
   `shared.tenant_tripplanner_domain` (one row per custom host of a tenant site; status pending / validating / attaching
   / active / removing / failed; no RLS, rule a allowlist) is edited on Tenant 360 › Subscription › TripPlanner own
