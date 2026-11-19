@@ -1,3 +1,4 @@
+import uuid as _uuid_mod
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -52,6 +53,16 @@ _DURATION_DAYS_SQL = (
     r"COALESCE(substring(lower(COALESCE(rt.duration, '')) FROM '(\d{1,4})\s*-?\s*days?')::int,"
     r" CASE WHEN lower(COALESCE(rt.duration, '')) ~ '(hour|half[ -]day|day trip|same day|full day)' THEN 1 END)"
 )
+
+
+def _require_uuid(value: str, detail: str) -> str:
+    """404 ``detail`` for a path id that is not a UUID (S285 live check: GET /v1/tours/mine reached the
+    ``/{tour_id}`` catch-all and the ``$1::uuid`` cast answered 500). Returns the value unchanged."""
+    try:
+        _uuid_mod.UUID(str(value))
+    except ValueError:
+        raise HTTPException(status_code=404, detail=detail) from None
+    return value
 
 
 def get_tenant(credentials: HTTPAuthorizationCredentials = Depends(security), request: Request = None):
@@ -609,6 +620,7 @@ async def trigger_rewrite(
     Creates tenant_tour_versions record (status=pending) and calls pipeline.
     """
     tenant_id = tenant["sub"]
+    _require_uuid(published_tour_id, "Tour not found")
     pool = request.app.state.pool
     # AA-1126 L1: no new rewrite (and no quota charge) while the plan's AI allowance is used up: 402
     await refuse_if_allowance_used(pool, tenant_id, action="rewrite")
@@ -817,6 +829,7 @@ async def retry_rewrite(version_id: str, request: Request, tenant=Depends(get_te
     from shared.jobs import queue as job_queue
 
     tenant_id = tenant["sub"]
+    _require_uuid(version_id, "Version not found")
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         row = await conn.fetchrow("""
@@ -935,6 +948,8 @@ async def get_tour_full(
     else:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
+    _require_uuid(tour_id, "Tour not found")
+
     if is_admin:
         # AA-859 MAIN exception (plan D2): the staff review path is outside the tenant boundary.
         pool = request.app.state.pool
@@ -1008,6 +1023,7 @@ async def get_tour(
     tenant=Depends(get_tenant),
 ):
     tenant_id = tenant["sub"]
+    _require_uuid(tour_id, "Tour not found")
 
     # AA-582 fix: scope through tenant_tour_versions (v1_marketplace.py pattern) —
     # published_tours.tenant_id is always the aa_internal sentinel, never per-tenant.
@@ -1067,6 +1083,7 @@ async def get_version(
 
     AA-990: also `master_updated_at` and `master_newer` (see GET /v1/tours/my-versions)."""
     tenant_id = tenant["sub"]
+    _require_uuid(version_id, "Version not found")
 
     history = []
     async with acquire_scoped_conn(
@@ -1125,6 +1142,7 @@ async def export_version_docx(
 ):
     import json as _json
     tenant_id = tenant["sub"]
+    _require_uuid(version_id, "Version not found")
     pool = request.app.state.pool
 
     # AA-859 D5b: on the tenant pool behind T2_VERSION_DETAIL_READS_FLAG (229 on tenant_tour_versions, 239
@@ -1334,6 +1352,7 @@ async def update_version(
 ):
     """Approve, reject, or inline-edit a tenant tour version (AA-859 W6: tenant pool behind its flag)."""
     tenant_id = tenant["sub"]
+    _require_uuid(version_id, "Version not found")
 
     if body.action not in ("approve", "reject", "edit"):
         raise HTTPException(status_code=400, detail="action must be approve|reject|edit")

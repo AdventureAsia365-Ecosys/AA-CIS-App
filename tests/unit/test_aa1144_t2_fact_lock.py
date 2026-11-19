@@ -39,10 +39,13 @@ PARENT = {
 }
 BASE = ["Lumora Valley Trek", "4 days 3 nights", "USD 450 per person", "Accommodation, guide"]
 EXCLUSIONS = "International flights\nVisa"
+INCLUSIONS = "Accommodation, guide"
 
 
-def _check(edited, parent=PARENT, base=BASE, master_itinerary=""):
-    new, locked = lock.check_edit(parent, edited, base + [EXCLUSIONS], master_itinerary, EXCLUSIONS)
+def _check(edited, parent=PARENT, base=BASE, master_itinerary="", master_texts=None, duration="4 days 3 nights",
+           inclusions=INCLUSIONS, exclusions=EXCLUSIONS):
+    new, locked = lock.check_edit(parent, edited, base + [exclusions], master_itinerary, exclusions,
+                                  master_texts=master_texts, source_inclusions=inclusions, duration=duration)
     return new, [(x.field, x.fact, x.value) for x in locked]
 
 
