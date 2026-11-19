@@ -164,9 +164,9 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
     # (flag T9_FAQ_LLM_FILTER, default off). A classification nobody scores → `validate` (ADR 0008), on the
     # Haiku the S247 trial measured; no model fallback (on failure the code keeps the deterministic list).
     "t9_faq_filter":      StageConfig("t9_faq_filter", "validate", "claude", "haiku", "acc3"),
-    # AA-779 (S247, migration 266, ADR 0011): the optional check that each final blog FAQ answer answers its
-    # question (same flag). Drop-only, never a hold → `validate` on the same Haiku; no model fallback (on failure
-    # the FAQ is kept unchanged).
+    # AA-779 (S247, migration 267, ADR 0011): the optional check that each final blog FAQ answer answers its
+    # question (same flag). Drop-only, never a hold → `validate` on Sonnet (migration 267: the round-3 eval passed
+    # batched Sonnet, isolated Haiku missed held-out recall); no model fallback (on failure the FAQ is kept unchanged).
     "t9_faq_answer_fit":  StageConfig("t9_faq_answer_fit", "validate", "claude", "sonnet", "acc3"),
     # AA-753 (10/10/2026) — the n7_* stages (n7_draft/adapt/faq/repair/gap_research/judge) were the
     # removed N7 produce pipeline (services/acp_produce/gates.py, 0 live callers). Dropped from
