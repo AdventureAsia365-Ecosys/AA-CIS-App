@@ -4722,7 +4722,8 @@ of every sample item), paired on its regenerated controls only, never its candid
 without one, or with a control missing, the run refuses at $0.
 S285: the T9 / S1 / T2 drafts (`w5-t9`, `w5-s1`, `w5-t2`) name the null run's judge and golden version, decide
 non_inferior on `fail_claims_per_item` at the null run's margin, and list their non-trap GATE items; writer cost and
-request targets read the writer-role ledger rows (`writer_cost_per_object_usd`, `writer_requests_per_object`), since the
+request targets read the writer path's ledger rows (`writer_cost_per_object_usd`: every row but the eval judge's, so S1's
+in-graph judge and T2's QA gate count; `writer_requests_per_object`: the writer-role calls), since the
 claim judge adds tens of calls per object. A draft's `plan` also lists what its registration would refuse
 (`registration_problems`: the minimum sample in force) and blocks a sample item the claim judge cannot read (no stored
 control, or over the evidence cap).

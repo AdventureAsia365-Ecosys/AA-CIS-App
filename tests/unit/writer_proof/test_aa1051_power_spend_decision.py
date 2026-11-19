@@ -229,7 +229,7 @@ def test_targets_and_computed_metrics():
     comp = decision.computed_metrics(rows, per)
     assert comp["item_fail_rate"] == 0.25 and comp["first_pass_yield"] == 0.75
     assert comp["fail_claims_per_item"] == 2.0 and comp["requests_per_object"] == 4.5
-    assert comp["writer_cost_per_object_usd"] == 0.0555                 # S285: the writer-role share, median
+    assert comp["writer_cost_per_object_usd"] == 0.0555                 # S285: the writer path's share, median
     doc = t9_plain_improve()
     t = {x["metric"]: x["status"] for x in decision.targets(doc, comp)}
     assert t["first_pass_yield"] == "met" and t["requests_per_object"] == "met"
@@ -249,11 +249,17 @@ def test_attribute_assigns_each_ledger_row_to_the_next_result_of_its_run():
     results = [{"result_id": "a", "run_id": "run1", "created_at": _t(10), "arm": "control", "mode": "rejudge"},
                {"result_id": "b", "run_id": "run1", "created_at": _t(20), "arm": "candidate", "mode": "regenerate"},
                {"result_id": "c", "run_id": "run2", "created_at": _t(15), "arm": "candidate", "mode": "regenerate"}]
-    ledger = [{"id": "1", "eval_run": "run1", "created_at": _t(5), "cost_usd": 0.01, "role": "judge"},
-              {"id": "2", "eval_run": "run1", "created_at": _t(12), "cost_usd": 0.05, "role": "writer"},
-              {"id": "3", "eval_run": "run1", "created_at": _t(19), "cost_usd": 0.02, "role": "judge"},
-              {"id": "4", "eval_run": "run2", "created_at": _t(14), "cost_usd": 0.07, "role": "writer"},
-              {"id": "5", "eval_run": "run1", "created_at": _t(30), "cost_usd": 0.003, "role": "judge"}]
+    ev = "writing_memory_eval"
+    ledger = [{"id": "1", "eval_run": "run1", "created_at": _t(5), "cost_usd": 0.01, "role": "judge",
+               "real_stage": ev},
+              {"id": "2", "eval_run": "run1", "created_at": _t(12), "cost_usd": 0.05, "role": "writer",
+               "real_stage": "t9_write"},
+              {"id": "3", "eval_run": "run1", "created_at": _t(19), "cost_usd": 0.02, "role": "judge",
+               "real_stage": ev},
+              {"id": "4", "eval_run": "run2", "created_at": _t(14), "cost_usd": 0.07, "role": "writer",
+               "real_stage": "t9_write"},
+              {"id": "5", "eval_run": "run1", "created_at": _t(30), "cost_usd": 0.003, "role": "judge",
+               "real_stage": ev}]
     att = cost_report.attribute(ledger, results)
     assert att["per_result"]["a"] == {"cost_usd": 0.01, "requests": 1, "writer_requests": 0, "writer_cost_usd": 0.0}
     assert att["per_result"]["b"] == {"cost_usd": 0.07, "requests": 2, "writer_requests": 1, "writer_cost_usd": 0.05}
@@ -264,5 +270,5 @@ def test_attribute_assigns_each_ledger_row_to_the_next_result_of_its_run():
     r1 = rep["runs"][0]
     assert r1["ledger_usd"] == 0.083 and r1["objects"] == 1 and r1["all_in_cost_per_object_usd"] == 0.083
     assert r1["attributed_cost_per_object_usd"]["median"] == 0.07 and r1["requests_per_object"]["max"] == 2.0
-    assert r1["writer_cost_per_object_usd"]["median"] == 0.05            # S285: writer-role rows only
+    assert r1["writer_cost_per_object_usd"]["median"] == 0.05            # S285: no eval judge row
     assert rep["total_usd"] == 0.153 and rep["stage"] == spend.W5_STAGE

@@ -1,6 +1,7 @@
 """AA-1051 S285 — the T9 / S1 / T2 pre-registrations re-drafted on the judge of the W5 null run (the pinned AA-1048
-v7 claim instrument, advisory) and golden aa729@1.5.0, the writer cost per object (the writer-role ledger rows only),
-and the registration preview of a draft's DRY plan (what registering it would refuse). Ids and counts only (the
+v7 claim instrument, advisory) and golden aa729@1.5.0, the writer cost per object (the writer path's ledger rows,
+every row but the eval judge's), and the registration preview of a draft's DRY plan (what registering it would
+refuse). Ids and counts only (the
 golden id ranges are the public changelog's); no DB, no model call, nothing queued."""
 from __future__ import annotations
 
@@ -9,7 +10,7 @@ import json
 
 import pytest
 
-from services.writer_proof import decision, power
+from services.writer_proof import cost_report, decision, power
 from services.writer_proof import prereg as pr
 from services.writer_proof import runner, splits
 from services.writer_proof.instrument import ADVISORY, PINNED
@@ -80,6 +81,41 @@ def test_writer_cost_targets_read_the_writer_share_not_the_judge():
         assert "target" in names["writer_cost_per_object_usd"]
         assert "target" not in names["cost_per_object_usd"]                    # all-in: judge chain included
         assert "target" not in names.get("requests_per_object", {})            # about 40 judge calls a blog
+
+
+def test_eval_judge_stages_match_the_judges_own_constants():
+    from services.ground_truth import r1
+    from services.writing_memory import config as wm_cfg
+    from services.writing_memory import releases
+    assert cost_report.EVAL_JUDGE_STAGES == {releases.JUDGE_STAGE, wm_cfg.EVAL_STAGE, r1.STAGE}
+
+
+def test_writer_cost_counts_the_a1_graph_judge_but_not_the_eval_judge():
+    """An a1-shaped object: the S1 rewrite, its own in-graph judge and brand audit (role judge), a source-facts call
+    (role validate), then the eval's claim instrument and plain judge. The writer cost is everything but the last two;
+    writer requests stay the writer-role calls."""
+    t0 = _ledger_time()
+    results = [{"result_id": "r1", "run_id": "run", "created_at": t0(100), "arm": "candidate", "mode": "regenerate"}]
+    rows = [("s1_generate", "writer", 0.030), ("s1_judge", "judge", 0.012), ("s1_brand_audit", "judge", 0.004),
+            ("s1_source_facts", "validate", 0.002), ("adhoc_aa1048", "judge", 0.050),
+            ("writing_memory_eval", "judge", 0.006)]
+    ledger = [{"id": str(i), "eval_run": "run", "created_at": t0(i), "cost_usd": usd, "role": role,
+               "real_stage": stage} for i, (stage, role, usd) in enumerate(rows)]
+    got = cost_report.attribute(ledger, results)["per_result"]["r1"]
+    assert got == {"cost_usd": 0.104, "requests": 6, "writer_requests": 1, "writer_cost_usd": 0.048}
+    # a row without a real stage counts as the writer path's (over-count, never under-count)
+    assert cost_report.writer_path_row({"role": "judge"}) is True
+    rep = cost_report.report([{"run_id": "run", "writer": "a1"}], ledger, results)
+    assert rep["runs"][0]["writer_cost_per_object_usd"]["median"] == 0.048
+    computed = decision.computed_metrics([{"result_id": "r1", "arm": "candidate", "mode": "regenerate",
+                                           "verdict": "pass"}], cost_report.attribute(ledger, results)["per_result"])
+    assert computed["writer_cost_per_object_usd"] == 0.048
+
+
+def _ledger_time():
+    from datetime import datetime, timedelta, timezone
+    base_t = datetime(2026, 11, 20, 9, 0, tzinfo=timezone.utc)
+    return lambda s: base_t + timedelta(seconds=s)
 
 
 def test_t9_targets_from_a_null_run_shaped_result():
