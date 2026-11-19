@@ -274,16 +274,22 @@ async def lead_route(conn, tenant_id: str) -> Optional[dict]:
     return {"tenant_id": tenant_id, "has_tripplanner": has_tp, **_route(await conn.fetchrow(ROUTE_SQL, tenant_id))}
 
 
-async def set_lead_route(conn, tenant_id: str, *, channel: Any, webhook_url: Any, email: Any, actor: str) -> dict:
-    """Validate and store the route (creating the site row with its defaults when absent); audited."""
+async def set_lead_route(conn, tenant_id: str, *, channel: Any, webhook_url: Any, email: Any, actor: str,
+                         require_active_planner: bool = False) -> dict:
+    """Validate and store the route (creating the site row with its defaults when absent); audited.
+    ``require_active_planner`` (the agency's own edit, :func:`set_agency_lead_route`): the active Trip planner check
+    runs inside this transaction, after the tenant row is locked, so a cancel cannot land between check and write."""
     channel, url, mail = validate_route(channel, webhook_url, email)
     async with conn.transaction():
         await conn.execute("SELECT set_config('aa.actor', $1, true)", actor)
-        status = await conn.fetchval(TENANT_LOCK_SQL, tenant_id)
-        if status is None:
-            raise LeadRouteError("tenant_not_found", status=404, message="no tenant with this id")
-        if status in ("offboarding", "closed"):
-            raise LeadRouteError("tenant_offboarded", status=409, message="restore the tenant first")
+        if require_active_planner:
+            await _require_active_planner(conn, tenant_id)
+        else:
+            status = await conn.fetchval(TENANT_LOCK_SQL, tenant_id)
+            if status is None:
+                raise LeadRouteError("tenant_not_found", status=404, message="no tenant with this id")
+            if status in ("offboarding", "closed"):
+                raise LeadRouteError("tenant_offboarded", status=409, message="restore the tenant first")
         before = _route(await conn.fetchrow(ROUTE_SQL + " FOR UPDATE", tenant_id))
         await conn.execute(UPSERT_SQL, tenant_id, channel, url, mail, actor[:64])
         after = _route(await conn.fetchrow(ROUTE_SQL, tenant_id))
@@ -389,10 +395,10 @@ async def set_appearance(conn, tenant_id: str, *, theme: Any, locale: Any, actor
 async def set_agency_lead_route(conn, tenant_id: str, *, channel: Any, webhook_url: Any, email: Any,
                                 actor: str) -> dict:
     """The agency owner's edit of the route (AA-1139): :func:`set_lead_route` with the same checks, for a tenant with
-    an active Trip planner only."""
-    validate_route(channel, webhook_url, email)
-    await _require_active_planner(conn, tenant_id)
-    return await set_lead_route(conn, tenant_id, channel=channel, webhook_url=webhook_url, email=email, actor=actor)
+    an active Trip planner only (checked in the write's transaction after the tenant lock, like
+    :func:`set_appearance`)."""
+    return await set_lead_route(conn, tenant_id, channel=channel, webhook_url=webhook_url, email=email, actor=actor,
+                                require_active_planner=True)
 
 
 async def module_view(conn, tenant_id: str, *, planner_origin: Optional[str] = None) -> Optional[dict]:

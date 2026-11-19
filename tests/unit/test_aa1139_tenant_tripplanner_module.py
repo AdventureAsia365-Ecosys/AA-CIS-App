@@ -245,3 +245,76 @@ def test_appearance_is_normalised():
             tp.validate_appearance(theme, locale)
         assert e.value.status == 422
 
+
+
+# ── the agency's route edit checks the planner inside the write's transaction (review finding, no TOCTOU) ─────────
+
+class _OrderConn:
+    """Records the order of transaction entry, the tenant lock, the planner check and the writes."""
+
+    def __init__(self, active=True, status="active"):
+        self.active, self.status = active, status
+        self.events: list[str] = []
+        self.in_tx = False
+
+    def transaction(self):
+        conn = self
+
+        class _Tx:
+            async def __aenter__(self):
+                conn.in_tx = True
+                conn.events.append("begin")
+
+            async def __aexit__(self, *exc):
+                conn.in_tx = False
+                conn.events.append("end")
+                return False
+
+        return _Tx()
+
+    async def execute(self, sql, *args):
+        if "INSERT INTO shared.tenant_tripplanner_site" in sql:
+            self.events.append("upsert" if self.in_tx else "upsert-outside")
+
+    async def fetchval(self, sql, *args):
+        if sql == tp.TENANT_LOCK_SQL:
+            self.events.append("lock" if self.in_tx else "lock-outside")
+            return self.status
+        if sql == tp.ACTIVE_TP_SQL:
+            self.events.append("planner" if self.in_tx else "planner-outside")
+            return self.active
+        if sql in (tp.TENANT_SQL, tp.HAS_TRIPPLANNER_SQL):
+            return self.status if sql == tp.TENANT_SQL else self.active
+        raise AssertionError(sql)
+
+    async def fetchrow(self, sql, *args):
+        return None
+
+
+def test_agency_route_edit_checks_the_planner_after_the_lock_in_one_transaction(monkeypatch):
+    import asyncio
+
+    async def audit(conn, **_kw):
+        conn.events.append("audit")
+
+    monkeypatch.setattr(tp, "write_audit_log", audit)
+    conn = _OrderConn()
+    asyncio.run(tp.set_agency_lead_route(conn, TENANT, channel="email", webhook_url=None,
+                                         email="desk@fernhollow.example.com", actor=f"membership:{MEMBER}"))
+    assert conn.events == ["begin", "lock", "planner", "upsert", "audit", "end"]
+
+
+@pytest.mark.parametrize("active,status,code", [(False, "active", "tripplanner_not_active"),
+                                                (True, "offboarding", "tenant_offboarded"),
+                                                (True, None, "tenant_not_found")])
+def test_agency_route_edit_refusals_happen_inside_the_transaction_before_any_write(monkeypatch, active, status, code):
+    import asyncio
+
+    monkeypatch.setattr(tp, "write_audit_log", lambda *a, **k: pytest.fail("no audit on a refusal"))
+    conn = _OrderConn(active=active, status=status)
+    with pytest.raises(tp.LeadRouteError) as e:
+        asyncio.run(tp.set_agency_lead_route(conn, TENANT, channel="none", webhook_url=None, email=None,
+                                             actor=f"membership:{MEMBER}"))
+    assert e.value.code == code
+    assert "upsert" not in conn.events and not any(ev.endswith("-outside") for ev in conn.events)
+    assert conn.events[0] == "begin" and conn.events[-1] == "end"
