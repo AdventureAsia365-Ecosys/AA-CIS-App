@@ -11861,6 +11861,11 @@
             "title": "Provenance",
             "type": "string"
           },
+          "read_only": {
+            "default": false,
+            "title": "Read Only",
+            "type": "boolean"
+          },
           "scope": {
             "title": "Scope",
             "type": "string"
