@@ -12,8 +12,7 @@
                                            tour_id columns).                                                 spend.read
   GET /admin/ai-gateway/budgets            every spending cap by tier: provider daily caps and job caps
                                            (shared.spend_budget), LLM connection monthly budgets, the tenant tier
-                                           (shared.tenant_ai_budget, AA-1016), today's spend and a coverage
-                                           list.                                                             spend.read
+                                           (shared.tenant_ai_budget, AA-1016), today's spend, coverage. spend.read
   GET /admin/ai-gateway/connection-split   (AA-1113) each connection's provider budget vs CIS + CRM shares. spend.read
   GET /admin/ai-gateway/calls              the Calls tab: every logged paid call newest first across the CIS ledgers
                                            and the CRM ledger (crm.ops.v1 GET /llm/calls with the staff member's
@@ -218,7 +217,8 @@ PAGE_WRITES: dict[str, tuple[str, str]] = {
     "connections": ("PATCH", "/admin/llm-connections/{connection_key}"),       # Connections view: on/off, limits
     "connection_test": ("POST", "/admin/llm-connections/{connection_key}/test"),
     "requeue": ("POST", "/admin/job-runner/jobs/retry-llm-denied"),            # Re-queue refused jobs (dry run too)
-    "routing": ("PATCH", "/admin/llm-config/{stage}"), "catalog": ("PATCH", "/admin/llm-catalog/{model_key}"),
+    "routing": ("PATCH", "/admin/llm-config/{stage}"),
+    "catalog": ("PATCH", "/admin/llm-catalog/{model_key}"),
     "budgets": ("PUT", "/admin/budgets/{provider}/{scope}"),
     "jev_credit": ("POST", "/admin/decisions/jev-credit/topups"),
     # AA-1025 B5 Credit view: add or delete an entry, Check now (all spend.write); its threshold save is `connections`
