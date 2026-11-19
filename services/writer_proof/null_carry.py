@@ -46,7 +46,7 @@ ITEM_COLUMNS = ("sample_id", "writer", "channel", "scope", "tenant_id", "split",
                 "label_source", "injection_spec", "refs", "input_sha256", "pick_reason")
 # The item's frozen DEV / CAL / GATE row (shared.eval_golden_split, CIS 400)
 SPLIT_COLUMNS = ("eval_split", "split_rule", "split_bucket")
-MAX_LISTED = 8                         # differences named in a blocking line (the dict keeps all of them)
+MAX_LISTED = 8  # technical-constant: differences named in a blocking line (display only; the dict keeps all)
 
 SET_SQL = """
     SELECT set_id::text AS set_id, version, shared_inputs::text AS shared_inputs
