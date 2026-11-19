@@ -127,7 +127,9 @@ async def _page_totals(conn, monkeypatch) -> dict:
     aa = await store.list_items(conn, kind=None, locale=None, status="draft", country=None, limit=1, offset=0)
     cards = await admin_content_quality.list_place_cards(req, limit=1, offset=0, status="auto_checked", q=None,
                                                          x_admin_secret="x")
-    flags = await atc.list_flags(req, state="open", kind=None, tenant_id=None, limit=1, offset=0)
+    # Compliance: list_flags' own total query with the page's default (state open, every kind and tenant). Its row
+    # query joins acp_shared.content_piece columns this test DB's replay does not create, so the rows are not read.
+    flags = {"total": int(await conn.fetchval(atc.COUNT_SQL, "open", None, None))}
     return {"review_waiting": review["pagination"]["total"], "supply_drafts": supply_drafts["total"],
             "supply_no_description": supply_none["total"], "aa_content_drafts": aa["total"],
             "place_cards_to_review": cards["total"], "compliance_holds": flags["total"]}
