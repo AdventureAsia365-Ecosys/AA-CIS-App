@@ -25,6 +25,10 @@
 // `acp_deliver.packets.publish_mode` model; the live T11 publish flow (v1_publish.py) has no
 // ramp/publish-mode concept at all. This FE call site was missed at the time, causing a live
 // HTTP 404 on this page. Removed here rather than restored, per the same AA-603 assessment.
+//
+// AA-1127 (S285 live evidence, 390 px): a check id or gate key is one long token
+// ("structural:t2_day_count_vs_master"); its badges and the fixed-width gate labels wrap anywhere (`tokenBadge`,
+// `tokenText`) instead of running out of the phone card and giving the section a sideways scroll.
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import SocialContentSubNav, { SocialContentSplit } from "../../_components/SocialContentSubNav";
@@ -35,6 +39,10 @@ import {
 } from "../../../_kit";
 import { STATS } from "./messages";
 import { fetchJson, EmptyState, ErrorState } from "../../_components/auditPanels";
+
+/** A badge or label holding one long token (a check id, a gate key): it may break anywhere and never outgrows its row. */
+const tokenBadge: React.CSSProperties = { maxWidth: "100%", overflowWrap: "anywhere" };
+const tokenText: React.CSSProperties = { minWidth: 0, overflowWrap: "anywhere" };
 
 // ── Types — match GET /admin/a4/review-log, /admin/a4/platform-stats ───────────────────────────
 
@@ -170,7 +178,7 @@ function ReviewLogSection() {
       cell: ({ row: { original: r } }) => r.failure_summary || "—" },
     { id: "checks", header: t("colChecks"), accessorFn: (r) => reviewSortValue(r, "checks"), cell: ({ row: { original: r } }) => (
       <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-        {(r.escalate_detail || []).map((item, i) => <Badge key={i} tone="neutral">{item.check_id}</Badge>)}
+        {(r.escalate_detail || []).map((item, i) => <Badge key={i} tone="neutral" style={tokenBadge}>{item.check_id}</Badge>)}
       </div>
     ) },
     { id: "status", header: t("colStatus"), accessorFn: (r) => reviewSortValue(r, "status"), cell: ({ row: { original: r } }) => (
@@ -199,7 +207,7 @@ function ReviewLogSection() {
       {checkIdCounts.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
           {checkIdCounts.map(([checkId, count]) => (
-            <Badge key={checkId} tone={count > 1 ? "warning" : "neutral"}>
+            <Badge key={checkId} tone={count > 1 ? "warning" : "neutral"} style={tokenBadge}>
               {checkId} × {count}
             </Badge>
           ))}
@@ -300,7 +308,7 @@ function PlatformStatsSection() {
             {stats.by_channel.length === 0 ? (
               <span style={{ fontSize: 12, color: K.muted2 }}>{t("noChannel")}</span>
             ) : stats.by_channel.map(c => (
-              <Badge key={c.channel} tone="neutral">{c.channel} × {c.count}</Badge>
+              <Badge key={c.channel} tone="neutral" style={tokenBadge}>{c.channel} × {c.count}</Badge>
             ))}
           </div>
 
@@ -311,7 +319,7 @@ function PlatformStatsSection() {
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {stats.top_gate_failures.map(g => (
                 <div key={g.gate} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{ width: 160, flexShrink: 0, fontSize: 12, fontFamily: mono, color: K.body }}>{g.gate}</div>
+                  <div style={{ ...tokenText, width: 160, flexShrink: 0, fontSize: 12, fontFamily: mono, color: K.body }}>{g.gate}</div>
                   <div style={{ flex: 1, background: K.bg, borderRadius: 4, height: 14, overflow: "hidden" }}>
                     <div style={{
                       height: "100%", borderRadius: 4, background: K.danger,
@@ -490,7 +498,7 @@ function GateTelemetrySection() {
               {visibleGates.map((g, i) => (
                 <div key={`${g.channel ?? ""}:${g.gate}:${i}`} style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <div style={{ width: 90, flexShrink: 0, fontSize: 11, fontFamily: mono, color: K.muted2 }}>{g.channel || "—"}</div>
-                  <div style={{ width: 150, flexShrink: 0, fontSize: 12, fontFamily: mono, color: K.body, display: "flex", alignItems: "center", gap: 5 }}>
+                  <div style={{ ...tokenText, width: 150, flexShrink: 0, fontSize: 12, fontFamily: mono, color: K.body, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 5 }}>
                     {g.gate}
                     {g.blocking
                       ? <Badge tone="danger">{t("block")}</Badge>

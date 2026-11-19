@@ -66,6 +66,8 @@ export const PAGES: VisualPage[] = [
   { slug: "platform-delivery-app-7d", route: "/admin/platform/delivery", path: "/admin/platform/delivery?app=cis&range=7d", auth: "staff" },
   { slug: "platform-delivery-queue-90d", route: "/admin/platform/delivery", path: "/admin/platform/delivery?app=merge-queue&repo=cis&range=90d", auth: "staff" },
   { slug: "platform-settings", route: "/admin/platform/settings", path: "/admin/platform/settings", auth: "staff" },
+  // AA-1127 (S285): the search view (Area column, long TripPlanner keys) ran 58 px past a phone frame
+  { slug: "platform-settings-search", route: "/admin/platform/settings", path: "/admin/platform/settings?app=tripplanner&key=tripplanner.spend", auth: "staff" },
   { slug: "platform-staff", route: "/admin/platform/staff", path: "/admin/platform/staff", auth: "staff" },
   { slug: "platform-ui-kit", route: "/admin/platform/ui-kit", path: "/admin/platform/ui-kit", auth: "staff" },
   { slug: "reports", route: "/admin/reports", path: "/admin/reports", auth: "staff" },

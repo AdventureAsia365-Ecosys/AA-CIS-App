@@ -28,7 +28,9 @@ export const M = defineMessages(
     // TenantSelect
     tenant: "Tenant",
     pickTenant: "Pick a tenant…",
-    searchTenants: "Search by name, slug or id",
+    // AA-1127 (S285): short enough for the 200 px filter-bar box at 390 px ("Search by name, slug or" was cut); the
+    // box's aria-label still says "Search tenant".
+    searchTenants: "Name, slug or id",
     searchLabel: (label: string) => `Search ${label.toLowerCase()}`,
     loadingTenants: "Loading tenants…",
     tenantListFailed: (err: string) => `The tenant list did not load (${err}).`,
@@ -68,7 +70,7 @@ export const M = defineMessages(
     subNavLabelQa: "Các trang kiểm nội dung tenant",
     tenant: "Tenant",
     pickTenant: "Chọn một tenant…",
-    searchTenants: "Tìm theo tên, slug hoặc id",
+    searchTenants: "Tên, slug hoặc id",
     searchLabel: (label: string) => `Tìm ${label.toLowerCase()}`,
     loadingTenants: "Đang tải danh sách tenant…",
     tenantListFailed: (err: string) => `Không tải được danh sách tenant (${err}).`,

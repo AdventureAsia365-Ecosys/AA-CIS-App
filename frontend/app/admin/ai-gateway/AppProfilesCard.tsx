@@ -11,6 +11,8 @@
 // Built on the kit only (Section, DataTable, Badge, Drawer, Field / Select / Input / Textarea, ConfirmModal, Toast).
 // S280 (AA-1096): a tighten-only role (no settings.write) sees the budget now in force, AI off and bulk pause locked
 // while on, and what its change would loosen before Save (tightenHints.tsx); a refusal reads in the UI language.
+// AA-1127 (S285): "Takes effect" is worded per app (lib/aiGateway appliesKey): CIS and TripPlanner within 20 s, the CRM
+// at once; it used to say "(TripPlanner within 20 s)" on every row.
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -22,7 +24,7 @@ import {
 import { budgetRuleOf, capRuleTone } from "@/lib/spendRules";
 import {
   APP_PROFILES_API, APP_PROFILES_KEY, DEGRADE_MODES, PROFILE_REASON_MAX, appProfileBody, appProfileDraft,
-  appProfilePath, isReadOnlyRefusal, usd, type AppProfile, type AppProfileDraft, type AppProfilesResp,
+  appProfilePath, appliesKey, isReadOnlyRefusal, usd, type AppProfile, type AppProfileDraft, type AppProfilesResp,
   type DegradeMode,
 } from "@/lib/aiGateway";
 import { DEGRADE, PROFILE_APP, PROFILES } from "./appProfiles.messages";
@@ -191,7 +193,8 @@ export default function AppProfilesCard() {
       { accessorKey: "degrade_mode", header: t("colDegrade"), enableSorting: false,
         cell: (x) => <span style={{ color: K.ink }}>{degradeText(x.row.original.degrade_mode)}</span> },
       { accessorKey: "enforced_here", header: t("colApplies"), enableSorting: false,
-        cell: (x) => <span style={small}>{x.row.original.enforced_here ? t("appliesHere") : t("appliesLater")}</span> },
+        cell: (x) => <span style={small} data-testid={`app-profile-applies-${x.row.original.app}`}>
+          {t(appliesKey(x.row.original))}</span> },
       { accessorKey: "updated_at", header: t("colChanged"), enableSorting: false,
         cell: (x) => (x.row.original.updated_at
           ? <span style={small}><DateText value={x.row.original.updated_at} relative /></span>
