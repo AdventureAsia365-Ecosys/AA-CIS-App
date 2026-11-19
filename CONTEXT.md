@@ -5033,6 +5033,32 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     service's `publish` (AA-986 L2, see Served state): it locks the source FOR SHARE and re-checks it, so a retire that
     lands between promote's check and the publish is refused too (process_export's L1 refusal, 409). The publish-date
     rule above is the ON CONFLICT branch of the repository insert that only that service runs.
+  - **Tour versions, one publish gate, the hand-edit lock** (AA-1146, S285; CIS 457-458). A person's change of a
+    tour's wording is a **draft version**: a new `generated_content` row (`status` draft, `origin` human,
+    `parent_version_num`, `edit_reason`, `author_id`; editors in `edit_diff.editors`), one open draft per tour, copied
+    from the live version; the live version is never edited in place any more (`PATCH .../generated/{id}` on it → 409
+    `edit_live_version`). Routes (`api/routers/admin_pipeline/drafts.py`): `GET|PUT|DELETE /admin/tours/{id}/draft`
+    (state + per-field word diff against the live version; save needs a reason; discard = status rejected),
+    `POST .../draft/publish`, `POST /admin/tours/{id}/unlock` (master.admin, reason), `GET .../raw-revisions`.
+    **One gate** for every publish route (Review Queue approve, promote, draft publish): a hand-edited version needs a
+    passing re-validation (409 `revalidate_required`; promote too since AA-1146), and while the setting
+    `cis.content.publish_two_person` is on (Dev default off; admin only, maker_checker; while on, changing it needs a
+    second person) the publisher must hold `content.publish` (admin, content_lead; else 403 `two_person_required`) and
+    must not be one of the version's editors (403 `same_person`) — `api/routers/admin_pipeline/_publish.py`,
+    `api/services/content_publish_gate.py` (reads the switch in the route's transaction, fails closed). The route
+    capability is `content.publish | review.act`, so `content` publishes only while the switch is off. **Lock**: a
+    person's publish of a hand-edited version (`process_export` exits approve / promote / human_publish) sets
+    `published_tours.human_lock_*`; a writer's version published by a person lifts it. Automatic exits (auto_publish,
+    recompose, lambda) over a locked Master are refused (`HumanLockedError`, the version → hitl), the `s1_rewrite` job
+    skips a locked tour before any paid call (result `{skipped, reason: human_locked}`), `run-tour` answers 409
+    `human_locked` and the S1 batch submit leaves locked tours out (`services/content_generation/human_lock.py`).
+    **Source tour history**: every raw edit writes `silver_aa_internal.raw_tour_revision` (append-only, before / after,
+    actor, optional reason) and an audit row (`raw_tour.fields_edited`); `price_raw` needs `reference_price.write`
+    (admin, customer_success; AA-1146 D5 — content_lead lost the reference price write). **Excel re-import (T1)**: the
+    Duplicate Review offers "Merge field by field" (`GET /admin/upload-staging/{id}/merge-preview`, decide `merge`
+    with `resolutions` + reason): fields nobody edited by hand take the sheet's value, hand-edited fields that differ
+    are conflicts the person resolves (keep / take), an empty cell never erases; the tour keeps its id, the merge is a
+    `raw_tour_revision` row (`excel_merge`, resolutions) and the published text stays until a version is published.
   - **Atomize retires what the new text no longer has** (AA-645 step 0): the per-day path soft-deletes live atoms on a
     day the itinerary no longer has (and day-less legacy rows), also on an all-skipped run (C6); the legacy path (no
     `Day N —` headers, random ids) soft-deletes the tour's earlier atoms after a good read (L1). An atomize that changed
