@@ -13,6 +13,8 @@ import {
 } from "../../_kit";
 import { phoneCardColumns } from "@/lib/tableSort";
 import { UP } from "./messages";
+import { MergeSlot, type MergeChoice } from "./MergePanel";
+import { canConfirm, decisionBody, decisionLabels, type Decision } from "./stagingDecisions";
 
 const TENANT_ID = "00000000-0000-0000-0000-000000000001";
 
@@ -725,29 +727,6 @@ function UploadHistorySection({ history, loading, onRefresh }: {
 
 // ─── DuplicateReview (Step 5) ─────────────────────────────────────────────────
 
-type Decision = "bypass" | "replace" | "keep_both" | "restore" | "create_new";
-
-// Message keys (messages.ts).
-const DECISION_LABELS: Record<"bypass" | "replace" | "keep_both", "decBypass" | "decReplace" | "decKeepBoth"> = {
-  bypass:    "decBypass",
-  replace:   "decReplace",
-  keep_both: "decKeepBoth",
-};
-
-// AA-986 L2 (Q6, ADR 0015) — a re-upload of a tour deleted at S0/A0 never revives it silently: staff choose to
-// restore the deleted tour (tenants that were warned are told it is back) or to start a new tour from the row.
-const DELETED_DECISION_LABELS: Record<"bypass" | "restore" | "create_new", "decBypass" | "decRestore" | "decCreateNew"> = {
-  bypass:     "decBypass",
-  restore:    "decRestore",
-  create_new: "decCreateNew",
-};
-
-function decisionLabels(
-  item: StagingItem,
-): Record<string, "decBypass" | "decReplace" | "decKeepBoth" | "decRestore" | "decCreateNew"> {
-  return item.matched_deleted ? DELETED_DECISION_LABELS : DECISION_LABELS;
-}
-
 function DuplicateReviewStep({
   batchIds,
   onDone,
@@ -763,6 +742,7 @@ function DuplicateReviewStep({
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState<Record<string, boolean>>({});
   const [error, setError]         = useState("");
+  const [merges, setMerges]       = useState<Record<string, MergeChoice>>({});
 
   useEffect(() => {
     async function fetchAll() {
@@ -798,7 +778,7 @@ function DuplicateReviewStep({
         const res = await fetch(`/api/admin/upload-staging/${item.staging_id}/decide`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ decision: dec }),
+          body: JSON.stringify(decisionBody(dec, merges[item.staging_id])),
         });
         results[item.staging_id] = res.ok;
         if (!res.ok) {
@@ -970,6 +950,8 @@ function DuplicateReviewStep({
                   </Select>
                 </div>
               )}
+              <MergeSlot stagingId={item.staging_id} open={decisions[item.staging_id] === "merge"}
+                done={!!submitted[item.staging_id]} onChange={c => setMerges(prev => ({ ...prev, [item.staging_id]: c }))} />
             </div>
           ))}
         </div>
@@ -980,7 +962,7 @@ function DuplicateReviewStep({
           <Button variant="secondary" onClick={onDone}>{t("skipLater")}</Button>
           <Button
             variant="primary"
-            disabled={submitting}
+            disabled={!canConfirm(submitting, items, decisions, merges)}
             onClick={confirmAll}
             style={{
               background: K.accent, border: `1px solid ${K.accent}`,

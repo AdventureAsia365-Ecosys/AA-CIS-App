@@ -5,12 +5,14 @@
 import json
 import os
 from uuid import UUID
+import asyncpg
 import boto3 as _boto3
 from fastapi import Header, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
 from api.routers.admin import verify_admin_secret
 from shared.aws_client.bronze import bronze_bucket
+from shared.tour_liveness import SOURCE_NOT_LIVE, source_not_live_message, source_state
 
 from api.routers.admin_pipeline._shared import IngestS3Request, UploadUrlRequest, UploadUrlResponse, logger, router
 
@@ -278,7 +280,133 @@ async def ingest_s3(
 # so there is no FastAPI greedy-matching conflict with /tours/{tour_id}/...
 
 class DecideRequest(BaseModel):
-    decision: str  # bypass | replace | update | keep_both | restore | create_new
+    decision: str  # bypass | replace | update | keep_both | restore | create_new | merge (AA-1146 T1)
+    # merge only: {field: "incoming" | "current"} for every hand-edited field that differs, and why (3..500 characters)
+    resolutions: Optional[dict] = None
+    reason: Optional[str] = None
+
+
+def _merge_cols() -> str:
+    from services.ingestion import excel_merge as em
+    return ", ".join(em.MERGE_FIELDS)
+
+
+async def _merge_inputs(conn, staging_id: str) -> tuple:
+    """(staging row, matched raw tour row, hand-edited fields, plan) of a staged re-import. 404 / 409 when it cannot
+    merge: no pending row, no matched tour, or the matched tour is not live (deleted: Restore or Create new)."""
+    from services.ingestion import excel_merge as em
+    staging = await conn.fetchrow("""
+        SELECT id::text AS id, parsed_payload, matched_tour_id::text AS matched_tour_id
+          FROM silver_aa_internal.upload_staging WHERE id = $1::uuid AND decision = 'pending'
+    """, staging_id)
+    if staging is None:
+        raise HTTPException(status_code=404, detail="Staging row not found or already decided")
+    if not staging["matched_tour_id"]:
+        raise HTTPException(status_code=409, detail="This row matches no existing tour: nothing to merge into")
+    tour_id = staging["matched_tour_id"]
+    src = await source_state(conn, tour_id)
+    if not src.live:
+        raise HTTPException(status_code=409, detail=source_not_live_message(src, "merge this sheet into it"),
+                            headers={"X-Error-Code": SOURCE_NOT_LIVE})
+    current = await conn.fetchrow(
+        f"SELECT tour_id::text AS tour_id, {_merge_cols()} FROM silver_aa_internal.raw_tours "
+        "WHERE tour_id = $1::uuid FOR UPDATE", tour_id)
+    try:
+        revisions = await conn.fetch(
+            "SELECT revision_num, source, fields, resolutions::text AS resolutions "
+            "FROM silver_aa_internal.raw_tour_revision WHERE tour_id = $1::uuid", tour_id)
+    except asyncpg.exceptions.UndefinedTableError:
+        raise HTTPException(status_code=503, detail={
+            "code": "versions_not_ready",
+            "message": "The merge is not available yet: the database update (CIS 457) is not applied"})
+    payload = staging["parsed_payload"]
+    incoming = json.loads(payload) if isinstance(payload, str) else dict(payload or {})
+    if incoming.get("country"):
+        from shared import countries
+        c = countries.resolve(incoming["country"] if isinstance(incoming["country"], str) else None)
+        if c is None:
+            incoming.pop("country")          # an unknown country never overwrites a valid one
+        else:
+            incoming["country"] = c.name
+    owned = em.hand_edited_fields([dict(r) for r in revisions])
+    return staging, dict(current), owned, em.plan(dict(current), incoming, owned)
+
+
+@router.get("/upload-staging/{staging_id}/merge-preview")
+async def merge_preview(staging_id: str, request: Request, x_admin_secret: str = Header(None)):
+    """AA-1146 T1: what a merge of this staged re-import into its tour would do, field by field: ``auto`` (nobody
+    edited it by hand: the sheet's value is taken), ``conflicts`` (a person edited it: choose incoming or current),
+    ``unchanged``. ``read_only``: fields the caller may not change (D5: the price text without reference_price.write);
+    ``open_draft``: the tour already has a sheet draft waiting (a merge is refused until it is published or discarded).
+    Nothing is written."""
+    from services.ingestion import excel_merge as em
+    from api.routers.admin_pipeline._publish import may_edit_price
+    from api.routers.admin_pipeline.fact_drafts import open_fact_draft
+    verify_admin_secret(x_admin_secret)
+    async with request.app.state.pool.acquire() as conn:
+        async with conn.transaction():
+            staging, current, owned, merge_plan = await _merge_inputs(conn, staging_id)
+            open_draft = await open_fact_draft(conn, current["tour_id"])
+    return {"staging_id": staging_id, "tour_id": current["tour_id"], **merge_plan,
+            "hand_edited": sorted(owned), "read_only": [] if may_edit_price(request) else sorted(em.PRICE_FIELDS),
+            "open_draft": open_draft["id"] if open_draft else None}
+
+
+def _merge_changes(request: Request, merge_plan: dict, resolutions_in) -> tuple:
+    """(changes, resolutions, withheld) of a merge: the person's choices applied, then D5: without reference_price.write
+    choosing the sheet's price is refused (403 price_read_only) and an untouched price change is held back (the tour
+    keeps its price; the result names the sheet's value for the pricing team)."""
+    from services.ingestion import excel_merge as em
+    from api.routers.admin_pipeline._publish import may_edit_price, price_read_only
+    try:
+        changes, resolutions = em.resolve(merge_plan, resolutions_in)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail={"code": "merge_unresolved", "message": str(e),
+                                                     "conflicts": merge_plan["conflicts"]})
+    if may_edit_price(request):
+        return changes, resolutions, {}
+    if any(resolutions.get(f) == em.INCOMING for f in em.PRICE_FIELDS):
+        raise price_read_only()
+    changes, withheld = em.withhold(changes, em.PRICE_FIELDS)
+    return changes, resolutions, withheld
+
+
+async def _decide_merge(request: Request, staging_id: str, body: "DecideRequest", actor: str) -> dict:
+    """AA-1146 T1: merge a staged re-import into its tour (same tour id), the hand edits winning unless the person
+    takes the sheet's value. The result is a DRAFT of the tour's facts (silver_aa_internal.raw_tour_fact_draft): the
+    tour is not touched; it changes only when a person publishes the draft through the gate (POST
+    /admin/tours/{id}/fact-draft/publish, fact_drafts.py). One audit row, the staging row removed, in one
+    transaction."""
+    from services.ingestion import excel_merge as em
+    from api.routers.admin_pipeline.fact_drafts import create_fact_draft
+    from api.routers.admin_pipeline.tour_detail import _raw_json
+    from services.acp_shared.audit_log import write_audit_log
+    reason = (body.reason or "").strip()
+    if not 3 <= len(reason) <= 500:
+        raise HTTPException(status_code=422, detail="Say why you merge this sheet (3 to 500 characters)")
+    async with request.app.state.pool.acquire() as conn:
+        async with conn.transaction():
+            staging, current, owned, merge_plan = await _merge_inputs(conn, staging_id)
+            changes, resolutions, withheld = _merge_changes(request, merge_plan, body.resolutions)
+            tour_id = current["tour_id"]
+            before = {f: _raw_json(current[f]) for f in changes}
+            draft_id = None
+            if changes:
+                draft_id = await create_fact_draft(conn, tour_id=tour_id, staging_id=staging_id, before=before,
+                                                   after=changes, resolutions=resolutions, author=actor, reason=reason)
+            await write_audit_log(conn, tenant_id=None, actor=actor, action="raw_tour.excel_merge_drafted",
+                                  resource_type="raw_tour", resource_id=tour_id, details={
+                                      "staging_id": staging_id, "fields": sorted(changes), "reason": reason,
+                                      "resolutions": resolutions, "auto": [a["field"] for a in merge_plan["auto"]],
+                                      "withheld": withheld, "before": before, "after": changes,
+                                      "fact_draft_id": draft_id})
+            await conn.execute("DELETE FROM silver_aa_internal.upload_staging WHERE id = $1::uuid", staging_id)
+    kept = sorted(f for f, c in resolutions.items() if c == em.CURRENT)
+    logger.info("staging_merged_as_draft", staging_id=staging_id, tour_id=tour_id, fields=sorted(changes), kept=kept,
+                withheld=sorted(withheld), fact_draft_id=draft_id)
+    return {"staging_id": staging_id, "decision": "merge", "committed": True, "tour_id": tour_id,
+            "fact_draft_id": draft_id, "pending": sorted(changes), "kept": kept, "withheld": withheld,
+            "published": False}
 
 
 # Q6 (ADR 0015): the deleted state of the matched key, per staging row. A key is deleted when none of its versions is
@@ -389,9 +517,12 @@ async def decide_staging(
     """
     # S241: the header was declared but never checked, so this write was public on the API domain.
     verify_admin_secret(x_admin_secret)
-    VALID = {"bypass", "replace", "update", "keep_both", "restore", "create_new"}
+    VALID = {"bypass", "replace", "update", "keep_both", "restore", "create_new", "merge"}
     if body.decision not in VALID:
         raise HTTPException(status_code=400, detail=f"decision must be one of {VALID}")
+    if body.decision == "merge":   # AA-1146 T1: field by field into the existing tour, hand edits win
+        from api.routers.admin_pipeline._publish import request_actor
+        return await _decide_merge(request, staging_id, body, request_actor(request))
     from services.tour_lifecycle import LifecycleError, deleted_key_info, key_of, restore_source, run_after_commit
     from services.tour_lifecycle import supersede as _supersede
     actor = x_admin_user_id[:64] if isinstance(x_admin_user_id, str) and x_admin_user_id else "admin"

@@ -404,6 +404,42 @@ _ALLOWED_RAW_FIELDS = {
     "src_itineraries", "src_description", "inclusions", "exclusions",
 }
 _JSONB_RAW_FIELDS = {"src_highlights"}
+# AA-1146 D5 (tech lead S285): the price text feeds the reference price Booking reads; content and content_lead no
+# longer change it (reference_price.write: admin, customer_success). Every price / provider edit keeps its old value in
+# the audit row and the tour's history (raw_tour_revision, CIS 457).
+_PRICE_RAW_FIELDS = {"price_raw"}
+RAW_REVISION_SQL = """
+    INSERT INTO silver_aa_internal.raw_tour_revision (tour_id, revision_num, source, fields, before, after, actor,
+                                                      reason, resolutions)
+    SELECT $1::uuid, COALESCE(MAX(r.revision_num), 0) + 1, $2, $3::text[], $4::jsonb, $5::jsonb, $6, $7, $8::jsonb
+      FROM silver_aa_internal.raw_tour_revision r WHERE r.tour_id = $1::uuid
+    RETURNING revision_num
+"""
+
+
+def _raw_json(value):
+    """A raw tour value as JSON (asyncpg hands jsonb back as text)."""
+    if isinstance(value, str):
+        try:
+            return json.loads(value) if value[:1] in "[{" else value
+        except ValueError:
+            return value
+    return value
+
+
+async def record_raw_revision(conn, tour_id: str, *, source: str, before: dict, after: dict, actor: str,
+                              reason, resolutions=None):
+    """AA-1146: one history row of a source tour change (append-only, CIS 457) in the caller's transaction, in a
+    savepoint: before CIS 457 (no table) nothing is recorded and the change goes on. Returns the revision number."""
+    import asyncpg
+    try:
+        async with conn.transaction():
+            return await conn.fetchval(
+                RAW_REVISION_SQL, tour_id, source, sorted(after), json.dumps(before, default=str),
+                json.dumps(after, default=str), actor[:64], reason,
+                json.dumps(resolutions) if resolutions is not None else None)
+    except asyncpg.exceptions.UndefinedTableError:
+        return None
 
 
 @router.patch("/tours/{tour_id}/raw")
@@ -412,13 +448,27 @@ async def update_raw_tour_fields(
     request: Request,
     x_admin_secret: str = Header(None),
 ):
+    """Edit fields of the source tour. AA-1146 (S285): every edit keeps the old values: one history row
+    (silver_aa_internal.raw_tour_revision, source staff_edit) and one audit row (raw_tour.fields_edited, before / after)
+    in the edit's transaction; an optional ``reason`` (3..500 characters) is stored with both. ``price_raw`` needs
+    reference_price.write (D5: 403 for content and content_lead)."""
     verify_admin_secret(x_admin_secret)
     body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Send a JSON object of fields")
+    reason = body.pop("reason", None)
+    if reason is not None:
+        reason = reason.strip() if isinstance(reason, str) else ""
+        if not 3 <= len(reason) <= 500:
+            raise HTTPException(status_code=422, detail="The reason must be 3 to 500 characters")
     invalid = set(body.keys()) - _ALLOWED_RAW_FIELDS
     if invalid:
         raise HTTPException(status_code=400, detail=f"Fields not allowed: {sorted(invalid)}")
     if not body:
         raise HTTPException(status_code=400, detail="No fields provided")
+    from api.routers.admin_pipeline._publish import may_edit_price, price_read_only, request_actor
+    if set(body) & _PRICE_RAW_FIELDS and not may_edit_price(request):
+        raise price_read_only()
 
     import json as _j_raw
     if "country" in body and body["country"] is not None:
@@ -433,17 +483,31 @@ async def update_raw_tour_fields(
         f"{f} = ${i+1}::jsonb" if f in _JSONB_RAW_FIELDS else f"{f} = ${i+1}"
         for i, f in enumerate(fields)
     )
+    actor = request_actor(request)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
-        updated = await conn.fetchrow(
-            f"UPDATE silver_aa_internal.raw_tours SET {set_clause}"
-            f" WHERE tour_id = ${len(fields)+1}::uuid RETURNING tour_id, now() AS changed_at",
-            *values, tour_id,
-        )
-    if not updated:
-        raise HTTPException(status_code=404, detail=f"Tour {tour_id} not found")
+        async with conn.transaction():
+            old = await conn.fetchrow(
+                f"SELECT {', '.join(fields)} FROM silver_aa_internal.raw_tours WHERE tour_id = $1::uuid FOR UPDATE",
+                tour_id)
+            if old is None:
+                raise HTTPException(status_code=404, detail=f"Tour {tour_id} not found")
+            updated = await conn.fetchrow(
+                f"UPDATE silver_aa_internal.raw_tours SET {set_clause}"
+                f" WHERE tour_id = ${len(fields)+1}::uuid RETURNING tour_id, now() AS changed_at",
+                *values, tour_id,
+            )
+            before = {f: _raw_json(old[f]) for f in fields}
+            after = {f: body[f] for f in fields}
+            revision = await record_raw_revision(conn, tour_id, source="staff_edit", before=before, after=after,
+                                                 actor=actor, reason=reason)
+            from services.acp_shared.audit_log import write_audit_log
+            await write_audit_log(conn, tenant_id=None, actor=actor, action="raw_tour.fields_edited",
+                                  resource_type="raw_tour", resource_id=str(tour_id),
+                                  details={"fields": fields, "before": before, "after": after, "reason": reason,
+                                           "revision_num": revision})
     await _source_fanout_raw(pool, tour_id, updated["changed_at"], fields)   # AA-1052 W6
-    return {"tour_id": tour_id, "updated": fields}
+    return {"tour_id": tour_id, "updated": fields, "revision_num": revision}
 
 
 # ── PATCH /admin/tours/{tour_id}/generated/{content_id} ──────────────────────
@@ -496,6 +560,25 @@ async def _record_field_edit_signals(conn, content_id: str, before, body: dict, 
             source_table="generated_content", source_id=content_id)
         ids.append(ref.signal_id)
     return ids
+
+
+# AA-1146: which versions this route may not edit once CIS 457 exists: the live one ('live') and a person's open draft
+# ('draft': its saves go through PUT /draft, which keeps its editors for the two-person rule). to_jsonb reads origin
+# without failing before 457 (no column: never a draft); the information_schema test keeps the live rule off before it.
+_EDIT_REFUSED_SQL = """
+    SELECT CASE
+             WHEN to_jsonb(gc) ->> 'origin' = 'human' AND gc.status::text = 'draft' THEN 'draft'
+             WHEN EXISTS (SELECT 1 FROM gold_aa_internal.published_tours p WHERE p.generated_content_id = gc.id)
+                  AND EXISTS (SELECT 1 FROM information_schema.columns
+                               WHERE table_schema = 'silver_aa_internal' AND table_name = 'generated_content'
+                                 AND column_name = 'origin') THEN 'live'
+           END AS refused
+      FROM silver_aa_internal.generated_content gc WHERE gc.id = $1::uuid
+"""
+_EDIT_REFUSALS = {
+    "live": ("edit_live_version", "This is the live version: save your change as a draft, then publish it"),
+    "draft": ("edit_draft_version", "This is a draft version: save your change in the draft editor (Rewrite tab)"),
+}
 
 
 @router.patch("/tours/{tour_id}/generated/{content_id}")
@@ -555,6 +638,13 @@ async def update_generated_content_fields(
                 content_id, tour_id)
             if before is None:
                 raise HTTPException(status_code=404, detail=f"Content {content_id} not found")
+            # AA-1146: the live version is never edited in place once versions exist (CIS 457): a person's change of
+            # the live text is a draft version (PUT /admin/tours/{id}/draft), published through the gate. A person's
+            # open draft is saved only there too: an edit here would drop its editors (the two-person rule).
+            refused = _EDIT_REFUSALS.get(await conn.fetchval(_EDIT_REFUSED_SQL, content_id))
+            if refused:
+                raise HTTPException(status_code=409, headers={"X-Error-Code": refused[0]},
+                                    detail={"code": refused[0], "message": refused[1]})
             signal_ids = await _record_field_edit_signals(conn, content_id, before, body, fields,
                                                           reviewed_by_value or reviewer_handle)
             edit_diff = {"fields": fields, "reviewer_handle": reviewer_handle}

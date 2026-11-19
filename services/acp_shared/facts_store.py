@@ -24,6 +24,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 # CIS 302 facts_kind_check — keep both in step.
 FACT_KINDS: tuple[str, ...] = ("price", "season", "visa_entry", "transfer_time", "booking_terms", "other")
 FactKind = Literal["price", "season", "visa_entry", "transfer_time", "booking_terms", "other"]
+# AA-1144 (S285 decision D7): the kinds an agency may still write. All product data (prices, seasons, visas and entry,
+# transfer times, anything else about a tour) is Adventure Asia's; the agency's markup lives in the CRM price rules.
+# An older own fact of another kind stays readable and deletable, but is never created or edited again and never
+# reaches a writer (services/acp_content_writing/facts.py). The CHECK (CIS 302) keeps every kind for those rows.
+AGENCY_FACT_KINDS: tuple[str, ...] = ("booking_terms",)
+AGENCY_KIND_REFUSAL = ("An agency's own facts are its booking terms only. Prices, seasons, visas and entry, transfer "
+                       "times and other tour facts come from Adventure Asia.")
 
 MAX_TITLE = 200
 MAX_BODY = 1200
@@ -40,6 +47,16 @@ EDITABLE = ("kind", "title", "body", "provenance", "country", "stated_on", "vali
 
 class FactError(ValueError):
     """A fact write that cannot be applied (bad field, limit reached): HTTP 422."""
+
+
+class FactKindLocked(FactError):
+    """AA-1144 (D7): a tenant write of a kind the agency no longer owns (a new fact, a kind change, or an edit of an
+    older fact of such a kind): HTTP 422."""
+
+
+def agency_may_write(kind: Optional[str]) -> bool:
+    """Whether an agency may create or edit an own fact of this kind (AGENCY_FACT_KINDS)."""
+    return kind in AGENCY_FACT_KINDS
 
 
 class FactConflict(ValueError):
@@ -184,6 +201,8 @@ async def create_fact(conn, fields: FactFields, *, scope: str, tenant_id: Option
     if scope == "tenant":
         if tenant_id is None:
             raise FactError("a tenant fact needs a tenant")
+        if not agency_may_write(fields.kind):
+            raise FactKindLocked(AGENCY_KIND_REFUSAL)
         n = await conn.fetchval("SELECT count(*) FROM acp_shared.facts WHERE scope = 'tenant' AND tenant_id = $1::uuid",
                                 tenant_id)
         if n >= MAX_TENANT_FACTS:
@@ -235,7 +254,12 @@ async def update_fact(conn, fact_id: str, patch: FactPatch, *, scope: str, tenan
     cur = await get_fact(conn, fact_id, scope=scope, tenant_id=tenant_id, lock=True)
     if cur is None:
         return None
+    # AA-1144 (D7): an agency edits only its booking terms; an older own fact of another kind is read only.
+    if scope == "tenant" and not agency_may_write(cur["kind"]):
+        raise FactKindLocked(AGENCY_KIND_REFUSAL)
     fields, changes = apply_patch(dict(cur), patch)
+    if scope == "tenant" and not agency_may_write(fields.kind):
+        raise FactKindLocked(AGENCY_KIND_REFUSAL)
     where, params = _scope_where(scope, tenant_id, 10)
     row = await conn.fetchrow(
         f"""UPDATE acp_shared.facts
@@ -259,7 +283,8 @@ async def delete_fact(conn, fact_id: str, *, scope: str, tenant_id: Optional[UUI
 
 
 __all__ = [
-    "FACT_KINDS", "FactConflict", "FactError", "FactFields", "FactPatch", "MAX_TENANT_FACTS", "apply_patch",
+    "AGENCY_FACT_KINDS", "AGENCY_KIND_REFUSAL", "FACT_KINDS", "FactConflict", "FactError", "FactKindLocked",
+    "agency_may_write", "FactFields", "FactPatch", "MAX_TENANT_FACTS", "apply_patch",
     "create_fact", "delete_fact", "get_fact", "is_expired", "list_facts", "new_fact_id", "subject_key", "to_api",
     "update_fact",
 ]

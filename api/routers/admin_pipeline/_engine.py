@@ -474,27 +474,7 @@ async def _execute_run_tour(
         status = "approved" if _is_publishable(result) else "pending"
         _route = bool(version_id) and not _ckpt.done(checkpoint, "routed")   # AA-993 G2: not routed before a release
         if _route and status == "approved":
-            from services.export.handler import process_export
-            from services.tour_lifecycle.policy import PolicyReviewRequiredError
-            try:
-                await process_export(str(version_id), contract_exit="auto_publish")
-            except PolicyReviewRequiredError as _held:
-                # AA-1049 guard: the version offers elephant riding (text or source) and no person approved it. An
-                # expected refusal: process_export moved it approved → hitl and filed its pending policy review.
-                logger.warning("s1_export_refused_policy_review", tour_id=req.tour_id, version_id=str(version_id),
-                               review_id=_held.review_id)
-            except SourceNotLiveError as _dead:
-                # AA-986: the source was trashed / superseded while S1 ran. An expected refusal, not an error
-                # (no Sentry event): process_export already moved the version approved → hitl; file the
-                # attempt as a review row, which _enqueue_review enters 'dismissed' for a dead source.
-                logger.warning("s1_export_refused_source_not_live", tour_id=req.tour_id,
-                               version_id=str(version_id), reason=_dead.state.reason)
-                try:
-                    await _enqueue_review(conn, req.tour_id, version_id, result, failure_summary=str(_dead))
-                except Exception as _rq_err:
-                    logger.warning("review_queue_enqueue_failed", tour_id=req.tour_id, error=str(_rq_err))
-            except Exception as _exp_err:
-                logger.error("export_failed", tour_id=req.tour_id, error=str(_exp_err))
+            await _auto_publish(conn, req, version_id, result)
         elif _route and status == "pending":
             # AA-212: route blocked / low-quality tour to HITL review_queue (idempotent enqueue).
             try:
@@ -563,6 +543,38 @@ async def _execute_run_tour(
         }
     finally:
         await conn.close()
+
+
+async def _auto_publish(conn, req: TourRunRequest, version_id, result: dict) -> None:
+    """The S1 auto publish of an approved version (moved out of _execute_run_tour, AA-1146): the expected refusals
+    (a hand-locked Master, the elephant-riding policy, a dead source) are warnings, never errors."""
+    from services.export.handler import process_export
+    from services.tour_lifecycle.policy import PolicyReviewRequiredError
+    from services.content_generation.human_lock import HumanLockedError
+    try:
+        await process_export(str(version_id), contract_exit="auto_publish")
+    except HumanLockedError as _locked:
+        # AA-1146: a person locked this Master (a published hand edit); an automatic publish leaves it as it
+        # is. process_export moved the version approved -> hitl. Expected, not an error.
+        logger.warning("s1_export_skipped_human_lock", tour_id=req.tour_id, version_id=str(version_id),
+                       locked_by=_locked.lock.get("by"))
+    except PolicyReviewRequiredError as _held:
+        # AA-1049 guard: the version offers elephant riding (text or source) and no person approved it. An
+        # expected refusal: process_export moved it approved → hitl and filed its pending policy review.
+        logger.warning("s1_export_refused_policy_review", tour_id=req.tour_id, version_id=str(version_id),
+                       review_id=_held.review_id)
+    except SourceNotLiveError as _dead:
+        # AA-986: the source was trashed / superseded while S1 ran. An expected refusal, not an error
+        # (no Sentry event): process_export already moved the version approved → hitl; file the
+        # attempt as a review row, which _enqueue_review enters 'dismissed' for a dead source.
+        logger.warning("s1_export_refused_source_not_live", tour_id=req.tour_id,
+                       version_id=str(version_id), reason=_dead.state.reason)
+        try:
+            await _enqueue_review(conn, req.tour_id, version_id, result, failure_summary=str(_dead))
+        except Exception as _rq_err:
+            logger.warning("review_queue_enqueue_failed", tour_id=req.tour_id, error=str(_rq_err))
+    except Exception as _exp_err:
+        logger.error("export_failed", tour_id=req.tour_id, error=str(_exp_err))
 
 
 async def _sonnet_upgrade(tour: dict, *, tour_id: str, **kwargs) -> Optional[dict]:

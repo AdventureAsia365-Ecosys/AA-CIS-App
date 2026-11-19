@@ -179,7 +179,8 @@ def test_the_s1_run_catches_the_policy_refusal():
     import inspect
 
     from api.routers import admin_pipeline
-    src = inspect.getsource(admin_pipeline._execute_run_tour)
+    src = inspect.getsource(admin_pipeline._auto_publish)   # AA-1146: the S1 auto publish, out of _execute_run_tour
+    assert "_auto_publish(conn, req, version_id, result)" in inspect.getsource(admin_pipeline._execute_run_tour)
     assert "except PolicyReviewRequiredError" in src
     assert src.index("except PolicyReviewRequiredError") < src.index("except SourceNotLiveError")
 

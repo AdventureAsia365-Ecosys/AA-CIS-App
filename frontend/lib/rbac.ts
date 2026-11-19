@@ -39,11 +39,11 @@ const TENANT_BOOK: StaffRole[] = ["admin", "customer_success", "support"];
 // AA-1035: AI & spend.
 const AI_SPEND: StaffRole[] = ["admin", "ai_ops", "finance"];
 // AA-1091: AA Catalogue › Reference prices — readers (reference_price.read) and writers (reference_price.write: the
-// customer-service team's customer_success role, admin, content_lead).
+// customer-service team's customer_success role and admin; content_lead lost it in AA-1146 D5).
 const REFERENCE_PRICE_READERS: StaffRole[] = [
   "admin", "content_lead", "content", "customer_success", "finance",
 ];
-const REFERENCE_PRICE_WRITERS: StaffRole[] = ["admin", "content_lead", "customer_success"];
+const REFERENCE_PRICE_WRITERS: StaffRole[] = ["admin", "customer_success"];
 
 // AA-878 — the read-only role (the UI-smoke E2E account). It reads the content pages and is refused on every
 // write: requireAdmin() (lib/auth-server.ts) answers 403 to any non-GET from it before the admin secret is
@@ -314,6 +314,8 @@ export function landingPage(role: string | null | undefined): string {
 // explicit list per role (no spreads) so that test can read it.
 export type Capability =
   | "content.read" | "content.write" | "review.act" | "master.admin" | "atoms.write" | "photos.write"
+  | "content.publish"             // AA-1146 D1: publish a tour version (admin, content_lead, and content while the
+                                  // two-person switch is off, through review.act)
   | "a4.unpublish" | "quality.write" | "content.settings.write" | "tenant.read" | "tenant.write"
   | "ops.read" | "ops.write" | "ai.admin" | "spend.read" | "spend.write" | "staff.read" | "audit.read"
   | "alerts.write"    // AA-913 — Platform › Alert recipients (changes also need a Cognito session)
@@ -346,13 +348,13 @@ export const ROLE_PERMS: Record<StaffRole, readonly Capability[]> = {
     "tenant.member.write", "tenant.assign", "billing.read", "billing.write", "wave.run", "lab.read",
     "tenant.member.resend", "tenant.book.write", "tenant.view_as", "notifications.read",
     "reference_price.read", "reference_price.write", "settings.write", "settings.approve", "learn.preview",
-    "docs.read",
+    "docs.read", "content.publish",
   ],
   content_lead: [
     "content.read", "content.write", "review.act", "master.admin", "atoms.write", "photos.write",
     "a4.unpublish", "quality.write", "content.settings.write", "catalog.read", "tenant_content.read",
-    "lab.read", "wave.run", "notifications.read", "reference_price.read", "reference_price.write", "learn.preview",
-    "docs.read",
+    "lab.read", "wave.run", "notifications.read", "reference_price.read", "learn.preview",
+    "docs.read", "content.publish",
   ],
   content: [
     "content.read", "content.write", "review.act", "catalog.read", "notifications.read", "reference_price.read",

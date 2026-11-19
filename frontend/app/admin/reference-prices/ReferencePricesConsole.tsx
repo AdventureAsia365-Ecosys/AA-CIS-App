@@ -8,7 +8,7 @@
 //
 // API (CIS BFF → api/routers/admin_reference_prices.py): GET list (server filters + paging), PATCH / DELETE one key,
 // POST accept / parse / import, GET export (base64 JSON). Who: lib/rbac.ts PAGE_RULES /admin/reference-prices (readers),
-// writes need reference_price.write (admin, content_lead, customer_success), hidden with can() and refused by the BFF
+// writes need reference_price.write (admin, customer_success; AA-1146 D5), hidden with can() and refused by the BFF
 // (API_WRITE_RULES "reference-prices") and the backend. No polling (S240): load on open + Refresh.
 
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";

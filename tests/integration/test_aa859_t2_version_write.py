@@ -136,7 +136,8 @@ async def test_edit_on_tenant_pool_inserts_the_next_version(ctx):
     new = await ctx.conn.fetchrow(f"SELECT * FROM {TTV} WHERE id = $1", uuid.UUID(out["new_version_id"]))
     assert new["tenant_id"] == ctx.a and new["published_tour_id"] == ctx.pt
     assert new["parent_version_id"] == ctx.a1 and new["status"] == "pending"
-    assert new["edit_source"] == "tenant_edit" and new["edited_by_user"] == "aa859-test"
+    # AA-1144: the editor is the member in the token (no mid here), never body.edited_by
+    assert new["edit_source"] == "tenant_edit" and new["edited_by_user"] == f"tenant:{ctx.a}"
     assert json.loads(new["rewritten_content"]) == {"name": "A edited"}
     assert new["edited_at"] is not None
     lines = [e for e in logs if e["event"] == "aa859_t2_version_write"]

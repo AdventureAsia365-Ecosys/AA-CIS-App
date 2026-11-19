@@ -3492,7 +3492,7 @@ Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`
   | DELETE `/v1/publish-log/{id}` (W4, unpublish) | `aa859:unpublish_pool` | three short blocks; Secrets Manager and the remote delete hold no connection |
   | GET `/v1/tours/pool`, `/my-versions`, `/versions/{id}` (W5a) | `aa859:t2_version_reads_pool` | job status from a second MAIN query keyed by job ids returned through RLS |
   | GET `/v1/tours/{id}/full` (tenant-JWT branch), `/{id}`, `/versions/{id}/export-docx` (D5b, S247) | `aa859:t2_version_detail_reads_pool` | own flag (not W5a's); the `/full` staff branch (X-Admin-Secret) stays on MAIN and reads no flag; export-docx audit on MAIN after the block; a master tour's raw / seo fields show only when those rows are the AA master tenant's (239), as in W5a |
-  | PATCH `/v1/tours/versions/{id}` (W6) | `aa859:t2_version_write_pool` | `pg_advisory_xact_lock(859, hashtext(tenant:published_tour))` + `MAX + 1`; UNIQUE backstop → 409 `version_conflict` |
+  | PATCH `/v1/tours/versions/{id}` (W6) | `aa859:t2_version_write_pool` | `pg_advisory_xact_lock(859, hashtext(tenant:published_tour))` + `MAX + 1`; UNIQUE backstop → 409 `version_conflict`; AA-1144 fact lock reads the Master / raw base on the same connection (239), audit on MAIN after the block |
   | GET/POST `/v1/integrations/{wordpress,facebook}`, POST `.../test` (W9) | `aa859:integration_connect_pool` | Secrets Manager / remote HTTP hold no connection; the UPSERT writes only 241's column grants; needs 241 |
   | GET / POST `/admin/brand-identity` with a tenant Bearer (wave 3, S247) | `aa859:brand_identity_pool` | needs 262 (RLS on `tenant_brand_rules` / `tenant_seo_config`); POST = one transaction, `pg_advisory_xact_lock(859, hashtext(tenant:brand_identity))` + `MAX + 1`, UNIQUE backstop → 409 `version_conflict`; the X-Admin-Secret staff branch stays on MAIN and reads no flag; `check_saved_cta` on MAIN after commit |
   | POST `/v1/publish-log/{piece_id}/publish` (wave 3, S247) | `aa859:publish_pool` | three short blocks (piece + connection, `claim()` as a savepoint, `finish()`); Secrets Manager and the remote post hold no connection; daily-limit override read and audit row on MAIN; no new grant |
@@ -4399,7 +4399,24 @@ Writers read both scopes for the trip's country, a tenant entry replacing the pl
 its subject (`facts.pick_facts`): T9 always (the FACTS seed, each entry with a `Source:` line the
 leak checks know); T2 only with the worker env `T2_FACTS=on` (default off: a FACTS block in the
 T2 user prompt, also read as T3 grounding source; `services/content_generation/t2_facts.py`).
+AA-1144 (S285 decision D7): an agency writes only `booking_terms` facts (`facts_store.AGENCY_FACT_KINDS`); prices,
+seasons, visas, transfer times and other tour facts are Adventure Asia's (the agency's markup is a CRM price rule).
+`/v1/facts` refuses any other kind (422); an older own fact of another kind stays listed (`read_only`) and deletable,
+is never edited, never reaches a writer (the read SQL and `pick_facts` leave it out) and never replaces a platform fact.
 _Avoid_: Fact (bare) — always say which scope.
+
+**Fact lock (agency T2 copy)**:
+AA-1144 (S285 decision D8): an agency may reword its T2 copy (`PATCH /v1/tours/versions/{id}`, action `edit`) but not
+change what the tour is. `services/content_generation/t2_fact_lock.py` checks the edit against the version it edits,
+the Master (`published_tours.aa_*`) and the raw source with the FactSheet extractors (`services/quality/s1_facts.py`):
+a non-wording key, another day structure, a figure the base never states (a spelled-out duration such as "a two-day
+walk" counts), a new place in the highlights or itinerary (checked against the parent's highlights / itinerary and the
+Master / raw texts only, never the parent's free-wording fields), a dropped / added "not included" item group, or a
+new "included" claim for a group the source excludes or never names is a 422 `fact_locked` (`{code, message, locked:
+[{field, fact, value}]}`). The edit is laid over the version (fields it does not send are kept); `edited_by_user` is the member from
+the token. Every edit and refusal writes `tenant_tour_version.edited` / `.edit_refused` (field + old / new sha256, no
+text) on MAIN after the transaction, best effort; the agency sees both in Account › Activity.
+_Avoid_: "T2 facts" for this (that is the `T2_FACTS` writer input above).
 
 ### Model operations (platform)
 
@@ -5043,6 +5060,42 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     service's `publish` (AA-986 L2, see Served state): it locks the source FOR SHARE and re-checks it, so a retire that
     lands between promote's check and the publish is refused too (process_export's L1 refusal, 409). The publish-date
     rule above is the ON CONFLICT branch of the repository insert that only that service runs.
+  - **Tour versions, one publish gate, the hand-edit lock** (AA-1146, S285; CIS 457-458). A person's change of a
+    tour's wording is a **draft version**: a new `generated_content` row (`status` draft, `origin` human,
+    `parent_version_num`, `edit_reason`, `author_id`; editors in `edit_diff.editors`), one open draft per tour, copied
+    from the live version; the live version is never edited in place any more (`PATCH .../generated/{id}` on it → 409
+    `edit_live_version`; on a person's open draft → 409 `edit_draft_version`: drafts are saved only through PUT /draft,
+    which keeps their editors). Routes (`api/routers/admin_pipeline/drafts.py`): `GET|PUT|DELETE /admin/tours/{id}/draft`
+    (state + per-field word diff against the live version; save needs a reason; discard = status rejected),
+    `POST .../draft/publish`, `POST /admin/tours/{id}/unlock` (master.admin, reason), `GET .../raw-revisions`.
+    **One gate** for every publish route (Review Queue approve, promote, draft publish): a hand-edited version needs a
+    passing re-validation (409 `revalidate_required`; promote too since AA-1146), and while the setting
+    `cis.content.publish_two_person` is on (Dev default off; admin only, maker_checker; while on, changing it needs a
+    second person) the publisher must hold `content.publish` (admin, content_lead; else 403 `two_person_required`) and
+    must not be one of the version's editors (403 `same_person`) — `api/routers/admin_pipeline/_publish.py`,
+    `api/services/content_publish_gate.py` (reads the switch in the route's transaction, fails closed). The route
+    capability is `content.publish | review.act`, so `content` publishes only while the switch is off. **Lock**: a
+    person's publish of a hand-edited version (`process_export` exits approve / promote / human_publish) sets
+    `published_tours.human_lock_*`; a writer's version published by a person lifts it. Automatic exits (auto_publish,
+    recompose, lambda) over a locked Master are refused (`HumanLockedError`, the version → hitl), the `s1_rewrite` job
+    skips a locked tour before any paid call (result `{skipped, reason: human_locked}`), `run-tour` answers 409
+    `human_locked` and the S1 batch submit leaves locked tours out (`services/content_generation/human_lock.py`).
+    **Source tour history**: every raw edit writes `silver_aa_internal.raw_tour_revision` (append-only, before / after,
+    actor, optional reason) and an audit row (`raw_tour.fields_edited`); `price_raw` needs `reference_price.write`
+    (admin, customer_success; AA-1146 D5 — content_lead lost the reference price write). **Excel re-import (T1)**: the
+    Duplicate Review offers "Merge field by field" (`GET /admin/upload-staging/{id}/merge-preview`, decide `merge`
+    with `resolutions` + reason): fields nobody edited by hand take the sheet's value, hand-edited fields that differ
+    are conflicts the person resolves (keep / take), an empty cell never erases. **The result is a draft of the facts**
+    (`silver_aa_internal.raw_tour_fact_draft`, one open per tour; the tour is not touched): `GET|DELETE
+    /admin/tours/{id}/fact-draft`, `POST .../fact-draft/publish` (`api/routers/admin_pipeline/fact_drafts.py`) runs the
+    same two-person rule (the merge's author is the editor), the price rule, a live source and a stale check (409
+    `fact_draft_stale` when a field changed since the merge), then writes the facts with one `raw_tour_revision` row
+    (`excel_merge`, resolutions) and runs the source fan-out. Without `reference_price.write` a merge never changes
+    `price_raw`: taking the sheet's price is 403 `price_read_only`, an untouched price change is held back (`withheld`
+    in the result). **Re-check verdicts belong to the text they read**: the re-validation writes `revalidate_passed`
+    only while the version's `edited_at` is the one it read (a save during the run rolls the verdict back, result
+    `stale`). **Waves**: a tour skipped for its lock (or left out of the batch) is the terminal wave state `locked`
+    (who, when, why on the report row), so a wave holding one can complete.
   - **Atomize retires what the new text no longer has** (AA-645 step 0): the per-day path soft-deletes live atoms on a
     day the itinerary no longer has (and day-less legacy rows), also on an all-skipped run (C6); the legacy path (no
     `Day N —` headers, random ids) soft-deletes the tour's earlier atoms after a good read (L1). An atomize that changed

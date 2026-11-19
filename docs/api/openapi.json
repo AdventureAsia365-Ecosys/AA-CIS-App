@@ -3518,6 +3518,29 @@
           "decision": {
             "title": "Decision",
             "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "resolutions": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolutions"
           }
         },
         "required": [
@@ -3931,6 +3954,38 @@
           "expected_updated_at"
         ],
         "title": "DraftBody",
+        "type": "object"
+      },
+      "DraftSave": {
+        "properties": {
+          "base_version_num": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Version Num"
+          },
+          "fields": {
+            "additionalProperties": true,
+            "title": "Fields",
+            "type": "object"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "DraftSave",
         "type": "object"
       },
       "DrillRequest": {
@@ -11861,6 +11916,11 @@
             "title": "Provenance",
             "type": "string"
           },
+          "read_only": {
+            "default": false,
+            "title": "Read Only",
+            "type": "boolean"
+          },
           "scope": {
             "title": "Scope",
             "type": "string"
@@ -12552,6 +12612,21 @@
           }
         },
         "title": "UndoMergeRequest",
+        "type": "object"
+      },
+      "UnlockBody": {
+        "properties": {
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "UnlockBody",
         "type": "object"
       },
       "UpdateContentBody": {
@@ -49885,6 +49960,517 @@
         ]
       }
     },
+    "/admin/tours/{tour_id}/draft": {
+      "delete": {
+        "operationId": "discard_tour_draft_admin_tours__tour_id__draft_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tour_id",
+            "required": true,
+            "schema": {
+              "title": "Tour Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Discard Tour Draft",
+        "tags": [
+          "admin-pipeline"
+        ]
+      },
+      "get": {
+        "operationId": "get_tour_draft_admin_tours__tour_id__draft_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tour_id",
+            "required": true,
+            "schema": {
+              "title": "Tour Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Tour Draft",
+        "tags": [
+          "admin-pipeline"
+        ]
+      },
+      "put": {
+        "description": "Create the tour's draft or save fields into it. The draft is a new version (never an overwrite of the live one);\nevery save resets the re-check (a publish needs a passing re-validation of what is saved now).",
+        "operationId": "put_tour_draft_admin_tours__tour_id__draft_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tour_id",
+            "required": true,
+            "schema": {
+              "title": "Tour Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftSave"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Tour Draft",
+        "tags": [
+          "admin-pipeline"
+        ]
+      }
+    },
+    "/admin/tours/{tour_id}/draft/publish": {
+      "post": {
+        "description": "Make the open draft the tour's live version. The one gate: a passing re-validation of the saved text (409\n``revalidate_required``), the two-person rule while cis.content.publish_two_person is on (403\n``two_person_required`` / ``same_person``), a live source (409 ``source_not_live``); then process_export with exit\n``human_publish`` (atomize, segment, source fan-out) locks the Master against automatic reruns.",
+        "operationId": "publish_tour_draft_admin_tours__tour_id__draft_publish_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tour_id",
+            "required": true,
+            "schema": {
+              "title": "Tour Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Publish Tour Draft",
+        "tags": [
+          "admin-pipeline"
+        ]
+      }
+    },
+    "/admin/tours/{tour_id}/fact-draft": {
+      "delete": {
+        "operationId": "discard_fact_draft_admin_tours__tour_id__fact_draft_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tour_id",
+            "required": true,
+            "schema": {
+              "title": "Tour Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Discard Fact Draft",
+        "tags": [
+          "admin-pipeline"
+        ]
+      },
+      "get": {
+        "operationId": "get_fact_draft_admin_tours__tour_id__fact_draft_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tour_id",
+            "required": true,
+            "schema": {
+              "title": "Tour Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Fact Draft",
+        "tags": [
+          "admin-pipeline"
+        ]
+      }
+    },
+    "/admin/tours/{tour_id}/fact-draft/publish": {
+      "post": {
+        "description": "Write the open sheet draft into the tour through the gate (see the module doc).",
+        "operationId": "publish_fact_draft_admin_tours__tour_id__fact_draft_publish_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tour_id",
+            "required": true,
+            "schema": {
+              "title": "Tour Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Publish Fact Draft",
+        "tags": [
+          "admin-pipeline"
+        ]
+      }
+    },
     "/admin/tours/{tour_id}/generated/{content_id}": {
       "patch": {
         "operationId": "update_generated_content_fields_admin_tours__tour_id__generated__content_id__patch",
@@ -50205,6 +50791,7 @@
     },
     "/admin/tours/{tour_id}/raw": {
       "patch": {
+        "description": "Edit fields of the source tour. AA-1146 (S285): every edit keeps the old values: one history row\n(silver_aa_internal.raw_tour_revision, source staff_edit) and one audit row (raw_tour.fields_edited, before / after)\nin the edit's transaction; an optional ``reason`` (3..500 characters) is stored with both. ``price_raw`` needs\nreference_price.write (D5: 403 for content and content_lead).",
         "operationId": "update_raw_tour_fields_admin_tours__tour_id__raw_patch",
         "parameters": [
           {
@@ -50270,6 +50857,88 @@
           }
         },
         "summary": "Update Raw Tour Fields",
+        "tags": [
+          "admin-pipeline"
+        ]
+      }
+    },
+    "/admin/tours/{tour_id}/raw-revisions": {
+      "get": {
+        "operationId": "list_raw_revisions_admin_tours__tour_id__raw_revisions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tour_id",
+            "required": true,
+            "schema": {
+              "title": "Tour Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Raw Revisions",
         "tags": [
           "admin-pipeline"
         ]
@@ -50592,6 +51261,89 @@
         "summary": "Retire a source tour (source_status=trashed, cascades)",
         "tags": [
           "admin"
+        ]
+      }
+    },
+    "/admin/tours/{tour_id}/unlock": {
+      "post": {
+        "description": "Lift the hand-edit lock: the next wave or S1 run may replace this Master again.",
+        "operationId": "unlock_tour_admin_tours__tour_id__unlock_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tour_id",
+            "required": true,
+            "schema": {
+              "title": "Tour Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnlockBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unlock Tour",
+        "tags": [
+          "admin-pipeline"
         ]
       }
     },
@@ -50925,7 +51677,7 @@
     },
     "/admin/tours/{tour_id}/versions/{version_num}/promote": {
       "post": {
-        "description": "Make version `version_num` the tour's live Master Content again (the per-tour rollback).\n\nAA-645 step 0 (C2): this used to copy only aa_name / aa_subtitle / the score onto published_tours and reset\npublished_at, so the page mixed two versions and the atoms stayed those of the replaced version. It now publishes\nthe version through the one publish path (`process_export`: every text and SEO field, the accepted score\npointer, the live-source rule) and re-atomizes it with `dedupe=False` + `force=True` (the version's own\n`a3_atomize:<id>` key and day fingerprints are already spent). Atom ids are content hashes, so the old text\nbrings the old atoms back and the replaced version's atoms are soft-deleted. published_at is kept (d06); the\nchange is recorded in published_tours.updated_at.\n\nAA-986 L2: process_export writes the Master through the tour lifecycle service (`services.tour_lifecycle.publish`,\nthe only writer of published_tours inserts): the source row is locked FOR SHARE and re-checked there, so a retire\nthat commits between the check below and the publish is refused (process_export turns it into the L1 refusal,\nSourceNotLiveError → 409 source_not_live). The d06 rule (first published_at kept, updated_at = now()) is the\nON CONFLICT branch of the repository insert that service runs.\n\nOnly an `approved` version can be promoted (the publish gate of every other path): a version that never passed\nthe gate goes through the Review Queue. 404 unknown tour / version, 409 not approved or source not live.",
+        "description": "Make version `version_num` the tour's live Master Content again (the per-tour rollback).\n\nAA-645 step 0 (C2): this used to copy only aa_name / aa_subtitle / the score onto published_tours and reset\npublished_at, so the page mixed two versions and the atoms stayed those of the replaced version. It now publishes\nthe version through the one publish path (`process_export`: every text and SEO field, the accepted score\npointer, the live-source rule) and re-atomizes it with `dedupe=False` + `force=True` (the version's own\n`a3_atomize:<id>` key and day fingerprints are already spent). Atom ids are content hashes, so the old text\nbrings the old atoms back and the replaced version's atoms are soft-deleted. published_at is kept (d06); the\nchange is recorded in published_tours.updated_at.\n\nAA-986 L2: process_export writes the Master through the tour lifecycle service (`services.tour_lifecycle.publish`,\nthe only writer of published_tours inserts): the source row is locked FOR SHARE and re-checked there, so a retire\nthat commits between the check below and the publish is refused (process_export turns it into the L1 refusal,\nSourceNotLiveError → 409 source_not_live). The d06 rule (first published_at kept, updated_at = now()) is the\nON CONFLICT branch of the repository insert that service runs.\n\nOnly an `approved` version can be promoted (the publish gate of every other path): a version that never passed\nthe gate goes through the Review Queue. 404 unknown tour / version, 409 not approved or source not live.\n\nAA-1146 (S285, option A of the content-editing advisory): promote goes through the same re-check gate as the\nReview Queue approve: a hand-edited version needs a passing re-validation of its current text (409\n``revalidate_required``), and the two-person rule applies while cis.content.publish_two_person is on (403\n``two_person_required`` / ``same_person``; the editors are the version's author and reviewer). A hand-edited\nversion published here locks the Master; a writer's version lifts the lock.",
         "operationId": "promote_tour_version_admin_tours__tour_id__versions__version_num__promote_post",
         "parameters": [
           {
@@ -51436,6 +52188,79 @@
           }
         },
         "summary": "Decide Staging",
+        "tags": [
+          "admin-pipeline"
+        ]
+      }
+    },
+    "/admin/upload-staging/{staging_id}/merge-preview": {
+      "get": {
+        "description": "AA-1146 T1: what a merge of this staged re-import into its tour would do, field by field: ``auto`` (nobody\nedited it by hand: the sheet's value is taken), ``conflicts`` (a person edited it: choose incoming or current),\n``unchanged``. ``read_only``: fields the caller may not change (D5: the price text without reference_price.write);\n``open_draft``: the tour already has a sheet draft waiting (a merge is refused until it is published or discarded).\nNothing is written.",
+        "operationId": "merge_preview_admin_upload_staging__staging_id__merge_preview_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "staging_id",
+            "required": true,
+            "schema": {
+              "title": "Staging Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Merge Preview",
         "tags": [
           "admin-pipeline"
         ]

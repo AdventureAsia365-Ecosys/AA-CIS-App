@@ -423,6 +423,14 @@ async def decide(pool: Any, value_id: str, *, actor: str, approve: bool, note: O
     return out
 
 
+_PUBLISH_TWO_PERSON_KEY = "cis.content.publish_two_person"   # api/services/content_publish_gate.py
+
+
+async def _content_switch_on(conn: Any) -> bool:
+    from api.services import content_publish_gate
+    return await content_publish_gate.switch_on(conn)
+
+
 async def two_person_on(conn: Any) -> bool:
     """Is two-person approval on, read in the caller's transaction (S279 review: the process cache could be empty or
     up to one cache window old, which failed open). Fails closed: an unreadable row or a value that is not a boolean
@@ -456,7 +464,9 @@ async def _decide(conn: Any, d: Definition, proposal: dict, *, actor: str, appro
     self_approved = False
     if approve and actor == proposal["proposed_by"] and d.approval == "maker_checker":
         # The flag itself is maker_checker (CIS 407): while it is on, the one person it checks cannot turn it off.
-        if await two_person_on(conn):
+        # AA-1146 D1 (S285): the content publish switch is the same: while it is on, changing it needs a second person
+        # whatever cis.settings.two_person_approval says.
+        if await two_person_on(conn) or (d.key == _PUBLISH_TWO_PERSON_KEY and await _content_switch_on(conn)):
             raise SettingsError(409, f"{d.label} needs a second person to approve (two-person approval is on)",
                                 "second_person_required")
         self_approved = True

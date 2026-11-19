@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -2540,6 +2540,42 @@
      "lower": "Trang báo sớm hơn rằng một kết nối chưa được dùng; kết nối ít dùng hiện No recent calls thường hơn.",
      "when": "Tăng khi các kết nối chỉ dùng vài lần mỗi ngày cứ hiện No recent calls; giảm khi muốn biết sớm hơn một kết nối không được dùng.",
      "example": "Với mặc định 6 giờ, kết nối có lần gọi trả lời gần nhất cách đây 7 giờ hiện No recent calls và ô Need a look không tính nó."
+    }
+   }
+  },
+  {
+   "key": "cis.platform.admin_mfa_required",
+   "app": "cis",
+   "area": "platform",
+   "label": "Staff sign-in: administrators must use an authenticator code",
+   "description": "On: the CIS API refuses a staff session of an administrator (the cis-admin group, or a staff member with the owner flag) whose sign-in did not use an authenticator app code, with 403 mfa_required (api/core/staff_mfa.py reads the token's amr claim, which Amazon Cognito sets to include otp after a password plus authenticator code sign-in). Off (default): nothing is refused; every administrator session without that code is logged as staff_admin_mfa_check would_refuse, so the switch can be checked before it is turned on. Other CIS roles, the read-only Dev test accounts and the capped preview session are never checked. Booking and the CRM have their own switch.",
+   "value_type": "bool",
+   "unit": null,
+   "min_value": null,
+   "max_value": null,
+   "allowed_values": null,
+   "default_value": false,
+   "scope_kind": "platform",
+   "impact": "high",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "Whether a CIS administrator must sign in with a password and a six-digit code from an authenticator app before the admin pages answer.",
+     "raise": "On: an administrator who signed in with an e-mail code only is refused and must sign in again with the authenticator code; a stolen mailbox no longer opens the admin pages.",
+     "lower": "Off: administrators can work with an e-mail code sign-in as today; their sessions are only logged.",
+     "when": "Turn it on only after every administrator has set up an authenticator app and one test sign-in shows the code was used; turn it off only to let an administrator back in while the authenticator is being reset.",
+     "example": "With the default off, an administrator who signed in with an e-mail code opens the admin pages; switched on, the same session gets an error asking for an authenticator sign-in."
+    },
+    "vi": {
+     "what": "Quản trị viên CIS có phải đăng nhập bằng mật khẩu và mã 6 số từ ứng dụng xác thực thì các trang quản trị mới trả lời hay không.",
+     "raise": "Bật: quản trị viên chỉ đăng nhập bằng mã e-mail bị từ chối và phải đăng nhập lại kèm mã xác thực; hộp thư bị lộ không còn mở được trang quản trị.",
+     "lower": "Tắt: quản trị viên làm việc với đăng nhập mã e-mail như hiện nay; phiên của họ chỉ được ghi log.",
+     "when": "Chỉ bật sau khi mọi quản trị viên đã cài ứng dụng xác thực và một lần đăng nhập thử cho thấy mã đã được dùng; chỉ tắt để cho một quản trị viên vào lại trong lúc đặt lại ứng dụng xác thực.",
+     "example": "Với mặc định tắt, quản trị viên đăng nhập bằng mã e-mail vẫn mở được trang quản trị; khi bật, cùng phiên đó nhận lỗi yêu cầu đăng nhập kèm mã xác thực."
     }
    }
   },
