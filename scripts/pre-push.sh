@@ -25,7 +25,10 @@
 #                   committed or not ("unit <path>" / "integration <path>" lines, "note <text>" for warnings), and exit
 #                   0; runs no tool and writes nothing (for the agent change hooks, to call once when a lane stops).
 #   --dry-run       prints the changed-file count and the checks it would run, then exits.
-#   --only a,b      run only these check ids (see CHECK_IDS, plus gitleaks).
+#   --only a,b      run only these check ids (see CHECK_IDS, plus lean_guard and gitleaks).
+#   lean_guard      AA-1161: every mode but --ci runs tools/repo/lean_guard.py on <base>...<head> (change-guard.yml job
+#                   `lean`): a raster image > 500 KiB, > 10 MiB of images, a dist/**/*.zip, an ELF / Mach-O / PE binary or
+#                   a file > 5 MiB that .lean-allow does not list blocks the push. A missing base is a note, not a block.
 #   gitleaks        AA-1024 G14: every mode but --ci scans the pushed commits (<base>..<head>) with gitleaks v8.30.1 (the
 #                   secret-scan.yml pin) and the BASE's .gitleaks.toml / .gitleaksignore, as CI reads them. Binary:
 #                   $AA_GITLEAKS, `gitleaks` on PATH, or <workspace>/.tmp-session/gitleaks-8301/gitleaks. A missing or
@@ -64,6 +67,7 @@ CI_CMD[unit]="COVERAGE_CORE=sysmon pytest tests/unit/ -v --tb=short --cov=servic
 UNIT_INSTALL="pip install -r requirements.txt -r requirements-dev.txt"
 CI_CMD[integration]="scripts/pre-push.sh --integration   (runs the changed integration test files on a throwaway Postgres and stamps this code; CI: Integration shard i/4, postgres:15)"
 INTEGRATION_INSTALL="pip install -r requirements.txt -r tests/integration/requirements-integration.txt"
+CI_CMD[lean_guard]="python3 -I -B tools/repo/lean_guard.py --base <base> --head HEAD --prefetch --github   (change-guard.yml lean; compress images with AA-Ecosys tools/docs/compress_images.py, list a justified big file in .lean-allow)"
 CI_CMD[gitleaks]="gitleaks git . --log-opts=\"--no-renames <base>..<head>\" -c .gitleaks.toml -i .gitleaksignore --redact   (secret-scan.yml gitleaks, rules from the PR base; a finding: rewrite the branch, never fix it in a later commit)"
 GITLEAKS_VERSION=8.30.1 # .github/workflows/secret-scan.yml (gitleaks v8.30.1 in every repo)
 GITLEAKS_LOCAL=.tmp-session/gitleaks-8301/gitleaks # where the PR opener and the lanes keep the checked download
@@ -896,7 +900,7 @@ main() {
   local plan=() id
   mapfile -t plan < <(plan_checks "$MODE" "$CI_MODE" "${CHANGED[@]}")
   # AA-1024 G14: every local push scans its commits (CI runs its own Secret Scan job, so not in --ci).
-  [[ $CI_MODE == 0 ]] && plan+=(gitleaks)
+  [[ $CI_MODE == 0 ]] && plan+=(lean_guard gitleaks)
   if [[ -n $ONLY ]]; then
     local kept=(); for id in "${plan[@]}"; do [[ $ONLY == *",$id,"* ]] && kept+=("$id"); done; plan=("${kept[@]}")
   fi
@@ -953,6 +957,8 @@ main() {
       frontend_kit) do_frontend_kit ;;
       frontend_tsc) node_check frontend "$id" npx tsc --noEmit -p . ;;
       frontend_lint) do_frontend_lint ;;
+      lean_guard) run_check "$id" "$PY -B tools/repo/lean_guard.py --base $BASE --head $HEAD_REF (change-guard.yml lean)" \
+        "$PY" -B tools/repo/lean_guard.py --base "$BASE" --head "$HEAD_REF" --allow-missing-base ;;
       gitleaks) do_gitleaks ;;
     esac
   done
