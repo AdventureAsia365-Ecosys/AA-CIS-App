@@ -40,7 +40,7 @@ import { PageFrame,
   Badge, Button, ConfirmModal, DataTable, Drawer, ErrorState, GuidePanel, K, PageHeader, StatusBadge, TableSkeleton,
   Tabs, apiGet, mono, useFormat, useLocalized, useT, useToast, type ColumnDef,
   Input, Select, Textarea,
-  LinkButton, useAdminIdentity,
+  LinkButton, ReadOnlyNote, WriteOnly, useAdminIdentity,
 } from "../../../_kit";
 import { can } from "@/lib/rbac";
 import {
@@ -169,11 +169,14 @@ function SignalsTab() {
         return (
           <div style={{ display: "grid", gap: 4, justifyItems: "start" }} onClick={(e) => e.stopPropagation()}>
             <Badge tone={factTone(s.fact_status)}>{factLabel(s.fact_status)}</Badge>
+            {/* AA-1127 C3: the verdict buttons only for a session that may write. */}
             {s.fact_status === "grey" && (
-              <div style={{ display: "flex", gap: 4 }}>
-                <Button size="sm" onClick={() => setVerdict(s.signal_id, "pass")}>{t("markPass")}</Button>
-                <Button size="sm" variant="danger" onClick={() => setVerdict(s.signal_id, "fail")}>{t("markFail")}</Button>
-              </div>
+              <WriteOnly>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <Button size="sm" onClick={() => setVerdict(s.signal_id, "pass")}>{t("markPass")}</Button>
+                  <Button size="sm" variant="danger" onClick={() => setVerdict(s.signal_id, "fail")}>{t("markFail")}</Button>
+                </div>
+              </WriteOnly>
             )}
           </div>
         ); } },
@@ -359,25 +362,30 @@ function RuleDrawer({ ruleId, onClose }: { ruleId: string | null; onClose: () =>
             {rule.support_reviewers ? t("supportRuleReviewers", rule.support_reviewers) : ""} · {t("cluster")}{" "}
             <span style={{ fontFamily: mono }}>{rule.cluster_key}</span>
           </div>
-          {rule.status === "candidate" && !editing && (
-            <div style={{ display: "grid", gap: 8, borderTop: `1px solid ${K.line}`, paddingTop: 12 }}>
-              <Button onClick={() => setDraft({ text: rule.rule_text, replacement: rule.replacement ?? "",
-                phrases: rule.match_phrases.join("\n") })}>{t("edit")}</Button>
-              <div style={{ display: "flex", gap: 8 }}>
-                <Input placeholder={t("whyReject")} value={reason} onChange={(e) => setReason(e.target.value)}
-                  style={{ flex: 1, fontSize: 13 }} aria-label={t("rejectAria")} />
-                <Button variant="danger" disabled={reason.trim().length < 3} onClick={reject}>{t("reject")}</Button>
+          {/* AA-1127 C3: edit / reject / R0 replay / activate / roll back only for a session that may write. */}
+          <WriteOnly>
+            {rule.status === "candidate" && !editing && (
+              <div style={{ display: "grid", gap: 8, borderTop: `1px solid ${K.line}`, paddingTop: 12 }}>
+                <Button onClick={() => setDraft({ text: rule.rule_text, replacement: rule.replacement ?? "",
+                  phrases: rule.match_phrases.join("\n") })}>{t("edit")}</Button>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <Input placeholder={t("whyReject")} value={reason} onChange={(e) => setReason(e.target.value)}
+                    style={{ flex: 1, fontSize: 13 }} aria-label={t("rejectAria")} />
+                  <Button variant="danger" disabled={reason.trim().length < 3} onClick={reject}>{t("reject")}</Button>
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </WriteOnly>
           <div style={{ display: "grid", gap: 8, borderTop: `1px solid ${K.line}`, paddingTop: 12 }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <h3 style={{ fontSize: 13, margin: 0 }}>{t("r0Replay")}</h3>
-              <Button variant="ghost" onClick={() => act("r0")} title={t("runR0Title")}>{t("runR0")}</Button>
-              {rule.kind === "lexicon" && L0_WRITERS.includes(rule.writer) && rule.status !== "active" && (
-                <Button variant="primary" disabled={!!rule.l0_activation} onClick={() => act("activate")}
-                  title={rule.l0_activation?.detail || t("activateL0Title")}>
-                  {t("activateL0")}</Button>)}
+              <WriteOnly>
+                <Button variant="ghost" onClick={() => act("r0")} title={t("runR0Title")}>{t("runR0")}</Button>
+                {rule.kind === "lexicon" && L0_WRITERS.includes(rule.writer) && rule.status !== "active" && (
+                  <Button variant="primary" disabled={!!rule.l0_activation} onClick={() => act("activate")}
+                    title={rule.l0_activation?.detail || t("activateL0Title")}>
+                    {t("activateL0")}</Button>)}
+              </WriteOnly>
             </div>
             {rule.l0_activation && rule.kind === "lexicon" && rule.status !== "active" && (
               <div style={{ color: K.muted, fontSize: 12 }}>{t("notActivatable", rule.l0_activation.detail)}</div>)}
@@ -385,12 +393,14 @@ function RuleDrawer({ ruleId, onClose }: { ruleId: string | null; onClose: () =>
               : <div style={{ color: K.muted, fontSize: 12.5 }}>{t("noR0")}</div>}
             <div style={{ color: K.muted2, fontSize: 11.5 }}>{t("r0Help")}</div>
             {rule.status === "active" && (
-              <div style={{ display: "flex", gap: 8 }}>
-                <Input placeholder={t("whyRollback")} value={reason} onChange={(e) => setReason(e.target.value)}
-                  style={{ flex: 1, fontSize: 13 }} aria-label={t("rollbackAria")} />
-                <Button variant="danger" disabled={reason.trim().length < 3}
-                  onClick={() => act("rollback", { reason })}>{t("rollBack")}</Button>
-              </div>
+              <WriteOnly>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <Input placeholder={t("whyRollback")} value={reason} onChange={(e) => setReason(e.target.value)}
+                    style={{ flex: 1, fontSize: 13 }} aria-label={t("rollbackAria")} />
+                  <Button variant="danger" disabled={reason.trim().length < 3}
+                    onClick={() => act("rollback", { reason })}>{t("rollBack")}</Button>
+                </div>
+              </WriteOnly>
             )}
           </div>
           <div>
@@ -534,15 +544,18 @@ export default function WritingMemory() {
         actions={<>
           <Button variant="ghost" onClick={() => qc.invalidateQueries({ queryKey: ["wm"] })}>
             <RefreshCw size={14} /> {t("refresh")}</Button>
-          <Button variant="ghost" onClick={() => run("backfill", true)} disabled={!!busy}
-            title={t("backfillDryRunTitle")}>
-            {t("backfillDryRun")}</Button>
-          <Button onClick={() => run("backfill")} disabled={!!busy}>{t("backfillSignals")}</Button>
-          <Button onClick={() => run("fact_filter")} disabled={!!busy}>{t("runFactFilter")}</Button>
-          <Button variant="ghost" onClick={() => run("r0_baseline")} disabled={!!busy} title={t("r0BaselineTitle")}>
-            {t("r0Baseline")}</Button>
-          <Button variant="primary" onClick={() => setConfirmMine(true)} disabled={!!busy} title={mine.title}>
-            <Play size={14} /> {t("mineRules")}</Button>
+          {/* AA-1127 C3: the run and paid buttons only for a session that may write (the API refuses the rest). */}
+          <WriteOnly fallback={<ReadOnlyNote testId="wm-read-only" />}>
+            <Button variant="ghost" onClick={() => run("backfill", true)} disabled={!!busy}
+              title={t("backfillDryRunTitle")}>
+              {t("backfillDryRun")}</Button>
+            <Button onClick={() => run("backfill")} disabled={!!busy}>{t("backfillSignals")}</Button>
+            <Button onClick={() => run("fact_filter")} disabled={!!busy}>{t("runFactFilter")}</Button>
+            <Button variant="ghost" onClick={() => run("r0_baseline")} disabled={!!busy} title={t("r0BaselineTitle")}>
+              {t("r0Baseline")}</Button>
+            <Button variant="primary" onClick={() => setConfirmMine(true)} disabled={!!busy} title={mine.title}>
+              <Play size={14} /> {t("mineRules")}</Button>
+          </WriteOnly>
         </>} />
       {loggedRead && (
         <div role="note" data-testid="wm-logged-read"

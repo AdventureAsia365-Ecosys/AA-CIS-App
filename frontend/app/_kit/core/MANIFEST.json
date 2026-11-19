@@ -78,6 +78,9 @@
     "Providers.tsx": {
       "sha256": "bbcd0aea4a7b76cad7098c1f6329fd8f137a25281767e75fc8c3d3c39887cfb2"
     },
+    "ReadOnly.tsx": {
+      "sha256": "01221fcf45b911c857659cbfde661fce6c7517ec936f5485b9e28fedc3f0bb81"
+    },
     "RowMenu.tsx": {
       "sha256": "eaf5d23f270158a75b7c73d8c0330680dd1fa32dce0a01e7835cf72454846f63"
     },
@@ -127,7 +130,7 @@
       "sha256": "44abb6d5201474cbbd8a7eb449d535829bc3c77af044362385156ea88310d583"
     },
     "kit.messages.ts": {
-      "sha256": "66c69c9d5a05da6dd256f3202cedfa49bbee5ef525a84bdba7cf6c24146703b0"
+      "sha256": "b38f091d1e5fbda7cedcfeb5e9d9c5d97761ba38445a808ef68a05b5787e6ce6"
     },
     "kitGallery.messages.ts": {
       "sha256": "7cde99066423d69077b4f2460fd6f09292ee123967518929adb2af79f61b47ee"

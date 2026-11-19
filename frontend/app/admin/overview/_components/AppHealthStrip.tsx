@@ -1,10 +1,11 @@
 "use client";
 // app/admin/overview/_components/AppHealthStrip.tsx
-// AA-858 — "Apps health — last 24 hours": one tile per app (CIS, TripPlanner, Booking) with a plain status,
+// AA-858 — "Apps health — last 24 hours": one tile per app (CIS, TripPlanner, Booking, Partner CRM) with a plain status,
 // requests, server errors, response time and a 24-bar hourly chart (requests vs errors). Numbers come from
 // AWS CloudWatch through GET /admin/overview/ops (cached 5 min server-side). Source texts: ./sources.ts.
 // S243 — the pill and the reason are `overall`: the same verdict /admin/platform/apps shows (backend
 // api/services/app_health.py, worst of the app's own health check and this traffic), with the same words.
+// AA-1127 C3: the Partner CRM tile (kind "probe") has no traffic numbers: its health check and alarms only.
 import { Bar, BarChart, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 import { CHART_TOOLTIP, K, useLang, useT } from "../../../_kit";
 import { useChartColors } from "../../../_kit/useTheme";
@@ -22,10 +23,11 @@ const APP_LINK: Partial<Record<AppHealth["app"], { href: string; label: "openTri
   booking: { href: BOOKING_ADMIN_URL, label: "openBooking" },
 };
 
-const WHAT: Record<AppHealth["app"], "whatCis" | "whatTripplanner" | "whatBooking"> = {
+const WHAT: Record<AppHealth["app"], "whatCis" | "whatTripplanner" | "whatBooking" | "whatCrm"> = {
   cis: "whatCis",
   tripplanner: "whatTripplanner",
   booking: "whatBooking",
+  crm: "whatCrm",
 };
 
 function hourLabel(iso: string): string {
@@ -88,40 +90,12 @@ function AlarmList({ alarms, app }: { alarms: AlarmBucket | null; app: AppHealth
   );
 }
 
-function AppTile({ app }: { app: AppHealth }) {
+function TrafficNumbers({ app }: { app: AppHealth }) {
   const t = useT(OPS);
-  const lang = useLang();
   const { HEALTH_SRC } = useSources();
-  const link = APP_LINK[app.app];
   const errSub = app.error_rate_pct == null ? t("noRequests") : t("pctOfRequests", app.error_rate_pct);
   return (
-    <div
-      data-testid={`ops-health-${app.app}`}
-      style={{
-        border: `1px solid ${K.line}`,
-        borderRadius: 12,
-        padding: 14,
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
-        minWidth: 0,
-        background: K.card,
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 15, fontWeight: 600, color: K.ink }}>{app.label}</div>
-          <div style={{ fontSize: 11, color: K.muted }}>{t(WHAT[app.app])}</div>
-        </div>
-        <AppStatusPill status={app.overall?.status} state={app.state} />
-      </div>
-      <div style={{ fontSize: 12, color: K.body }}>
-        {app.overall?.reason ?? app.state_reason}
-        {app.partial && t("stillArriving")}
-        {app.overall && app.overall.basis.length > 0 && (
-          <span style={{ color: K.muted }}> · {basisText(app.overall.basis, BASIS_MESSAGES[lang])}</span>
-        )}
-      </div>
+    <>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 6 }}>
         <Kpi
           compact
@@ -160,6 +134,51 @@ function AppTile({ app }: { app: AppHealth }) {
           </span>
         )}
       </div>
+    </>
+  );
+}
+
+function AppTile({ app }: { app: AppHealth }) {
+  const t = useT(OPS);
+  const lang = useLang();
+  const { HEALTH_SRC } = useSources();
+  const link = APP_LINK[app.app];
+  return (
+    <div
+      data-testid={`ops-health-${app.app}`}
+      style={{
+        border: `1px solid ${K.line}`,
+        borderRadius: 12,
+        padding: 14,
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        minWidth: 0,
+        background: K.card,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 15, fontWeight: 600, color: K.ink }}>{app.label}</div>
+          <div style={{ fontSize: 11, color: K.muted }}>{t(WHAT[app.app])}</div>
+        </div>
+        <AppStatusPill status={app.overall?.status} state={app.state} />
+      </div>
+      <div style={{ fontSize: 12, color: K.body }}>
+        {app.overall?.reason ?? app.state_reason}
+        {app.partial && t("stillArriving")}
+        {app.overall && app.overall.basis.length > 0 && (
+          <span style={{ color: K.muted }}> · {basisText(app.overall.basis, BASIS_MESSAGES[lang])}</span>
+        )}
+      </div>
+      {app.kind === "probe" ? (
+        <div data-testid={`ops-health-${app.app}-probe-only`} style={{ fontSize: 12, color: K.muted }}>
+          {t("probeOnly")}
+          <SourceHint source={HEALTH_SRC.probeOnly} size={11} />
+        </div>
+      ) : (
+        <TrafficNumbers app={app} />
+      )}
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
         <div style={{ minWidth: 0, flex: "1 1 160px" }}>
           <AlarmList alarms={app.alarms} app={app.app} />

@@ -18,9 +18,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import {
   Badge, Button, ButtonGroup, DataTable, Drawer, ErrorState, Field, Input, K, SegmentedControl, Select, TableSkeleton,
-  Textarea, apiGet, mono, useAdminIdentity, useFormat, useLang, useT, useToast, type ColumnDef, type Translator,
+  Textarea, apiGet, mono, useFormat, useLang, useT, useToast, type ColumnDef, type Translator,
 } from "../../../_kit";
-import { can } from "@/lib/rbac";
 import {
   ANSWERS, ANSWER_OF_LABEL, CLAIM_API, CLAIM_WRITERS, CLAIMS_PAGE, LABELS, REVIEW_PAGE, acceptable, acceptableCount,
   chunks, claimsUrl, deciderLabel, facetCounts, labelTone, note, proposalReason, reviewPageOffset, reviewUrl, setKey,
@@ -29,6 +28,7 @@ import {
   type ClaimsPage, type ItemContext, type ReviewFilters, type ReviewItem, type ReviewPage, type SetSummary,
 } from "@/lib/claimLabels";
 import { CL } from "./claimLabels.messages";
+import { useWmAdmin } from "./useWmAdmin";
 import { useWmText } from "./useWmText";
 
 type T = Translator<typeof CL.en>;
@@ -624,7 +624,7 @@ function SetsView({ canAdmin }: { canAdmin: boolean }) {
 
 export default function ClaimLabelsTab() {
   const t = useT(CL);
-  const canAdmin = can(useAdminIdentity().role, "ai.admin");
+  const canAdmin = useWmAdmin(); // AA-1127 C3: ai.admin and a session that may write
   const [view, setView] = useState<"review" | "sets">("review");
   return (
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 14 }} data-testid="wm-claim-labels">

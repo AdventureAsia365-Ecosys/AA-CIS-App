@@ -40,9 +40,10 @@ import {
   ToastProvider,
   apiGet,
   apiSend,
-  useToast, PageFrame, useT,
+  useToast, PageFrame, useT, useLang,
   ChipButton,
 } from "../../_kit";
+import { fmtCount } from "@/lib/numberFormat";
 import { JOBS } from "./messages";
 import JobDrawer from "./JobDrawer";
 import JobsTable from "./JobsTable";
@@ -157,6 +158,7 @@ const FILTER_KEYS: (keyof View)[] = ["kind", "status", "createdBy", "since", "un
 
 function JobsPageInner() {
   const t = useT(JOBS);
+  const lang = useLang();
   const toast = useToast();
   const qc = useQueryClient();
 
@@ -343,20 +345,24 @@ function JobsPageInner() {
           onChange={(k) => update({ tab: k as TabKey })}
         />
         <div style={{ marginLeft: "auto", fontSize: 12, color: K.muted, alignSelf: "center" }}>
-          {t("cost30d")} <span style={{ fontFamily: mono, color: K.ink }}>${cost30d.toFixed(4)}</span>
+          {t("cost30d")} <span style={{ fontFamily: mono, color: K.ink }}>{usd(cost30d, undefined, lang)}</span>
         </div>
       </div>
 
       {tab === "jobs" && (
         <>
           {/* Status filter chips — clicking sets the status filter, clicking the active one clears it. */}
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+          {/* AA-1127 C3: the chips count the last 30 days (the API's summary window); the table below has no time
+              limit, so the window is named here. */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 16 }}
+            data-testid="jobs-status-chips">
+            <span style={{ fontSize: 12, color: K.muted }}>{t("statusWindow")}</span>
             {byStatus.map(s => (
               <ChipButton key={s.status} selected={status === s.status}
                 onClick={() => update({ status: status === s.status ? "" : s.status })}
                 style={{ borderRadius: 8, padding: "8px 12px", gap: 8 }}>
                 <StatusBadge status={s.status} />
-                <span style={{ fontFamily: mono, fontSize: 13, color: K.ink }}>{s.n}</span>
+                <span style={{ fontFamily: mono, fontSize: 13, color: K.ink }}>{fmtCount(s.n, lang)}</span>
               </ChipButton>
             ))}
           </div>

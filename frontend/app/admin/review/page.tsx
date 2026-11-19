@@ -551,13 +551,15 @@ function ReviewQueueInner() {
         // kit toolbar can put it on its own line, then the selects wrap inside it.
         toolbarExtra={
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", minWidth: 0, maxWidth: "100%" }}>
-            <Select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} style={selectStyle}>
+            <Select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} style={selectStyle}
+              aria-label={t("filterStatusAria")}>
               <option value="pending">{t("statusPending")}</option>
               <option value="approved">{t("statusApproved")}</option>
               <option value="rejected">{t("statusRejected")}</option>
               <option value="all">{t("statusAll")}</option>
             </Select>
-            <Select value={filterCountry} onChange={(e) => setCountry(e.target.value)} style={selectStyle}>
+            <Select value={filterCountry} onChange={(e) => setCountry(e.target.value)} style={selectStyle}
+              aria-label={t("filterCountryAria")}>
               <option value="all">{t("allCountries")}</option>
               {countries.map((c) => (
                 <option key={c.country} value={c.country}>
@@ -565,7 +567,8 @@ function ReviewQueueInner() {
                 </option>
               ))}
             </Select>
-            <Select value={filterScore} onChange={(e) => setScore(e.target.value)} style={selectStyle}>
+            <Select value={filterScore} onChange={(e) => setScore(e.target.value)} style={selectStyle}
+              aria-label={t("filterScoreAria")}>
               <option value="all">{t("allScores")}</option>
               <option value="critical">{t("critical", filterNums.low)}</option>
               <option value="low">{t("low", filterNums.low, filterNums.belowPass)}</option>

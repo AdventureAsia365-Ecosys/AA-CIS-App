@@ -56,7 +56,9 @@ export const OVERVIEW = defineMessages(
     paidNoneNearCap: "none",
     openAiProviders: "Open the AI gateway: health, spend, caps and every call",
     aiThisMonth: "AI this month, all providers:",
-    sameAsEstimate: "— the same as the AI estimate on",
+    // AA-1127 C3: Cost per app adds the Partner CRM's own AI calls (its gateway, not this log), so it may be a little
+    // higher; the note no longer claims the two are equal.
+    sameAsEstimate: "— from this platform's AI calls log. The Partner CRM keeps its own AI log, added on",
     costPerApp: "Cost per app",
     todayFromMidnight: "Today's numbers start at midnight UTC.",
     dfsBalance: "DataForSEO balance",
@@ -118,7 +120,7 @@ export const OVERVIEW = defineMessages(
     paidNoneNearCap: "không có",
     openAiProviders: "Mở Cổng AI: tình trạng, chi phí, mức trần và mọi lần gọi",
     aiThisMonth: "AI tháng này, mọi nhà cung cấp:",
-    sameAsEstimate: "— bằng với ước tính AI ở trang",
+    sameAsEstimate: "— theo nhật ký gọi AI của nền tảng này. Partner CRM có nhật ký AI riêng, được cộng thêm ở trang",
     costPerApp: "Chi phí theo ứng dụng",
     todayFromMidnight: "Số liệu hôm nay tính từ nửa đêm UTC.",
     dfsBalance: "Số dư DataForSEO",

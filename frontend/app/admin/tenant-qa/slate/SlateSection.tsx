@@ -61,7 +61,7 @@ function SlateExplainerNote() {
     <Section style={{ marginBottom: 14, background: K.card }} bodyStyle={{ padding: "14px 18px" }}>
       <div style={{ fontSize: 13, color: K.body, lineHeight: 1.55, marginBottom: 10 }}>
         <strong>{t("whatIsSlate")}</strong> {t("slateIntro")}{" "}
-        (<code style={{ fontFamily: mono }}>/portal/t7-planning</code>).
+        (<code style={{ fontFamily: mono }}>/portal/create/social</code>).
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 18px", fontSize: 11.5, color: K.muted }}>
         <span><strong>proposed</strong> {t("legendProposed")}</span>
@@ -118,11 +118,15 @@ export function SlateSection() {
       {/* AA-919 S254: the shared admin tenant picker (active tenants, by name). */}
       <TenantSelect inline value={selectedTenant ?? ""} onChange={id => setSelectedTenant(id || null)}
         placeholder={t("chooseTenant")} />
-      <span style={{ fontSize: 12, color: K.muted }}>{t("channel")}</span>
-      <Select value={selectedChannel} onChange={e => setSelectedChannel(e.target.value)} style={selectStyle}>
-        <option value="">{t("allChannels")}</option>
-        {CHANNELS.map(c => <option key={c} value={c}>{c}</option>)}
-      </Select>
+      {/* AA-1127 C3: the caption and the select stay together (one label element), and the select has a name. */}
+      <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: K.muted }}>
+        {t("channel")}
+        <Select value={selectedChannel} onChange={e => setSelectedChannel(e.target.value)} style={selectStyle}
+          aria-label={t("channelAria")}>
+          <option value="">{t("allChannels")}</option>
+          {CHANNELS.map(c => <option key={c} value={c}>{c}</option>)}
+        </Select>
+      </label>
     </div>
   );
 

@@ -64,7 +64,8 @@ export interface AppTraffic {
   p95_ms: number | null;
   alarms_total: number | null;
   alarms_firing: number;
-  kind: "apigw" | "lambda" | null;
+  /** AA-1127 C3: "probe" = no traffic numbers are collected (Partner CRM): only its alarms are known. */
+  kind: "apigw" | "lambda" | "probe" | null;
   resources: string[] | null;
   window_hours: number | null;
   as_of: string | null;

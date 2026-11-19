@@ -17,6 +17,7 @@ const APP_SUBJECT: Record<AppHealth["app"], string> = {
   cis: "API của CIS",
   booking: "API của Booking",
   tripplanner: "các hàm của TripPlanner (duyệt và ghép chuyến đi)",
+  crm: "Partner CRM",
 };
 
 const isTp = (app: AppHealth["app"]) => app === "tripplanner";
@@ -45,6 +46,9 @@ const HEALTH_SRC: Sources["HEALTH_SRC"] = {
     `AWS CloudWatch, ${UNIT(app)} mỗi giờ của ${APP_SUBJECT[app]} ` +
     `(${isTp(app) ? "lượt chạy thất bại" : "lỗi máy chủ"} màu đỏ), ${HEALTH_REFRESH}`,
   alarms: (app) => `Các cảnh báo AWS CloudWatch thiết lập cho ${APP_SUBJECT[app]}, trạng thái hiện tại, ${OPS_5MIN}`,
+  probeOnly:
+    "Kiểm tra sức khoẻ riêng của Partner CRM (cùng kiểm tra ở Nền tảng › Ứng dụng) và các cảnh báo AWS CloudWatch của " +
+    `nó; ứng dụng này chưa thu số yêu cầu, ${OPS_5MIN}`,
   shared: `Các cảnh báo AWS CloudWatch của dịch vụ dùng chung (mạng, đăng nhập nhân sự, e-mail), trạng thái hiện tại, ${OPS_5MIN}`,
 };
 

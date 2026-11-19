@@ -20,7 +20,7 @@ import {
   Badge, Button, CHART_TOOLTIP, ChipButton, DataTable, Drawer, ErrorState, Field, FilterBar, FilterField, Input,
   K, KpiTile, LinkButton, Modal, PageFrame, PageHeader, Section, SegmentedControl, Select, Switch, ToastProvider,
   apiGet, apiSend, downloadCsv, filterControlStyle, mono, toCsv, useT, useToast,
-  useUrlFilters, type ColumnDef, type FilterSelect,
+  useUrlFilters, WriteOnly, type ColumnDef, type FilterSelect,
 } from "../../_kit";
 import { useChartColors } from "../../_kit/useTheme";
 import {
@@ -238,16 +238,19 @@ function Explorer() {
                   const v = views.data?.views.find((x) => x.id === e.target.value);
                   if (v) router.replace(viewHref(v.query), { scroll: false });
                 }} />
-              <span data-testid="usage-explorer-save-view" style={{ display: "inline-flex" }}>
-                <Button size="sm" variant="secondary"
-                  onClick={() => { setViewName(activeView?.name ?? ""); setSaveOpen(true); }}>
-                  <Save size={13} /> {t("saveView")}</Button>
-              </span>
-              {activeView && (
-                <Button size="sm" variant="ghost" title={t("deleteView")} ariaLabel={t("deleteView")}
-                  disabled={deleteView.isPending} onClick={() => deleteView.mutate(activeView.id)}>
-                  <Trash2 size={13} /></Button>
-              )}
+              {/* AA-1127 C3: saving or deleting a view is a write; a read-only session sees the views only. */}
+              <WriteOnly>
+                <span data-testid="usage-explorer-save-view" style={{ display: "inline-flex" }}>
+                  <Button size="sm" variant="secondary"
+                    onClick={() => { setViewName(activeView?.name ?? ""); setSaveOpen(true); }}>
+                    <Save size={13} /> {t("saveView")}</Button>
+                </span>
+                {activeView && (
+                  <Button size="sm" variant="ghost" title={t("deleteView")} ariaLabel={t("deleteView")}
+                    disabled={deleteView.isPending} onClick={() => deleteView.mutate(activeView.id)}>
+                    <Trash2 size={13} /></Button>
+                )}
+              </WriteOnly>
             </span>
           }>
           <FilterField label={t("group1")}>

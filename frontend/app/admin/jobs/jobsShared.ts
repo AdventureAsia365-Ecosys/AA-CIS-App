@@ -2,6 +2,7 @@
 // worker health panel (AA-650 / AA-687). API: /admin/job-runner/* via /api/admin proxy.
 
 import { formatDateTime } from "../../_kit";
+import { fmtUsd, type NumLang } from "@/lib/numberFormat";
 
 export interface Job {
   id: string;
@@ -135,6 +136,9 @@ export function stepProgress(job: Job): { step: string; done: number; total: num
   return null;
 }
 
-export function usd(v: number | null | undefined, digits = 4): string {
-  return `$${(v ?? 0).toFixed(digits)}`;
+/** USD. With `digits` (per-call costs in the drawer): fixed decimals. Without (AA-1127 C3): lib/numberFormat fmtUsd,
+ *  2 decimals from a cent up, more only below a cent, separators in the UI language. */
+export function usd(v: number | null | undefined, digits?: number, lang: NumLang = "en"): string {
+  if (digits !== undefined) return `$${(v ?? 0).toFixed(digits)}`;
+  return fmtUsd(v, lang);
 }

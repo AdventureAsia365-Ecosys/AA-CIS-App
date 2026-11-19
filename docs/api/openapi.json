@@ -10658,6 +10658,45 @@
         "title": "SeoConfigPatch",
         "type": "object"
       },
+      "SessionHint": {
+        "properties": {
+          "read_only": {
+            "title": "Read Only",
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "role",
+                  "e2e"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          }
+        },
+        "required": [
+          "read_only"
+        ],
+        "title": "SessionHint",
+        "type": "object"
+      },
       "SetGoalBody": {
         "properties": {
           "goal": {
@@ -42581,6 +42620,71 @@
         "summary": "SEO Intelligence (all tabs)",
         "tags": [
           "admin-seo"
+        ]
+      }
+    },
+    "/admin/session": {
+      "get": {
+        "operationId": "get_session_admin_session_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionHint"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "This staff session: may it change data at all? (admin shell hint, $0)",
+        "tags": [
+          "admin-session"
         ]
       }
     },
