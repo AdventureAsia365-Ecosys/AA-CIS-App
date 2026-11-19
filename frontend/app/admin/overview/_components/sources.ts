@@ -22,6 +22,7 @@ const APP_SUBJECT: Record<AppHealth["app"], string> = {
   cis: "CIS API",
   booking: "Booking API",
   tripplanner: "TripPlanner functions (browse and trip assembly)",
+  crm: "Partner CRM",
 };
 
 /** What counts as one request and as one error: an HTTP request for the APIs, a function run for TripPlanner. */
@@ -53,6 +54,9 @@ export const HEALTH_SRC = {
     `(${isTp(app) ? "failed runs" : "server errors"} in red), ${HEALTH_REFRESH}`,
   alarms: (app: AppHealth["app"]) =>
     `AWS CloudWatch alarms set up for ${APP_SUBJECT[app]}, their state now, ${OPS_5MIN}`,
+  probeOnly:
+    "The Partner CRM's own health check (the same check as Platform › Apps) and its AWS CloudWatch alarms; no " +
+    `request numbers are collected for it, ${OPS_5MIN}`,
   shared:
     `AWS CloudWatch alarms of the shared services (network, staff sign-in, e-mail), their state now, ${OPS_5MIN}`,
 };

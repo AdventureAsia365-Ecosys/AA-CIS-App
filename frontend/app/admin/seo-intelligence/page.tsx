@@ -13,7 +13,7 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useMemo, useState } from "react";
 import { Wallet } from "lucide-react";
 import {
@@ -91,6 +91,12 @@ const TABS = [
   { key: "gaps", label: "tabGaps" },
 ] as const;
 const RESEARCH_TAB = "research";
+// AA-1127 C3 (S283 UI audit): every tab is a deep link (?tab=keywords|questions|gaps|research), like the other admin
+// pages; the Overview tab is the bare URL.
+const TAB_KEYS: readonly string[] = [...TABS.map((x) => x.key), RESEARCH_TAB];
+function seoTabFromParam(wanted: string | null): string {
+  return wanted && TAB_KEYS.includes(wanted) ? wanted : "overview";
+}
 
 function Stat({ label, value, sub, color = K.ink }: {
   label: string; value: React.ReactNode; sub?: string; color?: string;
@@ -244,8 +250,18 @@ function SeoIntelligencePage() {
   const t = useT(SEO);
   const tr = useT(RESEARCH);
   const kwCols = useMemo(() => kwColumns(t), [t]);
-  const wanted = useSearchParams().get("tab");
-  const [tab, setTab] = useState(() => (wanted === RESEARCH_TAB ? RESEARCH_TAB : "overview"));
+  const params = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const [tab, setTabState] = useState(() => seoTabFromParam(params.get("tab")));
+  const setTab = (key: string) => {
+    setTabState(key);
+    const next = new URLSearchParams(params.toString());
+    if (key === "overview") next.delete("tab");
+    else next.set("tab", key);
+    const qs = next.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  };
   // AA-1127 (C1): the Keywords tab opens on the keywords our tours use (the API lists them first)
   const [linkedOnly, setLinkedOnly] = useState(true);
   const { data, isLoading, isError, error, refetch } = useQuery({

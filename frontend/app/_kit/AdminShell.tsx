@@ -12,6 +12,9 @@
 //
 // AA-994: the shell renders the one I18nProvider of the admin (language from the `cis_lang` cookie, English by
 // default), so the topbar switch changes the text of the shell and of every page below it.
+//
+// AA-1127 C3: the shell also renders the kit ReadOnlyProvider with the API's read-only hint for this session
+// (useSessionAccess, GET /admin/session), so a page hides its run / save / paid buttons with useReadOnly() / WriteOnly.
 
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
@@ -19,26 +22,31 @@ import { BottomNav } from "./BottomNav";
 import { CommandPalette } from "./CommandPalette";
 import { SessionKeepAlive } from "./SessionKeepAlive";
 import { ShellFrame } from "./core/ShellFrame";
+import { ReadOnlyProvider } from "./core/ReadOnly";
 import { I18nProvider } from "./core/useI18n";
 import { langStore } from "./i18n";
+import { useSessionAccess } from "./useSessionAccess";
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
+  const { readOnly } = useSessionAccess();
   return (
     <I18nProvider store={langStore}>
-      {/* AA-816: refreshes a Cognito session while the page stays open (no-op for legacy). */}
-      <SessionKeepAlive />
-      <ShellFrame
-        drawerBelow={768}
-        main="page"
-        sidebarId="admin-sidebar-drawer"
-        sidebar={(c) => <Sidebar drawerOpen={c.drawerOpen} onNavigate={c.closeDrawer} />}
-        topbar={(c) => <Topbar onOpenSearch={c.openPalette} onOpenMenu={c.openDrawer} />}
-        bottomNav={(c) => <BottomNav onOpenMore={c.openDrawer} />}
-        palette={(c) => <CommandPalette open={c.paletteOpen} onClose={c.closePalette} />}
-      >
-        {/* The page renders the kit AdminMain as its frame and scroll region (never a hand-written <main>). */}
-        {children}
-      </ShellFrame>
+      <ReadOnlyProvider readOnly={readOnly}>
+        {/* AA-816: refreshes a Cognito session while the page stays open (no-op for legacy). */}
+        <SessionKeepAlive />
+        <ShellFrame
+          drawerBelow={768}
+          main="page"
+          sidebarId="admin-sidebar-drawer"
+          sidebar={(c) => <Sidebar drawerOpen={c.drawerOpen} onNavigate={c.closeDrawer} />}
+          topbar={(c) => <Topbar onOpenSearch={c.openPalette} onOpenMenu={c.openDrawer} />}
+          bottomNav={(c) => <BottomNav onOpenMore={c.openDrawer} />}
+          palette={(c) => <CommandPalette open={c.paletteOpen} onClose={c.closePalette} />}
+        >
+          {/* The page renders the kit AdminMain as its frame and scroll region (never a hand-written <main>). */}
+          {children}
+        </ShellFrame>
+      </ReadOnlyProvider>
     </I18nProvider>
   );
 }

@@ -44,7 +44,7 @@ import {
   useT,
   type ColumnDef,
   type Tone,
-  Input, LinkButton,
+  Input, LinkButton, WriteOnly,
 } from "../../_kit";
 import { shownSum } from "@/lib/costWording";
 import { COST_WORDING } from "@/lib/costWording.messages";
@@ -134,10 +134,13 @@ export default function CostByApp({ onOpenSpend }: { onOpenSpend: () => void }) 
                 }}
               />
             </label>
-            <Button variant="secondary" size="sm" onClick={refreshFromAws} disabled={!data || check.isPending}
-              title={t("refreshTitle")}>
-              <CloudDownload size={13} /> {check.isPending ? t("fetching") : t("refreshAws")}
-            </Button>
+            {/* AA-1127 C3: a paid AWS read (Cost Explorer) and a write; hidden in a read-only session. */}
+            <WriteOnly>
+              <Button variant="secondary" size="sm" onClick={refreshFromAws} disabled={!data || check.isPending}
+                title={t("refreshTitle")}>
+                <CloudDownload size={13} /> {check.isPending ? t("fetching") : t("refreshAws")}
+              </Button>
+            </WriteOnly>
           </div>
       </div>
 

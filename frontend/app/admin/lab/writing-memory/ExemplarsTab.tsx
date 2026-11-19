@@ -19,15 +19,15 @@ import { RefreshCw, Search } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import {
   Badge, Button, DataTable, Drawer, ErrorState, Field, Input, K, Select, TableSkeleton, apiGet, mono,
-  useAdminIdentity, useFormat, useT, useToast, type ColumnDef,
+  useFormat, useT, useToast, type ColumnDef,
 } from "../../../_kit";
-import { can } from "@/lib/rbac";
 import { TenantSelect, useTenants } from "../../_components/TenantSelect";
 import {
   EXEMPLARS_PER_CHANNEL, EXEMPLAR_STATUSES, EXEMPLAR_WRITERS, WM_API, byChannel, exemplarActions, exemplarTone,
   type Exemplar, type ExemplarAction, type ExemplarSelection, type ExemplarsPage, type RefreshResult,
 } from "@/lib/writingMemory";
 import { EXEMPLAR_STATUS, X } from "./exemplars.messages";
+import { useWmAdmin } from "./useWmAdmin";
 import { useWmText } from "./useWmText";
 
 const PLATFORM = "__platform__";
@@ -152,7 +152,7 @@ export default function ExemplarsTab() {
   const qc = useQueryClient();
   const wm = useWmText();
   const { formatDateTime } = useFormat();
-  const canAdmin = can(useAdminIdentity().role, "ai.admin");
+  const canAdmin = useWmAdmin(); // AA-1127 C3: ai.admin and a session that may write
   const { byId, label } = useTenants();
   const ownerOf = useCallback((e: Exemplar) => wm.owner(e.scope, e.tenant_id,
     e.tenant_id && byId.has(e.tenant_id) ? label(e.tenant_id) : undefined), [byId, label, wm]);

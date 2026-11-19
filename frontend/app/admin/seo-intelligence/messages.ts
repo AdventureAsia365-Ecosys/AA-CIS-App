@@ -90,11 +90,11 @@ export const SEO = defineMessages(
     researchState: "Trạng thái nghiên cứu",
     researchedNoVolume: "đã nghiên cứu, không có lượng tìm kiếm",
     neverResearched: "chưa từng nghiên cứu",
-    title: "SEO Intelligence",
+    title: "Phân tích SEO",
     description:
       "Nhu cầu tìm kiếm, từ khoá, câu hỏi PAA và chỗ thiếu về độ phủ — gộp từ nghiên cứu Segment, ngữ cảnh SEO của S1 và DataForSEO.",
     dfsSpendLink: "Chi phí DataForSEO",
-    loading: "Đang tải SEO intelligence…",
+    loading: "Đang tải phân tích SEO…",
     loadFailed: "Tải thất bại.",
     searchKeywords: "Tìm từ khoá…",
     noPaaTitle: "Không có câu hỏi PAA",

@@ -82,6 +82,7 @@ from api.routers.admin_content_quality import router as admin_content_quality_ro
 from api.routers.admin_tenant_compliance import router as admin_tenant_compliance_router  # AA-1039 R6
 from api.routers.admin_tenant360 import router as admin_tenant360_router  # AA-766
 from api.routers.admin_view_as import router as admin_view_as_router  # AA-1035 R2 slice 2 — view as tenant
+from api.routers.admin_session import router as admin_session_router  # AA-1127 C3 — /admin/session read-only hint
 from api.routers.admin_tenant_assignments import router as admin_tenant_assignments_router  # AA-1035 R2 slice 2
 from api.routers.admin_platform_ops import router as admin_platform_ops_router  # AA-884
 from api.routers.admin_crm_console import router as admin_crm_console_router  # AA-941
@@ -368,6 +369,7 @@ app.include_router(v1_trip_page_router)  # AA-482 — GET /v1/trip/{tour_id}, pu
 app.include_router(admin_trip_page_router)  # AA-482 — /admin/trip-pages/{publish,recheck}
 app.include_router(admin_tenant_provision_router)  # before admin_router: /tenants/provision is no tenant id
 app.include_router(admin_view_as_router)  # AA-1035 R2 slice 2 — /admin/tenants/{id}/view-as, /admin/view-as/sessions
+app.include_router(admin_session_router)  # AA-1127 C3 — /admin/session (the shell's read-only hint)
 app.include_router(admin_tenant_assignments_router)  # AA-1035 R2 slice 2 — /admin/tenant-assignments (Assignments page)
 app.include_router(admin_tenant_subscription_router)  # AA-1028 R1 slice 3 (Tenant 360 › Subscription)
 app.include_router(admin_tenant_addon_requests_router)  # AA-1036 R3 (Tenant 360 › Subscription › requests)

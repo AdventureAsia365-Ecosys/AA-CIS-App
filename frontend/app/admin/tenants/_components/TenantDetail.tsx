@@ -29,6 +29,7 @@ import { dailyPublishDefault, fmtDailyPublishLimit } from "./tenant360";
 import { T360_WORDS_MESSAGES } from "./tenant360.messages";
 import type { Tenant } from "./tenantRow";
 import { scoreTone, type ScoreBands } from "@/lib/qualityThresholds";
+import { fmtCount, fmtUsd } from "@/lib/numberFormat";
 import { useScoreBands } from "../../_components/useQualityThresholds";
 import { Pagination } from "../../_components/Pagination";
 import { TEN } from "../messages";
@@ -107,7 +108,8 @@ function ToursTabContent({ tours, toursView, page, total, onPage }: {
         emptyTitle={isPublished ? tr("noPublished") : tr("noRewrites")}
         columns={[
           { id: "name", header: tr("colName"), accessorKey: "tour_name", cell: ({ row: { original: x } }) => (
-            <span style={{ display: "inline-block", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", verticalAlign: "bottom" }}>{x.tour_name}</span>
+            <span style={{ display: "inline-block", maxWidth: "min(100%, 380px)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", verticalAlign: "bottom" }}
+              title={x.tour_name}>{x.tour_name}</span>
           ) },
           { id: "country", header: tr("colCountry"), accessorFn: (x) => x.country ?? "", cell: ({ row: { original: x } }) => <span style={{ color: K.muted }}>{x.country ?? "—"}</span> },
           { id: "score", header: tr("colScore"), accessorFn: (x) => x.quality_score ?? -1, meta: { align: "right" }, cell: ({ row: { original: x } }) => (
@@ -400,7 +402,8 @@ function ActivityTabContent({ items }: { items: RewriteActivityItem[] }) {
         emptyTitle={t("noActivity")}
         columns={[
           { id: "name", header: t("colTourName"), accessorKey: "tour_name", cell: ({ row: { original: r } }) => (
-            <span style={{ display: "inline-block", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", verticalAlign: "bottom" }}>{r.tour_name}</span>
+            <span style={{ display: "inline-block", maxWidth: "min(100%, 380px)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", verticalAlign: "bottom" }}
+              title={r.tour_name}>{r.tour_name}</span>
           ) },
           { id: "country", header: t("colCountry"), accessorFn: (r) => r.country ?? "", cell: ({ row: { original: r } }) => <span style={{ color: K.muted }}>{r.country ?? "—"}</span> },
           { id: "version", header: t("colVersion"), accessorKey: "version_number", meta: { align: "right" },
@@ -418,16 +421,14 @@ function ActivityTabContent({ items }: { items: RewriteActivityItem[] }) {
 }
 
 // ─── Social Content tab (AA-557 I.22) ──────────────────────────────────────────
-// Skeleton only, per the issue's own scope: the full "detailed per-tenant Atom/Segment/Route/
-// Slate usage" breakdown is blocked on AA-558 (INVESTIGATE — the 06/07/08 merge decision), so
-// this tab intentionally shows only 2 real, already-cross-tenant-filterable counts (content-log/
-// publish-log both already accept a real `tenant_id` query param, admin_a4.py — no new backend
-// endpoint needed for the skeleton) rather than fabricating the detailed view ahead of that
-// decision.
+// Two counts (content-log / publish-log, both filtered by `tenant_id`, admin_a4.py) and a link to Content Trace
+// filtered to this tenant (`?tenant=`), which holds the per-piece detail. AA-1127 C3: the note no longer says a merge
+// decision is pending (closed) or that Trace cannot filter by tenant (it can).
 interface SocialContentSummary { pieces_written: number; pieces_published: number; }
 
 function SocialContentTabContent({ tenantId }: { tenantId: string }) {
   const t = useT(TEN);
+  const lang = useLang();
   const q = useQuery({
     queryKey: ["tenant-social-summary", tenantId],
     queryFn: () => Promise.all([
@@ -451,13 +452,14 @@ function SocialContentTabContent({ tenantId }: { tenantId: string }) {
         {([[t("piecesWritten"), data.pieces_written], [t("published"), data.pieces_published]] as [string, number][]).map(([l, v]) => (
           <div key={l} style={{ padding: "10px 14px", background: K.card, border: `1px solid ${K.line}`, borderRadius: 8, minWidth: 140 }}>
             <div style={{ fontSize: 10, color: K.muted2, marginBottom: 3 }}>{l}</div>
-            <div style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: K.ink }}>{v}</div>
+            <div style={{ fontFamily: serif, fontSize: 18, fontWeight: 500, color: K.ink }}>{fmtCount(v, lang)}</div>
           </div>
         ))}
       </div>
       <div style={{ fontSize: 11.5, color: K.muted2, fontStyle: "italic" }}>
         {t("socialNoteA")}{" "}
-        <a href="/admin/tenant-qa/trace" style={{ color: K.accent }}>{t("contentTrace")}</a> {t("socialNoteB")}
+        <a href={`/admin/tenant-qa/trace?tenant=${encodeURIComponent(tenantId)}`} style={{ color: K.accent }}
+          data-testid="tenant-social-trace-link">{t("contentTrace")}</a> {t("socialNoteB")}
       </div>
     </div>
   );
@@ -493,7 +495,8 @@ export function TenantDetail({ tenant, onChanged }: {
   tenant: Tenant; onChanged: () => void;
 }) {
   const tr = useT(TEN);
-  const dplWords = T360_WORDS_MESSAGES[useLang()];
+  const lang = useLang();
+  const dplWords = T360_WORDS_MESSAGES[lang];
   const tenantId = tenant.tenant_id;
   const isInternal = tenant.plan_tier === "internal";
   // AA-1035: support reaches the tenant without its plans, usage, cost or Tenant QA (the backend refuses them); hide
@@ -581,7 +584,7 @@ export function TenantDetail({ tenant, onChanged }: {
       <div style={{ display: "flex", gap: 20, marginBottom: 14, flexWrap: "wrap" }}>
         {([
           [tr("totalRewrites"), String(s.total_rewrites),              K.accent],
-          [tr("llmCostAllTime"), s.total_llm_cost_usd == null ? "—" : `$${s.total_llm_cost_usd.toFixed(3)}`, K.body],
+          [tr("llmCostAllTime"), s.total_llm_cost_usd == null ? "—" : fmtUsd(s.total_llm_cost_usd, lang), K.body],
           [tr("apiCallsMo"), s.api_calls_this_month.toLocaleString(), K.body],
           // AA-702: this is the API-call quota; the list row shows the tour quota — label both.
           [tr("apiQuotaShort"), `${s.quota_pct}%`,                     s.quota_pct > 80 ? K.danger : K.body],

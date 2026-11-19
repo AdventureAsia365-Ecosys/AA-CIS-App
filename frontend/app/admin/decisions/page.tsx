@@ -11,8 +11,9 @@ import {
   Button, PageFrame, PageFrameBody, PageFrameHeader, PageHeader, useFormat, useT, Input, Select,
   K, sans, mono, Section, Eyebrow, LoadingScreen, CHART_TOOLTIP,
   DataTable, Tabs, TONE, type Tone, type ColumnDef,
-  Badge, ConfirmModal, Field, apiSend, useAdminIdentity,
+  Badge, ConfirmModal, Field, apiSend, useAdminIdentity, useLang,
 } from "../../_kit";
+import { fmtCount, fmtUsd } from "@/lib/numberFormat";
 import { useChartColors } from "../../_kit/useTheme";
 import { stripIssueIds } from "@/lib/issueIds";
 import { traceHref } from "@/lib/aiGateway";
@@ -78,7 +79,8 @@ const KIND_HELP: Record<string, "kindNoul" | "kindChoice" | "kindScore"> = {
 };
 
 // ── small UI pieces ────────────────────────────────────────────────────────────────────────────
-const usd = (v: number | null | undefined) => (v == null ? "—" : v < 0.01 ? `$${v.toFixed(5)}` : `$${v.toFixed(3)}`);
+// AA-1127 C3: one USD format with the Jobs page (2 decimals from a cent up, more only below a cent).
+const usd = (v: number | null | undefined) => (v == null ? "—" : fmtUsd(v));
 // AA-601: a count that arrives null/undefined (a stage seen only in the cache-hit rollup, or a
 // FILTERed sum that was NULL) must count as 0 — summing it directly would make the whole total NaN
 // (the "Acted on = NaN" bug). The backend now zero-fills every aggregate; this is the FE guard so
@@ -139,19 +141,20 @@ function dcol<T>(id: string, header: string, cell: (r: T) => React.ReactNode,
 
 function ZoneBar({ counts }: { counts: Record<Zone, number> }) {
   const t = useT(DEC);
+  const lang = useLang();
   const total = ZONES.reduce((n, z) => n + counts[z], 0);
   if (!total) return <span style={{ color: K.muted2, fontSize: 12 }}>{t("noVerdictsYet")}</span>;
   return (
     <div>
       <div style={{ display: "flex", height: 12, borderRadius: 6, overflow: "hidden", background: K.line }}>
-        {ZONES.map(z => counts[z] ? <div key={z} title={`${t(ZONE_META[z].label)}: ${counts[z]}`}
+        {ZONES.map(z => counts[z] ? <div key={z} title={`${t(ZONE_META[z].label)}: ${fmtCount(counts[z], lang)}`}
           style={{ width: `${(counts[z] / total) * 100}%`, background: toneText(ZONE_META[z].tone) }} /> : null)}
       </div>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 6, fontSize: 12 }}>
         {ZONES.map(z => (
           <span key={z} style={{ display: "inline-flex", alignItems: "center", gap: 5 }} title={t(`${ZONE_META[z].label}Help`)}>
             <span style={{ width: 10, height: 10, borderRadius: 3, background: toneText(ZONE_META[z].tone) }} />
-            {t(ZONE_META[z].label)} <b>{counts[z]}</b> <span style={{ color: K.muted }}>({pct(counts[z], total)})</span>
+            {t(ZONE_META[z].label)} <b>{fmtCount(counts[z], lang)}</b> <span style={{ color: K.muted }}>({pct(counts[z], total)})</span>
           </span>
         ))}
       </div>
@@ -320,6 +323,9 @@ const PAGE = 50;
 
 export default function DecisionsPage() {
   const t = useT(DEC);
+  // AA-1127 C3 (S283 UI audit): every count with separators in the UI language (tiles, legend, axis, tables).
+  const lang = useLang();
+  const nf = (n: number | null | undefined) => fmtCount(n, lang);
   // S280: the question PUT is ai.admin; other roles read the settings only.
   const canEditQuestions = can(useAdminIdentity().role, "ai.admin");
   const { formatDateTime: when } = useFormat();
@@ -449,11 +455,11 @@ export default function DecisionsPage() {
           {data && tab === "overview" && (
             <>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 18 }}>
-                <Kpi label={t("kpiCalls", data.days)} value={data.total_calls.toLocaleString()} sub={t("kpiCallsSub")} />
+                <Kpi label={t("kpiCalls", data.days)} value={nf(data.total_calls)} sub={t("kpiCallsSub")} />
                 <Kpi label={t("kpiCost", data.days)} value={usd(data.total_cost_usd)} sub={t("kpiCostSub")} />
-                <Kpi label={t("kpiVerdicts")} value={verdictTotal.toLocaleString()} sub={t("kpiVerdictsSub", (data.stages ?? []).reduce((n, s) => n + (s.cached ?? 0), 0))} />
-                <Kpi label={t("kpiActed")} value={acted.toLocaleString()} sub={t("kpiActedSub", pct(acted, verdictTotal))} color={acted ? toneText(MODE_META.enforce.tone) : K.ink} />
-                <Kpi label={t("kpiErrors")} value={totals.error.toLocaleString()} sub={t("kpiErrorsSub", pct(totals.error, verdictTotal))} color={totals.error ? toneText(ZONE_META.error.tone) : K.ink} />
+                <Kpi label={t("kpiVerdicts")} value={nf(verdictTotal)} sub={t("kpiVerdictsSub", nf((data.stages ?? []).reduce((n, s) => n + (s.cached ?? 0), 0)))} />
+                <Kpi label={t("kpiActed")} value={nf(acted)} sub={t("kpiActedSub", pct(acted, verdictTotal))} color={acted ? toneText(MODE_META.enforce.tone) : K.ink} />
+                <Kpi label={t("kpiErrors")} value={nf(totals.error)} sub={t("kpiErrorsSub", pct(totals.error, verdictTotal))} color={totals.error ? toneText(ZONE_META.error.tone) : K.ink} />
                 <Kpi label={t("kpiLatency")} value={avgLatency != null ? `${Math.round(avgLatency)} ms` : "—"} sub={t("kpiLatencySub")} />
                 <Kpi label={t("kpiQuestions")} value={`${qs.length}`} sub={t("kpiQuestionsSub", qs.filter(q => q.mode === "enforce").length, qs.filter(q => q.mode === "shadow").length, qs.filter(q => q.mode === "off").length)} />
                 <Kpi label={t("kpiAllowlist")} value={`${data.tenant_allowlist.length}`} sub={data.tenant_allowlist.map(a => a.slug).join(", ") || t("platformOnly")} />
@@ -471,8 +477,8 @@ export default function DecisionsPage() {
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={data.daily ?? []}>
                         <CartesianGrid strokeDasharray="3 3" stroke={chartColors.line} />
-                        <XAxis dataKey="day" fontSize={11} /><YAxis fontSize={11} allowDecimals={false} />
-                        <Tooltip {...CHART_TOOLTIP} />
+                        <XAxis dataKey="day" fontSize={11} /><YAxis fontSize={11} allowDecimals={false} tickFormatter={(v: number) => nf(v)} width={56} />
+                        <Tooltip {...CHART_TOOLTIP} formatter={(v) => nf(Number(v))} />
                         <Legend />
                         {ZONES.map(z => <Bar key={z} dataKey={z} name={t(ZONE_META[z].label)} stackId="z" fill={chartColors[z]} />)}
                       </BarChart>
@@ -494,15 +500,15 @@ export default function DecisionsPage() {
                   {...tableSort(sSort, setSSort)}
                   columns={[
                     dcol<StageRow>("stage", t("colStage"), (r) => r.stage, { sortable: true, title: t("colStageTitle"), style: () => ({ fontFamily: mono, fontWeight: 700 }) }),
-                    dcol<StageRow>("questions", t("colQuestions"), (r) => n0(r.questions), { title: t("colQuestionsTitle") }),
-                    dcol<StageRow>("verdicts", t("colVerdicts"), (r) => n0(r.verdicts).toLocaleString(), { sortable: true }),
-                    dcol<StageRow>("acted", t("colActed"), (r) => n0(r.acted), { sortable: true, title: t("colActedTitle"),
+                    dcol<StageRow>("questions", t("colQuestions"), (r) => nf(n0(r.questions)), { title: t("colQuestionsTitle") }),
+                    dcol<StageRow>("verdicts", t("colVerdicts"), (r) => nf(n0(r.verdicts)), { sortable: true }),
+                    dcol<StageRow>("acted", t("colActed"), (r) => nf(n0(r.acted)), { sortable: true, title: t("colActedTitle"),
                       style: (r) => ({ fontWeight: 700, color: r.acted ? toneText(MODE_META.enforce.tone) : K.muted }) }),
                     dcol<StageRow>("errors", t("colErrors"), (r) => (
-                      <>{n0(r.errors)} <span style={{ color: K.muted }}>({pct(n0(r.errors), n0(r.verdicts))})</span></>
+                      <>{nf(n0(r.errors))} <span style={{ color: K.muted }}>({pct(n0(r.errors), n0(r.verdicts))})</span></>
                     ), { sortable: true, style: (r) => ({ color: r.errors ? toneText(ZONE_META.error.tone) : K.muted }) }),
-                    dcol<StageRow>("skipped", t("colSkipped"), (r) => n0(r.skipped)),
-                    dcol<StageRow>("calls", t("colCalls"), (r) => (data.calls_by_stage ?? []).find(c => c.stage === r.stage)?.calls ?? "—", { title: t("colCallsTitle") }),
+                    dcol<StageRow>("skipped", t("colSkipped"), (r) => nf(n0(r.skipped))),
+                    dcol<StageRow>("calls", t("colCalls"), (r) => nf((data.calls_by_stage ?? []).find(c => c.stage === r.stage)?.calls), { title: t("colCallsTitle") }),
                     dcol<StageRow>("cost_usd", t("colCost"), (r) => usd((data.calls_by_stage ?? []).find(c => c.stage === r.stage)?.cost_usd ?? r.cost_usd),
                       { sortable: true, style: () => ({ fontFamily: mono }) }),
                     dcol<StageRow>("avg_latency_ms", t("colAvgLatency"), (r) => (r.avg_latency_ms != null ? `${Math.round(r.avg_latency_ms)} ms` : "—"),
@@ -546,14 +552,14 @@ export default function DecisionsPage() {
                   dcol<Question>("reject_ceiling", t("colRejectAt"), (q) => num(q.reject_ceiling), { title: t("colRejectAtTitle"), style: () => ({ fontFamily: mono }) }),
                   dcol<Question>("calibrated", t("colCalibrated"), (q) => (q.calibration_ref
                     ? <Pill tone="success">{t("yes")}</Pill> : <Pill tone="neutral">{t("no")}</Pill>)),
-                  dcol<Question>("verdicts", t("colVerdicts"), (q) => q.verdicts, { sortable: true, style: () => ({ fontWeight: 700 }) }),
-                  dcol<Question>("cached", t("colCached"), (q) => q.cached ?? 0, { title: t("colCachedTitle") }),
-                  dcol<Question>("accept", t("zoneAccept"), (q) => q.accept, { style: () => ({ color: toneText("success"), fontWeight: 600 }) }),
-                  dcol<Question>("grey", t("zoneGrey"), (q) => q.grey),
-                  dcol<Question>("reject", t("zoneReject"), (q) => q.reject, { sortable: true, style: () => ({ color: toneText("danger"), fontWeight: 600 }) }),
-                  dcol<Question>("error", t("colError"), (q) => q.error, { sortable: true, style: (q) => ({ color: q.error ? toneText("warning") : undefined }) }),
-                  dcol<Question>("skipped", t("colSkipped"), (q) => q.skipped),
-                  dcol<Question>("acted", t("colActed"), (q) => q.acted, { sortable: true,
+                  dcol<Question>("verdicts", t("colVerdicts"), (q) => nf(q.verdicts), { sortable: true, style: () => ({ fontWeight: 700 }) }),
+                  dcol<Question>("cached", t("colCached"), (q) => nf(q.cached ?? 0), { title: t("colCachedTitle") }),
+                  dcol<Question>("accept", t("zoneAccept"), (q) => nf(q.accept), { style: () => ({ color: toneText("success"), fontWeight: 600 }) }),
+                  dcol<Question>("grey", t("zoneGrey"), (q) => nf(q.grey)),
+                  dcol<Question>("reject", t("zoneReject"), (q) => nf(q.reject), { sortable: true, style: () => ({ color: toneText("danger"), fontWeight: 600 }) }),
+                  dcol<Question>("error", t("colError"), (q) => nf(q.error), { sortable: true, style: (q) => ({ color: q.error ? toneText("warning") : undefined }) }),
+                  dcol<Question>("skipped", t("colSkipped"), (q) => nf(q.skipped)),
+                  dcol<Question>("acted", t("colActed"), (q) => nf(q.acted), { sortable: true,
                     style: (q) => ({ fontWeight: 700, color: q.acted ? toneText(MODE_META.enforce.tone) : K.muted }) }),
                   dcol<Question>("avg_probability", t("colAvgP"), (q) => num(q.avg_probability), { title: t("colAvgPTitle"), style: () => ({ fontFamily: mono }) }),
                   dcol<Question>("avg_latency_ms", t("colLatencyP"), (q) => (q.p50_latency_ms != null
@@ -650,7 +656,7 @@ export default function DecisionsPage() {
               />
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10, fontSize: 12.5 }}>
                 <span style={{ color: K.muted }}>
-                  {log.total ? t("range", vPage * PAGE + 1, Math.min((vPage + 1) * PAGE, log.total), log.total.toLocaleString()) : t("zeroVerdicts")}
+                  {log.total ? t("range", vPage * PAGE + 1, Math.min((vPage + 1) * PAGE, log.total), nf(log.total)) : t("zeroVerdicts")}
                 </span>
                 <Button size="sm" disabled={vPage === 0} onClick={() => setVPage(p => p - 1)}>{t("prev")}</Button>
                 <Button size="sm" disabled={(vPage + 1) * PAGE >= log.total} onClick={() => setVPage(p => p + 1)}>{t("next")}</Button>

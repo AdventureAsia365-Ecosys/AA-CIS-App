@@ -28,7 +28,7 @@ import JevPanel from "./JevPanel";
 import {
   Button, SegmentedControl, Tabs, PageFrame, PageHeader, useFormat, useT, Input, Select,
   K, serif, sans, mono, Section, Eyebrow, Badge, LoadingScreen, KpiTile, CHART_TOOLTIP,
-  DataTable, KX, LinkButton, Modal, Pressable, type ColumnDef, type Tone,
+  DataTable, KX, LinkButton, Modal, Pressable, WriteOnly, type ColumnDef, type Tone,
 } from "../../_kit";
 import { useChartColors } from "../../_kit/useTheme";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
@@ -1006,9 +1006,8 @@ function CostOperationsInner() {
                     <Eyebrow style={{ marginBottom: 0 }}>{t("awsVsEst")}</Eyebrow>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                       {ceCheckMsg && <span style={{ fontSize: 11.5, color: K.muted2 }}>{ceCheckMsg}</span>}
-                      <Button size="sm" variant="secondary" onClick={runCostExplorerCheck} disabled={ceChecking}>
-                        {ceChecking ? t("refreshing") : t("refreshAws")}
-                      </Button>
+                      <WriteOnly>{/* AA-1127 C3: paid Cost Explorer call, hidden when read-only */}<Button size="sm"
+                        variant="secondary" onClick={runCostExplorerCheck} disabled={ceChecking}>{ceChecking ? t("refreshing") : t("refreshAws")}</Button></WriteOnly>
                     </div>
                   </div>
 

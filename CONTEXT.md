@@ -3025,7 +3025,9 @@ four independent sections, each cached in Redis on its own key (`admin:overview:
 to `{status: "unavailable", reason, message}` instead of failing the call:
 - `health` (`cloudwatch.py`, 5 min): one `GetMetricData` call (16 metrics: API Gateway Count/5XX/4XX/Latency p95 for
   `aa-cis-<env>-api` and `aa-booking-<env>-api` with `Stage = <env>`, Lambda Invocations/Errors/Throttles/Duration p95
-  for `aa-tripplanner-<env>-browse|assembly`) + `DescribeAlarms` mapped by name prefix (`TargetTracking-*` skipped);
+  for `aa-tripplanner-<env>-browse|assembly`) + `DescribeAlarms` mapped by name prefix (`TargetTracking-*` skipped).
+  Partner CRM (AA-1127 C3) is a `probe` source: no metric query (its API is behind the ALB), alarms `aa-crm-<env>-`
+  only, numbers `null`; its tile's status is its own health check (`platform_apps._crm_card`) plus those alarms;
   read-only IAM on the task role (AA-CIS-Infra `ecs_task_infra_status_readonly`). Never called without Redis
   (`cache_offline`); a `SET NX` lock lets one request compute while the others get the last good value.
 - `tripplanner` / `booking` (`activity.py`, 5 min): only the producer contract views above + `shared.llm_call_log`
@@ -3082,7 +3084,12 @@ it). Admin-only reads stay refused by POLICY; the role-filtered open reads (sear
 it like reviewer/content. No Booking access (Booking reads only `booking-*` groups; the CIS bridge is retired, AA-911). Not
 assignable from the Staff page (`staff_directory.CIS_ROLES`, `lib/rbac.ts` `ASSIGNABLE_STAFF_ROLES`) and no
 Cognito group (a `cis-viewer` group is deferred to AA-816 E1); the reconcile report lists the row under cutover
-readiness (no email / sub), a legacy-only exception. UI smoke runs in **viewer mode** when the smoke session is
+readiness (no email / sub), a legacy-only exception. **Session hint (AA-1127 C3):** `GET /admin/session`
+(`api/routers/admin_session.py`, `notifications.read`, every role) answers `{role, read_only, reason}`: read-only for
+`READ_ONLY_ROLES` (`reason` "role") and for a Dev-only E2E identity (`e2e_read_only`, "e2e"). The admin shell reads it
+once (`app/_kit/useSessionAccess.ts`, 5 min) and renders the kit core `ReadOnlyProvider`; pages hide run / save / paid
+buttons with `WriteOnly` / `useReadOnly()` (Writing memory, Usage, Spend so far). A UI hint only; the API refuses the
+writes anyway. UI smoke runs in **viewer mode** when the smoke session is
 the viewer (since the AA-816 S2 path: the Cognito E2E user on the fixed Preview host, capped at viewer by the API;
 before it, this legacy account): readable pages get the full page check, admin-only pages must redirect to
 `/admin/review`, a BFF write and the staff list must answer 403. A smoke-public test keeps the page list's

@@ -119,6 +119,7 @@ def test_policy_reads_are_admin_only_and_the_s1_reads_stay_open():
         ("GET", "/admin/tenants/{tenant_id}/details"),
         # AA-1035 slice 2: the bell has its own capability (every role) so the tenant desk roles read it too
         ("GET", "/admin/notifications"), ("GET", "/admin/notifications/count"),
+        ("GET", "/admin/session"),   # AA-1127 C3: the shell's read-only hint, every role (notifications.read)
         # AA-1091: the Reference prices page has its own read capability (customer_success holds no content.read)
         ("GET", "/admin/reference-prices"), ("GET", "/admin/reference-prices/export"),
         ("GET", "/admin/reference-prices/{source_key}/history"),
@@ -200,6 +201,7 @@ def test_content_work_routes_are_the_every_staff_pages():
         "/admin/tours/{tour_id}/trash", "/admin/tours/{tour_id}/restore",
         "/admin/notifications/read-all", "/admin/notifications/{notif_id}/read",
         "/admin/notifications", "/admin/notifications/count",           # AA-1035 slice 2: notifications.read
+        "/admin/session",                                                 # AA-1127 C3: shell hint, every role
         "/admin/aa-content", "/admin/aa-content/{content_id}/draft",      # AA-977: drafts are content work
         "/admin/quality/thresholds",                                      # S279 L2: the score views' bands
         "/admin/docs/manifest", "/admin/docs/page", "/admin/docs/asset",  # AA-1133 B7: docs.read (every role)

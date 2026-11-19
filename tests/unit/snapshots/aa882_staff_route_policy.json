@@ -755,6 +755,10 @@
     "capability": null,
     "module": "api.routers.admin_seo"
   },
+  "GET /admin/session": {
+    "capability": "notifications.read",
+    "module": "api.routers.admin_session"
+  },
   "GET /admin/settings": {
     "capability": null,
     "module": "api.routers.admin_settings"

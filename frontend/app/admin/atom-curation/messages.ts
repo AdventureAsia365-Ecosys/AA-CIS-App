@@ -144,7 +144,7 @@ export const AT = defineMessages(
     tipCut: 'The tenant declined this proposal via the "Cut" button in their own Slate.',
     whatIsSlate: "What is Slate?",
     slateIntro:
-      "It's the list of topic ideas the pipeline has proposed for a tenant to write about — each one already scored and checked against that Channel's minimum bar. This page lets Admin view any one tenant's proposals (pick a Tenant below); a tenant only ever sees and acts on their own, in their portal's Social Content page",
+      "It's the list of topic ideas the pipeline has proposed for a tenant to write about — each one already scored and checked against that Channel's minimum bar. This page lets Admin view any one tenant's proposals (pick a Tenant below); a tenant only ever sees and acts on their own, in the Content studio of their agency app, Create › Social",
     legendProposed: "= the system suggested it, tenant hasn't acted yet",
     legendPicked: "= tenant chose to write it",
     legendUsed: "= it actually became a written piece",
@@ -160,6 +160,7 @@ export const AT = defineMessages(
     untitledMoment: "Untitled moment",
     chooseTenant: "Choose a tenant…",
     channel: "Channel:",
+    channelAria: "Channel",
     allChannels: "All channels",
     selectTenant: "Select a Tenant",
     selectTenantBody:
@@ -332,7 +333,7 @@ export const AT = defineMessages(
     tipCut: 'Tenant đã từ chối đề xuất này bằng nút "Cut" trong Slate của họ.',
     whatIsSlate: "Slate là gì?",
     slateIntro:
-      "Đó là danh sách ý tưởng chủ đề mà pipeline đề xuất cho một tenant viết — mỗi ý tưởng đã được chấm điểm và kiểm theo ngưỡng tối thiểu của Kênh đó. Trang này cho Admin xem đề xuất của bất kỳ một tenant nào (chọn Tenant bên dưới); tenant chỉ thấy và xử lý đề xuất của chính họ, trong trang Social Content của portal",
+      "Đó là danh sách ý tưởng chủ đề mà pipeline đề xuất cho một tenant viết — mỗi ý tưởng đã được chấm điểm và kiểm theo ngưỡng tối thiểu của Kênh đó. Trang này cho Admin xem đề xuất của bất kỳ một tenant nào (chọn Tenant bên dưới); tenant chỉ thấy và xử lý đề xuất của chính họ, trong Content studio của ứng dụng đại lý, mục Create › Social",
     legendProposed: "= hệ thống gợi ý, tenant chưa xử lý",
     legendPicked: "= tenant đã chọn viết",
     legendUsed: "= đã thực sự thành một bài viết",
@@ -348,6 +349,7 @@ export const AT = defineMessages(
     untitledMoment: "Khoảnh khắc chưa đặt tên",
     chooseTenant: "Chọn một tenant…",
     channel: "Kênh:",
+    channelAria: "Kênh",
     allChannels: "Mọi kênh",
     selectTenant: "Chọn một Tenant",
     selectTenantBody:

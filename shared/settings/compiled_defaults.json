@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -11970,6 +11970,42 @@
      "lower": "Khách đăng nhập bị giới hạn như khách vãng lai.",
      "when": "Tăng khi khách đăng nhập báo 'quá nhiều yêu cầu'; giảm nếu có người tạo tài khoản để lách giới hạn.",
      "example": "Với mặc định 2: khách đăng nhập được 20 câu chuyện chuyến đi mỗi giờ, khách vãng lai được 10."
+    }
+   }
+  },
+  {
+   "key": "tripplanner.spend.connection_share_enforce",
+   "app": "tripplanner",
+   "area": "spend",
+   "label": "TripPlanner: stop at its connection budget share",
+   "description": "Whether TripPlanner stops using a model connection once its own monthly share of that connection's budget is used up (AI gateway > Budgets; when TripPlanner has no share there, the CIS remainder it is counted in). false = log only: TripPlanner writes a log line and goes on (the first release of the per-app shares). true = under tripplanner.spend.environment dev the connection is left out of the route and the next one answers; under prod a reached share only alerts. Read by AA-TripPlanner-Web backend/shared/connection_share.py through catalog.v_app_settings_v1 and catalog.v_llm_connection_cap_v2.",
+   "value_type": "bool",
+   "unit": null,
+   "min_value": null,
+   "max_value": null,
+   "allowed_values": null,
+   "default_value": false,
+   "scope_kind": "platform",
+   "impact": "high",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "Whether TripPlanner stops calling a model connection when its own monthly share of that connection's budget is used up. Off, TripPlanner only logs it; on, it moves to the next connection of the route.",
+     "raise": "On (the stricter choice): TripPlanner can no longer spend past its share, so the connection's total holds for every app; a planner may get a slower or simpler model, or none, near the month end.",
+     "lower": "Off (log only): TripPlanner keeps calling past its share and the connection's total can be exceeded by what TripPlanner spends above it.",
+     "when": "Switch it on once TripPlanner has its own share on AI gateway > Budgets and the log lines show the share fits its real use.",
+     "example": "TripPlanner has 10 USD of acc2 and spent 10 USD this month. With the default off: the next planner request still goes to acc2 and a log line says the share is used up. Switched on: the request goes to the next connection of the route."
+    },
+    "vi": {
+     "what": "TripPlanner có ngừng gọi một kết nối model khi đã dùng hết phần ngân sách tháng của mình trên kết nối đó hay không. Tắt thì TripPlanner chỉ ghi log; bật thì chuyển sang kết nối kế tiếp của route.",
+     "raise": "Bật (lựa chọn chặt hơn): TripPlanner không còn tiêu vượt phần của mình, nên tổng của kết nối giữ được cho mọi app; gần cuối tháng trang lập kế hoạch có thể dùng model chậm hơn, đơn giản hơn, hoặc không có AI.",
+     "lower": "Tắt (chỉ ghi log): TripPlanner vẫn gọi tiếp khi vượt phần của mình và tổng của kết nối có thể bị vượt đúng bằng phần TripPlanner tiêu thêm.",
+     "when": "Bật khi TripPlanner đã có phần riêng ở AI gateway > Budgets và log cho thấy phần đó vừa với mức dùng thật.",
+     "example": "TripPlanner có 10 USD trên acc2 và tháng này đã tiêu 10 USD. Với mặc định tắt: yêu cầu lập kế hoạch tiếp theo vẫn đi acc2 và log ghi phần đã hết. Khi bật: yêu cầu đi sang kết nối kế tiếp của route."
     }
    }
   },

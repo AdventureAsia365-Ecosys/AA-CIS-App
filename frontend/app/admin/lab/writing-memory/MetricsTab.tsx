@@ -20,15 +20,15 @@ import { Gauge, Play } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
   Badge, Button, DataTable, ErrorState, Field, Input, K, KpiTile, Modal, TableSkeleton, apiGet, mono,
-  useAdminIdentity, useT, useToast, type ColumnDef,
+  useT, useToast, type ColumnDef,
 } from "../../../_kit";
-import { can } from "@/lib/rbac";
 import {
   SOFT_STOP_CODES, WM_API, WRITERS, actionTone, pctOrDash, usd,
   type Disagreement, type KpiAction, type KpiReport, type MetricsPage, type ReleaseStops, type Resolution,
   type SoftStopCode, type Writer, type WriterBlock,
 } from "@/lib/writingMemory";
 import { MX } from "./metrics.messages";
+import { useWmAdmin } from "./useWmAdmin";
 import { useWmText } from "./useWmText";
 
 type KpiRow = { writer: Writer; b: WriterBlock };
@@ -136,7 +136,7 @@ export default function MetricsTab() {
   const toast = useToast();
   const qc = useQueryClient();
   const wm = useWmText();
-  const canAdmin = can(useAdminIdentity().role, "ai.admin");
+  const canAdmin = useWmAdmin(); // AA-1127 C3: ai.admin and a session that may write
   const list = useQuery({ queryKey: ["wm", "metrics"], queryFn: () => apiGet<MetricsPage>(`${WM_API}/metrics`) });
   const [dry, setDry] = useState<KpiReport | null>(null);
   const [busy, setBusy] = useState(false);

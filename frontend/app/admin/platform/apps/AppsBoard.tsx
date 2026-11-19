@@ -354,6 +354,20 @@ function fmtMs(ms: number | null): string {
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms)} ms`;
 }
 
+/** Requests, server errors and p95 of an app with traffic numbers (not a "probe" app: AA-1127 C3, Partner CRM). */
+function TrafficNumbers({ traffic }: { traffic: AppTraffic }) {
+  const t = useT(APPS);
+  return (
+    <>
+      <span>{t("requests", (traffic.requests ?? 0).toLocaleString("en-US"))}</span>
+      <span style={{ color: traffic.errors ? K.danger : K.muted }}>
+        {t("serverErrors", (traffic.errors ?? 0).toLocaleString("en-US"))}
+      </span>
+      <span>{t("within95", fmtMs(traffic.p95_ms))}</span>
+    </>
+  );
+}
+
 /** The CloudWatch traffic the status is partly based on — the same numbers as the Overview tile. */
 function TrafficLine({ traffic }: { traffic: AppTraffic | null }) {
   const t = useT(APPS);
@@ -367,11 +381,7 @@ function TrafficLine({ traffic }: { traffic: AppTraffic | null }) {
       borderRadius: RADIUS.md, background: K.bg, minWidth: 0,
     }} title={t("trafficTitle", src, (traffic.resources ?? []).join(" + "), traffic.window_hours ?? 24)}>
       <span style={{ color: K.body, fontWeight: 600 }}>{t("lastHours", traffic.window_hours ?? 24)}</span>
-      <span>{t("requests", (traffic.requests ?? 0).toLocaleString("en-US"))}</span>
-      <span style={{ color: traffic.errors ? K.danger : K.muted }}>
-        {t("serverErrors", (traffic.errors ?? 0).toLocaleString("en-US"))}
-      </span>
-      <span>{t("within95", fmtMs(traffic.p95_ms))}</span>
+      {traffic.kind === "probe" ? <span>{t("noTrafficNumbers")}</span> : <TrafficNumbers traffic={traffic} />}
       {traffic.alarms_total != null && (
         <span style={{ color: traffic.alarms_firing ? K.danger : K.muted }}>
           {traffic.alarms_firing ? t("alarmsFiring", traffic.alarms_firing) : t("alarmsQuiet", traffic.alarms_total)}
