@@ -3482,7 +3482,7 @@ Redis flag, fail closed). It logs in as `aa_app_user` (`aa-cis/dev/rds-app-user`
   | DELETE `/v1/publish-log/{id}` (W4, unpublish) | `aa859:unpublish_pool` | three short blocks; Secrets Manager and the remote delete hold no connection |
   | GET `/v1/tours/pool`, `/my-versions`, `/versions/{id}` (W5a) | `aa859:t2_version_reads_pool` | job status from a second MAIN query keyed by job ids returned through RLS |
   | GET `/v1/tours/{id}/full` (tenant-JWT branch), `/{id}`, `/versions/{id}/export-docx` (D5b, S247) | `aa859:t2_version_detail_reads_pool` | own flag (not W5a's); the `/full` staff branch (X-Admin-Secret) stays on MAIN and reads no flag; export-docx audit on MAIN after the block; a master tour's raw / seo fields show only when those rows are the AA master tenant's (239), as in W5a |
-  | PATCH `/v1/tours/versions/{id}` (W6) | `aa859:t2_version_write_pool` | `pg_advisory_xact_lock(859, hashtext(tenant:published_tour))` + `MAX + 1`; UNIQUE backstop → 409 `version_conflict` |
+  | PATCH `/v1/tours/versions/{id}` (W6) | `aa859:t2_version_write_pool` | `pg_advisory_xact_lock(859, hashtext(tenant:published_tour))` + `MAX + 1`; UNIQUE backstop → 409 `version_conflict`; AA-1144 fact lock reads the Master / raw base on the same connection (239), audit on MAIN after the block |
   | GET/POST `/v1/integrations/{wordpress,facebook}`, POST `.../test` (W9) | `aa859:integration_connect_pool` | Secrets Manager / remote HTTP hold no connection; the UPSERT writes only 241's column grants; needs 241 |
   | GET / POST `/admin/brand-identity` with a tenant Bearer (wave 3, S247) | `aa859:brand_identity_pool` | needs 262 (RLS on `tenant_brand_rules` / `tenant_seo_config`); POST = one transaction, `pg_advisory_xact_lock(859, hashtext(tenant:brand_identity))` + `MAX + 1`, UNIQUE backstop → 409 `version_conflict`; the X-Admin-Secret staff branch stays on MAIN and reads no flag; `check_saved_cta` on MAIN after commit |
   | POST `/v1/publish-log/{piece_id}/publish` (wave 3, S247) | `aa859:publish_pool` | three short blocks (piece + connection, `claim()` as a savepoint, `finish()`); Secrets Manager and the remote post hold no connection; daily-limit override read and audit row on MAIN; no new grant |
@@ -4389,7 +4389,22 @@ Writers read both scopes for the trip's country, a tenant entry replacing the pl
 its subject (`facts.pick_facts`): T9 always (the FACTS seed, each entry with a `Source:` line the
 leak checks know); T2 only with the worker env `T2_FACTS=on` (default off: a FACTS block in the
 T2 user prompt, also read as T3 grounding source; `services/content_generation/t2_facts.py`).
+AA-1144 (S285 decision D7): an agency writes only `booking_terms` facts (`facts_store.AGENCY_FACT_KINDS`); prices,
+seasons, visas, transfer times and other tour facts are Adventure Asia's (the agency's markup is a CRM price rule).
+`/v1/facts` refuses any other kind (422); an older own fact of another kind stays listed (`read_only`) and deletable,
+is never edited, never reaches a writer (the read SQL and `pick_facts` leave it out) and never replaces a platform fact.
 _Avoid_: Fact (bare) — always say which scope.
+
+**Fact lock (agency T2 copy)**:
+AA-1144 (S285 decision D8): an agency may reword its T2 copy (`PATCH /v1/tours/versions/{id}`, action `edit`) but not
+change what the tour is. `services/content_generation/t2_fact_lock.py` checks the edit against the version it edits,
+the Master (`published_tours.aa_*`) and the raw source with the FactSheet extractors (`services/quality/s1_facts.py`):
+a non-wording key, another day structure, a figure the base never states, a new place in the highlights or itinerary,
+or a dropped / added "not included" item group is a 422 `fact_locked` (`{code, message, locked: [{field, fact,
+value}]}`). The edit is laid over the version (fields it does not send are kept); `edited_by_user` is the member from
+the token. Every edit and refusal writes `tenant_tour_version.edited` / `.edit_refused` (field + old / new sha256, no
+text) on MAIN after the transaction, best effort; the agency sees both in Account › Activity.
+_Avoid_: "T2 facts" for this (that is the `T2_FACTS` writer input above).
 
 ### Model operations (platform)
 
