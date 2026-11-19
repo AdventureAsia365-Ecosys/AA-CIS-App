@@ -60,7 +60,26 @@ def _cleanup(a):
     a.execute("COMMIT")
 
 
+# The column grants 456 repeats (323 / 347 / 452 made them on Dev; the replay skips those files).
+REPEATED = {"llm_app_profile": ("app",), "llm_call_log": ("account", "app", "cost_usd", "created_at"),
+            "llm_connection_cost_policy": ("connection_key", "alert_pct", "hard_stop")}
+_added: list = []
+
+
+def _missing_grants(a):
+    out = []
+    for table, cols in REPEATED.items():
+        for col in cols:
+            a.execute("SELECT has_column_privilege('catalog_owner', %s, %s, 'SELECT') AS ok", (f"shared.{table}", col))
+            if not a.fetchone()[0]:
+                out.append((table, col))
+    return out
+
+
 def undo_456(a):
+    for table, col in _added:
+        a.execute(f"REVOKE SELECT ({col}) ON shared.{table} FROM catalog_owner")
+    _added.clear()
     a.execute(f"DROP VIEW IF EXISTS {VIEW}")
     a.execute("REVOKE SELECT ON shared.llm_connection_budget_current FROM catalog_owner")
     a.execute("REVOKE CREATE ON SCHEMA catalog FROM catalog_owner")
@@ -90,6 +109,7 @@ def applied_456(db_migrator_login):  # noqa: F811
                              true, 'admin:zz-seed', now() - interval '1 minute')""",
                   (PROVIDER_KEY, json.dumps(PROVIDER)))
         a.execute("COMMIT")
+        _added.extend(_missing_grants(a))
         t323._apply(M455)                                    # replayed by conftest already: a no-op re-run
         t323._apply(M456)
         t323._apply(M456)                                    # idempotent re-run: the table is no longer empty

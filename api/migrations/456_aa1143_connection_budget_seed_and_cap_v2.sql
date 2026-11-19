@@ -54,7 +54,8 @@
 -- seed runs only on an empty table, CREATE OR REPLACE, ON CONFLICT DO NOTHING), one transaction, self-registering.
 --
 -- Rollback (a NEW forward migration under the same recipe, after the code PRs are reverted): DROP VIEW
--- catalog.v_llm_connection_cap_v2; REVOKE SELECT ON shared.llm_connection_budget_current FROM catalog_owner; DELETE the
+-- catalog.v_llm_connection_cap_v2; REVOKE SELECT ON shared.llm_connection_budget_current FROM catalog_owner (the column
+-- grants repeated from 323 / 347 / 452 stay); DELETE the
 -- setting key's value rows, then the key. The seeded rows stay (append-only); the CIS caps they wrote stay in force.
 
 BEGIN;
@@ -165,7 +166,12 @@ END $$;
 SET CONSTRAINTS ALL DEFERRED;
 
 -- ── 2. The v2 cap view (catalog recipe) ──────────────────────────────────────────────────────────────────────────
+-- What catalog_owner reads: the rows in force (455's view), and the columns CIS 323 / 347 / 452 granted already (the
+-- same grants repeated, so this file stands on its own; a re-grant changes nothing on Dev).
 GRANT SELECT ON shared.llm_connection_budget_current TO catalog_owner;
+GRANT SELECT (app) ON shared.llm_app_profile TO catalog_owner;
+GRANT SELECT (account, app, cost_usd, created_at) ON shared.llm_call_log TO catalog_owner;
+GRANT SELECT (connection_key, alert_pct, hard_stop) ON shared.llm_connection_cost_policy TO catalog_owner;
 
 GRANT CREATE ON SCHEMA catalog TO catalog_owner;
 SET LOCAL ROLE catalog_owner;
