@@ -78,6 +78,7 @@ logger = structlog.get_logger()
 CONTENT_READ = "content.read"
 CONTENT_WRITE = "content.write"              # upload, S1 rewrite, regenerate
 REVIEW_ACT = "review.act"
+CONTENT_PUBLISH = "content.publish"   # AA-1146 D1: publish a tour version; two-person rule: content_publish_gate.py
 MASTER_ADMIN = "master.admin"
 ATOMS_WRITE = "atoms.write"
 PHOTOS_WRITE = "photos.write"
@@ -141,8 +142,8 @@ TENANT_CONTENT_BOOK_READ = "tenant_content.book.read"
 # AA-1091 (S278, tech lead: "the customer-service team must be able to enter prices in CIS easily") - the structured
 # reference price of the AA tours (AA Catalogue > Reference prices, /admin/reference-prices; CIS 402). Read: the
 # catalogue roles, customer_success and finance (not the read-only viewer, AA-878: refused on every listed read).
-# Write (inline edit, accept, parse, Excel import): admin, content_lead and customer_success (the customer-service
-# team's CIS role). Never a selling price (root ADR 0005 d7).
+# Write (inline edit, accept, parse, Excel import): admin and customer_success (the customer-service team's CIS role;
+# content_lead lost it in AA-1146 D5, S285). Never a selling price (root ADR 0005 d7).
 REFERENCE_PRICE_READ = "reference_price.read"
 REFERENCE_PRICE_WRITE = "reference_price.write"
 # S279 thresholds L1 (tech lead S279 Q1; CIS 407) — Platform › Settings (/admin/settings/registry): propose a new value
@@ -162,7 +163,7 @@ _CONTENT_WORK = frozenset({CONTENT_READ, CONTENT_WRITE, REVIEW_ACT})
 # reads of the own tenants for customer_success (tenant_content.book.read; matrix "Tenant QA R (own)").
 ROLE_PERMS: dict[str, frozenset[str]] = {
     "admin": _CONTENT_WORK | {
-        MASTER_ADMIN, ATOMS_WRITE, PHOTOS_WRITE, A4_UNPUBLISH, QUALITY_WRITE, CONTENT_SETTINGS_WRITE,
+        CONTENT_PUBLISH, MASTER_ADMIN, ATOMS_WRITE, PHOTOS_WRITE, A4_UNPUBLISH, QUALITY_WRITE, CONTENT_SETTINGS_WRITE,
         TENANT_READ, TENANT_WRITE, OPS_READ, OPS_WRITE, AI_ADMIN, SPEND_READ, SPEND_WRITE,
         STAFF_READ, AUDIT_READ, ALERTS_WRITE,
         TENANT_CONTENT_READ, CATALOG_READ, TENANT_BOOK_READ, TENANT_BOOK_ACCOUNT_READ, TENANT_MEMBER_WRITE,
@@ -172,9 +173,9 @@ ROLE_PERMS: dict[str, frozenset[str]] = {
     },
     # AA Catalogue W, Tenant QA W, Writing Lab R (wave, review queue, master content, atoms / photos, SEO).
     "content_lead": _CONTENT_WORK | {
-        MASTER_ADMIN, ATOMS_WRITE, PHOTOS_WRITE, A4_UNPUBLISH, QUALITY_WRITE, CONTENT_SETTINGS_WRITE,
+        CONTENT_PUBLISH, MASTER_ADMIN, ATOMS_WRITE, PHOTOS_WRITE, A4_UNPUBLISH, QUALITY_WRITE, CONTENT_SETTINGS_WRITE,
         CATALOG_READ, TENANT_CONTENT_READ, LAB_READ, WAVE_RUN, NOTIFICATIONS_READ, REFERENCE_PRICE_READ,
-        REFERENCE_PRICE_WRITE, LEARN_PREVIEW,
+        LEARN_PREVIEW,
     },
     # AA Catalogue R + W of the writing (upload, S1 rewrite, review); never master lifecycle, atoms or tenants.
     "content": _CONTENT_WORK | {CATALOG_READ, NOTIFICATIONS_READ, REFERENCE_PRICE_READ},
@@ -497,28 +498,27 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/view-as/sessions/{session_id}/end"): TENANT_VIEW_AS,
 
     # ── admin_pipeline — Upload (S0), every staff role
-    ("POST", "/admin/upload-url"): CONTENT_WRITE,
-    ("POST", "/admin/ingest-s3"): CONTENT_WRITE,
+    ("POST", "/admin/upload-url"): CONTENT_WRITE, ("POST", "/admin/ingest-s3"): CONTENT_WRITE,
     ("POST", "/admin/upload-staging/{staging_id}/decide"): CONTENT_WRITE,
     ("POST", "/admin/raw-tours/{tour_id}/set-active"): CONTENT_WRITE,
     ("DELETE", "/admin/raw-tours/{tour_id}"): CONTENT_WRITE,
     # admin_pipeline — S1 rewrite, every staff role
-    ("POST", "/admin/run-tour"): CONTENT_WRITE,
-    ("POST", "/admin/run-tour-async"): CONTENT_WRITE,
-    ("POST", "/admin/s1-batch/submit"): CONTENT_WRITE,
-    ("POST", "/admin/s1/seo-prefetch"): CONTENT_WRITE,
+    ("POST", "/admin/run-tour"): CONTENT_WRITE, ("POST", "/admin/run-tour-async"): CONTENT_WRITE,
+    ("POST", "/admin/s1-batch/submit"): CONTENT_WRITE, ("POST", "/admin/s1/seo-prefetch"): CONTENT_WRITE,
     # admin_pipeline — Review Queue + tour edits, every staff role
-    ("POST", "/admin/review-queue/{review_id}/approve"): REVIEW_ACT,
-    ("POST", "/admin/review-queue/{review_id}/reject"): REVIEW_ACT,
-    ("POST", "/admin/review-queue/{review_id}/dismiss"): REVIEW_ACT,
-    ("POST", "/admin/review-queue/{review_id}/supersede"): REVIEW_ACT,
+    ("POST", "/admin/review-queue/{review_id}/approve"): any_of(CONTENT_PUBLISH, REVIEW_ACT),
+    **{("POST", "/admin/review-queue/{review_id}/" + a): REVIEW_ACT for a in ("reject", "dismiss", "supersede")},
     # AA-845 — a reviewer marks one sentence "unsupported" (a1_claim_supported truth=False)
     ("POST", "/admin/review-queue/{review_id}/claims/label"): REVIEW_ACT,
-    ("PATCH", "/admin/tours/{tour_id}/country"): CONTENT_WRITE,
-    ("PATCH", "/admin/tours/{tour_id}/raw"): CONTENT_WRITE,
+    ("PATCH", "/admin/tours/{tour_id}/country"): CONTENT_WRITE, ("PATCH", "/admin/tours/{tour_id}/raw"): CONTENT_WRITE,
     ("PATCH", "/admin/tours/{tour_id}/generated/{content_id}"): CONTENT_WRITE,
     ("POST", "/admin/tours/{tour_id}/generated/{content_id}/revalidate"): CONTENT_WRITE,
-    ("POST", "/admin/tours/{tour_id}/versions/{version_num}/promote"): CONTENT_WRITE,
+    ("POST", "/admin/tours/{tour_id}/versions/{version_num}/promote"): any_of(CONTENT_PUBLISH, REVIEW_ACT),
+    ("PUT", "/admin/tours/{tour_id}/draft"): CONTENT_WRITE, ("DELETE", "/admin/tours/{tour_id}/draft"): CONTENT_WRITE,
+    ("DELETE", "/admin/tours/{tour_id}/fact-draft"): CONTENT_WRITE,
+    ("POST", "/admin/tours/{tour_id}/draft/publish"): any_of(CONTENT_PUBLISH, REVIEW_ACT),
+    ("POST", "/admin/tours/{tour_id}/fact-draft/publish"): any_of(CONTENT_PUBLISH, REVIEW_ACT),
+    ("POST", "/admin/tours/{tour_id}/unlock"): MASTER_ADMIN,
     # admin_pipeline — brand rules + AA brand identity (Settings › Brand; §5.1 content.settings.write).
     # The brand-identity routes also take a tenant JWT (own brand, AA-424): POLICY applies to the
     # staff branch only (the router runs staff_policy_if_staff).
@@ -535,8 +535,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/infra/status"): OPS_READ,
 
     # ── admin_atoms — Social Content atoms (Atom Curation page, admin-only)
-    ("POST", "/admin/atoms/atomize"): ATOMS_WRITE,
-    ("PATCH", "/admin/atoms/{atom_id}"): ATOMS_WRITE,
+    ("POST", "/admin/atoms/atomize"): ATOMS_WRITE, ("PATCH", "/admin/atoms/{atom_id}"): ATOMS_WRITE,
     # AA-1035: the AA atom store is catalog.read (was tenant.read, which also gated the directory and tenant text)
     ("GET", "/admin/atoms"): CATALOG_READ,
     ("GET", "/admin/atoms/summary"): CATALOG_READ,
@@ -669,7 +668,7 @@ POLICY: dict[tuple[str, str], Any] = {
 
     # ── /v1 routers the staff BFF calls with the admin secret (/api/pipeline, the /api/tenant staff
     # branch). Their own guard keeps tenant JWTs out; POLICY narrows the staff roles.
-    ("POST", "/v1/pipeline/review-queue/{review_id}/approve"): REVIEW_ACT,
+    ("POST", "/v1/pipeline/review-queue/{review_id}/approve"): any_of(CONTENT_PUBLISH, REVIEW_ACT),
     ("POST", "/v1/pipeline/review-queue/{review_id}/reject"): REVIEW_ACT,
 
     # ── admin_platform (AA-816 C7) — staff directory health: the reconcile report (WORKFORCE vs the

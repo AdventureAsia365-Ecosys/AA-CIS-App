@@ -17,6 +17,9 @@ writes, so no job has to carry a wave id:
 Tour state, first match wins (TERMINAL ones end a wave):
   master → review_pending → trashed → running (a wave job still queued/running)
   → failed / interrupted (latest s1_rewrite failed|stopped_budget / cancelled)
+  → locked (AA-1146: the tour's Master carries a person's hand-edit lock and its S1 job skipped it,
+    result.reason = human_locked, or no S1 job ran for it: the batch submit leaves locked tours out;
+    terminal, the row names who locked it, when and why)
   → unclassified (S1 succeeded but neither Master nor a pending review — e.g. a review already
     approved/dismissed but not published, or Master set inactive) → not_started.
 
@@ -36,7 +39,8 @@ logger = structlog.get_logger()
 # AA-1076: llm_batch (one gateway batch for many tours, payload `tour_ids`) is a wave job of each of its tours: a tour
 # whose batch is still out is `running`, and the batch's ledger rows (bound to that job) count in the wave's cost.
 WAVE_JOB_KINDS = ("s1_rewrite", "a3_atomize", "revalidate", "llm_batch")
-TERMINAL_STATES = ("master", "review_pending", "trashed", "failed", "interrupted")
+TERMINAL_STATES = ("master", "review_pending", "trashed", "failed", "interrupted", "locked")
+HUMAN_LOCKED = "human_locked"   # services/content_generation/human_lock.SKIP_REASON (the s1_rewrite skip result)
 STATES = TERMINAL_STATES + ("running", "unclassified", "not_started")
 MASTER_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 INCOMPLETE_EVENT = "platform.rerun_wave.incomplete"
@@ -44,7 +48,7 @@ INCOMPLETE_EVENT = "platform.rerun_wave.incomplete"
 _JOBS_CTE = """
     w AS (SELECT * FROM shared.rerun_wave WHERE id = $1::uuid),
     jobs AS (
-        SELECT j.id, j.kind, j.status, j.created_at, j.error, t.tour_id
+        SELECT j.id, j.kind, j.status, j.created_at, j.error, j.result, t.tour_id
           FROM shared.job j
          CROSS JOIN w
          CROSS JOIN LATERAL (
@@ -74,7 +78,7 @@ TOURS_SQL = f"""
            rt.source_status::text AS source_status,
            (rt.deleted_at IS NOT NULL) AS deleted,
            length(coalesce(rt.src_itineraries, '')) AS src_chars,
-           s1.status AS s1_status, left(s1.error, 300) AS s1_error,
+           s1.status AS s1_status, left(s1.error, 300) AS s1_error, s1.skip_reason AS s1_skip_reason,
            EXISTS (SELECT 1 FROM jobs j WHERE j.tour_id = e.tour_id::text
                                           AND j.status IN ('queued', 'running')) AS any_active,
            EXISTS (SELECT 1 FROM jobs j WHERE j.tour_id = e.tour_id::text
@@ -85,13 +89,16 @@ TOURS_SQL = f"""
            -- updated_at, not published_at: a re-publish keeps the first published_at (AA-645 d06, mig 273)
            coalesce(pt.updated_at >= w.created_at
                     AND (w.closed_at IS NULL OR pt.updated_at <= w.closed_at), false) AS published_in_wave,
-           rq.review_status::text AS review_status, rq.failure_summary, rq.score_overall::float AS score
+           rq.review_status::text AS review_status, rq.failure_summary, rq.score_overall::float AS score,
+           -- AA-1146 (CIS 457): the hand-edit lock; to_jsonb reads it without failing before 457 (no column: NULL)
+           to_jsonb(pt) ->> 'human_lock_at' AS lock_at, to_jsonb(pt) ->> 'human_lock_by' AS lock_by,
+           left(to_jsonb(pt) ->> 'human_lock_reason', 300) AS lock_reason
       FROM exp e CROSS JOIN w
       LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = e.tour_id
       LEFT JOIN gold_aa_internal.published_tours pt
              ON pt.tour_id = e.tour_id AND pt.tenant_id = $3::uuid AND pt.deleted_at IS NULL
       LEFT JOIN LATERAL (
-            SELECT j.status, j.error FROM jobs j
+            SELECT j.status, j.error, j.result ->> 'reason' AS skip_reason FROM jobs j
              WHERE j.tour_id = e.tour_id::text AND j.kind = 's1_rewrite'
              ORDER BY j.created_at DESC LIMIT 1) s1 ON true
       LEFT JOIN LATERAL (
@@ -140,9 +147,25 @@ def classify(t: dict) -> str:
         return "failed"
     if s1 == "cancelled":
         return "interrupted"
+    if _locked(t, s1):
+        return "locked"
     if s1 == "succeeded":
         return "unclassified"
     return "not_started"
+
+
+def _locked(t: dict, s1: Optional[str]) -> bool:
+    """AA-1146: the S1 job skipped the tour for its hand-edit lock, or none ran and the Master is locked."""
+    if s1 == "succeeded" and t.get("s1_skip_reason") == HUMAN_LOCKED:
+        return True
+    return s1 is None and bool(t.get("lock_at"))
+
+
+def _lock_of(t: dict, state: str) -> Optional[dict]:
+    """The lock a 'locked' row shows (who, when, why)."""
+    if state != "locked":
+        return None
+    return {"at": t.get("lock_at"), "by": t.get("lock_by"), "reason": t.get("lock_reason")}
 
 
 def _failure_class(t: dict) -> Optional[str]:
@@ -171,6 +194,7 @@ def build_report(wave: dict, tours: list[dict], job_totals: list[dict], llm: lis
             "review": ({"score": t.get("score"), "failure_summary": (t.get("failure_summary") or "")[:300],
                         "failure_class": _failure_class(t)} if state == "review_pending" else None),
             "error": t.get("s1_error") if state in ("failed", "interrupted") else None,
+            "lock": _lock_of(t, state),
         })
     active_jobs = sum(r["n"] for r in job_totals if r["status"] in ("queued", "running"))
     terminal = sum(by_state[s] for s in TERMINAL_STATES)

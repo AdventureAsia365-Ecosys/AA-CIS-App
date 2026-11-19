@@ -42,10 +42,11 @@ def _gc_row():
 class _Recorder:
     """Fake asyncpg connection that records every call in order, transaction enter/exit included."""
 
-    def __init__(self, fail_on: str | None = None, repoint_status: str = "UPDATE 1"):
+    def __init__(self, fail_on: str | None = None, repoint_status: str = "UPDATE 1", flag_status: str = "UPDATE 1"):
         self.calls: list[tuple[str, str, tuple]] = []
         self.fail_on = fail_on
         self.repoint_status = repoint_status
+        self.flag_status = flag_status   # AA-1146: "UPDATE 0" = the text was saved again while the checks ran
         self.fetchrow = AsyncMock(side_effect=[_gc_row(), None])
         self.close = AsyncMock()
 
@@ -73,6 +74,8 @@ class _Recorder:
             raise RuntimeError("boom")
         if flat.startswith("UPDATE gold_aa_internal.published_tours"):
             return self.repoint_status
+        if flat.startswith("UPDATE silver_aa_internal.generated_content SET revalidate_passed"):
+            return self.flag_status
         return "OK"
 
 
@@ -139,6 +142,23 @@ def test_failure_after_insert_rolls_back_the_whole_write():
     assert ("tx", "rollback", ()) in conn.calls
     assert ("tx", "commit", ()) not in conn.calls
     conn.close.assert_awaited()
+
+
+def test_verdict_is_written_only_for_the_text_the_run_read():
+    """AA-1146: the verdict UPDATE is conditional on the edited_at the run read (a save in between resets the check)."""
+    conn = _Recorder()
+    _run(conn)
+    _, sql, args = conn.calls[_index(conn.calls, "UPDATE silver_aa_internal.generated_content SET revalidate_passed")]
+    assert "edited_at IS NOT DISTINCT FROM $3" in sql
+    assert args == (True, CONTENT_ID, None)    # the fake row has no edited_at: never edited
+
+
+def test_a_save_during_the_run_rolls_the_verdict_back():
+    """AA-1146: save A, checks start on A, save B, checks end: no TRUE for B, no new score row, nothing committed."""
+    conn = _Recorder(flag_status="UPDATE 0")
+    out = _run(conn)
+    assert out["stale"] is True and out["revalidate_passed"] is None
+    assert ("tx", "rollback", ()) in conn.calls and ("tx", "commit", ()) not in conn.calls
 
 
 def test_unpublished_version_reports_zero_repointed():

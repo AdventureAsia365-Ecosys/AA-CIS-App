@@ -272,6 +272,8 @@ class _GcConn:
         return self.before
 
     async def fetchval(self, sql, *args):
+        if "published_tours" in sql:   # AA-1146: the live-version check (not the live version here)
+            return None
         if "INSERT INTO shared.writing_signal" in sql:
             self.signals.append(args)
             return uuid.UUID(int=len(self.signals))

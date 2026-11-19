@@ -278,12 +278,15 @@ def _pool_with(conn):
 def test_a_raw_tour_edit_enqueues_the_fan_out_with_the_field_names(monkeypatch):
     from api.routers import admin_pipeline as ap
     monkeypatch.setattr(ap, "verify_admin_secret", lambda *_: None)
-    conn = MagicMock(fetchrow=AsyncMock(return_value={"tour_id": TOUR, "changed_at": NOW}))
+    # AA-1146: the old values (locked), then the UPDATE; the history row and the audit row in the same transaction
+    conn = MagicMock(fetchrow=AsyncMock(side_effect=[{"src_summary": "An old invented summary."},
+                                                     {"tour_id": TOUR, "changed_at": NOW}]),
+                     fetchval=AsyncMock(return_value=1), execute=AsyncMock())
     request = _req(_pool_with(conn))
     request.json = AsyncMock(return_value={"src_summary": "A new invented summary."})
     with patch.object(sf, "enqueue_safe", AsyncMock(return_value={"job_id": "j"})) as hook:
         out = asyncio.run(ap.update_raw_tour_fields(TOUR, request, x_admin_secret="x"))
-    assert out == {"tour_id": TOUR, "updated": ["src_summary"]}
+    assert out == {"tour_id": TOUR, "updated": ["src_summary"], "revision_num": 1}
     ch = hook.await_args.args[1]
     assert (ch.source_kind, ch.reason, ch.tour_id, ch.fields, ch.changed_at) == \
         ("raw_tour", "raw_tour_edited", TOUR, ("src_summary",), NOW)

@@ -6,8 +6,19 @@ from fastapi import Header, HTTPException, Request
 from api.routers.admin import verify_admin_secret
 from shared.tour_liveness import SOURCE_NOT_LIVE, SourceNotLiveError, source_not_live_message, source_state
 
+from api.routers.admin_pipeline._publish import enforce_publish_gate, request_actor
 from api.routers.admin_pipeline._shared import _as_list, logger, router
 from api.routers.admin_pipeline.uploads import _lifecycle_http
+
+
+def _version_editors(gc) -> list:
+    """AA-1146: the people who wrote a version's current text: the draft editors (edit_diff.editors), its author and
+    the last hand editor (generated_content.reviewed_by, AA-232: the editor's admin id)."""
+    from services.content_generation import tour_draft as td
+    out = td.editors_of(gc.get("edit_diff"), gc.get("author_id"))
+    if gc.get("reviewed_by"):
+        out.append(f"admin:{gc['reviewed_by']}")
+    return out
 
 
 # ── Tour version endpoints ────────────────────────────────────────────────────
@@ -35,12 +46,19 @@ async def promote_tour_version(
     ON CONFLICT branch of the repository insert that service runs.
 
     Only an `approved` version can be promoted (the publish gate of every other path): a version that never passed
-    the gate goes through the Review Queue. 404 unknown tour / version, 409 not approved or source not live."""
+    the gate goes through the Review Queue. 404 unknown tour / version, 409 not approved or source not live.
+
+    AA-1146 (S285, option A of the content-editing advisory): promote goes through the same re-check gate as the
+    Review Queue approve: a hand-edited version needs a passing re-validation of its current text (409
+    ``revalidate_required``), and the two-person rule applies while cis.content.publish_two_person is on (403
+    ``two_person_required`` / ``same_person``; the editors are the version's author and reviewer). A hand-edited
+    version published here locks the Master; a writer's version lifts the lock."""
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         gc = await conn.fetchrow("""
-            SELECT gc.id::text AS id, gc.status::text AS status
+            SELECT gc.id::text AS id, gc.status::text AS status, COALESCE(gc.human_edited, false) AS human_edited,
+                   gc.revalidate_passed, gc.reviewed_by::text AS reviewed_by, gc.edit_diff
             FROM silver_aa_internal.generated_content gc
             WHERE gc.tour_id = $1::uuid AND gc.version_num = $2
         """, tour_id, version_num)
@@ -52,6 +70,13 @@ async def promote_tour_version(
                 detail=(f"v{version_num} is '{gc['status']}', not approved: only a version that passed the publish "
                         "gate can be made current. Approve it in the Review Queue instead."),
             )
+        if gc.get("human_edited") and gc.get("revalidate_passed") is not True:
+            raise HTTPException(
+                status_code=409, headers={"X-Error-Code": "revalidate_required"},
+                detail={"code": "revalidate_required",
+                        "message": (f"v{version_num} was edited by hand after its approval: run the checks on it and "
+                                    "let them pass before you make it current")})
+        await enforce_publish_gate(conn, request, editors=_version_editors(gc))
         src = await source_state(conn, tour_id)
         if not src.live:
             raise HTTPException(status_code=409, detail=source_not_live_message(src, "promote this version"),
@@ -62,7 +87,8 @@ async def promote_tour_version(
     from services.tour_lifecycle.policy import POLICY_REVIEW_REQUIRED, PolicyReviewRequiredError
     try:
         exported = await process_export(gc["id"], atomize_dedupe=False, atomize_force=True,
-                                        atomize_created_by="admin:promote_version", contract_exit="promote")
+                                        atomize_created_by="admin:promote_version", contract_exit="promote",
+                                        lock_by=request_actor(request))
     except SourceNotLiveError as e:   # the source was retired between the check and the (locked) publish
         raise HTTPException(status_code=409, detail=source_not_live_message(e.state, "promote this version"),
                             headers={"X-Error-Code": SOURCE_NOT_LIVE})

@@ -571,6 +571,8 @@ async def approve_review(
         # version do not apply: this approve IS the policy's human review.
         from services.tour_lifecycle import policy as lifecycle_policy
         held_restore = gate_row is not None and await lifecycle_policy.held_master_version(conn, review_id)
+        from api.routers.admin_pipeline._publish import lock_kw, review_publish_gate
+        await review_publish_gate(conn, request, review_id, tenant_id)   # AA-1146 D1: the two-person rule
         if held_restore:
             policy_keep = True
         elif gate_row is not None and not gate_row["human_edited"]:
@@ -630,11 +632,8 @@ async def approve_review(
         generated_content_id = str(claimed["generated_content_id"])
         task_token = claimed["step_fn_task_token"]
 
-        await conn.execute("""
-            UPDATE silver_aa_internal.generated_content
-            SET status = 'approved'
-            WHERE id = $1::uuid
-        """, generated_content_id)
+        await conn.execute("UPDATE silver_aa_internal.generated_content SET status = 'approved' WHERE id = $1::uuid",
+                           generated_content_id)
         if blockers:   # S271 W0: approved over the publish checks with an explicit reason — keep it on the row
             note = (f"Approved unedited with override: {override} "
                     f"(blocked by: {', '.join(b['code'] for b in blockers)})")
@@ -677,7 +676,7 @@ async def approve_review(
         # Admin-path forward export (no SF token). Runs once per claim.
         from services.export.handler import process_export
         try:
-            await process_export(str(generated_content_id), contract_exit="approve")
+            await process_export(str(generated_content_id), contract_exit="approve", **lock_kw(request))
             exported = True
         except SourceNotLiveError as e:
             # The source was trashed between the claim and the export (race). Nothing is published and

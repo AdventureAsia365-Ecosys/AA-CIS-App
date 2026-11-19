@@ -19,7 +19,7 @@
 
 Root ADR 0005 d7: a reference price, never a selling price; the free text stays in raw_tours.price_raw. Who may call
 (api/core/staff_authz.py POLICY): reads reference_price.read (admin, content_lead, content, customer_success, finance,
-viewer), writes reference_price.write (admin, content_lead, customer_success); the viewer is refused on every write.
+viewer), writes reference_price.write (admin, customer_success; AA-1146 D5); the viewer is refused on every write.
 Every change leaves one acp_shared.audit_log row per key (tenant_id NULL, actor admin:<staff id>, before / after) in the
 write's transaction. Before CIS 402 is applied every route answers 503. AA-Booking reads the saved values through the
 contract view catalog.v_tour_price_reference_v2 (CIS 403). Included without a prefix (staff_policy reads the route).

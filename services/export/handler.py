@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from typing import Callable, Optional
 from shared.secrets import get_database_url
 from shared.tour_liveness import SOURCE_NOT_LIVE, SourceNotLiveError, SourceState, source_state
+from services.content_generation import human_lock as _human_lock   # AA-1146: the hand-edit lock of a Master
 
 logger = structlog.get_logger()
 
@@ -599,7 +600,8 @@ async def _refuse_policy_review(conn, silver: str, version_id: str, tour_id: str
 
 
 async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomize_force: bool = False,
-                         atomize_created_by: str = "system:a3_publish", contract_exit: str = "publish") -> dict:
+                         atomize_created_by: str = "system:a3_publish", contract_exit: str = "publish",
+                         **lock) -> dict:
     """Publish one approved version as the tour's Master Content and enqueue its A3 atomize.
 
     AA-645 step 0 (C2): the admin "promote" (make an older version current again) publishes through here too, with
@@ -612,7 +614,8 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
     and records it (``metadata.final_contract`` + its exit log) under ``contract_exit`` — ``auto_publish`` (an S1
     run), ``approve`` (Review Queue), ``promote`` (rollback), ``lambda`` (the legacy handler), ``recompose``
     (AA-1049 path A-new: a code-recomposed version of a served Master, ``content_generation/s1_recompose_store``).
-    Every caller names its exit (topology test). It never blocks the publish."""
+    Every caller names its exit (topology test). It never blocks the publish.
+    AA-1146: the hand-edit lock (human_lock.guard_export / after_export; ``lock``: lock_by, lock_reason)."""
     conn = await asyncpg.connect(get_database_url())
     tenant_slug = os.environ.get("TENANT_SLUG", "aa_internal")
     silver = f"silver_{tenant_slug}"
@@ -667,6 +670,7 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
 
         if not src.live:
             await _refuse_not_live(src)
+        await _human_lock.guard_export(conn, silver, version_id, str(tour_id), contract_exit)   # AA-1146
 
         # 2. Insert into published catalog (gold). AA-986 L2: through the tour lifecycle service (ADR 0015
         # decision 2, `publish`): the insert, "never two active Masters per key" and the `restored` record of a key
@@ -714,6 +718,7 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
         catalog_id = published.extra["catalog_id"]
         logger.info("export_done", catalog_id=catalog_id, version_id=version_id,
                     lifecycle_events=[e["event"] for e in published.events])
+        await _human_lock.after_export(conn, str(tour_id), row, contract_exit, **lock)   # AA-1146
         # AA-987: a publish that closes a paused / retired key (`restored`) brings the tour back on TripPlanner now,
         # not after its 30-min cache. The publish transaction is committed; best-effort, never raises.
         if published.events:
@@ -813,13 +818,8 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
         if record_s1_exit is not None:
             await record_s1_exit(conn, version_id, contract_exit, actual="published")
 
-        return {
-            "status":     "exported",
-            "catalog_id": catalog_id,
-            "version_id": version_id,
-            "tour_id":    str(tour_id),
-            "atomize_job_id": atomize_job_id,
-        }
+        return {"status": "exported", "catalog_id": catalog_id, "version_id": version_id, "tour_id": str(tour_id),
+                "atomize_job_id": atomize_job_id}
     finally:
         await conn.close()
 
