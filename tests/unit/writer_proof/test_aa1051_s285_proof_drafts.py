@@ -1,0 +1,128 @@
+"""AA-1051 S285 — the T9 / S1 / T2 pre-registrations re-drafted on the judge of the W5 null run (the pinned AA-1048
+v7 claim instrument, advisory) and golden aa729@1.5.0, the writer cost per object (the writer-role ledger rows only),
+and the registration preview of a draft's DRY plan (what registering it would refuse). Ids and counts only (the
+golden id ranges are the public changelog's); no DB, no model call, nothing queued."""
+from __future__ import annotations
+
+import asyncio
+import json
+
+import pytest
+
+from services.writer_proof import decision, power
+from services.writer_proof import prereg as pr
+from services.writer_proof import runner, splits
+from services.writer_proof.instrument import ADVISORY, PINNED
+from tests.unit.writer_proof import test_aa1051_runner as base
+from tests.unit.writer_proof.test_aa1051_runner import _Pool
+
+fakes = base.fakes          # the runner tests' fixture (faked R2 store / estimate / null gate)
+
+NULL_ID = "w5-null-t9-blog-v7-g150"
+DRAFTS = ("w5-t9", "w5-s1", "w5-t2")
+# aa729@1.5.0 (docs/calibration/aa729-golden-set-changelog.md): s1-001..050, t2-001..020, t9b-001..034, plus the
+# injection traps (inj-*), which never count as a GATE sample of a proof
+ALL_IDS = {"a1": [f"s1-{i:03d}" for i in range(1, 51)], "t2": [f"t2-{i:03d}" for i in range(1, 21)],
+           "t9_blog": [f"t9b-{i:03d}" for i in range(1, 35)]}
+# the 12 t9_blog GATE items the null run drew on Dev (S284 plan, sample_resolved 12 of 12)
+NULL_SAMPLE = ["t9b-006", "t9b-008", "t9b-013", "t9b-014", "t9b-019", "t9b-020", "t9b-024", "t9b-025", "t9b-028",
+               "t9b-029", "t9b-033", "t9b-034"]
+CAPS = {"w5-t9": 15.0, "w5-s1": 8.0, "w5-t2": 5.0}       # tech lead, 19/11 (= the D12 caps)
+# GATE items whose stored OUTPUT is over the eval judge's evidence cap (eval_judge OUTPUT_CHARS): their control can
+# never be judged (InputOverCap), so they could never pair; measured on the fixture's stored text before any run
+OVER_EVIDENCE_CAP = {"s1-027"}
+
+
+@pytest.mark.parametrize("pid", DRAFTS)
+def test_each_draft_runs_on_the_null_runs_judge_and_golden_version(pid):
+    pre, null = pr.load(pid), pr.load(NULL_ID)
+    assert not pre.registered and pr.problems(pre.doc) == []
+    assert pre.doc["judge"] == null.doc["judge"] and pre.doc["golden_set"] == {"name": "aa729", "version": "1.5.0"}
+    assert pre.doc["judge"]["instrument"] in PINNED and pre.doc["judge"]["instrument"] in ADVISORY
+    assert runner.same_instrument(null, pre)               # the null run's non_inferior verdict opens this proof
+    assert pre.doc["cap_usd"] == CAPS[pid] == pr.workflow_cap(pre.workflow)
+    assert pre.doc["release_id"] is None and pre.doc.get("sample") is None and pre.doc["noise_sample_ids"] == []
+
+
+@pytest.mark.parametrize("pid", DRAFTS)
+def test_each_draft_decides_on_the_null_runs_claim_scale(pid):
+    pre, null = pr.load(pid), pr.load(NULL_ID)
+    dec = pre.doc["decision"]
+    assert dec == {**null.doc["decision"]}                 # non_inferior, fail_claims_per_item, margin 4.0
+    primary = [m for m in pre.doc["metrics"] if m.get("primary")]
+    assert [m["name"] for m in primary] == ["fail_claims_per_item"]
+    pw = pre.doc["power"]
+    assert pw["writer_sd"] is not None and pw["writer_sd"] >= null.doc["power"]["writer_sd"]
+    assert pw["claims_per_item"] == power.DEFAULT_CLAIMS_PER_ITEM[pre.writer]
+
+
+@pytest.mark.parametrize("pid", DRAFTS)
+def test_each_sample_is_every_non_trap_gate_item_of_its_writer(pid):
+    pre = pr.load(pid)
+    ids = pre.doc["sample_ids"]
+    want = [s for s in ALL_IDS[pre.writer] if splits.split_of(s) == "gate" and s not in OVER_EVIDENCE_CAP]
+    assert ids == want and not any(s.startswith("inj-") for s in ids)
+    assert splits.split_of("s1-027") == "gate"                            # excluded by the cap, not by its side
+
+
+def test_the_t9_sample_is_the_null_runs_sample():
+    assert pr.load("w5-t9").doc["sample_ids"] == NULL_SAMPLE
+
+
+def test_gate_counts_match_the_changelog():
+    assert {pid: len(pr.load(pid).doc["sample_ids"]) for pid in DRAFTS} == {"w5-t9": 12, "w5-s1": 15, "w5-t2": 5}
+
+
+def test_writer_cost_targets_read_the_writer_share_not_the_judge():
+    for pid in DRAFTS:
+        names = {m["name"]: m for m in pr.load(pid).doc["metrics"]}
+        assert "target" in names["writer_cost_per_object_usd"]
+        assert "target" not in names["cost_per_object_usd"]                    # all-in: judge chain included
+        assert "target" not in names.get("requests_per_object", {})            # about 40 judge calls a blog
+
+
+def test_t9_targets_from_a_null_run_shaped_result():
+    """The S284 null run's arm B, as numbers: a claim judge flags most first drafts (yield 0.083)."""
+    doc = pr.load("w5-t9").doc
+    computed = {"first_pass_yield": 0.083333, "writer_requests_per_object": 1.0, "writer_cost_per_object_usd": 0.053,
+                "cost_per_object_usd": 0.070436, "requests_per_object": 38.5, "hard_stops": 0.0}
+    got = {t["metric"]: t["status"] for t in decision.targets(doc, computed)}
+    assert got == {"first_pass_yield": "missed", "writer_requests_per_object": "met",
+                   "writer_cost_per_object_usd": "met", "hard_stops": "met", "contract_violations": "pending",
+                   "unsupported_trip_promises_human_read_10": "pending"}
+
+
+# ── the registration preview ────────────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("pid,needle", [
+    ("w5-t9", None),
+    ("w5-s1", "a registered s1 proof needs >= 25 sample ids, has 15"),
+    ("w5-t2", "a registered t2 proof needs >= 20 sample ids, has 5"),
+])
+def test_registration_preview_names_the_sample_shortfall(pid, needle):
+    got = pr.registration_problems(pr.load(pid).doc)
+    assert got == [] if needle is None else got == [needle]
+
+
+def test_registration_preview_of_a_registered_file_or_a_non_object_is_empty():
+    assert pr.registration_problems(pr.load(NULL_ID).doc) == []
+    assert pr.registration_problems("not a doc") == []                     # type: ignore[arg-type]
+
+
+def test_registration_preview_keeps_a_named_registrant_and_flags_a_missing_writer_sd():
+    d = json.loads(json.dumps(pr.load("w5-t9").doc))
+    d["power"]["writer_sd"] = None
+    got = pr.registration_problems(d)
+    assert len(got) == 1 and "states power.writer_sd" in got[0]
+    assert d["status"] == "draft" and d["registered_by"] is None            # the draft itself is not changed
+
+
+def test_a_drafts_plan_lists_what_registration_would_refuse(fakes):
+    fakes["version"] = "1.5.0"
+    out = asyncio.run(runner.plan(_Pool(), pr.load("w5-s1")))
+    assert out["registration_problems"] == ["a registered s1 proof needs >= 25 sample ids, has 15"]
+    assert "registration would refuse: a registered s1 proof needs >= 25 sample ids, has 15" in out["blocking"]
+    assert out["samples"] == 15 and not out["ready_for_live"]
+    out = asyncio.run(runner.plan(_Pool(), pr.load("w5-t9")))
+    assert out["registration_problems"] == [] and not any(b.startswith("registration") for b in out["blocking"])
+    assert any("status is draft" in b for b in out["blocking"])
