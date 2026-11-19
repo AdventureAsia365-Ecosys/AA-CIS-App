@@ -14,6 +14,8 @@ Parts (each under the 800-line file ratchet of .github/code-health.json):
   review          Review Queue (queue, claims, approve, reject, supersede, dismiss)
   versions        promote, source, SEO context, versions export, DOCX export
   tour_detail     version detail, versions, history, detail, country / raw / generated edits, revalidate
+  drafts          AA-1146: a person's draft version (diff, publish through the gate), unlock, source tour history
+  _publish        AA-1146: the caller's actor and capabilities, the publish gate (no routes)
   metrics         metrics, SEO metrics, library, spot workers, infra status
   brands          /admin/brands
   brand_identity  /admin/brand-identity (staff or tenant JWT)
@@ -34,14 +36,14 @@ Three things keep the package behaving as the single module did, so callers and 
 import sys as _sys
 import types as _types
 
-from api.routers.admin_pipeline import _shared, _engine, _revalidate  # noqa: F401  helpers first (no routes)
+from api.routers.admin_pipeline import _shared, _engine, _revalidate, _publish  # noqa: F401  helpers first (no routes)
 from api.routers.admin_pipeline import (  # noqa: F401  route parts, in the original route order
-    runs, uploads, tours, review, versions, tour_detail, metrics, brands, brand_identity, billing,
+    runs, uploads, tours, review, versions, tour_detail, drafts, metrics, brands, brand_identity, billing,
 )
 from api.routers.admin_pipeline._shared import router
 
-_PARTS = (_shared, _engine, _revalidate, runs, uploads, tours, review, versions, tour_detail, metrics, brands,
-          brand_identity, billing)
+_PARTS = (_shared, _engine, _revalidate, _publish, runs, uploads, tours, review, versions, tour_detail, drafts, metrics,
+          brands, brand_identity, billing)
 
 for _part in _PARTS:
     for _name, _value in vars(_part).items():

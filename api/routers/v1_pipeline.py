@@ -531,6 +531,30 @@ _APPROVE_GATE_SQL = """
 """
 
 
+async def _enforce_publish_gate_for_review(conn, request: Request, review_id: str, tenant_id: str) -> None:
+    """AA-1146 D1: the publish gate of a Review Queue approve (api/routers/admin_pipeline/_publish.py)."""
+    from api.routers.admin_pipeline._publish import enforce_publish_gate
+    from services.content_generation import tour_draft as td
+    row = await conn.fetchrow("""
+        SELECT gc.reviewed_by::text AS reviewed_by, gc.edit_diff
+          FROM silver_aa_internal.review_queue rq
+          JOIN silver_aa_internal.generated_content gc ON gc.id = rq.generated_content_id
+         WHERE rq.id = $1::uuid AND rq.tenant_id = $2::uuid
+    """, review_id, tenant_id)
+    editors = []
+    if row is not None:
+        editors = td.editors_of(row["edit_diff"], None)
+        if row["reviewed_by"]:
+            editors.append(f"admin:{row['reviewed_by']}")
+    await enforce_publish_gate(conn, request, editors=editors)
+
+
+def _lock_kw(request: Request) -> dict:
+    """AA-1146: who approved, for the hand-edit lock process_export sets on a hand-edited version."""
+    from api.routers.admin_pipeline._publish import request_actor
+    return {"lock_by": request_actor(request)}
+
+
 @router.post("/review-queue/{review_id}/approve")
 async def approve_review(
     review_id: str,
@@ -571,6 +595,9 @@ async def approve_review(
         # version do not apply: this approve IS the policy's human review.
         from services.tour_lifecycle import policy as lifecycle_policy
         held_restore = gate_row is not None and await lifecycle_policy.held_master_version(conn, review_id)
+        # AA-1146 D1: the two-person rule while cis.content.publish_two_person is on (403 two_person_required /
+        # same_person; the editors are the version's draft editors and its last hand editor).
+        await _enforce_publish_gate_for_review(conn, request, review_id, tenant_id)
         if held_restore:
             policy_keep = True
         elif gate_row is not None and not gate_row["human_edited"]:
@@ -677,7 +704,7 @@ async def approve_review(
         # Admin-path forward export (no SF token). Runs once per claim.
         from services.export.handler import process_export
         try:
-            await process_export(str(generated_content_id), contract_exit="approve")
+            await process_export(str(generated_content_id), contract_exit="approve", **_lock_kw(request))
             exported = True
         except SourceNotLiveError as e:
             # The source was trashed between the claim and the export (race). Nothing is published and

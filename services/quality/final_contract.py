@@ -84,9 +84,13 @@ EXITS: dict[str, dict[str, tuple[str, ...]]] = {
         "api/routers/admin_pipeline/_revalidate.py::_revalidate_tour": ("revalidation",),
         # a reviewer's edit of a version's text
         "api/routers/admin_pipeline/tour_detail.py::update_generated_content_fields": ("human_edit",),
+        # AA-1146: a person's draft version (created or saved: its text) and its publish through the gate
+        "api/routers/admin_pipeline/drafts.py::put_tour_draft": ("human_edit",),
+        "api/routers/admin_pipeline/drafts.py::publish_tour_draft": ("human_publish",),
         # every publish of a Master (auto publish after a run, review approve, promote, the legacy Lambda); each
         # caller names its exit (contract_exit=)
-        "services/export/handler.py::process_export": ("auto_publish", "approve", "promote", "lambda", "recompose"),
+        "services/export/handler.py::process_export": ("auto_publish", "approve", "promote", "lambda", "recompose",
+                                                     "human_publish"),
         "api/routers/admin_pipeline/versions.py::promote_tour_version": ("promote",),
         "services/export/handler.py::lambda_handler": ("lambda",),
         # AA-1049 path A-new: the fixed-field recompose of a served Master (s1_recompose_store): the new version's

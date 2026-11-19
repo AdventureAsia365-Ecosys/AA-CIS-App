@@ -54,6 +54,24 @@ def _raise_if(exc: Optional[BaseException]) -> None:
         raise exc
 
 
+async def _human_lock_skip(ctx: JobContext, tour_id: str) -> Optional[dict]:
+    """The skip result when the tour's Master is locked by a hand edit (services/content_generation/human_lock.py),
+    else None. A failed read never skips (the publish refuses an automatic exit over a lock anyway)."""
+    from services.content_generation import human_lock
+    try:
+        async with ctx.pool.acquire() as conn:
+            lock = await human_lock.lock_of(conn, tour_id)
+    except Exception as e:  # noqa: BLE001 — the export guard is the backstop
+        logger.warning("s1_rewrite_lock_read_failed", job_id=ctx.job_id, tour_id=tour_id, error=str(e)[:200])
+        return None
+    if lock is None:
+        return None
+    logger.info("s1_rewrite_skipped_human_lock", job_id=ctx.job_id, tour_id=tour_id, locked_by=lock.get("by"),
+                locked_at=lock.get("at"))
+    await ctx.progress(phase="skipped", tour_id=tour_id, skip_reason=human_lock.SKIP_REASON)
+    return {"skipped": True, "reason": human_lock.SKIP_REASON, "tour_id": tour_id, "lock": lock}
+
+
 @job_kind(KIND, concurrency=6, max_attempts=1, expected_seconds=600)
 async def run(ctx: JobContext) -> dict:
     # Imported here (not at module import) so registering the kind never drags the heavy
@@ -74,6 +92,12 @@ async def run(ctx: JobContext) -> dict:
         logger.info("s1_rewrite_already_written", job_id=ctx.job_id, tour_id=tour_id,
                     version_id=prior.get("version_id"))
         return {"version_id": prior.get("version_id"), "resumed": True}
+
+    # AA-1146: a Master a person locked (a published hand edit) is never rewritten by a run it may not publish: skip
+    # before any paid call, say why in the job's result and progress (the wave report and the Jobs page read them).
+    skipped = await _human_lock_skip(ctx, tour_id)
+    if skipped is not None:
+        return skipped
 
     async def _save(fields: dict) -> None:
         await ctx.progress(**fields)

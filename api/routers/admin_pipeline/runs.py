@@ -11,14 +11,25 @@ from api.routers.admin import verify_admin_secret
 from shared.secrets import get_database_url  # AA-838 D9: default application_name
 
 from api.routers.admin_pipeline._shared import (
-    TourRunRequest, _MASTER_TENANT_ID, _is_uuid, _record_review_reason, router,
+    TourRunRequest, _MASTER_TENANT_ID, _is_uuid, _record_review_reason, logger, router,
 )
 from api.routers.admin_pipeline._engine import _execute_run_tour
 
 
+async def _refuse_locked(request: Request, tour_ids: List[str]) -> List[str]:
+    """AA-1146: the tours among ``tour_ids`` whose Master a person locked (a published hand edit)."""
+    from services.content_generation import human_lock
+    async with request.app.state.pool.acquire() as conn:
+        return sorted((await human_lock.locks_of(conn, [t for t in tour_ids if _is_uuid(t)])).keys())
+
+
 @router.post("/run-tour")
-async def run_tour(req: TourRunRequest, x_admin_secret: str = Header(None)):
+async def run_tour(req: TourRunRequest, request: Request, x_admin_secret: str = Header(None)):
     verify_admin_secret(x_admin_secret)
+    if await _refuse_locked(request, [req.tour_id]):   # AA-1146: unlock first (master.admin)
+        raise HTTPException(status_code=409, headers={"X-Error-Code": "human_locked"},
+                            detail={"code": "human_locked",
+                                    "message": "A person locked this tour's published text: unlock it to rewrite it"})
     return await _execute_run_tour(req)
 
 
@@ -187,9 +198,17 @@ async def submit_s1_batch_endpoint(req: S1BatchSubmitRequest, request: Request,
     from services.content_generation.s1_batch import submit_s1_batch
     from shared.llm_client.bedrock_batch import BatchUnavailable
 
+    # AA-1146: a tour whose Master a person locked is left out (the batch would pay for text it may not publish).
+    locked = await _refuse_locked(request, req.tour_ids)
+    tour_ids = [t for t in req.tour_ids if t not in set(locked)]
+    if locked:
+        logger.info("s1_batch_skipped_human_lock", tour_ids=locked)
+    if not tour_ids:
+        raise HTTPException(status_code=409, detail={"code": "human_locked", "skipped_locked": locked,
+                                                     "message": "Every tour of this batch is locked by a hand edit"})
     try:
         submit = await submit_s1_batch(
-            req.tour_ids, account=req.account, enforce_min=req.enforce_min,
+            tour_ids, account=req.account, enforce_min=req.enforce_min,
         )
     except BatchUnavailable as e:
         raise HTTPException(status_code=400, detail=f"batch submit failed: {e}")
@@ -206,7 +225,7 @@ async def submit_s1_batch_endpoint(req: S1BatchSubmitRequest, request: Request,
     return JSONResponse(status_code=202, content={
         "job_id": job_id, "status": "submitted", "job_arn": submit["job_arn"],
         "record_count": submit["record_count"], "account": submit["account"],
-        "poll_url": f"/admin/s1-batch/{job_id}",
+        "poll_url": f"/admin/s1-batch/{job_id}", "skipped_locked": locked,
     })
 
 

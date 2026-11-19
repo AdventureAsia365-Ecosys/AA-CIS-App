@@ -476,8 +476,14 @@ async def _execute_run_tour(
         if _route and status == "approved":
             from services.export.handler import process_export
             from services.tour_lifecycle.policy import PolicyReviewRequiredError
+            from services.content_generation.human_lock import HumanLockedError
             try:
                 await process_export(str(version_id), contract_exit="auto_publish")
+            except HumanLockedError as _locked:
+                # AA-1146: a person locked this Master (a published hand edit); an automatic publish leaves it as it
+                # is. process_export moved the version approved -> hitl. Expected, not an error.
+                logger.warning("s1_export_skipped_human_lock", tour_id=req.tour_id, version_id=str(version_id),
+                               locked_by=_locked.lock.get("by"))
             except PolicyReviewRequiredError as _held:
                 # AA-1049 guard: the version offers elephant riding (text or source) and no person approved it. An
                 # expected refusal: process_export moved it approved → hitl and filed its pending policy review.
