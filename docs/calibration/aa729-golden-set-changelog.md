@@ -13,6 +13,30 @@ also recorded in the fixture's own `label_history`.
 | 1.3.0 | Addendum: `t2-011..020`, `t9b-016..020`, `t9f-001`, `t9l-016..033`, panel labelled | 134 | tech lead (S259 plan) |
 | 1.4.0 | Brand labels (rubric `aa1079-brand-v1`) on 74 T2 / T9 items, no sample added | 134 | 3-lens agent panel (S278) |
 | 1.5.0 | Addendum (AA-1051 W5): 14 t9_blog pieces `t9b-021..034`, panel + verifier labelled | 148 | tech lead (S283 close `c-w5-gate=label6`; S284 decisions on the 14-item scope and the 2 disputed labels) |
+| 1.6.0 | Addendum (AA-1051 W5, S1): 22 a1 Master pages `s1-051..072`, panel + verifier labelled; built locally as the base of 1.7.0, never imported | 170 | S285 agent panel; the one dispute (`s1-068`, CAL) by the orchestrator rule, pending tech lead review |
+| 1.7.0 | Addendum (AA-1051 W5, T2): 48 tenant pages `t2-021..068` on 1.6.0, panel + verifier labelled | 218 | S285 agent panel; 10 disputes by the orchestrator rule, pending tech lead review |
+
+## 1.7.0 (S285)
+
+- **Why**: the W5 S1 and T2 writer proofs need the minimum GATE sample in force (settings
+  `cis.quality.writer_proof_s1_min_items` 25, `cis.quality.writer_proof_t2_min_items` 20); 1.5.0 had 15 usable a1
+  (16 less `s1-027`, over the judge's evidence cap) and 5 t2 GATE items.
+- **Built in two merges, imported once**: 1.6.0 = 1.5.0 plus 22 S1 samples, 1.7.0 = 1.6.0 plus 48 T2 samples (every
+  merge bumps the minor version). Only 1.7.0 was imported on Dev; it supersedes 1.5.0. No existing item, label or side
+  changed (the t9_blog items are byte-identical to 1.5.0, which lets the W5 null run of 1.5.0 carry, CIS
+  `services/writer_proof/null_carry.py`).
+- **GATE positions were declared before any label** (the side is a hash of the renumbered id): S1 `s1-052`, `053`,
+  `057`, `058`, `060`, `061`, `065`, `067`, `069`, `072` (stratified: Japan 3, Rajasthan 2, a source length
+  contradiction 4, Optional-heavy 4, overlapping); T2 `t2-026`, `028`, `033`, `034`, `037`, `039`, `041`, `044`, `045`,
+  `052`, `062`, `063`, `064`, `067`, `068` (all on the 4 audit tenants: thin source 4, 9+ days 10, a QA-failed version
+  4, an elephant mention 4; the 4 elephant items are the 4 tenants' versions of one Master tour). The other new ids are
+  CAL / DEV fill in picker order.
+- **Labels**: the 1.5.0 protocol (three lenses, then a full-source verifier). Disputes follow the orchestrator's rule
+  (the lens majority only when the verifier's sole fail ground is one it ruled a pipeline gap elsewhere in the set,
+  else the verifier), pending the tech lead's review: S1 1 (`s1-068`, CAL, majority pass); T2 10, all verifier fail,
+  3 of them on GATE (`t2-033`, `t2-063`, `t2-068`).
+- **Non-trap GATE items per writer after the merge**: a1 26, t2 20, t9_blog 12, t9_social 11. GATE labels: a1 21 fail /
+  5 pass (`s1-027` included), t2 11 fail / 9 pass.
 
 ## 1.5.0 (S284)
 

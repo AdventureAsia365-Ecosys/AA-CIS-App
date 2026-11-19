@@ -1,8 +1,8 @@
 """AA-1051 S285 — the T9 / S1 / T2 pre-registrations re-drafted on the judge of the W5 null run (the pinned AA-1048
-v7 claim instrument, advisory) and golden aa729@1.5.0, the writer cost per object (the writer path's ledger rows,
-every row but the eval judge's), and the registration preview of a draft's DRY plan (what registering it would
-refuse). Ids and counts only (the
-golden id ranges are the public changelog's); no DB, no model call, nothing queued."""
+v7 claim instrument, advisory) and golden aa729@1.5.0 (T9), S1 and T2 re-drafted on aa729@1.7.0 (S285 lane l25: the
+S1 and T2 GATE additions, opened by the null run's golden carry), the writer cost per object (the writer path's ledger
+rows, every row but the eval judge's), and the registration preview of a draft's DRY plan (what registering it would
+refuse). Ids and counts only (the golden id ranges are the public changelog's); no DB, no model call, nothing queued."""
 from __future__ import annotations
 
 import asyncio
@@ -11,6 +11,7 @@ import json
 import pytest
 
 from services.writer_proof import cost_report, decision, power
+from services.writer_proof import null_carry as nc
 from services.writer_proof import prereg as pr
 from services.writer_proof import runner, splits
 from services.writer_proof.instrument import ADVISORY, PINNED
@@ -21,10 +22,17 @@ fakes = base.fakes          # the runner tests' fixture (faked R2 store / estima
 
 NULL_ID = "w5-null-t9-blog-v7-g150"
 DRAFTS = ("w5-t9", "w5-s1", "w5-t2")
-# aa729@1.5.0 (docs/calibration/aa729-golden-set-changelog.md): s1-001..050, t2-001..020, t9b-001..034, plus the
-# injection traps (inj-*), which never count as a GATE sample of a proof
-ALL_IDS = {"a1": [f"s1-{i:03d}" for i in range(1, 51)], "t2": [f"t2-{i:03d}" for i in range(1, 21)],
+# docs/calibration/aa729-golden-set-changelog.md: 1.5.0 holds s1-001..050, t2-001..020, t9b-001..034; 1.7.0 adds
+# s1-051..072 (1.6.0) and t2-021..068 and no t9_blog item; plus the injection traps (inj-*), which never count as a
+# GATE sample of a proof
+ALL_IDS = {"a1": [f"s1-{i:03d}" for i in range(1, 73)], "t2": [f"t2-{i:03d}" for i in range(1, 69)],
            "t9_blog": [f"t9b-{i:03d}" for i in range(1, 35)]}
+GOLDEN = {"w5-t9": "1.5.0", "w5-s1": "1.7.0", "w5-t2": "1.7.0"}
+# S285 l25: the GATE ids each addendum added (the stratified S1 picks; the T2 slots on the 4 audit tenants)
+NEW_GATE = {"w5-s1": ["s1-052", "s1-053", "s1-057", "s1-058", "s1-060", "s1-061", "s1-065", "s1-067", "s1-069",
+                      "s1-072"],
+            "w5-t2": ["t2-026", "t2-028", "t2-033", "t2-034", "t2-037", "t2-039", "t2-041", "t2-044", "t2-045",
+                      "t2-052", "t2-062", "t2-063", "t2-064", "t2-067", "t2-068"]}
 # the 12 t9_blog GATE items the null run drew on Dev (S284 plan, sample_resolved 12 of 12)
 NULL_SAMPLE = ["t9b-006", "t9b-008", "t9b-013", "t9b-014", "t9b-019", "t9b-020", "t9b-024", "t9b-025", "t9b-028",
                "t9b-029", "t9b-033", "t9b-034"]
@@ -39,9 +47,14 @@ def test_each_draft_runs_on_the_null_runs_judge_and_golden_version(pid):
     pre, null = pr.load(pid), pr.load(NULL_ID)
     # a draft until the DRY plan passes; once registered (a later reviewed PR) `load` has checked its lock entry
     assert pr.problems(pre.doc) == [] and (not pre.registered or pr.read_lock()[pid] == pre.sha256)
-    assert pre.doc["judge"] == null.doc["judge"] and pre.doc["golden_set"] == {"name": "aa729", "version": "1.5.0"}
+    assert pre.doc["judge"] == null.doc["judge"] and pre.doc["golden_set"] == {"name": "aa729", "version": GOLDEN[pid]}
     assert pre.doc["judge"]["instrument"] in PINNED and pre.doc["judge"]["instrument"] in ADVISORY
-    assert runner.same_instrument(null, pre)               # the null run's non_inferior verdict opens this proof
+    if GOLDEN[pid] == null.doc["golden_set"]["version"]:
+        assert runner.same_instrument(null, pre)           # the null run's non_inferior verdict opens this proof
+    else:
+        # S285: a later version of the same set with the same judge pin: the golden carry rule may open it (rules a,
+        # b here; rule c, the identical t9_blog GATE items, is read from the stored rows by the plan)
+        assert not runner.same_instrument(null, pre) and nc.carry_problem(null, pre) is None
     assert pre.doc["cap_usd"] == CAPS[pid] == pr.workflow_cap(pre.workflow)
     assert pre.doc["release_id"] is None and pre.doc.get("sample") is None and pre.doc["noise_sample_ids"] == []
 
@@ -72,7 +85,29 @@ def test_the_t9_sample_is_the_null_runs_sample():
 
 
 def test_gate_counts_match_the_changelog():
-    assert {pid: len(pr.load(pid).doc["sample_ids"]) for pid in DRAFTS} == {"w5-t9": 12, "w5-s1": 15, "w5-t2": 5}
+    assert {pid: len(pr.load(pid).doc["sample_ids"]) for pid in DRAFTS} == {"w5-t9": 12, "w5-s1": 25, "w5-t2": 20}
+
+
+@pytest.mark.parametrize("pid", ["w5-s1", "w5-t2"])
+def test_the_s285_additions_are_on_gate_and_meet_the_minimum_in_force(pid):
+    pre = pr.load(pid)
+    ids = pre.doc["sample_ids"]
+    assert all(splits.split_of(s) == "gate" for s in NEW_GATE[pid])
+    assert set(NEW_GATE[pid]) <= set(ids) and len(ids) == pr.min_items(pre.workflow)
+    # the 1.5.0 sample is kept whole: the additions only append
+    old = [s for s in ids if s not in NEW_GATE[pid]]
+    assert all(int(s.split("-")[1]) <= (50 if pid == "w5-s1" else 20) for s in old)
+
+
+@pytest.mark.parametrize("pid", ["w5-s1", "w5-t2"])
+def test_the_null_run_is_carried_to_the_redrafted_proof(monkeypatch, pid):
+    """The registered null run (1.5.0) opens the 1.7.0 draft through the golden carry when its t9_blog GATE items read
+    the same in both versions (faked stored rows of invented text; null_carry's own tests cover every difference)."""
+    from tests.unit.writer_proof import test_aa1051_s285_null_carry as carry
+    calls, load = carry._gate(monkeypatch, {NULL_ID: "non_inferior"}, [(carry._old(), carry._new())])
+    out = carry._run([pr.load(NULL_ID)], pr.load(pid), load)
+    assert out["passed_by"] == NULL_ID and out["rule"] == nc.CARRY_RULE and "blocking" not in out
+    assert out["golden_carried_from"] == "1.5.0" and calls == [("1.5.0", "1.7.0")]
 
 
 def test_writer_cost_targets_read_the_writer_share_not_the_judge():
@@ -131,14 +166,20 @@ def test_t9_targets_from_a_null_run_shaped_result():
 
 # ── the registration preview ────────────────────────────────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("pid,needle", [
-    ("w5-t9", None),
-    ("w5-s1", "a registered s1 proof needs >= 25 sample ids, has 15"),
-    ("w5-t2", "a registered t2 proof needs >= 20 sample ids, has 5"),
+@pytest.mark.parametrize("pid", DRAFTS)
+def test_registration_preview_of_the_shipped_drafts_is_clean(pid):
+    # S285 l25: 1.7.0 brings S1 to 25 and T2 to 20 GATE items, the minimums in force
+    assert pr.registration_problems(pr.load(pid).doc) == []
+
+
+@pytest.mark.parametrize("pid,keep,needle", [
+    ("w5-s1", 15, "a registered s1 proof needs >= 25 sample ids, has 15"),
+    ("w5-t2", 5, "a registered t2 proof needs >= 20 sample ids, has 5"),
 ])
-def test_registration_preview_names_the_sample_shortfall(pid, needle):
-    got = pr.registration_problems(pr.load(pid).doc)
-    assert got == [] if needle is None else got == [needle]
+def test_registration_preview_names_the_sample_shortfall(pid, keep, needle):
+    d = json.loads(json.dumps(pr.load(pid).doc))
+    d["sample_ids"] = d["sample_ids"][:keep]                               # the 1.5.0-sized draft
+    assert pr.registration_problems(d) == [needle]
 
 
 def test_registration_preview_of_a_registered_file_or_a_non_object_is_empty():
@@ -156,11 +197,17 @@ def test_registration_preview_keeps_a_named_registrant_and_flags_a_missing_write
 
 
 def test_a_drafts_plan_lists_what_registration_would_refuse(fakes):
-    fakes["version"] = "1.5.0"
-    out = asyncio.run(runner.plan(_Pool(), pr.load("w5-s1")))
+    fakes["version"] = "1.7.0"
+    d = json.loads(json.dumps(pr.load("w5-s1").doc))
+    d["sample_ids"] = d["sample_ids"][:15]
+    out = asyncio.run(runner.plan(_Pool(), pr.from_doc(d)))
     assert out["registration_problems"] == ["a registered s1 proof needs >= 25 sample ids, has 15"]
     assert "registration would refuse: a registered s1 proof needs >= 25 sample ids, has 15" in out["blocking"]
     assert out["samples"] == 15 and not out["ready_for_live"]
+    out = asyncio.run(runner.plan(_Pool(), pr.load("w5-s1")))
+    assert out["registration_problems"] == [] and out["samples"] == 25 and out["golden_set"] == "aa729@1.7.0"
+    assert not any(b.startswith(("registration", "pre-registered on")) for b in out["blocking"])
+    fakes["version"] = "1.5.0"
     out = asyncio.run(runner.plan(_Pool(), pr.load("w5-t9")))
     assert out["registration_problems"] == [] and not any(b.startswith("registration") for b in out["blocking"])
 
