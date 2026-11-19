@@ -40,6 +40,7 @@ import {
   aaCall,
   countryLabel,
   countryOptions,
+  filtersFromSearch,
   isGroupKey,
   listUrl,
   pendingDraftLabel,
@@ -54,6 +55,7 @@ import {
   type AaState,
 } from "@/lib/aaContent";
 import AaContentEditor, { Field, InlineError, fieldStyle, noteStyle } from "./AaContentEditor";
+import { useLinkFilters } from "../_components/useLinkFilters";
 import { AC } from "./messages";
 import { useAaText } from "./useAaText";
 
@@ -67,7 +69,8 @@ export default function AaContentConsole() {
   const qc = useQueryClient();
   const role = useAdminIdentity().role;
   const canWrite = can(role, "content.write");
-  const [filters, setFilters] = useState<AaListFilters>(EMPTY_FILTERS);
+  // AA-1156: a link may open the list filtered (?status=draft, the My work tile)
+  const [filters, setFilters] = useLinkFilters(filtersFromSearch, EMPTY_FILTERS);
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(PAGE_SIZES[0]);
   const [openGroup, setOpenGroup] = useState<string | null>(null);
@@ -82,7 +85,7 @@ export default function AaContentConsole() {
 
   // A filter change goes back to page 1 in the same handler (no setState in an effect).
   const setFilter = <F extends keyof AaListFilters>(key: F, value: AaListFilters[F]) => {
-    setFilters((f) => ({ ...f, [key]: value }));
+    setFilters({ ...filters, [key]: value });
     setPageIndex(0);
   };
 

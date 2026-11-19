@@ -3160,6 +3160,22 @@ of the S241 admin-console design). Staff roles here and in `lib/rbac.ts` are kep
 legacy password login (`/auth/admin-login`, kept for Booking until ADR 0006 Phase 2); Booking keeps a thin
 profile keyed by `admin_users.id` and verifies a CIS-issued JWT with `aud=booking` (root ADR 0004, O1).
 
+**My work (AA-1156, S286; no migration).** `/admin/my-work` is the landing page of `content`, `content_lead` and
+`tenant_qa` (`lib/rbac.ts landingPage`; admin keeps `/admin/overview` and finds My work in the Home nav group, the
+viewer keeps the Review Queue). `GET /admin/my-work/summary` (`api/routers/admin_my_work.py`, POLICY
+`review.act | content.write | quality.write`) answers one tile per work queue the caller's capabilities allow, never
+per person: Review Queue waiting (`review.act`), supply copy drafts to review (entities with an open draft version,
+whatever their content status: a redraft of published or stale content keeps that status; list filter `has_draft`)
+and hotels / services with no description (`content_status = 'draft'`; stale ones waiting for their automatic redraft
+are left out), AA content drafts (`content.write`), place cards to review and compliance holds (`quality.write`). Each
+tile has `count`, `oldest_at` and the target page's `filter`; the count runs the page's own list filter (shared WHERE
+text next to each list query: `_review_queue_where`, `supply_content.review.LIST_FILTER_SQL`, `aa_content.store
+._LIST_FROM`, `acp_shared.place_card_list.list_filter`, `admin_tenant_compliance.FILTER_SQL`), so a tile equals the
+total its page lists for that filter (`tests/integration/test_aa1156_my_work_counts.py`). The page adds the filter as
+the link's query (`frontend/lib/myWork.ts`); Supply copy reads `?status=` and `?has_draft=`, AA content and Place
+cards read `?status=`. Refresh, no
+polling; a "Booking: My work" link opens the Booking staff dashboard through `appPageUrl`.
+
 ### Booking staff token (AA-680) — retired (AA-911, S271)
 
 CIS no longer mints AA-Booking tokens. `POST /auth/booking-token` and `GET /auth/.well-known/jwks.json` are gone (404)

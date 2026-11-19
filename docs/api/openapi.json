@@ -6674,6 +6674,94 @@
         "title": "MoveToDraftResult",
         "type": "object"
       },
+      "MyWorkSummary": {
+        "properties": {
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          },
+          "tiles": {
+            "items": {
+              "$ref": "#/components/schemas/MyWorkTile"
+            },
+            "title": "Tiles",
+            "type": "array"
+          }
+        },
+        "required": [
+          "role",
+          "tiles",
+          "generated_at"
+        ],
+        "title": "MyWorkSummary",
+        "type": "object"
+      },
+      "MyWorkTile": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "capability": {
+            "title": "Capability",
+            "type": "string"
+          },
+          "count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Count"
+          },
+          "filter": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Filter",
+            "type": "object"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "oldest_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest At"
+          }
+        },
+        "required": [
+          "key",
+          "capability",
+          "filter",
+          "available"
+        ],
+        "title": "MyWorkTile",
+        "type": "object"
+      },
       "OffboardRequest": {
         "properties": {
           "reason": {
@@ -32666,6 +32754,71 @@
         ]
       }
     },
+    "/admin/my-work/summary": {
+      "get": {
+        "operationId": "my_work_summary_admin_my_work_summary_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyWorkSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "My work: the caller's content queues",
+        "tags": [
+          "admin-my-work"
+        ]
+      }
+    },
     "/admin/notifications": {
       "get": {
         "operationId": "list_notifications_admin_notifications_get",
@@ -44099,6 +44252,24 @@
                 }
               ],
               "title": "Entity Type"
+            }
+          },
+          {
+            "description": "true: only entities with an open draft (any content status); false: only entities without one",
+            "in": "query",
+            "name": "has_draft",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "true: only entities with an open draft (any content status); false: only entities without one",
+              "title": "Has Draft"
             }
           },
           {

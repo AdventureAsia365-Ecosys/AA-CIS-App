@@ -50,6 +50,7 @@ export const PAGES: VisualPage[] = [
   { slug: "lab-writing-memory", route: "/admin/lab/writing-memory", path: "/admin/lab/writing-memory", auth: "staff" },
   { slug: "master-content", route: "/admin/master-content", path: "/admin/master-content", auth: "staff" },
   { slug: "overview", route: "/admin/overview", path: "/admin/overview", auth: "staff" },
+  { slug: "my-work", route: "/admin/my-work", path: "/admin/my-work", auth: "staff" },
   { slug: "photos", route: "/admin/photos", path: "/admin/photos", auth: "staff" },
   { slug: "places", route: "/admin/places", path: "/admin/places", auth: "staff" },
   { slug: "places-cards", route: "/admin/places/cards", path: "/admin/places/cards", auth: "staff" },

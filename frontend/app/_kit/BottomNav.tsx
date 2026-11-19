@@ -1,13 +1,13 @@
 "use client";
 // app/_kit/BottomNav.tsx
-// AA-752 — phone (< 768px) bottom navigation: Overview · Review (badge) · Master · Jobs · More.
+// AA-752 — phone (< 768px) bottom navigation: Overview (or My work, AA-1156) · Review (badge) · Master · Jobs · More.
 // Fixed to the bottom, hidden ≥ 768px (the `.aa-bottom-nav` media query in globals.css). Each
 // target is ≥ 44px tall; the active item is gold. "More" opens the existing off-canvas drawer.
 // AA-883 — items are filtered by role (lib/rbac.ts canSeePage, same rule as the sidebar), so a
 // reviewer / content user no longer gets Overview and Jobs buttons that only redirect them away.
 
 import { useRouter, usePathname } from "next/navigation";
-import { Gauge, ClipboardList, Library, ListChecks, Menu } from "lucide-react";
+import { Gauge, ClipboardList, Inbox, Library, ListChecks, Menu } from "lucide-react";
 import { K } from "./core/tokens";
 import { navActive, useNavLabel } from "./adminNav";
 import { useT } from "./core/useI18n";
@@ -16,8 +16,10 @@ import { useReviewPendingCount } from "./useReviewPendingCount";
 import { useAdminIdentity } from "./useAdminIdentity";
 import { canSeePage } from "@/lib/rbac";
 
+// AA-1156: My work for the roles that land there; a role that may open Overview (admin) keeps Overview in its place.
 const ITEMS = [
   { href: "/admin/overview", label: "Overview", icon: Gauge },
+  { href: "/admin/my-work", label: "My work", icon: Inbox, unlessCanSee: "/admin/overview" },
   { href: "/admin/review", label: "Review", icon: ClipboardList, badge: true },
   { href: "/admin/master-content", label: "Master", icon: Library },
   { href: "/admin/jobs", label: "Jobs", icon: ListChecks },
@@ -27,7 +29,8 @@ export function BottomNav({ onOpenMore }: { onOpenMore: () => void }) {
   const router = useRouter();
   const pathname = usePathname();
   const { role } = useAdminIdentity();
-  const items = ITEMS.filter((it) => canSeePage(role, it.href));
+  const items = ITEMS.filter((it) =>
+    canSeePage(role, it.href) && !("unlessCanSee" in it && canSeePage(role, it.unlessCanSee)));
 
   // Same query (key + request) as the Sidebar badge — see useReviewPendingCount.
   const pending = useReviewPendingCount();

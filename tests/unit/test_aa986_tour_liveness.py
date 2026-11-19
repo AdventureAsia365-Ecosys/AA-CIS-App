@@ -368,8 +368,12 @@ def test_enqueue_review_dismisses_a_dead_source():
 def test_admin_review_list_hides_pending_dead_sources_and_flags_closed_rows():
     import inspect
     from api.routers import admin_pipeline, v1_pipeline
+    from api.routers.admin_pipeline import review
+    # AA-1156: the WHERE lives in one builder that the page (and the My work tile) both call
+    where = inspect.getsource(review._review_queue_where)
+    assert "(rq.review_status <> 'pending' OR ({live_source_sql('rt')}))" in where
     src = inspect.getsource(admin_pipeline.admin_review_queue)
-    assert "(rq.review_status <> 'pending' OR ({live_source_sql('rt')}))" in src
+    assert "_review_queue_where(" in src
     assert '"source_live":' in src
     v1 = inspect.getsource(v1_pipeline.get_review_queue)
     assert '{live_source_sql("rt")}' in v1 and '{live_source_exists_sql("rq.tour_id")}' in v1

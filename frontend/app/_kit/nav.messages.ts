@@ -20,6 +20,7 @@ export const NAV_MESSAGES = defineMessages(
     "Platform": "Platform",
     // Home
     "Overview": "Overview",
+    "My work": "My work",
     "App health": "App health",
     "Reports": "Reports",
     "Data coverage": "Data coverage",
@@ -91,6 +92,7 @@ export const NAV_MESSAGES = defineMessages(
     "Trade": "Thương mại",
     "Platform": "Nền tảng",
     "Overview": "Tổng quan",
+    "My work": "Việc của tôi",
     "App health": "Sức khoẻ ứng dụng",
     "Reports": "Báo cáo",
     "Data coverage": "Độ phủ dữ liệu",

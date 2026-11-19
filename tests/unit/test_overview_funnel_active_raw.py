@@ -29,4 +29,7 @@ def test_in_review_counts_the_same_queue_as_the_review_page():
     from api.routers.admin_pipeline import review
     body = _cte("rev_c")
     assert f"rq.tenant_id = '{admin_overview._AA_INTERNAL}'::uuid" in body
-    assert f'tenant_id = "{admin_overview._AA_INTERNAL}"' in inspect.getsource(review)
+    # AA-1156: the page and the My work tile read the queue's tenant from one constant
+    assert review._REVIEW_TENANT_ID == admin_overview._AA_INTERNAL
+    assert "tenant_id = _REVIEW_TENANT_ID" in inspect.getsource(review.admin_review_queue)
+    assert "_review_queue_where(_REVIEW_TENANT_ID" in inspect.getsource(review.review_queue_summary)

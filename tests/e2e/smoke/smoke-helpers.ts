@@ -56,7 +56,9 @@ export function roleMaySeePage(role: string, pagePath: string): boolean {
 
 /** Where the proxy sends a staff role that may not open a page (frontend/lib/rbac.ts landingPage). */
 export function landingPathFor(role: string): string {
-  return role === 'admin' ? '/admin/overview' : '/admin/review';
+  if (role === 'admin') return '/admin/overview';
+  // AA-1156: the content roles land on My work; the viewer (the smoke account) keeps the Review Queue
+  return ['content', 'content_lead', 'tenant_qa'].includes(role) ? '/admin/my-work' : '/admin/review';
 }
 
 /** Known-benign console messages. Empty by default — add a precise substring to silence real

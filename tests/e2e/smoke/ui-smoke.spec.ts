@@ -74,6 +74,8 @@ const ADMIN_PAGES: PageSpec[] = [
   { id: 'usage-explorer', label: 'Usage explorer', path: '/admin/usage', readySelector: '[data-testid="usage-explorer-ready"]', viewerRefused: true },
   { id: 'master-content', label: 'Master Content', path: '/admin/master-content' },
   { id: 'overview', label: 'Overview', path: '/admin/overview', viewerRefused: true },
+  // AA-1156: My work (content queues by capability); the viewer holds no tile capability, so it is refused
+  { id: 'my-work', label: 'My work', path: '/admin/my-work', readySelector: '[data-testid="my-work-content"]', viewerRefused: true },
   // AA-883 — Platform › People & access › Staff (backend live on Dev since CIS main c2f9e919).
   { id: 'platform-staff', label: 'Staff', path: '/admin/platform/staff', viewerRefused: true },
   // AA-884 — Platform › Apps, Audit log, Cost per app. ADMIN-ONLY pages (viewer refused, AA-878) (PAGE_RULES /admin/platform; backend
