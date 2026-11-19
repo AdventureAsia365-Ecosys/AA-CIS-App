@@ -20,6 +20,8 @@
 //     behind a Redis lock); "Refresh from AWS" is the explicit POST /api/admin/cost-explorer/check (spend.write,
 //     admin; the same call as Cost Operations, plus the App-tag request) for this month's window.
 // No polling: one load per month viewed.
+// AA-1127 (C2): a daily job (cost_explorer_refresh) keeps the stored figures current; `ce_freshness` shows their age as
+// an "AWS figures fresh / stale" badge (CeFreshness.tsx, the stale window is a Platform › Settings value).
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, ChevronRight, CloudDownload, Info } from "lucide-react";
@@ -60,6 +62,7 @@ import {
   type SatelliteLine,
 } from "@/lib/platform";
 import { COST } from "./byApp.messages";
+import { CeFreshnessBadge } from "./CeFreshness";
 
 type KindWord = "kindApp" | "kindLlm" | "kindShared" | "kindOther" | "kindUntagged";
 const KIND_TONE: Record<CostRowKind, { tone: Tone; label: KindWord }> = {
@@ -266,6 +269,7 @@ function DataStatus({ data }: { data: CostResp }) {
   }
   return (
     <div style={{ ...noteStyle, display: "flex", flexDirection: "column", gap: 2 }}>
+      <CeFreshnessBadge f={data.ce_freshness} />
       {data.aws.has_data ? (
         <span>
           {t("covers", formatDate(data.aws.covered_from), formatDate(data.aws.covered_to), formatDateTime(data.aws.fetched_at))}

@@ -34,6 +34,7 @@ from . import writing_memory_job  # noqa: F401  AA-917 (writing-memory backfill,
 from . import report_jobs  # noqa: F401  AA-1003 (kpi_snapshot_daily, report_generate)
 from . import report_ops_jobs  # noqa: F401  AA-1003 R2 (inquiry_handoff_check, report_email)
 from . import llm_cost_reconcile_job  # noqa: F401  AA-1002 S10 (LLM cost ledger vs the provider, nightly)
+from . import cost_explorer_refresh_job  # noqa: F401  AA-1127 (daily Cost Explorer read of both snapshots, ~$0.03)
 from . import llm_probe_job  # noqa: F401  AA-1018 (daily LLM connection probe; off unless LLM_DAILY_PROBE=on)
 from . import llm_model_lifecycle_job  # noqa: F401  AA-1024 D2 (nightly Bedrock model lifecycle sync, $0)
 from . import llm_route_watch_job  # noqa: F401  AA-1042 (route alerts every 15 min + daily digest, $0)

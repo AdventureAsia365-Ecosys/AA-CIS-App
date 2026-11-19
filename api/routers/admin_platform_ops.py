@@ -28,7 +28,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from api.core.staff_authz import staff_policy
 from api.routers.admin import verify_admin_secret
-from api.services import platform_apps, platform_audit, platform_cost, platform_infra
+from api.services import cost_explorer_daily, platform_apps, platform_audit, platform_cost, platform_infra
 
 logger = structlog.get_logger()
 
@@ -98,10 +98,11 @@ async def get_cost(request: Request, month: Optional[str] = Query(None, pattern=
             # AA-936: the CRM row's LLM spend from crm.ops.v1, with the staff member's own WORKFORCE token.
             return await platform_apps.crm_llm_usage(authorization, start, end_exclusive)
 
-        return await platform_cost.cost_by_app(request.app.state.pool, month, redis=_redis(request),
-                                               refresh_if_stale=refresh_if_stale, crm_llm=crm_llm)
+        out = await platform_cost.cost_by_app(request.app.state.pool, month, redis=_redis(request),
+                                              refresh_if_stale=refresh_if_stale, crm_llm=crm_llm)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    return await cost_explorer_daily.with_freshness(request.app.state.pool, out)  # AA-1127 C2: the "stale" badge
 
 
 @router.get("/infra", summary="The limits that stay in Terraform (WAF, API Gateway throttles, Lambda concurrency, "

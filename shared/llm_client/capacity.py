@@ -97,6 +97,7 @@ KIND_LINES: dict[str, Optional[str]] = {
     # no LLM call
     "ai_usage_rollup": None,     # AA-1045: the hourly usage rollup of the paid-call ledgers (database only)
     "data_erasure": None, "inquiry_handoff_check": None, "kpi_snapshot_daily": None, "llm_cost_reconcile": None,
+    "cost_explorer_refresh": None,   # AA-1127: AWS Cost Explorer reads, no LLM call
     "llm_route_watch": None,     # AA-1042: route alerts and digest from the ledger (database reads only)
     "ops_alert_email": None, "photo_destination_match": None, "photo_medium_backfill": None, "photo_sync": None,
     "place_geocode": None, "place_relocate": None, "place_shape": None,

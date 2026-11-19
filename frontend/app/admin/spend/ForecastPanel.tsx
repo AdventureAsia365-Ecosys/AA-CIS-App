@@ -3,7 +3,8 @@
 //
 // API: GET /api/admin/cost-ops/forecast (backend api/services/cost_ops.py cost_forecast; spend.read = admin). DB only:
 // the AWS rows read the STORED Cost Explorer snapshots (AWS bill tab › "Refresh from AWS" stores new days), never a
-// live CE call. Always the current UTC month; the page's date window does not apply.
+// live CE call. Always the current UTC month; the page's date window does not apply. AA-1127 (C2): `ce_freshness` drives
+// the "AWS figures fresh / stale" badge (CeFreshness.tsx); a daily job keeps the snapshots current.
 // AA-994: text in the UI language (panels.messages.ts); provider and account labels come from the API.
 
 import { useQuery } from "@tanstack/react-query";
@@ -11,6 +12,7 @@ import { useMemo } from "react";
 import {
   Badge, DataTable, ErrorState, K, SkeletonBar, apiGet, useFormat, useT, type ColumnDef, type Translator,
 } from "../../_kit";
+import { CeFreshnessBadge, type CeFreshness } from "./CeFreshness";
 import { PanelTitle, STATUS_META, noteStyle, numStyle, panelStyle, usd, type BudgetStatus } from "./costOpsUi";
 import { PANELS } from "./panels.messages";
 
@@ -49,6 +51,8 @@ interface ForecastResp {
   aws_accounts: AwsRow[];
   generated_at: string;
   sources: Record<string, string>;
+  /** AA-1127 (C2): how old the stored Cost Explorer figures are (the AWS rows read them) */
+  ce_freshness?: CeFreshness;
 }
 
 function StatusCell({ r }: { r: Projection }) {
@@ -153,6 +157,9 @@ export default function ForecastPanel() {
       <PanelTitle aside={<span style={noteStyle}>{t("asOf", formatDateTime(data.generated_at))}</span>}>
         {t("forecastTitle", data.month)}
       </PanelTitle>
+      {data.ce_freshness && (
+        <div style={{ marginBottom: 8, minWidth: 0 }}><CeFreshnessBadge f={data.ce_freshness} /></div>
+      )}
       <div style={{ ...noteStyle, marginBottom: 12 }}>
         {t("forecastNote", data.complete_days, data.days_in_month, data.run_rate_days)}
         {over.length > 0 && (

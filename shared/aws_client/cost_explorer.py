@@ -171,13 +171,21 @@ def usage_split(raw: Any) -> Optional[dict[str, float]]:
     return {"usage_usd": usage, "adjustments_usd": other}
 
 
-def _fetch_one_account_cost(account: str, start_date: str, end_date: str) -> list[dict[str, Any]]:
+def _count_request(stats: Optional[dict[str, int]]) -> None:
+    """AA-1127: one more CE request in ``stats["requests"]`` (the caller's cost line), when the caller asked."""
+    if stats is not None:
+        stats["requests"] = stats.get("requests", 0) + 1
+
+
+def _fetch_one_account_cost(account: str, start_date: str, end_date: str,
+                            stats: Optional[dict[str, int]] = None) -> list[dict[str, Any]]:
     """One ce:GetCostAndUsage call for one account, grouped by SERVICE and RECORD_TYPE (AA-1002 S10). Returns one row
     per (day, service) ready for record_snapshot(): ``amount_usd`` is the service's UnblendedCost summed over its
     record types, i.e. the same net figure as before the split (the Cost page is unchanged), and ``raw.record_types``
     keeps the amount of each record type, so a reader can tell usage from credits and refunds (``usage_split``).
     Raises CostExplorerUnavailable on failure -- caller in fetch_all_accounts_cost() decides whether to skip this
-    account or propagate."""
+    account or propagate. ``stats`` (AA-1127): when given, ``stats["requests"]`` counts the CE requests made (pages
+    included, ~$0.01 each)."""
     if account != "acc2" and account not in _SATELLITE_ACCOUNTS:
         raise ValueError(f"Unknown Cost Explorer account: {account!r} (valid: {list(FETCH_ACCOUNTS)})")
     account_id = acc2_account_id() if account == "acc2" else _SATELLITE_ACCOUNTS[account]["account_id"]
@@ -193,6 +201,7 @@ def _fetch_one_account_cost(account: str, start_date: str, end_date: str) -> lis
             "GroupBy": [{"Type": "DIMENSION", "Key": "SERVICE"}, {"Type": "DIMENSION", "Key": "RECORD_TYPE"}],
         }
         while True:
+            _count_request(stats)
             resp = client.get_cost_and_usage(**kwargs)
             results_by_time.extend(resp.get("ResultsByTime", []))
             token = resp.get("NextPageToken")
@@ -238,20 +247,26 @@ def _fetch_one_account_cost(account: str, start_date: str, end_date: str) -> lis
     return rows
 
 
-def fetch_all_accounts_cost(start_date: str, end_date: str) -> dict[str, Any]:
+def fetch_all_accounts_cost(start_date: str, end_date: str, *,
+                            stats: Optional[dict[str, int]] = None) -> dict[str, Any]:
     """Fetch Cost Explorer data for acc2/acc3 independently (no single consolidated call --
     acc2 is not the Organizations payer, see module docstring). A failure on one satellite
     account (e.g. AssumeRole not yet applied) does NOT fail the whole check -- that account's
     rows are simply omitted and listed under "errors", same partial-result philosophy as
     admin_llm_ops.py's per-stage config reads. Raises only if ALL accounts fail.
 
-    start_date/end_date: 'YYYY-MM-DD' strings, CE's TimePeriod format (End is exclusive).
+    start_date/end_date: 'YYYY-MM-DD' strings, CE's TimePeriod format (End is exclusive). ``stats`` (AA-1127, the
+    daily refresh's cost line): when given, ``stats["requests"]`` counts every CE request made, failed accounts
+    included.
     """
     rows: list[dict[str, Any]] = []
     errors: dict[str, str] = {}
     for account in FETCH_ACCOUNTS:
         try:
-            rows.extend(_fetch_one_account_cost(account, start_date, end_date))
+            if stats is None:
+                rows.extend(_fetch_one_account_cost(account, start_date, end_date))
+            else:
+                rows.extend(_fetch_one_account_cost(account, start_date, end_date, stats=stats))
         except CostExplorerUnavailable as e:
             logger.warning("cost_explorer_account_fetch_failed", account=account, error=str(e))
             errors[account] = str(e)
