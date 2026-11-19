@@ -45,9 +45,10 @@ test("Content Trace: kit FilterField and DateField, in the content column, opene
   const header = src.slice(src.indexOf("<PageFrameHeader>"), src.indexOf("</PageFrameHeader>"));
   assert.doesNotMatch(header, /FilterField|TenantSelect|StatTile/, "filters and tiles live in the content column");
   const body = src.slice(src.indexOf('<SocialContentSubNav active="content_trace" />'));
-  assert.ok(body.indexOf('data-testid="content-trace-filters"') > 0);
+  assert.ok(body.indexOf("<TraceFilters f={filters} />") > 0);
+  assert.match(src, /function TraceFilters\(/);
   assert.match(src, /useSearchParams\(\)\.get\("tenant"\)/);
-  assert.match(src, /<Suspense fallback=\{null\}><ContentTrace \/><\/Suspense>/);
+  assert.match(src, /<Suspense fallback=\{null\}><ContentTracePage \/><\/Suspense>/);
 });
 
 test("one search box on tables whose page has its own search", () => {

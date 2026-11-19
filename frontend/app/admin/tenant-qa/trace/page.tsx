@@ -165,21 +165,30 @@ function useChannelLabel(): (code: string) => string {
   return (code) => (!code ? t("all") : Object.hasOwn(CHANNEL.en, code) ? t(code) : code);
 }
 
-// useSearchParams (the `?tenant=` deep link) needs a Suspense boundary for `next build`.
-export default function ContentTracePage() {
-  return <Suspense fallback={null}><ContentTrace /></Suspense>;
+/** `?tenant=<id>` (Tenant 360's Social tab link) or "" (all tenants). */
+function useTenantParam(): string {
+  return useSearchParams().get("tenant") ?? "";
 }
 
-function ContentTrace() {
+// useSearchParams (the `?tenant=` deep link) needs a Suspense boundary for `next build`.
+export default function ContentTraceRoute() {
+  return <Suspense fallback={null}><ContentTracePage /></Suspense>;
+}
+
+function ContentTracePage() {
   const t = useT(TRACE);
   const channelLabel = useChannelLabel();
-  const initialTenant = useSearchParams().get("tenant") ?? "";
+  const initialTenant = useTenantParam();
   const [tenantId, setTenantId] = useState(initialTenant);
   const [channel, setChannel] = useState("");
   const [status, setStatus] = useState("");
   const [published, setPublished] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const filters: TraceFilterState = {
+    tenantId, setTenantId, channel, setChannel, status, setStatus, published, setPublished,
+    dateFrom, setDateFrom, dateTo, setDateTo,
+  };
 
   // AA-1006: the row detail opens in a kit Drawer (the table row used to expand in place); sorting is the kit table's.
   const [openRow, setOpenRow] = useState<ContentLogRow | null>(null);
@@ -268,34 +277,7 @@ function ContentTrace() {
                 Slate), real links (see SocialContentSubNav.tsx). */}
             <SocialContentSubNav active="content_trace" />
             <div style={{ flex: 1, minWidth: 0 }}>
-              {/* Filter bar — Tenant is the primary lens ("All" is a real, always-valid choice, never a placeholder
-                  that must be replaced before the table shows anything). AA-1127 C4: kit FilterField / DateField. */}
-              <div data-testid="content-trace-filters"
-                style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", minWidth: 0, marginBottom: 12 }}>
-                {/* AA-919 S254: the shared admin tenant picker (active tenants, by name; "" = All tenants). */}
-                <TenantSelect inline value={tenantId} onChange={setTenantId} placeholder={t("allTenants")} />
-                <FilterField label={t("channel")}>
-                  <Select value={channel} onChange={e => setChannel(e.target.value)} style={{ ...selectStyle, minWidth: 140 }}>
-                    {CHANNEL_OPTIONS.map(o => <option key={o.value} value={o.value}>{channelLabel(o.value)}</option>)}
-                  </Select>
-                </FilterField>
-                <FilterField label={t("status")}>
-                  <Select value={status} onChange={e => setStatus(e.target.value)} style={{ ...selectStyle, minWidth: 140 }}>
-                    {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{t(o.label)}</option>)}
-                  </Select>
-                </FilterField>
-                <FilterField label={t("published")}>
-                  <Select value={published} onChange={e => setPublished(e.target.value)} style={{ ...selectStyle, minWidth: 130 }}>
-                    {PUBLISHED_OPTIONS.map(o => <option key={o.value} value={o.value}>{t(o.label)}</option>)}
-                  </Select>
-                </FilterField>
-                <FilterField label={t("from")} as="div">
-                  <DateField value={dateFrom} onChange={setDateFrom} max={dateTo || undefined} aria-label={t("from")} />
-                </FilterField>
-                <FilterField label={t("to")} as="div">
-                  <DateField value={dateTo} onChange={setDateTo} min={dateFrom || undefined} aria-label={t("to")} />
-                </FilterField>
-              </div>
+              <TraceFilters f={filters} />
 
               {/* AA-572 point 2 — tenant stat header, same tile shape 01-Atomize's own header stat
                   bar uses (mirrored inline rather than inventing a differently-shaped one). */}
@@ -359,6 +341,51 @@ function ContentTrace() {
           )}
         </Drawer>
     </PageFrame>
+  );
+}
+
+interface TraceFilterState {
+  tenantId: string; setTenantId: (v: string) => void;
+  channel: string; setChannel: (v: string) => void;
+  status: string; setStatus: (v: string) => void;
+  published: string; setPublished: (v: string) => void;
+  dateFrom: string; setDateFrom: (v: string) => void;
+  dateTo: string; setDateTo: (v: string) => void;
+}
+
+/** AA-1127 C4: the filter bar of the content column (kit FilterField / DateField, so every control has a name). */
+function TraceFilters({ f }: { f: TraceFilterState }) {
+  const t = useT(TRACE);
+  const channelLabel = useChannelLabel();
+  // Tenant is the primary lens ("All" is a real, always-valid choice, never a placeholder that must be replaced
+  // before the table shows anything).
+  return (
+    <div data-testid="content-trace-filters"
+      style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", minWidth: 0, marginBottom: 12 }}>
+      {/* AA-919 S254: the shared admin tenant picker (active tenants, by name; "" = All tenants). */}
+      <TenantSelect inline value={f.tenantId} onChange={f.setTenantId} placeholder={t("allTenants")} />
+      <FilterField label={t("channel")}>
+        <Select value={f.channel} onChange={e => f.setChannel(e.target.value)} style={{ ...selectStyle, minWidth: 140 }}>
+          {CHANNEL_OPTIONS.map(o => <option key={o.value} value={o.value}>{channelLabel(o.value)}</option>)}
+        </Select>
+      </FilterField>
+      <FilterField label={t("status")}>
+        <Select value={f.status} onChange={e => f.setStatus(e.target.value)} style={{ ...selectStyle, minWidth: 140 }}>
+          {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{t(o.label)}</option>)}
+        </Select>
+      </FilterField>
+      <FilterField label={t("published")}>
+        <Select value={f.published} onChange={e => f.setPublished(e.target.value)} style={{ ...selectStyle, minWidth: 130 }}>
+          {PUBLISHED_OPTIONS.map(o => <option key={o.value} value={o.value}>{t(o.label)}</option>)}
+        </Select>
+      </FilterField>
+      <FilterField label={t("from")} as="div">
+        <DateField value={f.dateFrom} onChange={f.setDateFrom} max={f.dateTo || undefined} aria-label={t("from")} />
+      </FilterField>
+      <FilterField label={t("to")} as="div">
+        <DateField value={f.dateTo} onChange={f.setDateTo} min={f.dateFrom || undefined} aria-label={t("to")} />
+      </FilterField>
+    </div>
   );
 }
 
