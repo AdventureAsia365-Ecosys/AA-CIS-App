@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -730,6 +730,114 @@
      "lower": "Xem lại dày hơn.",
      "when": "Rút ngắn khi tỷ giá biến động nhanh.",
      "example": "Với mặc định 3 tháng, giá VND đặt ngày 1/1 hiện nhãn cần xem lại từ ngày 1/4."
+    }
+   }
+  },
+  {
+   "key": "cis.content.publish_two_person",
+   "app": "cis",
+   "area": "content",
+   "label": "Two-person publishing of tour content",
+   "description": "On: a tour version goes live (Review Queue approve, promote, publish of a draft version) only when the person publishing holds content.publish (admin, content_lead) and did not write the draft: 403 two_person_required / same_person otherwise. Off (development phase): content staff may publish their own drafts through the same re-check gate. Read on every publish by api/services/content_publish_gate.py, in the publish transaction's connection (fails closed: an unreadable value counts as on). Separate from cis.settings.two_person_approval. While it is on, turning it off needs a second person.",
+   "value_type": "bool",
+   "unit": null,
+   "min_value": null,
+   "max_value": null,
+   "allowed_values": null,
+   "default_value": false,
+   "scope_kind": "platform",
+   "impact": "high",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "Whether a tour's content needs a second person before it goes live: the person who wrote a draft or edited a version cannot publish it, and only a content lead or an administrator can publish.",
+     "raise": "On: every published change to a tour is read by a second person first; changes reach the website more slowly.",
+     "lower": "Off: content staff publish their own edits after the automatic checks pass; faster, with no second reader.",
+     "when": "Turn it on at the first production launch, or as soon as more than one person edits tours every day.",
+     "example": "With the default off (development phase), a content editor fixes a typo and publishes it alone; when on, a content lead publishes it."
+    },
+    "vi": {
+     "what": "Nội dung tour có cần người thứ hai trước khi lên trang hay không: người viết bản nháp hoặc sửa một phiên bản không tự xuất bản được, và chỉ trưởng nhóm nội dung hoặc quản trị viên mới xuất bản.",
+     "raise": "Bật: mọi thay đổi xuất bản của một tour đều được người thứ hai đọc trước; thay đổi lên website chậm hơn.",
+     "lower": "Tắt: nhân viên nội dung tự xuất bản bản sửa của mình khi bước kiểm tự động đạt; nhanh hơn, không có người đọc thứ hai.",
+     "when": "Bật khi ra mắt bản production đầu tiên, hoặc ngay khi có hơn một người sửa tour hằng ngày.",
+     "example": "Với mặc định tắt (giai đoạn phát triển), nhân viên nội dung sửa một lỗi chính tả và tự xuất bản; khi bật, trưởng nhóm nội dung xuất bản."
+    }
+   }
+  },
+  {
+   "key": "cis.content.t2_rerun_alert_pct",
+   "app": "cis",
+   "area": "content",
+   "label": "Agency copy refresh after a fact change: alert at (% of the monthly cap)",
+   "description": "The share of cis.content.t2_rerun_monthly_cap_usd at which the operators are alerted (bell + e-mail). Seeded now (tech lead S285 A2: alert at 80 %); not enforced yet: the refresh job of AA-1146 part 2 reads it.",
+   "value_type": "pct",
+   "unit": "%",
+   "min_value": 1,
+   "max_value": 100,
+   "allowed_values": null,
+   "default_value": 80,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": false,
+   "guide": {
+    "en": {
+     "what": "How much of the monthly cap of the automatic agency-copy refresh may be spent before the team gets an alert. Not used yet: the automatic refresh is still being built.",
+     "raise": "The alert comes later, closer to the cap; less noise, less time to react before refreshes stop.",
+     "lower": "The alert comes earlier; more time to raise the cap or pause before the agencies' copies stop refreshing.",
+     "when": "Lower it if the cap is often reached before anyone notices; raise it if the alert fires every month without action.",
+     "example": "With the default of 80 % and a cap of 10 USD, the alert fires once 8 USD is spent in the month."
+    },
+    "vi": {
+     "what": "Phần trăm của mức trần tháng của việc tự làm mới bản đại lý được chi trước khi nhóm nhận cảnh báo. Chưa dùng: phần tự làm mới đang được xây.",
+     "raise": "Cảnh báo đến muộn hơn, gần mức trần hơn; ít ồn hơn, ít thời gian xử lý hơn trước khi việc làm mới dừng.",
+     "lower": "Cảnh báo đến sớm hơn; có thêm thời gian để tăng trần hoặc tạm dừng trước khi bản của đại lý ngừng được làm mới.",
+     "when": "Giảm nếu mức trần thường bị chạm trước khi có người để ý; tăng nếu cảnh báo bật hằng tháng mà không ai cần làm gì.",
+     "example": "Với mặc định 80 % và mức trần 10 USD, cảnh báo bật khi đã chi 8 USD trong tháng."
+    }
+   }
+  },
+  {
+   "key": "cis.content.t2_rerun_monthly_cap_usd",
+   "app": "cis",
+   "area": "content",
+   "label": "Agency copy refresh after a fact change: monthly cap (USD)",
+   "description": "The billed model cost a calendar month (UTC) may spend on the automatic rewrite of the agencies' tour copies when a tour's facts change (FactSheet diff; wording-only edits never trigger it). At the cap the copies are only marked stale and the agencies notified. Seeded now (tech lead S285 A2: 10 USD a month on Dev, alert at 80 %, cis.content.t2_rerun_alert_pct); not enforced yet: the refresh job of AA-1146 part 2 reads it.",
+   "value_type": "usd",
+   "unit": "USD/month",
+   "min_value": 0,
+   "max_value": 1000,
+   "allowed_values": null,
+   "default_value": 10,
+   "scope_kind": "platform",
+   "impact": "high",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": false,
+   "guide": {
+    "en": {
+     "what": "The most a month may spend on rewriting the agencies' copies of a tour automatically when the tour's facts change. Not used yet: the automatic refresh is still being built, so nothing spends against it today.",
+     "raise": "More agency copies follow a fact change on their own within the month; the model bill can grow with it.",
+     "lower": "Fewer automatic rewrites; past the cap the copies are only marked out of date and the agencies are told to refresh them.",
+     "when": "Raise it when the alert fires early in the month and agencies wait for refreshed copies; lower it when the bill matters more than freshness.",
+     "example": "With the default of 10 USD, about 40 to 80 agency copies can be refreshed a month at the measured cost per copy."
+    },
+    "vi": {
+     "what": "Số tiền tối đa một tháng được chi để tự viết lại bản tour của các đại lý khi dữ kiện của tour thay đổi. Chưa dùng: phần tự làm mới đang được xây, nên hiện chưa có khoản chi nào tính vào mức này.",
+     "raise": "Nhiều bản của đại lý tự theo kịp thay đổi dữ kiện trong tháng hơn; hoá đơn model có thể tăng theo.",
+     "lower": "Ít lượt tự viết lại hơn; quá mức trần thì các bản chỉ bị đánh dấu lỗi thời và đại lý được báo để tự làm mới.",
+     "when": "Tăng khi cảnh báo bật sớm trong tháng và đại lý phải chờ bản làm mới; giảm khi hoá đơn quan trọng hơn độ mới.",
+     "example": "Với mặc định 10 USD, khoảng 40 đến 80 bản của đại lý được làm mới mỗi tháng theo chi phí đo được cho mỗi bản."
     }
    }
   },

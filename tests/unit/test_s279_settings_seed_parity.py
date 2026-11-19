@@ -95,7 +95,11 @@ TP_DOMAIN_KEYS = ("cis.tripplanner.custom_domain_max_per_tenant", "cis.tripplann
                   "cis.tripplanner.custom_domain_validation_timeout_hours", "cis.tripplanner.custom_domain_poll_seconds",
                   "cis.tripplanner.custom_domain_edge_pending_hours", "cis.tripplanner.custom_domain_renewal_grace_days")
 
-NOT_ENFORCED = ("cis.content.trash_retention_days", "cis.learn.learner_retention_days", *TP_DOMAIN_KEYS)
+# AA-1146 (CIS 458): the agency-copy refresh cap and its alert, until the refresh job of AA-1146 part 2 ships.
+T2_RERUN_KEYS = ("cis.content.t2_rerun_monthly_cap_usd", "cis.content.t2_rerun_alert_pct")
+
+NOT_ENFORCED = ("cis.content.trash_retention_days", "cis.learn.learner_retention_days", *TP_DOMAIN_KEYS,
+                *T2_RERUN_KEYS)
 
 
 TWO_STEP_KEYS = ("cis.quality.claim_two_step_route_tp_min_pct", "cis.quality.claim_two_step_judge_tp_keep_min_pct",
