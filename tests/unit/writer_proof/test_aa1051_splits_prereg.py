@@ -11,6 +11,7 @@ from services.writer_proof import prereg as pr
 from services.writer_proof import splits
 from services.writer_proof import spend
 from services.writing_memory import config as cfg
+from tests.unit.writer_proof.prereg_templates import t9_plain_improve
 
 
 # ── splits ───────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -170,7 +171,7 @@ def test_a_null_run_takes_no_release_and_no_improve_rule():
 @pytest.mark.parametrize("eff,needle", [(None, "needs power.effect_abs"), (0.1, "must be > decision.margin_abs"),
                                         (-1, "effect_abs must be null or a number > 0"), (0.3, None)])
 def test_an_improve_rule_needs_an_effect_above_the_margin(eff, needle):
-    d = json.loads(pr.path_for("w5-t9").read_text())
+    d = t9_plain_improve()
     d["power"] = {**d["power"], "effect_abs": eff}
     p = pr.problems(d)
     assert (needle is None and p == []) or any(needle in x for x in p), p

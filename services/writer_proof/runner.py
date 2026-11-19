@@ -33,7 +33,8 @@ Commands (DRY RUN unless `run --live`; every command prints one JSON document, i
   python -m services.writer_proof.runner report --prereg w5-null-t9-blog
   python -m services.writer_proof.runner campaign [--r1-report <file> [--instrument <id>]]
 
-plan    reads the DB (READ ONLY): the pre-registration (valid, registered, golden version = the active one), the
+plan    reads the DB (READ ONLY): the pre-registration (valid, registered, golden version = the active one; S285: for a
+        draft, what its registration would refuse, `registration_problems`), the
         sample on the GATE side, each arm's R2 estimate (controls, calibration on CAL, judge family, caps), the W5
         spend so far, the lock (no earlier result under another sha), and the power check when an R1 report is given.
         S280: the pinned judge priced from shared.llm_model_catalog (price.py; each arm is gated on the larger of
@@ -193,6 +194,8 @@ async def plan(pool, pre: pr.Prereg, *, r1_report: Optional[str] = None, instrum
     # `pre` may have been loaded before this refresh (the CLI loads it first; an exec process has no refresher, so
     # load() checked it against the compiled defaults): check it again under the values an administrator set.
     blocking: list[str] = [f"pre-registration: {x}" for x in pr.problems(pre.doc)]
+    # S285: a draft's plan also says what its registration would refuse (minimum sample in force, writer spread)
+    registration = pr.registration_problems(pre.doc)
     pre = await resolved(pool, pre)              # S283: a sample rule drawn from the active golden version
     out: dict[str, Any] = {"prereg": pre.id, "sha256": pre.sha256, "workflow": pre.workflow, "writer": pre.writer,
                            "status": pre.doc.get("status"), "samples": len(pre.doc.get("sample_ids") or []),
@@ -201,8 +204,10 @@ async def plan(pool, pre: pr.Prereg, *, r1_report: Optional[str] = None, instrum
                            "judge": pre.doc["judge"], "sample_resolved": pre.doc.get("sample_resolved"),
                            "sample_ids": list(pre.doc.get("sample_ids") or [])}
     blocking.extend(_sample_short(pre))
+    out["registration_problems"] = registration
     if not pre.registered:
         blocking.append("status is draft (fill the sample with `draft`, register it in a reviewed PR)")
+        blocking.extend(f"registration would refuse: {x}" for x in registration)
     store = r2.PgStore(pool, stages=(spend.W5_STAGE,))
     gs = await store.golden_set()
     want = pre.doc.get("golden_set") or {}

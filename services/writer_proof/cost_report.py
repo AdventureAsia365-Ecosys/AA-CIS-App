@@ -7,8 +7,8 @@ belongs to the first result row of its run stored at or after it (`attribute`): 
 calls. Rows after the last result (none expected) are reported as unattributed, never dropped.
 
 Report per run: ledger total, rows, cost per object two ways (all-in = run total / candidate objects; attributed =
-median / mean / max over the candidate rows), requests and writer requests per object (median / max), plus the W5
-totals against the D12 caps.
+median / mean / max over the candidate rows), requests and writer requests per object (median / max), the writer's
+own cost per object (S285: the writer-role rows only), plus the W5 totals against the D12 caps.
 
     python -m services.writer_proof.cost_report --prereg w5-null-t9-blog      # the runs of one pre-registration
     python -m services.writer_proof.cost_report --run <uuid> [--run <uuid>]   # given runs
@@ -48,25 +48,33 @@ RUNS_SQL = """
 """
 
 
+def _slot() -> dict:
+    return {"cost_usd": 0.0, "requests": 0, "writer_requests": 0, "writer_cost_usd": 0.0}
+
+
 def attribute(ledger: list[dict], results: list[dict]) -> dict:
-    """{per_result: {result_id: {cost_usd, requests, writer_requests}}, unattributed: {run_id: {...}}}. Each ledger
-    row goes to the first result row of its run whose created_at >= the ledger row's. Pure."""
+    """{per_result: {result_id: {cost_usd, requests, writer_requests, writer_cost_usd}}, unattributed: {run_id: {...}}}.
+    Each ledger row goes to the first result row of its run whose created_at >= the ledger row's. `writer_cost_usd` is
+    the part of `cost_usd` on writer-role rows (S285: a claim instrument judge adds tens of judge calls per object, so a
+    writer cost target reads this, not the all-in cost). Pure."""
     by_run: dict[str, list[dict]] = {}
     for r in sorted(results, key=lambda r: (r["created_at"], r["result_id"])):
         by_run.setdefault(str(r["run_id"]), []).append(r)
-    per: dict[str, dict] = {str(r["result_id"]): {"cost_usd": 0.0, "requests": 0, "writer_requests": 0}
-                            for r in results}
+    per: dict[str, dict] = {str(r["result_id"]): _slot() for r in results}
     orphan: dict[str, dict] = {}
     for row in sorted(ledger, key=lambda x: (x["created_at"], x["id"])):
         run = str(row.get("eval_run"))
         target = next((r for r in by_run.get(run, []) if r["created_at"] >= row["created_at"]), None)
-        slot = per[str(target["result_id"])] if target else orphan.setdefault(
-            run, {"cost_usd": 0.0, "requests": 0, "writer_requests": 0})
-        slot["cost_usd"] += float(row.get("cost_usd") or 0.0)
+        slot = per[str(target["result_id"])] if target else orphan.setdefault(run, _slot())
+        usd = float(row.get("cost_usd") or 0.0)
+        writer = row.get("role") == "writer"
+        slot["cost_usd"] += usd
         slot["requests"] += 1
-        slot["writer_requests"] += row.get("role") == "writer"
+        slot["writer_requests"] += writer
+        slot["writer_cost_usd"] += usd if writer else 0.0
     for d in list(per.values()) + list(orphan.values()):
         d["cost_usd"] = round(d["cost_usd"], 6)
+        d["writer_cost_usd"] = round(d["writer_cost_usd"], 6)
     return {"per_result": per, "unattributed": orphan}
 
 
@@ -100,6 +108,7 @@ def report(runs: list[dict], ledger: list[dict], results: list[dict]) -> dict:
             "attributed_cost_per_object_usd": _stats([o["cost_usd"] for o in objs]),
             "requests_per_object": _stats([float(o["requests"]) for o in objs]),
             "writer_requests_per_object": _stats([float(o["writer_requests"]) for o in objs]),
+            "writer_cost_per_object_usd": _stats([o["writer_cost_usd"] for o in objs]),
             "unattributed": att["unattributed"].get(rid)})
     return {"stage": W5_STAGE, "runs": out_runs,
             "total_usd": round(sum(r["ledger_usd"] for r in out_runs), 6),

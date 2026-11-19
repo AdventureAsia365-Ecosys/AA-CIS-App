@@ -10,6 +10,7 @@ import pytest
 
 from services.writer_proof import cost_report, decision, power, spend
 from services.writer_proof import prereg as pr
+from tests.unit.writer_proof.prereg_templates import t9_plain_improve
 
 
 # ── power ────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -100,7 +101,7 @@ def test_improve_power_n_needed_reaches_the_target():
 
 
 def test_check_prereg_passes_the_rule_and_the_effect():
-    d = json.loads(pr.path_for("w5-t9").read_text())
+    d = t9_plain_improve()
     d.update(sample_ids=sorted(f"zz-{i:02d}" for i in range(12)))
     pre = pr.from_doc(d)
     out = power.check_prereg(pre, _votes(720, 4))
@@ -223,11 +224,13 @@ def test_higher_is_better_metric_flips_the_sign():
 
 def test_targets_and_computed_metrics():
     rows = _rows(fails_b=(0, 1, 2), claims_b=2)
-    per = {f"res-{i}": {"cost_usd": 0.1 + i / 100, "requests": 4 + (i % 2), "writer_requests": 1} for i in range(12)}
+    per = {f"res-{i}": {"cost_usd": 0.1 + i / 100, "requests": 4 + (i % 2), "writer_requests": 1,
+                        "writer_cost_usd": 0.05 + i / 1000} for i in range(12)}
     comp = decision.computed_metrics(rows, per)
     assert comp["item_fail_rate"] == 0.25 and comp["first_pass_yield"] == 0.75
     assert comp["fail_claims_per_item"] == 2.0 and comp["requests_per_object"] == 4.5
-    doc = json.loads(pr.path_for("w5-t9").read_text())
+    assert comp["writer_cost_per_object_usd"] == 0.0555                 # S285: the writer-role share, median
+    doc = t9_plain_improve()
     t = {x["metric"]: x["status"] for x in decision.targets(doc, comp)}
     assert t["first_pass_yield"] == "met" and t["requests_per_object"] == "met"
     assert t["contract_violations"] == "pending" and t["cost_per_object_usd"] == "met"
@@ -252,8 +255,8 @@ def test_attribute_assigns_each_ledger_row_to_the_next_result_of_its_run():
               {"id": "4", "eval_run": "run2", "created_at": _t(14), "cost_usd": 0.07, "role": "writer"},
               {"id": "5", "eval_run": "run1", "created_at": _t(30), "cost_usd": 0.003, "role": "judge"}]
     att = cost_report.attribute(ledger, results)
-    assert att["per_result"]["a"] == {"cost_usd": 0.01, "requests": 1, "writer_requests": 0}
-    assert att["per_result"]["b"] == {"cost_usd": 0.07, "requests": 2, "writer_requests": 1}
+    assert att["per_result"]["a"] == {"cost_usd": 0.01, "requests": 1, "writer_requests": 0, "writer_cost_usd": 0.0}
+    assert att["per_result"]["b"] == {"cost_usd": 0.07, "requests": 2, "writer_requests": 1, "writer_cost_usd": 0.05}
     assert att["per_result"]["c"]["writer_requests"] == 1
     assert att["unattributed"]["run1"]["requests"] == 1                   # after the last result: kept, flagged
     rep = cost_report.report([{"run_id": "run1", "writer": "t9_blog"}, {"run_id": "run2", "writer": "t9_blog"}],
@@ -261,4 +264,5 @@ def test_attribute_assigns_each_ledger_row_to_the_next_result_of_its_run():
     r1 = rep["runs"][0]
     assert r1["ledger_usd"] == 0.083 and r1["objects"] == 1 and r1["all_in_cost_per_object_usd"] == 0.083
     assert r1["attributed_cost_per_object_usd"]["median"] == 0.07 and r1["requests_per_object"]["max"] == 2.0
+    assert r1["writer_cost_per_object_usd"]["median"] == 0.05            # S285: writer-role rows only
     assert rep["total_usd"] == 0.153 and rep["stage"] == spend.W5_STAGE
