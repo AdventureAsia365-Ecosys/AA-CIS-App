@@ -73,6 +73,8 @@ The AA-832 chain (EventBridge -> ops-probe Lambda -> admin POST -> shared.job ->
 - AA-1002 (S10): each tick also queues the nightly LLM cost reconciliation (`llm_cost_reconcile`, $0) once per UTC day
   from 02:00 UTC (idempotency key per day), while the kind is registered and LLM_COST_RECONCILE is not off. Field
   `llm_cost_reconcile` (the job id, when created) or `llm_cost_reconcile_error`.
+- AA-1127 (C2): and the daily Cost Explorer read (`cost_explorer_refresh_job.sampler_part`, settings `cis.spend.ce_*`).
+  Field `cost_explorer_refresh` (the job id, when created) or `cost_explorer_refresh_error`.
 - AA-1026 (S267): the ops checks part also evaluates LLM stage coverage (shared/llm_client/stage_coverage.py: every
   active stage has a model that answered within 36 h, no refusal or open circuit since); a stage without one raises
   the ops check ``llm_stage_coverage.<stage>`` (bell once a day per stage, one e-mail per stage and UTC day). Fields
@@ -597,6 +599,10 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
         await asyncio.wait_for(_llm_cost_reconcile_part(pool, kinds, ts, out), timeout=5.0)
     except Exception as e:
         out["llm_cost_reconcile_error"] = _err(e)
+
+    # AA-1127 (C2): one idempotent INSERT a day while the daily Cost Explorer check is on, same short budget
+    from services.jobs.cost_explorer_refresh_job import sampler_part as _ce_refresh_part
+    await _guarded_part(_ce_refresh_part(pool, kinds, ts, out), out, "cost_explorer_refresh_error", timeout=5.0)
 
     # AA-1018: one idempotent INSERT a day when LLM_DAILY_PROBE=on, same short budget
     try:

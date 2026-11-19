@@ -1707,12 +1707,12 @@ async def get_cost_explorer(
 
 @router.get("/cost-ops/forecast", summary="Month-end spend forecast vs budget per provider and AWS account")
 async def get_cost_ops_forecast(request: Request, month: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}$")):
-    from api.services.cost_ops import cost_forecast
-
+    from api.services import cost_explorer_daily, cost_ops
     try:
-        return await cost_forecast(request.app.state.pool, month)
+        out = await cost_ops.cost_forecast(request.app.state.pool, month)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
+    return await cost_explorer_daily.with_freshness(request.app.state.pool, out)  # AA-1127 C2: the "stale" badge
 
 
 @router.get(

@@ -86,6 +86,8 @@ def test_background_kind_never_claimed_with_two_or_fewer_free_slots(free):
                           "inquiry_handoff_check", "report_email",
                           # AA-1002 S10: nightly LLM cost reconciliation ($0: DB, stored CE snapshot, usage APIs)
                           "llm_cost_reconcile",
+                          # AA-1127 (C2): the daily Cost Explorer read of both snapshots (~0.03 USD, settings-driven)
+                          "cost_explorer_refresh",
                           # AA-1018: the daily LLM connection probe (off unless LLM_DAILY_PROBE=on; dry run $0)
                           "llm_connection_probe",
                           # AA-1024 D2: the nightly model lifecycle sync ($0: Bedrock control-plane lists)

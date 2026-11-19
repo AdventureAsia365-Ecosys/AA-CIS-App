@@ -383,6 +383,22 @@ export interface CostResp {
   crm_llm?: { status: string; reason?: string | null; http_status?: number | null };
   refresh: CostRefresh;
   sources: Record<string, string>;
+  /** AA-1127 (C2): how old the newest stored Cost Explorer fetch is (api/services/cost_explorer_daily.py). */
+  ce_freshness?: CeFreshness;
+}
+
+/** AA-1127 (C2): the `ce_freshness` block of the Spend page's two cost reads (GET /admin/platform/cost and
+ * /admin/cost-ops/forecast): the older of the two newest Cost Explorer fetches, its age, the stale window (setting
+ * cis.spend.ce_stale_after_hours) and the daily check. `stale: null` = the read failed (no badge). */
+export interface CeFreshness {
+  stale: boolean | null;
+  age_hours?: number | null;
+  stale_after_hours?: number | null;
+  oldest_newest_at?: string | null;
+  service_fetched_at?: string | null;
+  app_fetched_at?: string | null;
+  error?: string;
+  daily_refresh?: { enabled: boolean; hour_utc: number };
 }
 
 export interface CeCheckResp {

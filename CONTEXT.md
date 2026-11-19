@@ -1166,6 +1166,13 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     fetched on demand through `POST /admin/cost-explorer/check` (AA-623). acc2 calls CE
     directly; acc3 via assume-role (`shared/aws_client/cost_explorer.py`). AA-998: acc1 is no longer fetched; its
     stored rows stay and read with `account_key = "retired"` (shown as "Retired account", no account ID).
+    AA-1127 (C2, tech lead decision S285): job kind `cost_explorer_refresh` (`services/jobs/cost_explorer_refresh_job.py`,
+    core `api/services/cost_explorer_daily.py`) stores both snapshots (per account and service, and acc2 by App tag)
+    for the month to date once per UTC day, queued by the ops metrics sampler from the hour of
+    `cis.spend.ce_daily_refresh_hour_utc` while `cis.spend.ce_daily_refresh_enabled` is on (CIS 461, Platform ›
+    Settings, area spend; about 3 CE requests, ~0.03 USD a run, reported as the job's own cost). The two Spend reads
+    (forecast, By app) carry `ce_freshness`; the page shows "AWS figures stale" when the older of the two newest
+    fetches is older than `cis.spend.ce_stale_after_hours`.
   - **How the admin names an AWS account** (AA-998): never by the internal key (acc2 / acc3 stay as keys in
     `account_route`, `llm_call_log.account` and the cost rows) but by its 12-digit account ID, read at run time
     (acc2: STS of the task's own credentials, once per process; acc3: `BEDROCK_ACCT_PRIMARY`) by
