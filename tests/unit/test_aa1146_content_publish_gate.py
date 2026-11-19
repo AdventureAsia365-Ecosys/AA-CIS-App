@@ -56,10 +56,12 @@ class _Conn:
     ({"value_text": json.dumps("yes")}, None, True),
     (None, RuntimeError("zz connection lost"), True),
 ])
+@pytest.mark.real_publish_switch
 def test_switch_on_reads_the_row_and_fails_closed(row, exc, expected):
     assert asyncio.run(gate.switch_on(_Conn(row, exc))) is expected
 
 
+@pytest.mark.real_publish_switch
 def test_switch_on_without_a_value_row_is_the_default(monkeypatch):
     monkeypatch.setattr(gate, "_default", lambda: False)
     assert asyncio.run(gate.switch_on(_Conn(None))) is False
