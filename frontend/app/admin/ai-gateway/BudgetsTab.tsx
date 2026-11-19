@@ -9,8 +9,9 @@
 //   Tenant AI budgets                shared.tenant_ai_budget (AA-1016, migration 321): each tenant's monthly budget and
 //                                    this month's spend; set on the tenant (Tenants › the tenant › Cost). Before 321
 //                                    (tenant_ready false or absent) the designed empty state.
-//   Connection budget split          (AA-1113) provider budget vs the CIS and CRM shares; ConnectionSplitSection,
-//                                    its own read (GET /api/admin/ai-gateway/connection-split).
+//   Connection budgets               (AA-1143, decision G3; replaces the AA-1113 split table) each connection's total,
+//                                    each app's share and the CIS remainder, edited here; ConnectionBudgetsSection,
+//                                    its own read (GET /api/admin/ai-gateway/connection-budgets).
 //   Coverage                         does every paid provider and switched-on connection have a cap.
 //   Central LLM caps (AA-1025 A7)    spend_budget provider "llm" (CIS migration 340): app / stage / job kind / eval /
 //                                    ad-hoc caps checked by the gateway before each call; edited in their own Drawer
@@ -40,7 +41,7 @@ import { connectionName } from "@/lib/llmConnections";
 import { useAccountText, useAwsAccounts } from "../_components/useAwsAccounts";
 import { BUDGETS, BUDGET_STATE, CENTRAL } from "./budgets.messages";
 import SpendControlsSection, { RunCapCell, RunCapEditorNote, useAtCapText, useRunCapRule } from "./SpendControlsSection";
-import ConnectionSplitSection from "./ConnectionSplitSection";
+import ConnectionBudgetsSection from "./ConnectionBudgetsSection";
 import { usePageAccess } from "./usePageAccess";
 import { LevelsCell, UsedOfCap } from "./tenantBudgetParts";
 import { tenantBudgetInForce } from "@/lib/tenantBudgetInForce";
@@ -767,7 +768,7 @@ export default function BudgetsTab({ onOpenConnections }: { onOpenConnections: (
         <ConnectionBudgetTable rows={tiers?.connection ?? []} loading={loading} />
       </Section>
       {/* AA-1113: the provider budget of each connection split between the CIS and CRM shares (own query). */}
-      <ConnectionSplitSection />
+      <ConnectionBudgetsSection />
       {data?.tenant_ready ? (
         <Section title={t("groupTenant")} description={t("groupTenantHelp")}
           padded={false} testId="ai-gateway-budgets-tenant-tier">

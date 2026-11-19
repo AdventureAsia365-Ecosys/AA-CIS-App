@@ -235,6 +235,8 @@ PAGE_WRITES: dict[str, tuple[str, str]] = {
     "batches": ("POST", "/admin/ai-gateway/batches"),
     # AA-1126 G2 Budgets › Spend controls: reset an app's anomaly breaker (ai.admin, not a tighten-only role)
     "anomaly_reset": ("POST", "/admin/ai-gateway/anomaly-breaker/{app}/reset"),
+    # AA-1143 Budgets › Connection budgets: a connection's total and the apps' shares, the CRM copy (spend.write)
+    "connection_budgets": ("PUT", "/admin/ai-gateway/connection-budgets/{connection_key}"),
 }
 
 

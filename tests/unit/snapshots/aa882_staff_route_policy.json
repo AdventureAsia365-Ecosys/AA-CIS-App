@@ -131,6 +131,14 @@
     "capability": "spend.read",
     "module": "api.routers.admin_ai_gateway"
   },
+  "GET /admin/ai-gateway/connection-budgets": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_ai_gateway_budgets"
+  },
+  "GET /admin/ai-gateway/connection-budgets/{connection_key}/history": {
+    "capability": "spend.read",
+    "module": "api.routers.admin_ai_gateway_budgets"
+  },
   "GET /admin/ai-gateway/connection-split": {
     "capability": "spend.read",
     "module": "api.routers.admin_ai_gateway"
@@ -1239,6 +1247,10 @@
     "capability": "ai.admin",
     "module": "api.routers.admin_ai_gateway"
   },
+  "POST /admin/ai-gateway/connection-budgets/crm-sync": {
+    "capability": "spend.write",
+    "module": "api.routers.admin_ai_gateway_budgets"
+  },
   "POST /admin/ai-gateway/credit/check": {
     "capability": "spend.write",
     "module": "api.routers.admin_ai_gateway"
@@ -1962,6 +1974,10 @@
   "PUT /admin/ai-gateway/capacity/{connection_key}/{model_key}": {
     "capability": "ai.admin",
     "module": "api.routers.admin_ai_gateway"
+  },
+  "PUT /admin/ai-gateway/connection-budgets/{connection_key}": {
+    "capability": "spend.write",
+    "module": "api.routers.admin_ai_gateway_budgets"
   },
   "PUT /admin/ai-gateway/route-policy/{stage}": {
     "capability": "ai.admin",

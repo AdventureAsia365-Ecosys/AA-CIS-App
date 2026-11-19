@@ -329,6 +329,11 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/ai-gateway/credit/check"): SPEND_WRITE,   # AA-1025 B5: the low-credit check now (bell + e-mail)
     ("GET", "/admin/ai-gateway/app-profiles"): SPEND_READ,           # AA-1025 H1a: the app profile of every app
     ("PATCH", "/admin/ai-gateway/app-profiles/{app}"): AI_ADMIN,     # AA-1025 H1a: AI on / off per app, audited
+    # AA-1143 (decision G3): one budget per LLM connection (total + per-app shares, CIS takes the remainder), audited
+    ("GET", "/admin/ai-gateway/connection-budgets"): SPEND_READ,
+    ("GET", "/admin/ai-gateway/connection-budgets/{connection_key}/history"): SPEND_READ,
+    ("PUT", "/admin/ai-gateway/connection-budgets/{connection_key}"): SPEND_WRITE,
+    ("POST", "/admin/ai-gateway/connection-budgets/crm-sync"): SPEND_WRITE,
     ("GET", "/admin/ai-gateway/spend-controls"): SPEND_READ,         # AA-1126: spend controls + anomaly breaker
     ("POST", "/admin/ai-gateway/anomaly-breaker/{app}/reset"): AI_ADMIN,   # AA-1126 G2: reset one app's breaker
     ("GET", "/admin/ai-gateway/capacity"): SPEND_READ,               # AA-1025 H2: TPM limits, lines, claim hold

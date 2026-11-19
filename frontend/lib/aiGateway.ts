@@ -1321,6 +1321,7 @@ export const ACCESS_API = "/api/admin/ai-gateway/access";
 export const PAGE_ACTIONS = [
   "provider_switch", "connections", "connection_test", "requeue", "routing", "catalog", "budgets", "jev_credit",
   "credit", "app_profiles", "route_control", "route_policy", "route_test", "batches", "anomaly_reset",
+  "connection_budgets",
 ] as const;
 export type PageAction = (typeof PAGE_ACTIONS)[number];
 
@@ -1346,6 +1347,7 @@ export const ACTION_CAPABILITY: Record<PageAction, "ai.admin" | "ops.write" | "s
   route_test: "ai.admin",     // AA-1042 Trace tab: the route test (a few tiny paid calls) and Run check now
   batches: "ai.admin",        // AA-1076 Batches tab: send a wave through the batch lane (paid), cancel a batch
   anomaly_reset: "ai.admin",  // AA-1126 Budgets › Spend controls: reset an app's AI anomaly breaker
+  connection_budgets: "spend.write",   // AA-1143 Budgets › Connection budgets: total and apps' shares
 };
 
 /**
