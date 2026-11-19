@@ -208,8 +208,9 @@ export function secretNotConfigured(): NextResponse {
 export type VerifyStaffTokenResult =
   | ({ ok: true } & VerifiedStaff)
   // status: the backend's answer (401 unknown/invalid, 403 e.g. a booking-only Cognito user), or 0
-  // when the backend could not be reached.
-  | { ok: false; status: number };
+  // when the backend could not be reached. detail: the backend's `detail` text when it sent one (AA-1111:
+  // "mfa_required" = an administrator signed in without an authenticator code while the switch is on).
+  | { ok: false; status: number; detail?: string };
 
 /**
  * POST /auth/verify-admin for one token, through the shared cache. Accepts both a legacy HS256 token
@@ -226,7 +227,7 @@ export async function verifyStaffToken(token: string): Promise<VerifyStaffTokenR
       body: JSON.stringify({ token }),
       signal: AbortSignal.timeout(3000),
     });
-    if (!res.ok) return { ok: false, status: res.status };
+    if (!res.ok) return { ok: false, status: res.status, detail: await refusalDetail(res) };
     const data = await res.json();
     const result: VerifiedStaff = {
       adminId: data.admin_id,
@@ -237,6 +238,16 @@ export async function verifyStaffToken(token: string): Promise<VerifyStaffTokenR
     return { ok: true, ...result };
   } catch {
     return { ok: false, status: 0 };
+  }
+}
+
+/** The `detail` string of a refused verify-admin answer, or undefined (never throws). */
+async function refusalDetail(res: Response): Promise<string | undefined> {
+  try {
+    const body = await res.json();
+    return typeof body?.detail === "string" ? body.detail : undefined;
+  } catch {
+    return undefined;
   }
 }
 

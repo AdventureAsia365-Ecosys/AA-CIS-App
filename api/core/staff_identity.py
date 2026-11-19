@@ -384,6 +384,11 @@ async def resolve_staff(db: Any, principal: Principal, *, touch_login: bool = Fa
 
 
 async def authenticate(db: Any, token: str, *, touch_login: bool = False) -> StaffIdentity:
-    """verify_staff_token + resolve_staff."""
+    """verify_staff_token + resolve_staff + the administrator MFA check (AA-1111, :mod:`api.core.staff_mfa`: 403
+    ``mfa_required`` for an administrator session without an authenticator code while the switch is on)."""
+    from api.core import staff_mfa  # noqa: PLC0415 - staff_mfa imports this module
+
     principal = await verify_staff_token(token)
-    return await resolve_staff(db, principal, touch_login=touch_login)
+    identity = await resolve_staff(db, principal, touch_login=touch_login)
+    staff_mfa.check(identity, token)
+    return identity
