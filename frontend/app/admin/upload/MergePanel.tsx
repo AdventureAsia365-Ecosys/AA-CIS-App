@@ -114,3 +114,11 @@ export default function MergePanel({ stagingId, onChange }: {
     </div>
   );
 }
+
+/** The merge panel of one staged row, shown while its decision is "merge" and it is not sent yet. */
+export function MergeSlot({ stagingId, open, done, onChange }: {
+  stagingId: string; open: boolean; done: boolean; onChange: (choice: MergeChoice) => void;
+}) {
+  if (!open || done) return null;
+  return <MergePanel stagingId={stagingId} onChange={onChange} />;
+}

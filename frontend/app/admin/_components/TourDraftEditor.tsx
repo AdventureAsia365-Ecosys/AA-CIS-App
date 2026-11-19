@@ -7,7 +7,9 @@
 // 503 and the drawer keeps its old inline editor (`fallback`). Buttons follow can() (the backend re-checks every call).
 
 import React, { useCallback, useEffect, useState } from "react";
-import { K, Badge, Button, Input, Textarea, mono, useAdminIdentity, useFormat, useT, useToast } from "../../_kit";
+import {
+  K, Badge, Button, Input, Textarea, mono, useAdminIdentity, useFormat, useT, useToast, type Translator,
+} from "../../_kit";
 import { can } from "@/lib/rbac";
 import { FIELD } from "../review/messages";
 import { D } from "./tourDraft.messages";
@@ -16,7 +18,6 @@ type FieldKey =
   | "aa_name" | "aa_subtitle" | "aa_summary" | "aa_description" | "aa_highlights" | "aa_itineraries"
   | "mobile_card_text" | "seo_title" | "seo_meta" | "seo_keywords_used";
 
-// Edited here, in reading order. og_tags stays read-only (as in the Review Queue).
 // Labels: the Review Queue's field catalogue (FIELD, English and Vietnamese). List fields take one item per line.
 const FIELDS: { key: FieldKey; rows?: number; list?: boolean; limit?: number }[] = [
   { key: "aa_name" },
@@ -32,25 +33,30 @@ const FIELDS: { key: FieldKey; rows?: number; list?: boolean; limit?: number }[]
 ];
 
 type Fields = Partial<Record<FieldKey | "og_tags", unknown>>;
+type Texts = Record<FieldKey, string>;
 interface DiffOp { op: "equal" | "insert" | "delete"; text: string }
+interface Draft {
+  id: string; version_num: number; reason: string | null; editors: string[]; checks_passed: boolean | null;
+  fields: Fields;
+}
 interface DraftState {
   live: { id: string; version_num: number; fields: Fields } | null;
-  draft: {
-    id: string; version_num: number; reason: string | null; editors: string[]; checks_passed: boolean | null;
-    fields: Fields;
-  } | null;
+  draft: Draft | null;
   diff: { field: string; ops: DiffOp[] }[];
   lock: { at: string | null; by: string | null; reason: string | null } | null;
   two_person_publish: boolean;
 }
+type Busy = "" | "save" | "checks" | "publish" | "discard" | "unlock";
+type T = Translator<typeof D.en>;
 
 function asText(v: unknown, list?: boolean): string {
   if (v == null) return "";
   if (Array.isArray(v)) return v.map(String).join("\n");
-  if (list && typeof v === "string") {
-    try { const p = JSON.parse(v); if (Array.isArray(p)) return p.map(String).join("\n"); } catch { /* text */ }
-  }
-  return String(v);
+  if (!list || typeof v !== "string") return String(v);
+  try {
+    const p = JSON.parse(v);
+    return Array.isArray(p) ? p.map(String).join("\n") : v;
+  } catch { return v; }
 }
 
 function toValue(text: string, list?: boolean): unknown {
@@ -58,42 +64,153 @@ function toValue(text: string, list?: boolean): unknown {
 }
 
 function errText(body: unknown, fallback: string): string {
-  const d = (body as { detail?: unknown })?.detail;
+  const d = (body as { detail?: unknown } | null)?.detail;
   if (typeof d === "string") return d;
-  const m = (d as { message?: unknown })?.message;
+  const m = (d as { message?: unknown } | undefined)?.message;
   return typeof m === "string" ? m : fallback;
 }
 
-export default function TourDraftEditor({ tourId, fallback }: { tourId: string; fallback: React.ReactNode }) {
-  const t = useT(D);
-  const tf = useT(FIELD);
-  const toast = useToast();
-  const { role } = useAdminIdentity();
+/** The texts a state starts the form with: the draft's fields, else the live version's. */
+function textsOf(s: DraftState): Texts {
+  const src = s.draft?.fields ?? s.live?.fields ?? {};
+  return Object.fromEntries(FIELDS.map(f => [f.key, asText(src[f.key], f.list)])) as Texts;
+}
+
+function reasonOk(reason: string): boolean {
+  const r = reason.trim().length;
+  return r >= 3 && r <= 500;
+}
+
+function checksTone(passed: boolean | null): string {
+  if (passed === true) return K.success;
+  return passed === false ? K.danger : K.muted;
+}
+
+function checksKey(passed: boolean | null): "checksPassed" | "checksFailed" | "checksPending" {
+  if (passed === true) return "checksPassed";
+  return passed === false ? "checksFailed" : "checksPending";
+}
+
+const NOTE: React.CSSProperties = { fontSize: 12, color: K.muted, margin: "0 0 12px" };
+
+function Note({ show, text }: { show: boolean; text: string }) {
+  return show ? <p style={NOTE}>{text}</p> : null;
+}
+
+function DraftHeader({ state, canUnlock, busy, onUnlock, t }: {
+  state: DraftState; canUnlock: boolean; busy: Busy; onUnlock: () => void; t: T;
+}) {
   const { formatDateTime } = useFormat();
+  const lock = state.lock;
+  return (
+    <>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
+        <Badge tone="neutral">{state.live ? t("liveVersion", state.live.version_num) : t("noLive")}</Badge>
+        {state.draft && <Badge tone="warning">{t("draftBanner", state.draft.version_num)}</Badge>}
+        {lock && <Badge tone="accent">{t("locked")}</Badge>}
+        {lock && canUnlock && <Button variant="secondary" onClick={onUnlock} disabled={busy !== ""}>{t("unlock")}</Button>}
+      </div>
+      {lock && <p style={NOTE}>{t("lockedBy", lock.by ?? "—", lock.at ? formatDateTime(lock.at) : "—")}</p>}
+    </>
+  );
+}
+
+function FieldBox({ f, value, readOnly, onChange }: {
+  f: (typeof FIELDS)[number]; value: string; readOnly: boolean; onChange: (v: string) => void;
+}) {
+  const tf = useT(FIELD);
+  const over = f.limit !== undefined && value.length > f.limit;
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, fontWeight: 600, color: K.muted,
+        textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 4 }}>
+        <span>{tf(f.key)}</span>
+        {f.limit && <span style={{ color: over ? K.danger : K.muted2 }}>{value.length}/{f.limit}</span>}
+      </div>
+      {f.rows ? (
+        <Textarea value={value} rows={f.rows} readOnly={readOnly} onChange={e => onChange(e.target.value)}
+          style={{ width: "100%", fontFamily: f.list ? mono : undefined, fontSize: 13 }} />
+      ) : (
+        <Input value={value} readOnly={readOnly} onChange={e => onChange(e.target.value)} style={{ width: "100%" }} />
+      )}
+    </div>
+  );
+}
+
+interface Actions { save: () => void; checks: () => void; refresh: () => void; publish: () => void; discard: () => void }
+
+function DraftActions({ draft, canEdit, canPublish, dirty, reasonReady, busy, on, t }: {
+  draft: Draft | null; canEdit: boolean; canPublish: boolean; dirty: boolean; reasonReady: boolean; busy: Busy;
+  on: Actions; t: T;
+}) {
+  const idle = busy === "";
+  const passed = draft?.checks_passed === true;
+  return (
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+      {canEdit && (
+        <Button variant="primary" onClick={on.save} disabled={!idle || !reasonReady || (!dirty && !!draft)}>
+          {busy === "save" ? t("savingDraft") : t("saveDraft")}
+        </Button>
+      )}
+      {draft && <DraftOnlyActions canEdit={canEdit} canPublish={canPublish} idle={idle} dirty={dirty} passed={passed}
+        publishing={busy === "publish"} on={on} t={t} />}
+    </div>
+  );
+}
+
+function DraftOnlyActions({ canEdit, canPublish, idle, dirty, passed, publishing, on, t }: {
+  canEdit: boolean; canPublish: boolean; idle: boolean; dirty: boolean; passed: boolean; publishing: boolean;
+  on: Actions; t: T;
+}) {
+  return (
+    <>
+      {canEdit && <Button variant="secondary" onClick={on.checks} disabled={!idle || dirty}>{t("runChecks")}</Button>}
+      <Button variant="secondary" onClick={on.refresh} disabled={!idle}>{t("refresh")}</Button>
+      {canPublish && (
+        <Button variant="primary" onClick={on.publish} disabled={!idle || dirty || !passed}
+          title={passed ? undefined : t("publishNeedsChecks")}>
+          {publishing ? t("publishing") : t("publish")}
+        </Button>
+      )}
+      {canEdit && <Button variant="secondary" onClick={on.discard} disabled={!idle}>{t("discard")}</Button>}
+    </>
+  );
+}
+
+function DiffView({ diff, t }: { diff: DraftState["diff"]; t: T }) {
+  const tf = useT(FIELD);
+  return (
+    <div style={{ borderTop: `1px solid ${K.line}`, paddingTop: 12 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: K.muted, textTransform: "uppercase", letterSpacing: "0.1em",
+        marginBottom: 8 }}>{t("diffTitle")}</div>
+      {diff.length === 0 && <div style={{ fontSize: 12, color: K.muted }}>{t("noChanges")}</div>}
+      {diff.map(d => (
+        <div key={d.field} style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: K.muted, marginBottom: 4 }}>{tf(d.field as FieldKey)}</div>
+          <div style={{ fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap", color: K.body }}>
+            {d.ops.map((o, i) => <DiffOpSpan key={i} op={o} />)}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DiffOpSpan({ op }: { op: DiffOp }) {
+  if (op.op === "delete") return <del style={{ background: K.dangerTint, color: K.danger }}>{op.text}</del>;
+  if (op.op === "insert") {
+    return <ins style={{ background: K.successSoft, color: K.success, textDecoration: "none" }}>{op.text}</ins>;
+  }
+  return <span>{op.text}</span>;
+}
+
+/** The draft state of a tour: loaded on open and on reload(); `notReady` = the versions API answers 503. */
+function useDraftState(tourId: string, t: T) {
   const [state, setState] = useState<DraftState | null>(null);
   const [notReady, setNotReady] = useState(false);
   const [error, setError] = useState("");
-  const [texts, setTexts] = useState<Record<FieldKey, string>>({} as Record<FieldKey, string>);
-  const [reason, setReason] = useState("");
-  const [busy, setBusy] = useState<"" | "save" | "checks" | "publish" | "discard" | "unlock">("");
-
-  const canEdit = can(role, "content.write");
-  const canPublish = can(role, "content.publish") || can(role, "review.act");
-  const canUnlock = can(role, "master.admin");
-
-  const apply = useCallback((s: DraftState) => {
-    setState(s);
-    const src = s.draft?.fields ?? s.live?.fields ?? {};
-    const next = {} as Record<FieldKey, string>;
-    for (const f of FIELDS) next[f.key] = asText(src[f.key], f.list);
-    setTexts(next);
-    setReason(s.draft?.reason ?? "");
-  }, []);
-
-  // A reload is a new `round` (the fetch runs in the effect, its answer set from the promise).
   const [round, setRound] = useState(0);
-  const load = useCallback(() => setRound(n => n + 1), []);
-
+  const reload = useCallback(() => setRound(n => n + 1), []);
   useEffect(() => {
     let alive = true;
     fetch(`/api/admin/tours/${tourId}/draft`)
@@ -102,102 +219,83 @@ export default function TourDraftEditor({ tourId, fallback }: { tourId: string; 
         if (r.status === 503) { setNotReady(true); return; }
         if (!r.ok) { setError(t("loadFailed")); return; }
         const body = await r.json();
-        if (alive) { setError(""); apply(body); }
+        if (alive) { setError(""); setState(body); }
       })
       .catch(() => { if (alive) setError(t("loadFailed")); });
     return () => { alive = false; };
-  }, [tourId, apply, t, round]);
+  }, [tourId, t, round]);
+  return { state, notReady, error, reload };
+}
 
+export default function TourDraftEditor({ tourId, fallback }: { tourId: string; fallback: React.ReactNode }) {
+  const t: T = useT(D);
+  const { state, notReady, error, reload } = useDraftState(tourId, t);
   if (notReady) return <>{fallback}</>;
   if (error) return <div style={{ padding: 24, color: K.danger }}>{error}</div>;
   if (!state) return <div style={{ padding: 24, color: K.muted }}>{t("loading")}</div>;
+  return <DraftForm key={draftKey(state)} tourId={tourId} initial={state} reload={reload} t={t} />;
+}
 
-  const base = state.draft?.fields ?? state.live?.fields ?? {};
-  const changed = FIELDS.filter(f => texts[f.key] !== asText(base[f.key], f.list));
-  const draft = state.draft;
+function draftKey(s: DraftState): string {
+  return s.draft ? `${s.draft.id}:${s.draft.reason ?? ""}` : `live:${s.live?.id ?? "none"}`;
+}
 
-  async function call(kind: typeof busy, url: string, init: RequestInit, ok: (body: unknown) => void) {
+function useDraftCalls(tourId: string, t: T, setBusy: (b: Busy) => void) {
+  const toast = useToast();
+  return async function call(kind: Busy, url: string, init: RequestInit, ok: (body: unknown) => void) {
     setBusy(kind);
     try {
       const r = await fetch(url, init);
       const body = await r.json().catch(() => ({}));
-      if (!r.ok) { toast.error(errText(body, t("failed")), 5000); return; }
-      ok(body);
+      if (r.ok) ok(body);
+      else toast.error(errText(body, t("failed")), 5000);
     } finally { setBusy(""); }
-  }
-
-  const saveDraft = () => call("save", `/api/admin/tours/${tourId}/draft`, {
-    method: "PUT", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ reason, fields: Object.fromEntries(changed.map(f => [f.key, toValue(texts[f.key], f.list)])) }),
-  }, body => { apply(body as DraftState); toast.success(t("draftSaved"), 3000); });
-
-  const runChecks = () => draft && call("checks", `/api/admin/tours/${tourId}/generated/${draft.id}/revalidate`,
-    { method: "POST" }, () => toast.success(t("checksQueued"), 4000));
-
-  const publish = () => call("publish", `/api/admin/tours/${tourId}/draft/publish`, { method: "POST" }, body => {
-    toast.success(t("published", (body as { version_num: number }).version_num), 5000);
-    load();
-  });
-
-  const discard = () => {
-    if (!confirm(t("discardConfirm"))) return;
-    call("discard", `/api/admin/tours/${tourId}/draft`, { method: "DELETE" }, () => {
-      toast.success(t("discarded"), 3000);
-      load();
-    });
   };
+}
 
+function DraftForm({ tourId, initial, reload, t }: { tourId: string; initial: DraftState; reload: () => void; t: T }) {
+  const toast = useToast();
+  const { role } = useAdminIdentity();
+  const [state, setState] = useState<DraftState>(initial);
+  const [texts, setTexts] = useState<Texts>(() => textsOf(initial));
+  const [reason, setReason] = useState(initial.draft?.reason ?? "");
+  const [busy, setBusy] = useState<Busy>("");
+  const call = useDraftCalls(tourId, t, setBusy);
+  const canEdit = can(role, "content.write");
+  const base = textsOf(state);
+  const changed = FIELDS.filter(f => texts[f.key] !== base[f.key]);
+  const draft = state.draft;
+  const url = `/api/admin/tours/${tourId}`;
+  const json = { "Content-Type": "application/json" };
+  const done = (key: "discarded" | "unlocked") => () => { toast.success(t(key), 3000); reload(); };
+  const on: Actions = {
+    save: () => call("save", `${url}/draft`, { method: "PUT", headers: json, body: JSON.stringify(
+      { reason, fields: Object.fromEntries(changed.map(f => [f.key, toValue(texts[f.key], f.list)])) }) },
+    body => { setState(body as DraftState); toast.success(t("draftSaved"), 3000); }),
+    checks: () => call("checks", `${url}/generated/${draft?.id}/revalidate`, { method: "POST" },
+      () => toast.success(t("checksQueued"), 4000)),
+    refresh: reload,
+    publish: () => call("publish", `${url}/draft/publish`, { method: "POST" }, body => {
+      toast.success(t("published", (body as { version_num: number }).version_num), 5000);
+      reload();
+    }),
+    discard: () => { if (confirm(t("discardConfirm"))) call("discard", `${url}/draft`, { method: "DELETE" }, done("discarded")); },
+  };
   const unlock = () => {
-    const why = prompt(t("unlockPrompt"));
-    if (!why || why.trim().length < 3) return;
-    call("unlock", `/api/admin/tours/${tourId}/unlock`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: why.trim() }),
-    }, () => { toast.success(t("unlocked"), 4000); load(); });
+    const why = (prompt(t("unlockPrompt")) ?? "").trim();
+    if (why.length >= 3) {
+      call("unlock", `${url}/unlock`, { method: "POST", headers: json, body: JSON.stringify({ reason: why }) },
+        done("unlocked"));
+    }
   };
-
-  const reasonOk = reason.trim().length >= 3 && reason.trim().length <= 500;
-
   return (
     <div>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
-        <Badge tone="neutral">{state.live ? t("liveVersion", state.live.version_num) : t("noLive")}</Badge>
-        {draft && <Badge tone="warning">{t("draftBanner", draft.version_num)}</Badge>}
-        {state.lock && <Badge tone="accent">{t("locked")}</Badge>}
-        {state.lock && canUnlock && (
-          <Button variant="secondary" onClick={unlock} disabled={busy !== ""}>{t("unlock")}</Button>
-        )}
-      </div>
-      {state.lock && (
-        <div style={{ fontSize: 12, color: K.muted, marginBottom: 12 }}>
-          {t("lockedBy", state.lock.by ?? "—", state.lock.at ? formatDateTime(state.lock.at) : "—")}
-        </div>
-      )}
-      {!draft && <p style={{ fontSize: 12, color: K.muted, margin: "0 0 12px" }}>{t("noDraft")}</p>}
-      {draft && draft.editors.length > 0 && (
-        <p style={{ fontSize: 12, color: K.muted, margin: "0 0 12px" }}>{t("editedBy", draft.editors.join(", "))}</p>
-      )}
-      {state.two_person_publish && <p style={{ fontSize: 12, color: K.muted, margin: "0 0 12px" }}>{t("twoPerson")}</p>}
-      {!canEdit && <p style={{ fontSize: 12, color: K.muted, margin: "0 0 12px" }}>{t("readOnly")}</p>}
-
+      <DraftHeader state={state} canUnlock={can(role, "master.admin")} busy={busy} onUnlock={unlock} t={t} />
+      <DraftNotes state={state} canEdit={canEdit} t={t} />
       {FIELDS.map(f => (
-        <div key={f.key} style={{ marginBottom: 12 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, fontWeight: 600, color: K.muted,
-            textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 4 }}>
-            <span>{tf(f.key)}</span>
-            {f.limit && <span style={{ color: texts[f.key]?.length > f.limit ? K.danger : K.muted2 }}>
-              {texts[f.key]?.length ?? 0}/{f.limit}</span>}
-          </div>
-          {f.rows ? (
-            <Textarea value={texts[f.key] ?? ""} rows={f.rows} readOnly={!canEdit}
-              onChange={e => setTexts(x => ({ ...x, [f.key]: e.target.value }))}
-              style={{ width: "100%", fontFamily: f.list ? mono : undefined, fontSize: 13 }} />
-          ) : (
-            <Input value={texts[f.key] ?? ""} readOnly={!canEdit}
-              onChange={e => setTexts(x => ({ ...x, [f.key]: e.target.value }))} style={{ width: "100%" }} />
-          )}
-        </div>
+        <FieldBox key={f.key} f={f} value={texts[f.key]} readOnly={!canEdit}
+          onChange={v => setTexts(x => ({ ...x, [f.key]: v }))} />
       ))}
-
       {canEdit && (
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 11, fontWeight: 600, color: K.muted, marginBottom: 4 }}>{t("reason")}</div>
@@ -205,56 +303,32 @@ export default function TourDraftEditor({ tourId, fallback }: { tourId: string; 
             placeholder={t("reasonHint")} />
         </div>
       )}
-
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 20 }}>
-        {canEdit && (
-          <Button variant="primary" onClick={saveDraft} disabled={busy !== "" || !reasonOk || (changed.length === 0 && !!draft)}>
-            {busy === "save" ? t("savingDraft") : t("saveDraft")}
-          </Button>
-        )}
-        {draft && canEdit && (
-          <Button variant="secondary" onClick={runChecks} disabled={busy !== "" || changed.length > 0}>{t("runChecks")}</Button>
-        )}
-        {draft && <Button variant="secondary" onClick={load} disabled={busy !== ""}>{t("refresh")}</Button>}
-        {draft && canPublish && (
-          <Button variant="primary" onClick={publish}
-            disabled={busy !== "" || changed.length > 0 || draft.checks_passed !== true}
-            title={draft.checks_passed !== true ? t("publishNeedsChecks") : undefined}>
-            {busy === "publish" ? t("publishing") : t("publish")}
-          </Button>
-        )}
-        {draft && canEdit && (
-          <Button variant="secondary" onClick={discard} disabled={busy !== ""}>{t("discard")}</Button>
-        )}
-      </div>
-      {draft && (
-        <div style={{ fontSize: 12, marginBottom: 12, color: draft.checks_passed === true ? K.success
-          : draft.checks_passed === false ? K.danger : K.muted }}>
-          {draft.checks_passed === true ? t("checksPassed") : draft.checks_passed === false ? t("checksFailed")
-            : t("checksPending")}
-        </div>
-      )}
-
-      {draft && (
-        <div style={{ borderTop: `1px solid ${K.line}`, paddingTop: 12 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: K.muted, textTransform: "uppercase", letterSpacing: "0.1em",
-            marginBottom: 8 }}>{t("diffTitle")}</div>
-          {state.diff.length === 0 ? (
-            <div style={{ fontSize: 12, color: K.muted }}>{t("noChanges")}</div>
-          ) : state.diff.map(d => (
-            <div key={d.field} style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: K.muted, marginBottom: 4 }}>
-                {(FIELDS.some(f => f.key === d.field) ? tf(d.field as FieldKey) : d.field)}
-              </div>
-              <div style={{ fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap", color: K.body }}>
-                {d.ops.map((o, i) => o.op === "equal" ? <span key={i}>{o.text}</span>
-                  : o.op === "delete" ? <del key={i} style={{ background: K.dangerTint, color: K.danger }}>{o.text}</del>
-                  : <ins key={i} style={{ background: K.successSoft, color: K.success, textDecoration: "none" }}>{o.text}</ins>)}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      <DraftActions draft={draft} canEdit={canEdit} canPublish={can(role, "content.publish") || can(role, "review.act")}
+        dirty={changed.length > 0} reasonReady={reasonOk(reason)} busy={busy} on={on} t={t} />
+      {draft && <DraftChecks draft={draft} diff={state.diff} t={t} />}
     </div>
+  );
+}
+
+function DraftNotes({ state, canEdit, t }: { state: DraftState; canEdit: boolean; t: T }) {
+  const editors = state.draft?.editors ?? [];
+  return (
+    <>
+      <Note show={!state.draft} text={t("noDraft")} />
+      <Note show={editors.length > 0} text={t("editedBy", editors.join(", "))} />
+      <Note show={state.two_person_publish} text={t("twoPerson")} />
+      <Note show={!canEdit} text={t("readOnly")} />
+    </>
+  );
+}
+
+function DraftChecks({ draft, diff, t }: { draft: Draft; diff: DraftState["diff"]; t: T }) {
+  return (
+    <>
+      <div style={{ fontSize: 12, marginBottom: 12, color: checksTone(draft.checks_passed) }}>
+        {t(checksKey(draft.checks_passed))}
+      </div>
+      <DiffView diff={diff} t={t} />
+    </>
   );
 }

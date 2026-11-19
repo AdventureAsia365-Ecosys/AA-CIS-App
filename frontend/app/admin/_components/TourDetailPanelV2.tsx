@@ -14,103 +14,10 @@ import { SubjectLabelSection } from "../tenant-qa/quality/PieceLabel";
 import { can } from "@/lib/rbac";
 import TourDraftEditor from "./TourDraftEditor";
 import { D as DRAFT_M } from "./tourDraft.messages";
-
-// ── Types ──────────────────────────────────────────────────────────────────────
-
-export interface JudgeMeta {
-  brand_fit: number | null;
-  distinct: number | null;
-  mission_present: boolean | null;
-  feedback: string | null;
-  judge_score: number | null;
-}
-
-export interface TourDetailFull {
-  raw: {
-    tour_id: string;
-    src_name: string;
-    src_subtitle: string | null;
-    src_summary: string | null;
-    src_description: string | null;
-    src_highlights: string[] | null;
-    src_itineraries: string | null;
-    country: string | null;
-    duration: string | null;
-    price_raw: string | null;
-    group_size: string | null;
-    period: string | null;
-    provider: string | null;
-    inclusions: string | null;
-    exclusions: string | null;
-    pipeline_status: string;
-    ingest_at: string | null;
-  };
-  generated: {
-    id: string;
-    version_num: number;
-    created_at: string | null;
-    status: string;
-    aa_name: string;
-    aa_subtitle: string | null;
-    aa_summary: string | null;
-    aa_description: string | null;
-    aa_highlights: string[] | null;
-    aa_itineraries: string | null;
-    seo_title: string | null;
-    seo_meta: string | null;
-    seo_keywords_used: string[] | null;
-    model_editorial: string | null;
-    score_overall: number | null;
-    score_brand: number | null;
-    score_seo: number | null;
-    score_structure: number | null;
-    score_quality: number | null;
-    brand_audit_status: string | null;
-    judge: JudgeMeta | null;
-  } | null;
-  published: {
-    id: string;
-    aa_name: string;
-    aa_subtitle: string | null;
-    quality_score: number | null;
-    published_at: string | null;
-  } | null;
-}
-
-interface HistoryRow {
-  id: string;
-  version_num: number;
-  created_at: string | null;
-  status: string;
-  model_editorial: string | null;
-  brand_rules_version: number | null;
-  brand_name: string | null;
-  prompt_version: string | null;
-  score_overall: number | null;
-  score_brand: number | null;
-  score_seo: number | null;
-  score_structure: number | null;
-  llm_model: string | null;
-  cost_usd: number | null;
-}
-
-interface VersionContent {
-  id: string;
-  version_num: number;
-  model_id: string | null;
-  quality_score: number | null;
-  created_at: string | null;
-  aa_name: string | null;
-  aa_subtitle: string | null;
-  aa_summary: string | null;
-  aa_highlights: string[];
-  aa_itineraries: string | null;
-  seo_title: string | null;
-  seo_meta: string | null;
-}
+import type { TourDetailFull, HistoryRow, VersionContent } from "./tourDetail.types";
+export type { JudgeMeta, TourDetailFull } from "./tourDetail.types";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-
 export function scoreColor(s: number | null | undefined, bands: ScoreBands | null | undefined): string {
   const tone = scoreTone(s, bands);
   return tone === "success" ? K.success : tone === "warning" ? K.amber : tone === "danger" ? K.danger : K.muted2;
@@ -149,6 +56,40 @@ function commaToArray(text: string): string[] {
   return text.split(",").map(s => s.trim()).filter(Boolean);
 }
 
+function FieldHint({ text }: { text?: string }) {
+  return text ? <div style={{ fontSize: 11, color: K.muted, marginTop: 3 }}>{text}</div> : null;
+}
+
+/** AA-1146: the fields of the source tour the role changed and may write (price_raw only with reference_price.write). */
+function changedRaw(draft: Record<string, string>, raw: TourDetailFull["raw"] | undefined, canEditPrice: boolean) {
+  const body: Record<string, string | string[]> = {};
+  for (const [k, v] of Object.entries(draft)) {
+    const before = k === "src_highlights" ? arrayToText(raw?.src_highlights) : rawText(raw, k);
+    if (v === before || (k === "price_raw" && !canEditPrice)) continue;
+    body[k] = k === "src_highlights" ? textToArray(v) : v;
+  }
+  return body;
+}
+
+function priceHintText(canEditPrice: boolean, text: string): string | undefined {
+  return canEditPrice ? undefined : text;
+}
+
+function rawText(raw: TourDetailFull["raw"] | undefined, k: string): string {
+  return String((raw as unknown as Record<string, unknown> | undefined)?.[k] ?? "");
+}
+
+function RawSaveBar({ canEdit, saving, onSave, labels }: {
+  canEdit: boolean; saving: boolean; onSave: () => void; labels: { saving: string; saveAll: string; readOnly: string };
+}) {
+  if (!canEdit) return <div style={{ fontSize: 12, color: K.muted, marginTop: 8 }}>{labels.readOnly}</div>;
+  return (
+    <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+      <Button variant="primary" onClick={onSave} disabled={saving}>{saving ? labels.saving : labels.saveAll}</Button>
+    </div>
+  );
+}
+
 // ── EditableField ─────────────────────────────────────────────────────────────
 
 function EditableField({ label, initialValue, onSave, onChange, rows, charLimit, placeholder, readOnly, hint }: {
@@ -177,7 +118,7 @@ function EditableField({ label, initialValue, onSave, onChange, rows, charLimit,
   }
 
   async function handleBlur() {
-    if (readOnly || value === lastSaved || state === "saving") return;
+    if (value === lastSaved || state === "saving") return;   // a read-only box never changes
     setState("saving");
     try {
       await onSave(value);
@@ -242,7 +183,7 @@ function EditableField({ label, initialValue, onSave, onChange, rows, charLimit,
           style={inputStyle}
         />
       )}
-      {hint && <div style={{ fontSize: 11, color: K.muted, marginTop: 3 }}>{hint}</div>}
+      <FieldHint text={hint} />
     </div>
   );
 }
@@ -408,6 +349,7 @@ function TourDetailPanel({ tourId, tourName, rewriteCount = 0, onClose }: PanelP
   // AA-1146: the source tour's fields follow the role (content.write); the price text only reference_price.write (D5)
   const canEditRaw = can(role, "content.write");
   const canEditPrice = can(role, "reference_price.write");
+  const priceHint = priceHintText(canEditPrice, td("priceReadOnly"));
   const rel = useRelTime();
   const [detail, setDetail] = useState<TourDetailFull | null>(null);
   const [loading, setLoading] = useState(true);
@@ -506,14 +448,7 @@ function TourDetailPanel({ tourId, tourName, rewriteCount = 0, onClose }: PanelP
   async function saveAllRaw() {
     setSavingAll(true);
     try {
-      const r0 = detail?.raw;
-      const body: Record<string, string | string[]> = {};
-      for (const [k, v] of Object.entries(rawDraft)) {
-        if (k === "price_raw" && !canEditPrice) continue;
-        const before = k === "src_highlights" ? arrayToText(r0?.src_highlights)
-          : String((r0 as unknown as Record<string, unknown> | undefined)?.[k] ?? "");
-        if (v !== before) body[k] = k === "src_highlights" ? textToArray(v ?? "") : v;
-      }
+      const body = changedRaw(rawDraft, detail?.raw, canEditPrice);
       if (Object.keys(body).length === 0) { showToast(t("allSaved"), "success"); return; }
       const res = await fetch(`/api/admin/tours/${tourId}/raw`, {
         method: "PATCH",
@@ -682,7 +617,7 @@ function TourDetailPanel({ tourId, tourName, rewriteCount = 0, onClose }: PanelP
                 <EditableField label={t("fCountry")} initialValue={raw?.country || ""} onSave={v => saveRaw("country", v)} onChange={v => setRawDraft(d => ({ ...d, country: v }))} readOnly={!canEditRaw} />
                 <EditableField label={t("fDuration")} initialValue={raw?.duration || ""} onSave={v => saveRaw("duration", v)} onChange={v => setRawDraft(d => ({ ...d, duration: v }))} readOnly={!canEditRaw} />
                 <EditableField label={t("fGroupSize")} initialValue={raw?.group_size || ""} onSave={v => saveRaw("group_size", v)} onChange={v => setRawDraft(d => ({ ...d, group_size: v }))} readOnly={!canEditRaw} />
-                <EditableField label={t("fPrice")} initialValue={raw?.price_raw || ""} onSave={v => saveRaw("price_raw", v)} onChange={v => setRawDraft(d => ({ ...d, price_raw: v }))} readOnly={!canEditPrice} hint={canEditPrice ? undefined : td("priceReadOnly")} />
+                <EditableField label={t("fPrice")} initialValue={raw?.price_raw || ""} onSave={v => saveRaw("price_raw", v)} onChange={v => setRawDraft(d => ({ ...d, price_raw: v }))} readOnly={!canEditPrice} hint={priceHint} />
                 <EditableField label={t("fPeriod")} initialValue={raw?.period || ""} onSave={v => saveRaw("period", v)} onChange={v => setRawDraft(d => ({ ...d, period: v }))} readOnly={!canEditRaw} />
                 <EditableField label={t("fProvider")} initialValue={raw?.provider || ""} onSave={v => saveRaw("provider", v)} onChange={v => setRawDraft(d => ({ ...d, provider: v }))} readOnly={!canEditRaw} />
               </div>
@@ -700,15 +635,8 @@ function TourDetailPanel({ tourId, tourName, rewriteCount = 0, onClose }: PanelP
               <EditableField label={t("fDescription")} initialValue={raw?.src_description || ""} onSave={v => saveRaw("src_description", v)} onChange={v => setRawDraft(d => ({ ...d, src_description: v }))} rows={6} readOnly={!canEditRaw} />
               <EditableField label={t("fInclusions")} initialValue={raw?.inclusions || ""} onSave={v => saveRaw("inclusions", v)} onChange={v => setRawDraft(d => ({ ...d, inclusions: v }))} rows={4} readOnly={!canEditRaw} />
               <EditableField label={t("fExclusions")} initialValue={raw?.exclusions || ""} onSave={v => saveRaw("exclusions", v)} onChange={v => setRawDraft(d => ({ ...d, exclusions: v }))} rows={4} readOnly={!canEditRaw} />
-              {canEditRaw ? (
-                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
-                  <Button variant="primary" onClick={saveAllRaw} disabled={savingAll}>
-                    {savingAll ? t("saving") : t("saveAll")}
-                  </Button>
-                </div>
-              ) : (
-                <div style={{ fontSize: 12, color: K.muted, marginTop: 8 }}>{td("readOnly")}</div>
-              )}
+              <RawSaveBar canEdit={canEditRaw} saving={savingAll} onSave={saveAllRaw}
+                labels={{ saving: t("saving"), saveAll: t("saveAll"), readOnly: td("readOnly") }} />
             </div>
           ) : tab === "rewrite" ? (
             gen ? (

@@ -44,3 +44,26 @@ async def enforce_publish_gate(conn: Any, request: Request, *, editors: Iterable
     if code is not None:
         raise HTTPException(status_code=403, detail={"code": code, "message": gate.MESSAGES[code]},
                             headers={"X-Error-Code": code})
+
+
+async def review_publish_gate(conn: Any, request: Request, review_id: str, tenant_id: str) -> None:
+    """The publish gate of a Review Queue approve (api/routers/v1_pipeline.py approve_review): the editors are the
+    version's draft editors and its last hand editor (reviewed_by). No extra read while the switch is off."""
+    from services.content_generation import tour_draft as td
+    if not await gate.switch_on(conn):
+        return
+    row = await conn.fetchrow("""
+        SELECT gc.reviewed_by::text AS reviewed_by, gc.edit_diff
+          FROM silver_aa_internal.review_queue rq
+          JOIN silver_aa_internal.generated_content gc ON gc.id = rq.generated_content_id
+         WHERE rq.id = $1::uuid AND rq.tenant_id = $2::uuid
+    """, review_id, tenant_id)
+    editors = td.editors_of(row["edit_diff"], None) if row is not None else []
+    if row is not None and row["reviewed_by"]:
+        editors.append(f"admin:{row['reviewed_by']}")
+    await enforce_publish_gate(conn, request, editors=editors)
+
+
+def lock_kw(request: Request) -> dict:
+    """Who published, for the hand-edit lock process_export sets on a hand-edited version."""
+    return {"lock_by": request_actor(request)}

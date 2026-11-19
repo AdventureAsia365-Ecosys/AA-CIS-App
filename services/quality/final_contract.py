@@ -80,6 +80,8 @@ EXITS: dict[str, dict[str, tuple[str, ...]]] = {
             ("done", "hitl", "resumed", "resumed_hitl", "batch", "batch_hitl", "revalidation"),
         # the version INSERT of an S1 run (records the graph's contract with the stored sha)
         "api/routers/admin_pipeline/_engine.py::_execute_run_tour": ("done", "hitl", "resumed", "batch"),
+        # its auto publish of an approved version (AA-1146: a helper of _execute_run_tour)
+        "api/routers/admin_pipeline/_engine.py::_auto_publish": ("auto_publish",),
         # the re-validation of a human edit (stores the graph's revalidation record)
         "api/routers/admin_pipeline/_revalidate.py::_revalidate_tour": ("revalidation",),
         # a reviewer's edit of a version's text

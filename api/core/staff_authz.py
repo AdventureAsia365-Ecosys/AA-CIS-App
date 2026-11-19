@@ -78,11 +78,7 @@ logger = structlog.get_logger()
 CONTENT_READ = "content.read"
 CONTENT_WRITE = "content.write"              # upload, S1 rewrite, regenerate
 REVIEW_ACT = "review.act"
-# AA-1146 D1 (tech lead S285): publish a tour version (Review Queue approve, promote, a draft version's publish).
-# Held by admin and content_lead. content publishes through review.act only while the setting
-# cis.content.publish_two_person is off; with it on, every publish route also needs this capability and a publisher
-# other than the draft's author (api/services/content_publish_gate.py, checked by the route in its transaction).
-CONTENT_PUBLISH = "content.publish"
+CONTENT_PUBLISH = "content.publish"   # AA-1146 D1: publish a tour version; two-person rule: content_publish_gate.py
 MASTER_ADMIN = "master.admin"
 ATOMS_WRITE = "atoms.write"
 PHOTOS_WRITE = "photos.write"
@@ -176,8 +172,6 @@ ROLE_PERMS: dict[str, frozenset[str]] = {
         SETTINGS_APPROVE, LEARN_PREVIEW,
     },
     # AA Catalogue W, Tenant QA W, Writing Lab R (wave, review queue, master content, atoms / photos, SEO).
-    # AA-1146 D1 / D5 (S285): content.publish; no reference_price.write any more (prices are entered by
-    # customer_success, then in Booking), the read stays.
     "content_lead": _CONTENT_WORK | {
         CONTENT_PUBLISH, MASTER_ADMIN, ATOMS_WRITE, PHOTOS_WRITE, A4_UNPUBLISH, QUALITY_WRITE, CONTENT_SETTINGS_WRITE,
         CATALOG_READ, TENANT_CONTENT_READ, LAB_READ, WAVE_RUN, NOTIFICATIONS_READ, REFERENCE_PRICE_READ,
@@ -504,19 +498,14 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/view-as/sessions/{session_id}/end"): TENANT_VIEW_AS,
 
     # ── admin_pipeline — Upload (S0), every staff role
-    ("POST", "/admin/upload-url"): CONTENT_WRITE,
-    ("POST", "/admin/ingest-s3"): CONTENT_WRITE,
+    ("POST", "/admin/upload-url"): CONTENT_WRITE, ("POST", "/admin/ingest-s3"): CONTENT_WRITE,
     ("POST", "/admin/upload-staging/{staging_id}/decide"): CONTENT_WRITE,
     ("POST", "/admin/raw-tours/{tour_id}/set-active"): CONTENT_WRITE,
     ("DELETE", "/admin/raw-tours/{tour_id}"): CONTENT_WRITE,
     # admin_pipeline — S1 rewrite, every staff role
-    ("POST", "/admin/run-tour"): CONTENT_WRITE,
-    ("POST", "/admin/run-tour-async"): CONTENT_WRITE,
-    ("POST", "/admin/s1-batch/submit"): CONTENT_WRITE,
-    ("POST", "/admin/s1/seo-prefetch"): CONTENT_WRITE,
+    ("POST", "/admin/run-tour"): CONTENT_WRITE, ("POST", "/admin/run-tour-async"): CONTENT_WRITE,
+    ("POST", "/admin/s1-batch/submit"): CONTENT_WRITE, ("POST", "/admin/s1/seo-prefetch"): CONTENT_WRITE,
     # admin_pipeline — Review Queue + tour edits, every staff role
-    # AA-1146 D1: a publish route takes content.publish or review.act; the route adds the two-person rule
-    # (api/services/content_publish_gate.py) when cis.content.publish_two_person is on.
     ("POST", "/admin/review-queue/{review_id}/approve"): any_of(CONTENT_PUBLISH, REVIEW_ACT),
     ("POST", "/admin/review-queue/{review_id}/reject"): REVIEW_ACT,
     ("POST", "/admin/review-queue/{review_id}/dismiss"): REVIEW_ACT,
@@ -528,10 +517,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("PATCH", "/admin/tours/{tour_id}/generated/{content_id}"): CONTENT_WRITE,
     ("POST", "/admin/tours/{tour_id}/generated/{content_id}/revalidate"): CONTENT_WRITE,
     ("POST", "/admin/tours/{tour_id}/versions/{version_num}/promote"): any_of(CONTENT_PUBLISH, REVIEW_ACT),
-    # AA-1146: the one open human draft of a tour's wording (create / edit / discard), its publish through the gate,
-    # and the Master's hand-edit lock (lifted by a person only).
-    ("PUT", "/admin/tours/{tour_id}/draft"): CONTENT_WRITE,
-    ("DELETE", "/admin/tours/{tour_id}/draft"): CONTENT_WRITE,
+    ("PUT", "/admin/tours/{tour_id}/draft"): CONTENT_WRITE, ("DELETE", "/admin/tours/{tour_id}/draft"): CONTENT_WRITE,
     ("POST", "/admin/tours/{tour_id}/draft/publish"): any_of(CONTENT_PUBLISH, REVIEW_ACT),
     ("POST", "/admin/tours/{tour_id}/unlock"): MASTER_ADMIN,
     # admin_pipeline — brand rules + AA brand identity (Settings › Brand; §5.1 content.settings.write).
@@ -550,8 +536,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/infra/status"): OPS_READ,
 
     # ── admin_atoms — Social Content atoms (Atom Curation page, admin-only)
-    ("POST", "/admin/atoms/atomize"): ATOMS_WRITE,
-    ("PATCH", "/admin/atoms/{atom_id}"): ATOMS_WRITE,
+    ("POST", "/admin/atoms/atomize"): ATOMS_WRITE, ("PATCH", "/admin/atoms/{atom_id}"): ATOMS_WRITE,
     # AA-1035: the AA atom store is catalog.read (was tenant.read, which also gated the directory and tenant text)
     ("GET", "/admin/atoms"): CATALOG_READ,
     ("GET", "/admin/atoms/summary"): CATALOG_READ,

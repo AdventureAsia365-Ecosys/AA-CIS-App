@@ -333,7 +333,7 @@ def test_approve_trash_between_claim_and_export_dismisses_and_409s():
 def test_s1_auto_export_treats_a_dead_source_as_a_warning_and_files_a_dismissed_review():
     import inspect
     from api.routers import admin_pipeline
-    src = inspect.getsource(admin_pipeline._execute_run_tour)
+    src = inspect.getsource(admin_pipeline._auto_publish)   # AA-1146: the S1 auto publish, out of _execute_run_tour
     refused = src.index("except SourceNotLiveError as _dead:")
     generic = src.index('logger.error("export_failed"')
     assert refused < generic                             # caught before the generic error log (no Sentry noise)

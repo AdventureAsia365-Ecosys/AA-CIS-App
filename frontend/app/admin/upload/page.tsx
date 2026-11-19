@@ -13,7 +13,8 @@ import {
 } from "../../_kit";
 import { phoneCardColumns } from "@/lib/tableSort";
 import { UP } from "./messages";
-import MergePanel, { type MergeChoice } from "./MergePanel";
+import { MergeSlot, type MergeChoice } from "./MergePanel";
+import { canConfirm, decisionBody, decisionLabels, type Decision } from "./stagingDecisions";
 
 const TENANT_ID = "00000000-0000-0000-0000-000000000001";
 
@@ -726,32 +727,6 @@ function UploadHistorySection({ history, loading, onRefresh }: {
 
 // ─── DuplicateReview (Step 5) ─────────────────────────────────────────────────
 
-type Decision = "bypass" | "replace" | "keep_both" | "restore" | "create_new" | "merge";
-
-// Message keys (messages.ts).
-// AA-1146 T1: "merge" keeps the tour and its hand edits, taking the untouched fields from the sheet (MergePanel).
-const DECISION_LABELS: Record<"bypass" | "merge" | "replace" | "keep_both",
-  "decBypass" | "decMerge" | "decReplace" | "decKeepBoth"> = {
-  bypass:    "decBypass",
-  merge:     "decMerge",
-  replace:   "decReplace",
-  keep_both: "decKeepBoth",
-};
-
-// AA-986 L2 (Q6, ADR 0015) — a re-upload of a tour deleted at S0/A0 never revives it silently: staff choose to
-// restore the deleted tour (tenants that were warned are told it is back) or to start a new tour from the row.
-const DELETED_DECISION_LABELS: Record<"bypass" | "restore" | "create_new", "decBypass" | "decRestore" | "decCreateNew"> = {
-  bypass:     "decBypass",
-  restore:    "decRestore",
-  create_new: "decCreateNew",
-};
-
-function decisionLabels(
-  item: StagingItem,
-): Record<string, "decBypass" | "decMerge" | "decReplace" | "decKeepBoth" | "decRestore" | "decCreateNew"> {
-  return item.matched_deleted ? DELETED_DECISION_LABELS : DECISION_LABELS;
-}
-
 function DuplicateReviewStep({
   batchIds,
   onDone,
@@ -799,19 +774,11 @@ function DuplicateReviewStep({
     for (const item of items) {
       if (submitted[item.staging_id]) continue;
       const dec = decisions[item.staging_id] || "bypass";
-      const merge = merges[item.staging_id];
-      if (dec === "merge" && !merge?.ready) {
-        results[item.staging_id] = false;
-        failures.push(`${item.incoming.src_name || "—"}: ${t("mergeNeedsReason")}`);
-        continue;
-      }
       try {
         const res = await fetch(`/api/admin/upload-staging/${item.staging_id}/decide`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(dec === "merge"
-            ? { decision: dec, resolutions: merge.resolutions, reason: merge.reason }
-            : { decision: dec }),
+          body: JSON.stringify(decisionBody(dec, merges[item.staging_id])),
         });
         results[item.staging_id] = res.ok;
         if (!res.ok) {
@@ -983,10 +950,8 @@ function DuplicateReviewStep({
                   </Select>
                 </div>
               )}
-              {!submitted[item.staging_id] && decisions[item.staging_id] === "merge" && (
-                <MergePanel stagingId={item.staging_id}
-                  onChange={choice => setMerges(prev => ({ ...prev, [item.staging_id]: choice }))} />
-              )}
+              <MergeSlot stagingId={item.staging_id} open={decisions[item.staging_id] === "merge"}
+                done={!!submitted[item.staging_id]} onChange={c => setMerges(prev => ({ ...prev, [item.staging_id]: c }))} />
             </div>
           ))}
         </div>
@@ -997,7 +962,7 @@ function DuplicateReviewStep({
           <Button variant="secondary" onClick={onDone}>{t("skipLater")}</Button>
           <Button
             variant="primary"
-            disabled={submitting}
+            disabled={!canConfirm(submitting, items, decisions, merges)}
             onClick={confirmAll}
             style={{
               background: K.accent, border: `1px solid ${K.accent}`,
