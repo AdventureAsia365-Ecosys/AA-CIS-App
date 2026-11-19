@@ -126,3 +126,25 @@ def test_a_drafts_plan_lists_what_registration_would_refuse(fakes):
     out = asyncio.run(runner.plan(_Pool(), pr.load("w5-t9")))
     assert out["registration_problems"] == [] and not any(b.startswith("registration") for b in out["blocking"])
     assert any("status is draft" in b for b in out["blocking"])
+
+
+# ── an item the claim judge cannot read ─────────────────────────────────────────────────────────────────────────
+
+def test_a_sample_item_without_a_judgeable_control_output_blocks_the_plan(fakes, monkeypatch):
+    fakes["version"] = "1.5.0"
+
+    async def instrument_check(pool, *, instrument, writer, outputs, arms):
+        return {"judge": {"instrument": instrument, "call": {"usd": 0.07, "outputs": 11}},
+                "arms": {a: {"usd_max": 1.0, "calls_missing": False} for a in arms}, "blocking": []}
+    monkeypatch.setattr(runner.price, "instrument_check", instrument_check)
+    out = asyncio.run(runner.plan(_Pool(), pr.load("w5-t9")))
+    assert any(b.startswith("1 of the 12 sample items have no judgeable control output") for b in out["blocking"])
+
+
+@pytest.mark.parametrize("priced,judge,want", [(12, None, []), (0, None, []), (None, None, []),
+                                              (11, {"model_key": "zz", "connection": "zz-c"}, [])])
+def test_unjudgeable_is_silent_when_every_item_is_priced_or_the_judge_is_plain(priced, judge, want):
+    pre = pr.load("w5-t9")
+    if judge is not None:
+        pre = pr.Prereg(doc={**pre.doc, "judge": judge}, sha256=pre.sha256)
+    assert runner._unjudgeable(pre, {"judge": {"call": {"outputs": priced}}}) == want

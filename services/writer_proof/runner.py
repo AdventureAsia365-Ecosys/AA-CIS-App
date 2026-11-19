@@ -181,8 +181,23 @@ async def _price_and_null_run(pool, pre: pr.Prereg, out: dict, estimates: dict[s
         estimates[arm] = max(estimates[arm], float(pc["usd_max"]))
     out["estimated_usd_max"] = round(sum(estimates.values()), 4) if estimates else None
     out["null_run"] = await null_gate(pool, pre)          # root ADR 0020 W5: the null run proves the eval stable first
-    return list(out["price_check"]["blocking"]) + ([out["null_run"]["blocking"]] if out["null_run"].get("blocking")
-                                                   else [])
+    return (list(out["price_check"]["blocking"]) + _unjudgeable(pre, out["price_check"])
+            + ([out["null_run"]["blocking"]] if out["null_run"].get("blocking") else []))
+
+
+def _unjudgeable(pre: pr.Prereg, price_check: dict) -> list[str]:
+    """S285: a blocking line when a claim instrument judge priced fewer control outputs than the sample has items (an
+    item without a stored control, or over the eval judge's evidence cap, `eval_judge.InputOverCap`): such an item can
+    never pair, so `paired_all` would make the paid verdict invalid. A plain judge's price does not read outputs. Pure."""
+    if not (pre.doc.get("judge") or {}).get("instrument"):
+        return []
+    priced = ((price_check.get("judge") or {}).get("call") or {}).get("outputs")
+    n = len(pre.doc.get("sample_ids") or [])
+    if priced is None or not priced or priced >= n:      # 0: price.instrument_check already blocks ("no output")
+        return []
+    return [f"{n - priced} of the {n} sample items have no judgeable control output (missing, or over the eval "
+            "judge's evidence cap): they can never pair (paired_all), so the verdict would be invalid; draft the "
+            "sample without them"]
 
 
 async def plan(pool, pre: pr.Prereg, *, r1_report: Optional[str] = None, instrument: Optional[str] = None,
