@@ -21,6 +21,9 @@
 #                   but --ci) then blocks a push whose changed integration tests have no stamp. Skip once, visibly:
 #                   AA_PREPUSH_SKIP_INTEGRATION=1 git push (say so in the PR body).
 #   --self-test     runs the decision logic on fixture diffs; invokes no lint/test tool.
+#   --select-only   AA-1136: print the test files fast mode and --integration would pick for the changes vs the base,
+#                   committed or not ("unit <path>" / "integration <path>" lines, "note <text>" for warnings), and exit
+#                   0; runs no tool and writes nothing (for the agent change hooks, to call once when a lane stops).
 #   --dry-run       prints the changed-file count and the checks it would run, then exits.
 #   --only a,b      run only these check ids (see CHECK_IDS, plus gitleaks).
 #   gitleaks        AA-1024 G14: every mode but --ci scans the pushed commits (<base>..<head>) with gitleaks v8.30.1 (the
@@ -295,6 +298,48 @@ for node in data:
 PYEOF
 }
 
+# worktree_changes BASE HEAD: the changed paths since the merge base, committed or not (the committed diff, staged and
+# unstaged changes of tracked files, untracked files git does not ignore), one per line. Fails when the diff fails.
+worktree_changes() {
+  local out
+  out=$(changed_files "$1" "$2" 2>/dev/null | tr '\0' '\n') || return 1
+  {
+    [[ -n $out ]] && printf '%s\n' "$out"
+    git -c core.quotePath=false diff --name-only HEAD
+    git -c core.quotePath=false ls-files --others --exclude-standard
+  } | sed '/^$/d' | sort -u
+}
+
+# select_only BASE HEAD (--select-only): the unit and integration test files for the changes, as "unit <path>" /
+# "integration <path>" lines, warnings as "note <text>" lines. Always exits 0; runs no tool and writes nothing.
+select_only() {
+  local files=() line
+  if ! git rev-parse -q --verify "$1^{commit}" >/dev/null || ! git merge-base "$1" "$2" >/dev/null 2>&1; then
+    echo "note cannot diff $2 against $1 (git fetch origin?): nothing selected"
+    return 0
+  fi
+  if ! line=$(worktree_changes "$1" "$2"); then
+    echo "note cannot diff $2 against $1: nothing selected"
+    return 0
+  fi
+  [[ -n $line ]] && mapfile -t files <<<"$line"
+  while IFS= read -r line; do
+    case $line in
+      OVER*) echo "note ${line#OVER } unit test files match (cap $MAX_TEST_FILES): only the name-matched ones are listed" ;;
+      WARN*) echo "note ${line#WARN }" ;;
+      ?*) echo "unit $line" ;;
+    esac
+  done < <(unit_targets "${files[@]}")
+  while IFS= read -r line; do
+    case $line in
+      OVER*) echo "note ${line#OVER } integration test files match (cap $MAX_INTEGRATION_FILES): only the changed ones are listed" ;;
+      WARN*) echo "note ${line#WARN }" ;;
+      ?*) echo "integration $line" ;;
+    esac
+  done < <(integration_targets "${files[@]}")
+  return 0
+}
+
 # --- self-test ------------------------------------------------------------------------------------------------------
 self_test() {
   local fails=0 n=0 r
@@ -409,6 +454,24 @@ self_test() {
   )
   rm -rf "$tmp"
   r=0; [[ $got == $'services/\xc3\xa9 a.py' ]] || r=1; verdict "non-ASCII file name is listed raw (core.quotePath=false)" "$got" "$r"
+  # AA-1136 --select-only on a throwaway repo: committed, staged, unstaged and untracked changes count, ignored files
+  # do not; a missing base is a note (exit 0).
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/pre-push-sel.XXXXXX")
+  got=$(
+    cd "$tmp" && git init -q -b main . && mkdir -p services tests/unit tests/integration &&
+      for m in alpha beta gamma delta; do : >"services/$m.py"; echo "import services.$m" >"tests/unit/test_$m.py"; done &&
+      : >tests/integration/test_epsilon.py && echo 'scratch_*' >.gitignore && git add -A &&
+      git -c user.name=t -c user.email=t@t commit -q -m a && git switch -q -c lane &&
+      echo x >services/alpha.py && git -c user.name=t -c user.email=t@t commit -q -am b &&
+      echo y >services/beta.py && git add services/beta.py && echo z >services/gamma.py &&
+      echo w >tests/integration/test_epsilon.py && : >services/scratch_x.py && : >tests/unit/test_zeta.py &&
+      select_only main HEAD | tr '\n' '|' && select_only no-such-ref HEAD; echo "rc=$?"
+  )
+  rm -rf "$tmp"
+  local want="unit tests/unit/test_alpha.py|unit tests/unit/test_beta.py|unit tests/unit/test_gamma.py|"
+  want+="unit tests/unit/test_zeta.py|integration tests/integration/test_epsilon.py|"
+  want+=$'note cannot diff HEAD against no-such-ref (git fetch origin?): nothing selected\nrc=0'
+  r=0; [[ $got == "$want" ]] || r=1; verdict "--select-only: committed + staged + unstaged + untracked, not ignored" "$got" "$r"
 
   echo
   if (( fails )); then echo "self-test: $fails of $n FAILED"; return 1; fi
@@ -791,7 +854,7 @@ main() {
   # origin/main shared by every worktree). Drop them once cwd is the top level, so git finds the repo by itself.
   unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES \
     GIT_NAMESPACE GIT_PREFIX GIT_CEILING_DIRECTORIES GIT_DISCOVERY_ACROSS_FILESYSTEM
-  MODE=fast CI_MODE=0 DRY=0 ONLY="" HEAD_REF=HEAD BASE=${AA_PREPUSH_BASE:-origin/main} RUN_INTEGRATION=0
+  MODE=fast CI_MODE=0 DRY=0 ONLY="" HEAD_REF=HEAD BASE=${AA_PREPUSH_BASE:-origin/main} RUN_INTEGRATION=0 SELECT_ONLY=0
   [[ ${AA_PREPUSH:-} == full ]] && MODE=full
   while (( $# )); do
     case $1 in
@@ -800,6 +863,7 @@ main() {
       --ci) CI_MODE=1; MODE=full ;;
       --self-test) self_test; exit $? ;;
       --integration) RUN_INTEGRATION=1 ;;
+      --select-only) SELECT_ONLY=1 ;;
       --dry-run) DRY=1 ;;
       --only|--base|--head)
         if (( $# < 2 )); then echo "pre-push: $1 needs a value (usage: $1 <value>; see --help)" >&2; exit 2; fi
@@ -810,6 +874,7 @@ main() {
     esac
     shift
   done
+  if [[ $SELECT_ONLY == 1 ]]; then select_only "$BASE" "$HEAD_REF"; exit 0; fi
   PY=$(pick_python)
 
   CHANGED=()
