@@ -13,8 +13,10 @@
 //   E2ECS=1 ONE_SIGN_IN_EMAIL=<their company address> EXPECT_BOOKING=none \
 //     npx playwright test --project=admin-evidence one-sign-in --headed
 //
-// EXPECT_BOOKING=none: the "Content + Product & operations" preset gives NO Booking role until custom roles exist, so
-// Booking must answer 403 no_booking_role after the silent sign-in, still without a second prompt.
+// EXPECT_BOOKING=none: the "Content + Product & operations" preset gives NO Booking role until custom roles exist. The
+// silent sign-in still completes without a second prompt, then the Booking callback refuses it (API 403 no_booking_role):
+// no Booking session, the refresh token is revoked and the person lands on Booking /login?reason=no_booking_role, which
+// shows the "no Booking role yet" message. That landing, with no e-mail field on screen, is the success state.
 //
 // Output (tests/e2e/results/admin-evidence/, gitignored): one-sign-in-*.png and one-sign-in-hops.json (hosts and paths
 // of every top-level navigation, no query strings), and a Playwright trace one-sign-in-trace.zip that starts only AFTER
@@ -82,17 +84,26 @@ test.describe('AA-1150 — one sign-in opens CIS and Booking', () => {
     const go = page.getByRole('link', { name: /sign in with company email/i })
       .or(page.getByRole('button', { name: /sign in with company email/i })).first();
     if (await go.isVisible({ timeout: 10000 }).catch(() => false)) await go.click();
+    // Success state per mode: 'role' = back on a Booking staff page; 'none' = the callback's refusal landing,
+    // Booking /login?reason=no_booking_role (the plain /login we started from does not count).
+    const landed = EXPECT_BOOKING === 'none' ? 'no-role-landing' : 'back-on-booking';
     await expect.poll(async () => {
       if (await emailPromptVisible(page)) return 'second-prompt';
       const u = new URL(page.url());
-      return u.origin === BOOKING && !u.pathname.startsWith('/login') ? 'back-on-booking' : 'redirecting';
-    }, { timeout: 45000, intervals: [500, 1000, 2000] }).toBe('back-on-booking');
+      if (u.origin !== BOOKING) return 'redirecting';
+      if (u.pathname.startsWith('/login')) {
+        return u.searchParams.get('reason') === 'no_booking_role' ? 'no-role-landing' : 'redirecting';
+      }
+      return 'back-on-booking';
+    }, { timeout: 45000, intervals: [500, 1000, 2000] }).toBe(landed);
 
-    const me = await context.request.get(`${BOOKING}/api/booking/staff/me`, { timeout: 20000 });
     if (EXPECT_BOOKING === 'none') {
-      expect(me.status(), 'content + operations has no Booking role yet').toBe(403);
-      expect(await me.text()).toContain('no_booking_role');
+      // The refusal message is on screen, and no Booking session was set (the BFF answers 401, not a staff profile).
+      await expect(page.getByText(/no Booking role yet/i)).toBeVisible({ timeout: 15000 });
+      const me = await context.request.get(`${BOOKING}/api/booking/staff/me`, { timeout: 20000 });
+      expect(me.status(), 'no Booking session after a no-role sign-in').toBe(401);
     } else {
+      const me = await context.request.get(`${BOOKING}/api/booking/staff/me`, { timeout: 20000 });
       expect(me.status()).toBe(200);
       const body = await me.json();
       expect(body.email?.toLowerCase()).toBe(E2E_CIS_CS_EMAIL);
