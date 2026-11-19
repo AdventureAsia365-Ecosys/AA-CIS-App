@@ -29,6 +29,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 
 RUNNER = "zz854_rds_master"
+MIGRATION_462 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
+                             "462_aa1155_custom_staff_roles.sql")
 MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
                          "247_admin_users_identity.sql")
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
@@ -49,6 +51,8 @@ def _connect(user=DB_USER):
 
 
 def _undo_247(a):
+    # AA-1155: CIS 462's contract view reads staff_app_grant and the 247 columns; it goes first and comes back at teardown.
+    a.execute("DROP VIEW IF EXISTS shared.v_staff_booking_grant")
     a.execute("DROP TABLE IF EXISTS shared.staff_app_grant")
     a.execute("ALTER TABLE shared.admin_users "
               "DROP CONSTRAINT IF EXISTS admin_users_email_chk, "
@@ -108,6 +112,8 @@ def rds_like_247():
     finally:
         a.execute("DELETE FROM shared.admin_users WHERE id = %s", (LEGACY_ID,))
         _drop_runner(a)               # schema shared, the tables and the registry back to the test user
+        # AA-1155: put back what the 247 undo removed on top of 247 (the 462 view and CHECKs), as the replay left it.
+        _apply(open(MIGRATION_462, encoding="utf-8").read(), DB_USER)
         admin.close()
 
 
