@@ -51,7 +51,7 @@ from services.acp_content_writing.generate import SentenceRepairError, repair_se
 from services.acp_shared.token_budget import T9_REPAIR_MAX_TOKENS
 from services.acp_content_writing.quality_gates import _length_bounds_for_channel
 from services.acp_content_writing.service import grounding_from_writer_input
-from services.acp_shared import atom_replaced, place_cards, route_guard, seed_audit
+from services.acp_shared import atom_replaced, place_card_list, place_cards, route_guard, seed_audit
 from services.acp_shared.atom_seed import WRITER_FACT_KINDS
 from services.acp_shared.audit_log import AdminAuditAction, PlatformAuditAction, write_audit_log
 from services.acp_shared.brand_pack import fetch_brand_pack_conn
@@ -1808,15 +1808,7 @@ async def list_place_cards(
     status: Optional[str] = None, q: Optional[str] = None, x_admin_secret: str = Header(None),
 ):
     verify_admin_secret(x_admin_secret)
-    where, params = ["true"], []
-    if status:
-        params.append(status)
-        where.append(f"pc.status = ${len(params)}")
-    if q:
-        params.append(f"%{q}%")
-        where.append(f"(pc.display_name ILIKE ${len(params)} OR pc.locality ILIKE ${len(params)} "
-                     f"OR pc.country ILIKE ${len(params)})")
-    w = " AND ".join(where)
+    w, params = place_card_list.list_filter(status, q)   # AA-1156: the My work tile counts with the same filter
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         total = await conn.fetchval(f"SELECT count(*) FROM acp_shared.place_card pc WHERE {w}", *params)

@@ -527,6 +527,10 @@
     "capability": null,
     "module": "api.routers.admin_pipeline"
   },
+  "GET /admin/my-work/summary": {
+    "capability": "review.act|content.write|quality.write",
+    "module": "api.routers.admin_my_work"
+  },
   "GET /admin/notifications": {
     "capability": "notifications.read",
     "module": "api.routers.admin"

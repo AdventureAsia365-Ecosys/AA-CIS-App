@@ -51,6 +51,7 @@ SAMPLES = [
     ("admin_waves", "POST", "/admin/waves/{wave_id}/close", None),
     ("admin_waves", "POST", "/admin/waves/check", None),
     ("admin_overview", "GET", "/admin/overview", None),
+    ("admin_my_work", "GET", "/admin/my-work/summary", None),                           # AA-1156
     ("admin_budgets", "GET", "/admin/budgets", None),
     ("admin_llm_ops", "GET", "/admin/spend/daily", None),
     ("admin_usage_explorer", "GET", "/admin/usage-explorer/query", None),               # AA-1045

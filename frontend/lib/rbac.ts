@@ -44,6 +44,12 @@ const REFERENCE_PRICE_READERS: StaffRole[] = [
   "admin", "content_lead", "content", "customer_success", "finance",
 ];
 const REFERENCE_PRICE_WRITERS: StaffRole[] = ["admin", "customer_success"];
+// AA-1156 — My work (/admin/my-work): the roles holding a tile capability (review.act, content.write or quality.write;
+// lib/myWork.ts MY_WORK_TILES, backend api/routers/admin_my_work.py). tests/unit/test_aa1156_my_work.py derives the
+// set from ROLE_PERMS and keeps this list equal to it.
+const MY_WORK: StaffRole[] = ["admin", "content_lead", "content", "tenant_qa"];
+// AA-1156 — the content roles land on My work after sign-in (admin keeps Overview; the viewer keeps the Review Queue).
+const MY_WORK_LANDING: readonly StaffRole[] = ["content_lead", "content", "tenant_qa"];
 
 // AA-878 — the read-only role (the UI-smoke E2E account). It reads the content pages and is refused on every
 // write: requireAdmin() (lib/auth-server.ts) answers 403 to any non-GET from it before the admin secret is
@@ -83,6 +89,7 @@ export const PAGE_RULES: PageRule[] = [
   { prefix: "/admin/overview", roles: ["admin"] },          // AA-664
   { prefix: "/admin/data-coverage", roles: ["admin"] },     // AA-992 — counts from raw upload to CRM (incl. CRM)
   { prefix: "/admin/reports", roles: ["admin"] },          // AA-1003 — report register, KPI scorecard runs
+  { prefix: "/admin/my-work", roles: MY_WORK },            // AA-1156 — the caller's content queues (tiles by capability)
   // AA-1039 (S266): also the Tenants group pages /admin/tenants/agencies (was /admin/platform/agencies) and
   // /admin/tenants/data-erasure (was /admin/data-erasure).
   // AA-1035 R2: the more specific Tenants pages first (pageRule takes the first match); the directory and Tenant 360
@@ -303,6 +310,7 @@ export function canWriteAdminPath(role: string | null | undefined, method: strin
 /** Landing page after login / for the retired /admin/dashboard. */
 export function landingPage(role: string | null | undefined): string {
   if (role === "admin") return "/admin/overview";
+  if (MY_WORK_LANDING.includes(role as StaffRole)) return "/admin/my-work";   // AA-1156
   if (role === "customer_success" || role === "support" || role === "finance") return "/admin/tenants";   // AA-1035
   if (role === "ai_ops") return "/admin/ai-gateway";
   return "/admin/review";

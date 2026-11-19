@@ -20,7 +20,7 @@ import type { Capability } from "./rbac";
 
 /** Icon keys; app/_kit/adminNav.tsx maps each to a lucide icon (TypeScript checks the map is complete). */
 export type NavIcon =
-  | "overview" | "appHealth" | "reports" | "dataCoverage"
+  | "overview" | "myWork" | "appHealth" | "reports" | "dataCoverage"
   | "tenants" | "agencies" | "erasure" | "plans" | "assignments"
   | "upload" | "rewrite" | "review" | "master" | "atoms" | "places" | "placeCards" | "photos" | "facts" | "supply"
   | "aaContent" | "referencePrices"
@@ -63,6 +63,8 @@ export const ADMIN_GROUP_LABELS = [
 export const ADMIN_IA: IaGroup[] = [
   { label: "Home", items: [
     { href: "/admin/overview", label: "Overview", icon: "overview" },
+    // AA-1156: the content queues of the signed-in role (the landing page of the content roles; admin lands on Overview)
+    { href: "/admin/my-work", label: "My work", icon: "myWork" },
     // Health and running commit of every app (until the Home health strip replaces it).
     { href: "/admin/platform/apps", label: "App health", icon: "appHealth" },
     { href: "/admin/reports", label: "Reports", icon: "reports" },

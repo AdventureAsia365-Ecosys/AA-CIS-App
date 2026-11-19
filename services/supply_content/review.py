@@ -95,17 +95,30 @@ def diff(base: Optional[dict], draft: Optional[dict]) -> list[str]:
                                      tofile=f"v{draft['content_version']}", lineterm=""))
 
 
+# The list's filter ($1 content_status, $2 entity_type; NULL = any): one text for the page (list_entities) and the
+# My work tiles (status_summary, AA-1156), so a tile counts exactly the rows the page lists for the same filter.
+LIST_FILTER_SQL = "($1::text IS NULL OR e.content_status = $1) AND ($2::text IS NULL OR e.entity_type = $2)"
+
+
+async def status_summary(pool, *, status: Optional[str] = None, entity_type: Optional[str] = None) -> dict:
+    """AA-1156 My work: how many entities the list shows for this filter and the oldest ``updated_at`` among them (the
+    entity row moves when its content status changes, so it is about when the item entered this state)."""
+    row = await pool.fetchrow(f"SELECT count(*) AS n, min(e.updated_at) AS oldest FROM shared.supply_entity e "
+                              f"WHERE {LIST_FILTER_SQL}", status, entity_type)
+    return {"count": int(row["n"] or 0), "oldest_at": row["oldest"]}
+
+
 async def list_entities(pool, *, status: Optional[str] = None, entity_type: Optional[str] = None,
                         limit: int = 50, offset: int = 0) -> dict:
     rows = await pool.fetch(
-        """
+        f"""
         SELECT e.id::text AS id, e.source_id, e.entity_type, e.service_type, e.title, e.country_code,
                e.applied_supply_version, e.active, e.content_status, e.updated_at,
                (SELECT count(*) FROM shared.supply_content_version v
                  WHERE v.entity_id = e.id AND v.status = 'draft') AS open_drafts,
                count(*) OVER () AS total
           FROM shared.supply_entity e
-         WHERE ($1::text IS NULL OR e.content_status = $1) AND ($2::text IS NULL OR e.entity_type = $2)
+         WHERE {LIST_FILTER_SQL}
          ORDER BY e.updated_at DESC, e.id
          LIMIT $3 OFFSET $4
         """, status, entity_type, limit, offset)

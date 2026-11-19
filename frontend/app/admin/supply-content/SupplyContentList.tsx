@@ -16,7 +16,7 @@
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import {
   Badge,
   Button,
@@ -34,6 +34,7 @@ import {
   ENTITY_TYPES,
   STATUS_TONE,
   detailHref,
+  filtersFromSearch,
   listUrl,
   supplyErrorText,
   type ContentStatus,
@@ -48,6 +49,14 @@ import { SC } from "./messages";
 import { useSupplyText } from "./useSupplyText";
 
 export const LIST_KEY = ["supply-content-list"] as const;
+const NO_FILTERS: ListFilters = { status: "", type: "" };
+const noopSubscribe = () => () => {};
+
+/** AA-1156: the filters a link opened the page with (?status=, the My work tiles), read once hydrated so the server
+ *  render and the first client render agree (the Place cards pattern); empty on the server. */
+function initialFilters(hydrated: boolean): ListFilters {
+  return hydrated ? filtersFromSearch(window.location.search) : NO_FILTERS;
+}
 const PAGE_SIZES = [25, 50, 100];
 
 async function getJson<T>(url: string, w: SupplyWords): Promise<T> {
@@ -64,7 +73,10 @@ export default function SupplyContentList() {
   const { formatDateTime } = useFormat();
   const qc = useQueryClient();
   const router = useRouter();
-  const [filters, setFilters] = useState<ListFilters>({ status: "", type: "" });
+  const hydrated = useSyncExternalStore(noopSubscribe, () => true, () => false);
+  // null until the user picks a filter; before that the URL's filters (AA-1156)
+  const [edited, setEdited] = useState<ListFilters | null>(null);
+  const filters = edited ?? initialFilters(hydrated);
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(PAGE_SIZES[0]);
 
@@ -81,7 +93,7 @@ export default function SupplyContentList() {
   });
 
   const setFilter = <F extends keyof ListFilters>(key: F, value: ListFilters[F]) => {
-    setFilters((f) => ({ ...f, [key]: value }));
+    setEdited({ ...filters, [key]: value });
     setPageIndex(0);
   };
 

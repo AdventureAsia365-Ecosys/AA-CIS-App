@@ -21,7 +21,7 @@ import {
   Puzzle, ListChecks, Scale, Search, Image as ImageIcon, BookOpen, BarChart3, ShieldAlert, ShieldCheck,
   Boxes, ScrollText, FlaskConical, BellRing, MapPin, Network, Eraser, Building2, FileText, Hotel, Table2, BookMarked, Quote,
   Newspaper, CreditCard, FileStack, PenLine, UserCheck, ChartColumn, Palette, MapPinned,
-  CalendarCheck, Receipt, Layers, Briefcase, Tag, Server, Map as MapIcon, GitBranch,
+  CalendarCheck, Receipt, Layers, Briefcase, Tag, Server, Map as MapIcon, GitBranch, Inbox,
 } from "lucide-react";
 import { useCallback } from "react";
 import { canSeeNavItem, type Capability } from "@/lib/rbac";
@@ -49,6 +49,7 @@ export interface NavGroup {
 
 const ICONS: Record<NavIcon, React.ReactNode> = {
   overview: <Gauge size={16} />,
+  myWork: <Inbox size={16} />,   // AA-1156
   appHealth: <Boxes size={16} />,
   reports: <Newspaper size={16} />,
   dataCoverage: <Table2 size={16} />,

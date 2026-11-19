@@ -107,34 +107,17 @@ def _review_failure_class(score, codes: list, failures: list, brand_audit_status
             "hint": "Regenerate to try again"}
 
 
-@router.get("/review-queue")
-async def admin_review_queue(
-    request: Request,
-    x_admin_secret: str = Header(None),
-    page: int = 1,
-    page_size: int = 20,
-    status: str = "pending",
-    country: Optional[str] = None,
-    score: str = "all",
-    tour_id: Optional[str] = None,
-    policy: Optional[str] = None,
-):
-    """AA-739: server-side paging + filters (country, score band, tour) and full facets, so the
-    page no longer paginates/filters client-side over a 20-row slice (it showed 20 of 54 and only
-    the countries on that slice).
+# The Review Queue's one tenant: Master Content (aa_internal).
+_REVIEW_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 
-    AA-1049: ``policy=elephant_riding`` keeps only the elephant-riding policy reviews
-    (services/quality/policy_review.py); every row carries ``policy_review`` (null, or {kind, held, approvable,
-    evidence}) and the facets count them (``facets.policy_reviews``)."""
-    from services.quality import approve_gate, policy_review
-    verify_admin_secret(x_admin_secret)
-    pool = request.app.state.pool
-    tenant_id = "00000000-0000-0000-0000-000000000001"
-    page = max(1, page)
-    page_size = max(1, min(page_size, _REVIEW_MAX_PAGE_SIZE))
-    offset = (page - 1) * page_size
 
-    # Shared WHERE for rows, total and facets. $1 = tenant; further params appended in order.
+def _review_queue_where(tenant_id: str, *, status: str = "pending", country: Optional[str] = None, score: str = "all",
+                        tour_id: Optional[str] = None, policy: Optional[str] = None
+                        ) -> tuple[list[str], list, list[str], list]:
+    """The Review Queue's WHERE clauses and parameters ($1 = tenant, more appended in order), plus the facet copy that
+    ignores the country / score / tour filters. One builder for the page (admin_review_queue) and the My work tile
+    (review_queue_summary, AA-1156), so the tile counts exactly the rows the page lists for the same filters."""
+    from services.quality import policy_review
     params: list = [tenant_id]
     # AA-986 L1: a pending row whose source is no longer live (trashed / superseded / deleted at S0/A0) is
     # hidden: it cannot be approved (409 source_not_live). Closed rows stay, with `source_live` on each.
@@ -159,6 +142,50 @@ async def admin_review_queue(
         where.append(f"rq.tour_id = ${len(params)}::uuid")
     if policy == policy_review.FILTER_VALUE:
         where.append(policy_review.row_is_policy_sql("rq"))
+    return where, params, facet_where, facet_params
+
+
+async def review_queue_summary(conn, *, status: str = "pending") -> dict:
+    """AA-1156 My work: how many Review Queue rows the page lists for ``status`` (its default view: pending, no other
+    filter) and when the oldest of them was queued. Same FROM / WHERE as the page's total."""
+    where, params, _fw, _fp = _review_queue_where(_REVIEW_TENANT_ID, status=status)
+    row = await conn.fetchrow(f"""
+        SELECT count(*) AS n, min(rq.created_at) AS oldest FROM silver_aa_internal.review_queue rq
+        JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = rq.tour_id
+        WHERE {" AND ".join(where)}
+    """, *params)
+    return {"count": int(row["n"] or 0), "oldest_at": row["oldest"]}
+
+
+@router.get("/review-queue")
+async def admin_review_queue(
+    request: Request,
+    x_admin_secret: str = Header(None),
+    page: int = 1,
+    page_size: int = 20,
+    status: str = "pending",
+    country: Optional[str] = None,
+    score: str = "all",
+    tour_id: Optional[str] = None,
+    policy: Optional[str] = None,
+):
+    """AA-739: server-side paging + filters (country, score band, tour) and full facets, so the
+    page no longer paginates/filters client-side over a 20-row slice (it showed 20 of 54 and only
+    the countries on that slice).
+
+    AA-1049: ``policy=elephant_riding`` keeps only the elephant-riding policy reviews
+    (services/quality/policy_review.py); every row carries ``policy_review`` (null, or {kind, held, approvable,
+    evidence}) and the facets count them (``facets.policy_reviews``)."""
+    from services.quality import approve_gate, policy_review
+    verify_admin_secret(x_admin_secret)
+    pool = request.app.state.pool
+    tenant_id = _REVIEW_TENANT_ID
+    page = max(1, page)
+    page_size = max(1, min(page_size, _REVIEW_MAX_PAGE_SIZE))
+    offset = (page - 1) * page_size
+
+    where, params, facet_where, facet_params = _review_queue_where(
+        tenant_id, status=status, country=country, score=score, tour_id=tour_id, policy=policy)
     where_sql = " AND ".join(where)
 
     async with pool.acquire() as conn:

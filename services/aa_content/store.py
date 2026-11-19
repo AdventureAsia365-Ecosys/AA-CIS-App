@@ -93,6 +93,9 @@ LIST_SQL = f"""
      LIMIT $5 OFFSET $6
 """
 COUNT_SQL = f"SELECT count(*) {_LIST_FROM}"
+# AA-1156 My work: the list's count for a filter, and the oldest newest-version start among the rows (for the draft
+# filter the newest version is the waiting draft, so it is when the oldest waiting draft was started).
+SUMMARY_SQL = f"SELECT count(*) AS n, min(nv.created_at) AS oldest {_LIST_FROM}"
 
 
 class ContentNotFound(LookupError):
@@ -198,6 +201,12 @@ async def list_items(conn: Any, *, kind: Optional[str], locale: Optional[str], s
     total = await conn.fetchval(COUNT_SQL, *args)
     rows = await conn.fetch(LIST_SQL, *args, limit, offset)
     return {"items": [_list_row(r) for r in rows], "total": int(total or 0), "limit": limit, "offset": offset}
+
+
+async def summary(conn: Any, *, status: Optional[str] = None) -> dict:
+    """AA-1156 My work: the admin list's total for ``status`` (no other filter) and the oldest start among its rows."""
+    row = await conn.fetchrow(SUMMARY_SQL, None, None, status, None)
+    return {"count": int(row["n"] or 0), "oldest_at": row["oldest"]}
 
 
 # ── writes ────────────────────────────────────────────────────────────────────

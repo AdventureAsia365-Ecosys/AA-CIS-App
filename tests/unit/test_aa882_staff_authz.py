@@ -126,6 +126,8 @@ def test_policy_reads_are_admin_only_and_the_s1_reads_stay_open():
         ("GET", "/admin/reference-prices/{source_key}/history"),
         # S279 thresholds L2: the pass line and score / SEO bands the score views colour by (no secret, no tenant data)
         ("GET", "/admin/quality/thresholds"),
+        # AA-1156: My work, the content roles' landing page (the tiles of the caller's own capabilities)
+        ("GET", "/admin/my-work/summary"),
         # AA-1133 B7: the docs reader is every staff role's (docs.read); the feedback view stays ops.read
         ("GET", "/admin/docs/manifest"), ("GET", "/admin/docs/page"), ("GET", "/admin/docs/asset"),
         ("GET", "/admin/docs/search"),
@@ -207,6 +209,7 @@ def test_content_work_routes_are_the_every_staff_pages():
         "/admin/session",                                                 # AA-1127 C3: shell hint, every role
         "/admin/aa-content", "/admin/aa-content/{content_id}/draft",      # AA-977: drafts are content work
         "/admin/quality/thresholds",                                      # S279 L2: the score views' bands
+        "/admin/my-work/summary",                                         # AA-1156: My work (tiles by capability)
         "/admin/docs/manifest", "/admin/docs/page", "/admin/docs/asset",  # AA-1133 B7: docs.read (every role)
         "/admin/docs/search", "/admin/docs/feedback",                     # (GET feedback is ops.read: POST here)
         "/v1/pipeline/review-queue/{review_id}/approve",

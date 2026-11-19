@@ -15,7 +15,7 @@
 
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, RefreshCw } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import {
   Badge,
   Button,
@@ -40,6 +40,7 @@ import {
   aaCall,
   countryLabel,
   countryOptions,
+  filtersFromSearch,
   isGroupKey,
   listUrl,
   pendingDraftLabel,
@@ -59,6 +60,7 @@ import { useAaText } from "./useAaText";
 
 export const LIST_KEY = ["aa-content-list"] as const;
 const PAGE_SIZES = [25, 50, 100];
+const noopSubscribe = () => () => {};
 
 export default function AaContentConsole() {
   const t = useT(AC);
@@ -67,7 +69,11 @@ export default function AaContentConsole() {
   const qc = useQueryClient();
   const role = useAdminIdentity().role;
   const canWrite = can(role, "content.write");
-  const [filters, setFilters] = useState<AaListFilters>(EMPTY_FILTERS);
+  // AA-1156: a link may open the list filtered (?status=draft, the My work tile), read once hydrated so the server
+  // render and the first client render agree (the Place cards pattern); null until the user picks a filter.
+  const hydrated = useSyncExternalStore(noopSubscribe, () => true, () => false);
+  const [edited, setEdited] = useState<AaListFilters | null>(null);
+  const filters = edited ?? (hydrated ? filtersFromSearch(window.location.search) : EMPTY_FILTERS);
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(PAGE_SIZES[0]);
   const [openGroup, setOpenGroup] = useState<string | null>(null);
@@ -82,7 +88,7 @@ export default function AaContentConsole() {
 
   // A filter change goes back to page 1 in the same handler (no setState in an effect).
   const setFilter = <F extends keyof AaListFilters>(key: F, value: AaListFilters[F]) => {
-    setFilters((f) => ({ ...f, [key]: value }));
+    setEdited({ ...filters, [key]: value });
     setPageIndex(0);
   };
 

@@ -48,7 +48,12 @@ TEXT_CHANGED = ("The piece's text changed since this check, so the links shown a
                 "Ask the agency to publish again (the check runs again), then review the new result.")
 RELEASE_ACTION = "content_compliance.released"
 
-LIST_SQL = """
+# The list's filter ($1 state open | resolved | all, $2 kind or NULL, $3 tenant or NULL): one text for the page's rows
+# and total (list_flags) and the My work tile (summary, AA-1156), so the tile counts exactly what the page lists.
+FILTER_SQL = """($1::text = 'all' OR f.state = $1) AND ($2::text IS NULL OR f.kind = $2)
+       AND ($3::uuid IS NULL OR f.tenant_id = $3)"""
+
+LIST_SQL = f"""
     SELECT f.flag_id::text AS flag_id, f.tenant_id::text AS tenant_id, t.name AS tenant_name, f.kind, f.stage,
            f.piece_id::text AS piece_id, f.publish_id::text AS publish_id, f.tour_id::text AS tour_id, f.channel,
            COALESCE(f.external_url, pl.external_url) AS external_url, pl.status AS publish_status, f.codes, f.detail,
@@ -62,17 +67,13 @@ LIST_SQL = """
       LEFT JOIN acp_shared.publish_log pl ON pl.publish_id = f.publish_id
       LEFT JOIN acp_shared.content_piece cp ON cp.piece_id = f.piece_id
       LEFT JOIN acp_shared.angle_gate_option ago ON ago.option_id = cp.angle_gate_option_id
-     WHERE ($1::text = 'all' OR f.state = $1)
-       AND ($2::text IS NULL OR f.kind = $2)
-       AND ($3::uuid IS NULL OR f.tenant_id = $3)
+     WHERE {FILTER_SQL}
      ORDER BY f.created_at DESC, f.flag_id
      LIMIT $4 OFFSET $5
 """
-COUNT_SQL = """
-    SELECT count(*) FROM acp_shared.content_compliance_flag f
-     WHERE ($1::text = 'all' OR f.state = $1) AND ($2::text IS NULL OR f.kind = $2)
-       AND ($3::uuid IS NULL OR f.tenant_id = $3)
-"""
+COUNT_SQL = f"SELECT count(*) FROM acp_shared.content_compliance_flag f WHERE {FILTER_SQL}"
+SUMMARY_SQL = (f"SELECT count(*) AS n, min(f.created_at) AS oldest FROM acp_shared.content_compliance_flag f "
+               f"WHERE {FILTER_SQL}")
 OPEN_COUNTS_SQL = """
     SELECT kind, count(*)::int AS n FROM acp_shared.content_compliance_flag WHERE state = 'open' GROUP BY kind
 """
@@ -110,6 +111,13 @@ async def list_flags(request: Request,
     return {"data": [_row(r) for r in rows], "total": int(total or 0), "limit": limit, "offset": offset,
             "open_counts": {"subject_gate": counts.get("subject_gate", 0),
                             "tour_retired": counts.get("tour_retired", 0)}}
+
+
+async def summary(conn, *, state: str = "open") -> dict:
+    """AA-1156 My work: the flags the page lists by default (state open, every kind and tenant) and the oldest one's
+    creation time. Raises asyncpg.UndefinedTableError before CIS 360 (the caller leaves the tile out)."""
+    row = await conn.fetchrow(SUMMARY_SQL, state, None, None)
+    return {"count": int(row["n"] or 0), "oldest_at": row["oldest"]}
 
 
 class ReleaseBody(BaseModel):

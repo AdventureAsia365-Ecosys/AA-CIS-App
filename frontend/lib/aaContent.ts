@@ -182,6 +182,17 @@ export interface AaListFilters {
 
 export const EMPTY_FILTERS: AaListFilters = { kind: "", locale: "", status: "", country: "" };
 
+/** AA-1156: the list filters a link carries (`?status=`, `?kind=`, `?locale=`, e.g. the My work tile); an unknown value
+ *  is ignored (no filter), never sent to the API. */
+export function filtersFromSearch(search: string): AaListFilters {
+  const p = new URLSearchParams(search);
+  const pick = <T extends string>(key: string, allowed: readonly T[]): T | "" => {
+    const v = p.get(key) ?? "";
+    return (allowed as readonly string[]).includes(v) ? (v as T) : "";
+  };
+  return { ...EMPTY_FILTERS, kind: pick("kind", KINDS), locale: pick("locale", LOCALES), status: pick("status", STATUSES) };
+}
+
 /** The admin list URL for one server page (filters and paging run on the server; lesson S218). */
 export function listUrl(filters: AaListFilters, pageIndex: number, pageSize: number): string {
   const q = new URLSearchParams();

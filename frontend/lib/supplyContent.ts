@@ -127,6 +127,18 @@ export interface Detail {
 
 export interface ListFilters { status: ContentStatus | ""; type: EntityType | "" }
 
+/** AA-1156: the list filters a link carries (`?status=` and `?type=`, e.g. the My work tiles); an unknown value is
+ *  ignored (no filter), never sent to the API. */
+export function filtersFromSearch(search: string): ListFilters {
+  const p = new URLSearchParams(search);
+  const status = p.get("status") ?? "";
+  const type = p.get("type") ?? "";
+  return {
+    status: (CONTENT_STATUSES as readonly string[]).includes(status) ? (status as ContentStatus) : "",
+    type: (ENTITY_TYPES as readonly string[]).includes(type) ? (type as EntityType) : "",
+  };
+}
+
 /** One server page of the list (filters and paging run on the server, lesson S218). */
 export function listUrl(f: ListFilters, pageIndex: number, pageSize: number): string {
   const q = new URLSearchParams();
