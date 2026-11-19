@@ -213,7 +213,8 @@ export default function Assignments() {
           <DataTable<TenantAssignments>
             tableId="tenant-assignments" data={rows} columns={columns} getRowId={(r) => r.tenant_id}
             loading={q.isLoading} emptyTitle={t("emptyTitle")} emptyDescription={t("emptyDescription")}
-            onRowClick={(r) => setOpenId(r.tenant_id)} tableMinWidth={760} compact />
+            onRowClick={(r) => setOpenId(r.tenant_id)} tableMinWidth={760} compact
+            searchable={false} /* AA-1127 C4: the page's own search box above filters these rows */ />
         </Section>
       )}
       {open && <AssignmentDrawer key={open.tenant_id} tenant={open} canAssign={canAssign} onClose={() => setOpenId(null)} />}
