@@ -36,7 +36,8 @@ OVER_EVIDENCE_CAP = {"s1-027"}
 @pytest.mark.parametrize("pid", DRAFTS)
 def test_each_draft_runs_on_the_null_runs_judge_and_golden_version(pid):
     pre, null = pr.load(pid), pr.load(NULL_ID)
-    assert not pre.registered and pr.problems(pre.doc) == []
+    # a draft until the DRY plan passes; once registered (a later reviewed PR) `load` has checked its lock entry
+    assert pr.problems(pre.doc) == [] and (not pre.registered or pr.read_lock()[pid] == pre.sha256)
     assert pre.doc["judge"] == null.doc["judge"] and pre.doc["golden_set"] == {"name": "aa729", "version": "1.5.0"}
     assert pre.doc["judge"]["instrument"] in PINNED and pre.doc["judge"]["instrument"] in ADVISORY
     assert runner.same_instrument(null, pre)               # the null run's non_inferior verdict opens this proof
@@ -111,6 +112,7 @@ def test_registration_preview_of_a_registered_file_or_a_non_object_is_empty():
 
 def test_registration_preview_keeps_a_named_registrant_and_flags_a_missing_writer_sd():
     d = json.loads(json.dumps(pr.load("w5-t9").doc))
+    d.update(status="draft", registered_by=None, registered_on=None)        # stays true after w5-t9 is registered
     d["power"]["writer_sd"] = None
     got = pr.registration_problems(d)
     assert len(got) == 1 and "states power.writer_sd" in got[0]
@@ -125,7 +127,6 @@ def test_a_drafts_plan_lists_what_registration_would_refuse(fakes):
     assert out["samples"] == 15 and not out["ready_for_live"]
     out = asyncio.run(runner.plan(_Pool(), pr.load("w5-t9")))
     assert out["registration_problems"] == [] and not any(b.startswith("registration") for b in out["blocking"])
-    assert any("status is draft" in b for b in out["blocking"])
 
 
 # ── an item the claim judge cannot read ─────────────────────────────────────────────────────────────────────────

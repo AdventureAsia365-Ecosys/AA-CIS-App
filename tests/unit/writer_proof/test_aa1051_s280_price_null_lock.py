@@ -206,7 +206,7 @@ def test_a_registered_file_must_match_the_lock():
     assert "not in registered.lock.json" in pr.registered_lock_problem(pre, {})
     assert "edited after it was registered" in pr.registered_lock_problem(pre, {pre.id: "e" * 64})
     assert pr.registered_lock_problem(pre, {pre.id: pre.sha256}) is None
-    assert pr.registered_lock_problem(pr.load("w5-t9"), {}) is None                 # a draft is not locked
+    assert pr.registered_lock_problem(pr.load("w5-t2"), {}) is None                 # a draft is not locked
 
 
 def test_load_refuses_a_registered_file_outside_the_lock(tmp_path, monkeypatch):
@@ -376,7 +376,8 @@ def test_null_gate_names_a_registered_null_run_it_had_to_ignore(fakes, tmp_path,
 def test_unloadable_registered_reports_a_registered_file_outside_the_lock(tmp_path, monkeypatch):
     pre = _pre()
     (tmp_path / f"{pre.id}.json").write_text(json.dumps(pre.doc))
-    (tmp_path / "w5-t9.json").write_text(json.dumps(pr.load("w5-t9").doc))          # a draft: not reported
+    draft = {**pr.load("w5-null-t9-blog").doc, "id": "w5-zz-draft"}                 # S285: no shipped id, which
+    (tmp_path / "w5-zz-draft.json").write_text(json.dumps(draft))                  # a later PR may register
     monkeypatch.setattr(pr, "PREREG_DIR", tmp_path)
     monkeypatch.setattr(pr, "LOCK_FILE", tmp_path / "registered.lock.json")
     got = pr.unloadable_registered("null")
