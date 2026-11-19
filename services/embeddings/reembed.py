@@ -16,9 +16,9 @@ Three modes, all for ONE column of ``shared.embedding_column``:
   serving vector also empties its shadow: trigger ``<column>__shadow_reset`` on CIS 329's function, so updated rows
   are re-read like new ones). Stops before a page whose estimate would cross ``cost_cap_usd`` (result
   ``stopped: cost_cap``), or after ``max_rows``. The cap covers the whole JOB: ``already_spent``
-  (the job's llm_call_log rows, ``queue.llm_spend``, kept across retries and releases) counts against it. ``complete`` only when no row with a
-  vector lacks a shadow vector, blank-text rows included (the swap refuses them too): their keys come back in
-  ``blank_keys`` (runbook: purge or fix them).
+  (the job's llm_call_log rows, ``queue.llm_spend``, kept across retries and releases) counts against it.
+  ``complete`` only when no row with a vector lacks a shadow vector, blank-text rows included (the swap refuses them
+  too): their keys come back in ``blank_keys`` (runbook: purge or fix them).
 - ``probe``: one embedding of a few words in the target space (its deployments must be enabled), so the fallback model
   is proven reachable before a fill. Ledger stage ``adhoc_conn_test``.
 

@@ -9,10 +9,10 @@ Payload: {"mode": "dry_run" | "fill" | "probe", "column": "<schema.table.column>
 
 Paid calls: dry_run none; probe one embedding of a few words; fill one embedding call per page (Cohere: up to 96 texts
 per call; Titan: one request per text), stopped before a page that would cross the cap. The cap is per job: its retries
-(max_attempts 3) and releases on deploy share it (the job's llm_call_log rows, ``queue.llm_spend``); a new job is a new cap (an operator's
-decision). A fill is resumable: it only reads rows whose shadow is still empty, so a retry, a release or a re-queue
-continues where it stopped. concurrency 1 (one re-embed at a time; they share the account's embedding quota),
-background (never takes the worker's last free slots).
+(max_attempts 3) and releases on deploy share it (the job's llm_call_log rows, ``queue.llm_spend``); a new job is a
+new cap (an operator's decision). A fill is resumable: it only reads rows whose shadow is still empty, so a retry, a
+release or a re-queue continues where it stopped. concurrency 1 (one re-embed at a time; they share the account's
+embedding quota), background (never takes the worker's last free slots).
 """
 from __future__ import annotations
 

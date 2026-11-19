@@ -6,9 +6,10 @@ that also passed its LLM spend to ``add_cost`` counted it twice: the W5 proofs (
 exactly twice the ledger on the Jobs page.
 
 An AST scan of the app finds every ``<x>.add_cost(<arg>)`` call and every ``add_cost=<arg>`` keyword and compares them
-with the allow-list below: each entry is a reviewed non-LLM spend with its own ledger (DataForSEO -> shared.dfs_call_log,
-Geoapify -> geo.geocode_call, Cost Explorer requests). A new site fails here until it is reviewed and listed; an LLM
-result's cost (``out.cost_usd``, ``usage["cost_usd"]``, ``draft.cost_usd``, ...) never belongs on the list.
+with the allow-list below: each entry is a reviewed non-LLM spend with its own ledger
+(DataForSEO -> shared.dfs_call_log, Geoapify -> geo.geocode_call, Cost Explorer requests). A new site fails here until
+it is reviewed and listed; an LLM result's cost (``out.cost_usd``, ``usage["cost_usd"]``, ``draft.cost_usd``, ...)
+never belongs on the list.
 """
 import ast
 import re
