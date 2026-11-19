@@ -122,3 +122,127 @@ def split_rows(connections: Iterable[tuple[str, Any]], provider_budgets: Mapping
     stray = sorted((set(provider_budgets) | set(crm_caps or {})) - known)
     return {"rows": rows, "unknown_keys": stray,
             "over_allocated": [r["connection_key"] for r in rows if r["over_allocated"]]}
+
+
+# ── AA-1143 (decision G3, CIS 455 / 456): one budget per connection as rows ───────────────────────────────────────
+#
+# shared.llm_connection_budget holds, per connection, the total (app NULL: the provider budget) and one fixed-USD share
+# per app other than cis; CIS takes the remainder (total minus the other apps' shares), which the table's trigger
+# writes to llm_provider_connection.monthly_budget_usd (the number the CIS gateway enforces). The rules below are the
+# API's checks before a save; the database refuses the same over-allocation on its own.
+
+REMAINDER_APP = "cis"
+CRM_APP = "crm"
+# The apps whose own gateway enforces their share on their own ledger, from the copy CIS sends them (the CRM, root
+# ADR 0008a): on a connection with a total, no share means no spend. Every other share app spends in the CIS ledger.
+OWN_LEDGER_APPS = (CRM_APP,)
+REASON_MIN, REASON_MAX = 20, 500        # the Settings rule (CIS 455 CHECK)
+USD_MAX = Decimal("1000000")            # the bound of monthly_budget_usd and of the provider budget setting
+CENT = Decimal("0.01")
+
+
+class BudgetEditRefused(ValueError):
+    """A connection budget change the rules refuse (422), with a stable ``code`` for the page."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(code, message)
+        self.code = code
+        self.message = message
+
+    def __str__(self) -> str:
+        return self.message
+
+
+def usd_amount(value: Any, what: str) -> Decimal:
+    """A USD amount 0..1000000, rounded to the cent (the column is numeric(10,2)). BudgetEditRefused otherwise."""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str, Decimal)):
+        raise BudgetEditRefused("amount_invalid", f"{what}: not an amount")
+    try:
+        usd = Decimal(str(value))
+    except InvalidOperation:
+        raise BudgetEditRefused("amount_invalid", f"{what}: not an amount") from None
+    if not usd.is_finite() or usd < 0 or usd > USD_MAX:
+        raise BudgetEditRefused("amount_invalid", f"{what}: must be from 0 to 1000000 USD")
+    return usd.quantize(CENT)
+
+
+def remainder(total: Optional[Decimal], shares: Mapping[str, Optional[Decimal]]) -> Optional[Decimal]:
+    """The CIS remainder: total minus the other apps' shares (None shares count 0); None without a total."""
+    if total is None:
+        return None
+    return total - sum((v for v in shares.values() if v is not None), Decimal(0))
+
+
+def check_reason(reason: Any) -> str:
+    text = reason.strip() if isinstance(reason, str) else ""
+    if not REASON_MIN <= len(text) <= REASON_MAX:
+        raise BudgetEditRefused("reason_length", f"a reason of {REASON_MIN} to {REASON_MAX} characters is required")
+    return text
+
+
+def plan_edit(apps: Iterable[str], before_total: Optional[Decimal], before_shares: Mapping[str, Optional[Decimal]],
+              total: Any = None, shares: Optional[Mapping[str, Any]] = None) -> dict:
+    """The state after one save, checked. ``apps``: the share apps (every app of shared.llm_app_profile but cis);
+    ``total`` None = unchanged; ``shares`` {app: amount | None (remove)} = only the apps that change. Returns
+    {"total", "shares" (every share app), "changes": [(app or None, new amount or None)], "remainder"}: the rows to
+    write, decreases first (the order a reader of the CRM copy needs, see ``crm_tightens``). Refuses: an unknown app
+    or cis (CIS takes the remainder), no total on a connection that has none, shares above the total."""
+    apps = list(apps)
+    new_total = before_total if total is None else usd_amount(total, "total")
+    if new_total is None:
+        raise BudgetEditRefused("total_required", "set the connection's total first")
+    new_shares = {a: before_shares.get(a) for a in apps}
+    changes: list[tuple[Optional[str], Optional[Decimal]]] = []
+    for app, raw in (shares or {}).items():
+        if app == REMAINDER_APP:
+            raise BudgetEditRefused("cis_is_remainder", "CIS has no share of its own: it takes the remainder")
+        if app not in new_shares:
+            raise BudgetEditRefused("unknown_app", f"unknown app {app!r}")
+        new = None if raw is None else usd_amount(raw, app)
+        if new != new_shares[app]:
+            new_shares[app] = new
+            changes.append((app, new))
+    left = remainder(new_total, new_shares)
+    if left is not None and left < 0:
+        raise BudgetEditRefused(
+            "over_allocated", f"the apps' shares add up to {new_total - left} USD, more than the total {new_total} USD")
+    if new_total != before_total:
+        changes.append((None, new_total))
+    # Shares that go down first, then the total, then the shares that go up (one INSERT keeps this order in its ids).
+
+    def rank(change):
+        app, new = change
+        if app is None:
+            return 1
+        old = before_shares.get(app)
+        return 0 if (new or Decimal(0)) < (old or Decimal(0)) else 2
+    changes.sort(key=rank)
+    return {"total": new_total, "shares": new_shares, "changes": changes, "remainder": left}
+
+
+def effective_caps(total: Optional[Decimal], shares: Mapping[str, Optional[Decimal]]) -> dict:
+    """{app: its real cap} for the tighten-only check: cis = the remainder, an app = its share. What "no share" means
+    depends on where the app's spend is counted, so it is one rule for every app, not a CRM special case:
+
+    - an app that spends inside the CIS ledger (TripPlanner today): no share = it spends inside the remainder, which
+      the cis entry bounds, so its own entry is None;
+    - an app with its own ledger (``OWN_LEDGER_APPS``: its gateway enforces the copy CIS sends it): on a connection
+      with a total, no share = a cap of 0 (the copy says "0.00" and its gateway blocks the connection), so its entry
+      is 0. Giving it a share is then a raise and removing one a cut. Without a total CIS sends it nothing for the
+      connection (its own fallback applies), so the entry stays None. Pure."""
+    caps = {a: (None if v is None else float(v)) for a, v in shares.items()}
+    if total is not None:
+        for app in OWN_LEDGER_APPS:
+            if app in caps and caps[app] is None:
+                caps[app] = 0.0
+    left = remainder(total, shares)
+    caps[REMAINDER_APP] = None if left is None else float(left)
+    caps["total"] = None if total is None else float(total)
+    return caps
+
+
+def crm_tightens(before: Optional[Decimal], after: Optional[Decimal]) -> bool:
+    """True when the CRM's share goes down (or is removed): its copy is sent BEFORE the CIS rows are written, so for a
+    moment the CRM is held to the lower amount while CIS still has the old remainder (never above the total). A rise
+    is sent after the CIS rows (CIS first takes the lower remainder)."""
+    return (after or Decimal(0)) < (before or Decimal(0)) or (before is not None and after is None)

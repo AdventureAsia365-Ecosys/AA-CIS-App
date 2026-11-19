@@ -14,6 +14,8 @@
 // AA-1025 C1 follow-up: every write control (on / off, Save, Run test, Check now) shows only when GET
 // /api/admin/ai-gateway/access says this session may use it (usePageAccess); a read-only session sees the values as
 // text and the form read-only.
+// AA-1143 (decision G3): the monthly budget is read-only here; it is the CIS remainder of the connection's total and
+// the apps' shares, edited on AI gateway › Budgets (ConnectionBudgetSummary shows them with the link).
 // S280 (AA-1096): a tighten-only role (no settings.write) sees each limit now in force, the budget stop locked while
 // on, and what its change would loosen before Save (tightenHints.tsx); a refusal reads in the UI language.
 
@@ -25,6 +27,8 @@ import {
   sans, useT, useToast, type ColumnDef, type Translator,
 } from "../../_kit";
 import { CONNECTIONS } from "./connections.messages";
+import { ConnectionBudgetSummary } from "./ConnectionBudgetsSection";
+import { CONN_BUDGETS } from "./connectionBudgets.messages";
 import { useErrorClassText } from "./useErrorClassText";
 import { usePageAccess } from "./usePageAccess";
 import { useRefusalText } from "./useRefusalText";
@@ -195,6 +199,7 @@ function DeploymentsTable({ conn, health, t }: { conn: Connection; health?: Conn
 }
 
 function SettingsForm({ conn, name, t }: { conn: Connection; name: string; t: T }) {
+  const tb = useT(CONN_BUDGETS);
   const toast = useToast();
   const qc = useQueryClient();
   const locked = !usePageAccess().can("connections");
@@ -257,7 +262,9 @@ function SettingsForm({ conn, name, t }: { conn: Connection; name: string; t: T 
         {num("max_retries", t("retries"))}
         {num("max_concurrency", t("concurrency"))}
         {num("rpm_limit", t("rpm"))}
-        {num("monthly_budget_usd", t("budget"))}
+        <Field label={t("budget")} hint={tb("drawerTitle")} locked>
+          <Input value={form.monthly_budget_usd} readOnly data-testid="conn-field-monthly_budget_usd" />
+        </Field>
         {conn.cost_policy && num("budget_alert_pct", t("alertPct"))}
       </div>
       {conn.cost_policy && (
@@ -280,6 +287,7 @@ function SettingsForm({ conn, name, t }: { conn: Connection; name: string; t: T 
           </Field>
         </div>
       )}
+      <ConnectionBudgetSummary connectionKey={conn.connection_key} />
       <Field label={t("notes")}>
         <Textarea value={form.notes} onChange={set("notes")} disabled={mut.isPending || locked} rows={2} />
       </Field>

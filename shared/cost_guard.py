@@ -24,7 +24,7 @@ from typing import Optional
 
 import structlog
 
-from shared import settings as _settings
+from shared import connection_pool_spend, settings as _settings
 from shared.ai_budget_defaults import plan_budget_defaults
 
 logger = structlog.get_logger()
@@ -499,10 +499,10 @@ def policy_of(policies: dict, connection_key: str) -> ConnectionCostPolicy:
 
 
 async def connection_month_spend(conn, connection_keys: list[str]) -> dict[str, tuple[float, int]]:
-    """{connection_key: (USD, calls)} logged this UTC month (account = the key); keys with no row are absent."""
+    """{connection_key: (USD, calls)} this UTC month the CIS remainder pays for (AA-1143, connection_pool_spend)."""
     if not connection_keys:
         return {}
-    rows = await conn.fetch(_CONNECTION_MONTH_SPEND_SQL, list(connection_keys))
+    rows = await connection_pool_spend.rows(conn, list(connection_keys), _CONNECTION_MONTH_SPEND_SQL)
     return {r["account"]: (float(r["spent"] or 0.0), int(r["calls"] or 0)) for r in rows}
 
 

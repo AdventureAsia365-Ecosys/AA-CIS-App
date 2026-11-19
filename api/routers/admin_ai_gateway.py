@@ -12,8 +12,7 @@
                                            tour_id columns).                                                 spend.read
   GET /admin/ai-gateway/budgets            every spending cap by tier: provider daily caps and job caps
                                            (shared.spend_budget), LLM connection monthly budgets, the tenant tier
-                                           (shared.tenant_ai_budget, AA-1016), today's spend and a coverage
-                                           list.                                                             spend.read
+                                           (shared.tenant_ai_budget, AA-1016), today's spend, coverage. spend.read
   GET /admin/ai-gateway/connection-split   (AA-1113) each connection's provider budget vs CIS + CRM shares. spend.read
   GET /admin/ai-gateway/calls              the Calls tab: every logged paid call newest first across the CIS ledgers
                                            and the CRM ledger (crm.ops.v1 GET /llm/calls with the staff member's
@@ -235,6 +234,7 @@ PAGE_WRITES: dict[str, tuple[str, str]] = {
     "batches": ("POST", "/admin/ai-gateway/batches"),
     # AA-1126 G2 Budgets › Spend controls: reset an app's anomaly breaker (ai.admin, not a tighten-only role)
     "anomaly_reset": ("POST", "/admin/ai-gateway/anomaly-breaker/{app}/reset"),
+    "connection_budgets": ("PUT", "/admin/ai-gateway/connection-budgets/{connection_key}"),   # AA-1143 Budgets
 }
 
 

@@ -68,6 +68,8 @@ SAMPLES = [
     ("admin_llm_route_control", "GET", "/admin/ai-gateway/route-control", None),           # AA-1042
     ("admin_ai_gateway_spend", "GET", "/admin/ai-gateway/spend-controls", None),             # AA-1126
     ("admin_ai_gateway_spend", "POST", "/admin/ai-gateway/anomaly-breaker/{app}/reset", None),  # AA-1126
+    ("admin_ai_gateway_budgets", "GET", "/admin/ai-gateway/connection-budgets", None),             # AA-1143
+    ("admin_ai_gateway_budgets", "PUT", "/admin/ai-gateway/connection-budgets/{connection_key}", None),  # AA-1143
     ("admin_llm_route_control", "POST", "/admin/ai-gateway/route-control/save",
      {"order_mode": "aws_first", "expected_version": 1}),
     ("admin_llm_route", "GET", "/admin/ai-gateway/route-policy", None),                  # AA-1042 Trace tab

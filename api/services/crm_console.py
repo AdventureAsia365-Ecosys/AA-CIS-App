@@ -68,6 +68,10 @@ ALLOWED: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         ("POST", rf"{_T}/studio-invitations"),
         # AA-1025 H1c (crm.ops.v1 1.10): the CRM app profile, relayed by PATCH /admin/ai-gateway/app-profiles/crm.
         ("PUT", r"/llm/app-profile"),
+        # AA-1143 (crm.ops.v1 1.16): the CRM's copy of its connection budget shares, sent by AI gateway › Budgets
+        # (api/services/llm_connection_budgets.py) and read back to show whether it is in sync.
+        ("GET", r"/llm/connection-shares"),
+        ("PUT", r"/llm/connection-shares"),
         # AA-1096 L4 (crm.ops.v1 1.13): the CRM settings registry, relayed by Platform › Settings (CRM tab,
         # api/services/crm_settings_relay.py).
         ("GET", r"/settings"),

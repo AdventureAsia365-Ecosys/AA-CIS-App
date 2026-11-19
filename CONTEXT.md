@@ -614,6 +614,22 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   member's own token) and AI gateway › Budgets shows provider budget, CIS share, CRM share, headroom and a flag when
   the shares add up to more than the provider budget (also when a share is missing or alert only on a budgeted
   connection, or the CRM could not be asked).
+- **One budget per connection as rows** (AA-1143, tech lead decision G3 S285; CIS 455 / 456; root ADR 0009 d6 / d13,
+  0008a): `shared.llm_connection_budget` (append-only versions, reason 20..500 characters, audited
+  `llm_connection_budget_changed`) holds per connection its total (app NULL: the provider budget) and one fixed-USD share
+  per app of `shared.llm_app_profile` other than cis; **CIS takes the remainder** (total minus the other apps' shares).
+  The table's statement trigger refuses shares above the total and writes the remainder to `monthly_budget_usd`, so the
+  CIS gateway keeps enforcing that column (no new read on the call path) and `PATCH /admin/llm-connections/{key}`
+  refuses a direct edit of it on a connection with a total. The CIS month spend of a connection
+  (`shared/connection_pool_spend.py`) counts every app without its own share whole and an app with a share
+  only above it. Edited on ONE screen, AI gateway › Budgets › Connection budgets (`GET / PUT
+  /admin/ai-gateway/connection-budgets[/{key}]`, `…/{key}/history`, `POST …/crm-sync`;
+  `api/services/llm_connection_budgets.py`, rules in `llm_connection_split.py`); the Connections drawer shows them
+  read-only with a link. TripPlanner reads its row through `catalog.v_llm_connection_cap_v2` (log-only first:
+  setting `tripplanner.spend.connection_share_enforce`); an app with no share spends inside the CIS remainder. The CRM
+  gets its copy over crm.ops.v1 `PUT /llm/connection-shares` (every connection with a total, its share or 0; a lower
+  share is sent before the CIS rows are written, a higher one after) and falls back to its old setting for one
+  release. The split read above and its two settings stay until the contract step.
 - **Budget per connection + nightly cost reconciliation** (AA-1002 slice S10, migration 317 expand):
   `llm_provider_connection.monthly_budget_usd` is enforced per connection, independent of the job budgets
   (`shared.spend_budget`) and wave caps, which still apply. The policy is `shared.llm_connection_cost_policy` (no row =

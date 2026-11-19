@@ -341,6 +341,24 @@ async def _refuse_loosening(db, c, connection_key: str, changes: dict, policy_ch
                                        up_is_looser=TIGHTEN_UP_IS_LOOSER, down_is_looser=TIGHTEN_DOWN_IS_LOOSER)
 
 
+BUDGET_ON_BUDGETS = ("the monthly budget of this connection is set on AI gateway > Budgets: its total and each app's "
+                     "share; CIS takes what is left")
+
+
+async def _refuse_managed_budget(db, connection_key: str, diff: list) -> None:
+    """AA-1143 (decision G3, CIS 455): a connection with a total in shared.llm_connection_budget has its CIS cap
+    (monthly_budget_usd) written by the budget rows' trigger (the remainder); an edit here would drift from the rows
+    until the next save, so it is refused (ConnectionToggleRefused, 422). Before CIS 455 nothing changes."""
+    if "monthly_budget_usd" not in diff:
+        return
+    # to_regclass first: inside the edit's transaction a missing relation would abort it.
+    if not await db.fetchval("SELECT to_regclass('shared.llm_connection_budget_current') IS NOT NULL AS ok"):
+        return
+    if await db.fetchval("SELECT 1 AS ok FROM shared.llm_connection_budget_current "
+                         "WHERE connection_key = $1 AND app IS NULL", connection_key):
+        raise ConnectionToggleRefused(BUDGET_ON_BUDGETS)
+
+
 async def update_connection(db, connection_key: str, changes: dict, *, actor: str,
                             role: Optional[str] = None) -> dict:
     """AA-1002 (S4): change the editable fields of one connection (``EDITABLE``) and audit it. Raises LookupError
@@ -394,6 +412,7 @@ async def update_connection(db, connection_key: str, changes: dict, *, actor: st
             raise ConnectionToggleRefused(
                 f"connection {connection_key!r} changed while its secret was checked; send the request again")
         diff = [f for f in EDITABLE if f in changes and not _same(getattr(c, f), changes[f])]
+        await _refuse_managed_budget(db, connection_key, diff)
         if diff:
             sets = ", ".join(f"{f} = ${i + 2}" for i, f in enumerate(diff))
             needs = "322" if set(diff) & set(V2_FIELDS) else "310"
