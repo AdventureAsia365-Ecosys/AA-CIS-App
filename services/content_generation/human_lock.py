@@ -116,7 +116,8 @@ async def guard_export(conn: Any, silver: str, version_id: str, tour_id: str, co
 async def after_export(conn: Any, tour_id: str, row: Any, contract_exit: str, *, lock_by: Optional[str] = None,
                        lock_reason: Optional[str] = None) -> None:
     """process_export, after the publish: a person's publish of a hand-edited version locks the Master (``lock_by``
-    the person, ``lock_reason`` or the draft's reason); of a writer's version, lifts the lock. Automatic exits: nothing."""
+    the person, ``lock_reason`` or the draft's reason); of a writer's version, lifts the lock. Automatic exits:
+    nothing."""
     if contract_exit not in HUMAN_EXITS:
         return
     if is_human_version(row):
