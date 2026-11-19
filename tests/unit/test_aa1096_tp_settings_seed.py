@@ -35,6 +35,7 @@ TP_SEED = {
     "tripplanner.spend.stage_cap_compose_usd": 0,      # AA-1126 (CIS 447): 0 = no stage cap (no env var set today)
     "tripplanner.spend.stage_cap_search_usd": 0,
     "tripplanner.spend.near_cap_pct": 80,              # today's SPEND_NEAR_CAP_RATIO 0.8
+    "tripplanner.spend.connection_share_enforce": False,   # AA-1143 (CIS 456): log only first
 }
 
 
