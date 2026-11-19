@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -9576,6 +9576,114 @@
      "lower": "Tắt: một quản trị viên tự đổi được; nhanh hơn, chỉ có e-mail làm bước kiểm tra.",
      "when": "Bật khi ra mắt bản production đầu tiên hoặc có tenant trả phí đầu tiên.",
      "example": "Với mặc định tắt (off, giai đoạn phát triển)."
+    }
+   }
+  },
+  {
+   "key": "cis.spend.ce_daily_refresh_enabled",
+   "app": "cis",
+   "area": "spend",
+   "label": "Daily Cost Explorer check: on",
+   "description": "On: once per UTC day, from the hour of cis.spend.ce_daily_refresh_hour_utc, the api's ops metrics sampler queues one cost_explorer_refresh job (services/jobs/cost_explorer_refresh_job.py). It reads AWS Cost Explorer for the main and the LLM account, grouped by service and, for the main account, by App tag, for the current month and the last few days, and stores the figures the Spend page, the forecast and the nightly LLM cost reconciliation read. About 0.01 USD per Cost Explorer request, about 3 requests a run. Off: nothing is queued; the figures are only fetched when Spend > By app finds them old, or with Refresh from AWS.",
+   "value_type": "bool",
+   "unit": null,
+   "min_value": null,
+   "max_value": null,
+   "allowed_values": null,
+   "default_value": true,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "Whether the platform reads the real AWS bill from Cost Explorer once a day by itself.",
+     "raise": "On: the Spend page, the forecast and the cost reconciliation see AWS figures at most about a day old; each run costs about 0.03 USD (about 1 USD a month).",
+     "lower": "Off: no daily charge; the AWS figures grow old until someone opens Spend > By app or presses Refresh from AWS, and the Spend page shows them as stale.",
+     "when": "Leave it on while the AWS bill is watched; turn it off only when the account is idle and nobody reads the Spend page.",
+     "example": "With the default on and the hour at 1, the check runs a little after 01:00 UTC (08:00 in Vietnam) every day."
+    },
+    "vi": {
+     "what": "Nền tảng có tự đọc hoá đơn AWS thật từ Cost Explorer mỗi ngày một lần hay không.",
+     "raise": "Bật: trang Spend, dự báo và đối soát chi phí thấy số AWS cũ nhất khoảng một ngày; mỗi lượt tốn khoảng 0.03 USD (khoảng 1 USD mỗi tháng).",
+     "lower": "Tắt: không tốn tiền mỗi ngày; số AWS cũ dần cho tới khi có người mở Spend > By app hoặc bấm Refresh from AWS, và trang Spend đánh dấu là cũ.",
+     "when": "Để bật khi còn theo dõi hoá đơn AWS; chỉ tắt khi tài khoản không chạy gì và không ai đọc trang Spend.",
+     "example": "Với mặc định bật và giờ chạy là 1, lượt kiểm chạy ngay sau 01:00 UTC (08:00 giờ Việt Nam) mỗi ngày."
+    }
+   }
+  },
+  {
+   "key": "cis.spend.ce_daily_refresh_hour_utc",
+   "app": "cis",
+   "area": "spend",
+   "label": "Daily Cost Explorer check: hour (UTC)",
+   "description": "The UTC hour from which the api's ops metrics sampler queues the day's cost_explorer_refresh job (one per UTC day, idempotency key cost_explorer_refresh:<day>), while cis.spend.ce_daily_refresh_enabled is on. A run before 02:00 UTC gives the nightly LLM cost reconciliation (llm_cost_reconcile) fresh Bedrock figures. A change applies from the next UTC day when today's run already exists.",
+   "value_type": "int",
+   "unit": "hour (UTC)",
+   "min_value": 0,
+   "max_value": 23,
+   "allowed_values": null,
+   "default_value": 1,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The hour (UTC) of the day from which the daily Cost Explorer check runs.",
+     "raise": "The check runs later in the day; AWS has finished more of the previous day's figures, but the nightly cost reconciliation reads older ones.",
+     "lower": "The check runs earlier; the nightly cost reconciliation at 02:00 UTC reads the new figures.",
+     "when": "Move it when another night job needs the figures at a different time.",
+     "example": "With the default 1, the check runs a little after 01:00 UTC (08:00 in Vietnam), before the 02:00 UTC cost reconciliation."
+    },
+    "vi": {
+     "what": "Giờ (UTC) trong ngày mà lượt kiểm Cost Explorer hằng ngày bắt đầu chạy.",
+     "raise": "Lượt kiểm chạy muộn hơn trong ngày; AWS đã chốt thêm số của ngày hôm trước, nhưng đối soát chi phí ban đêm đọc số cũ hơn.",
+     "lower": "Lượt kiểm chạy sớm hơn; đối soát chi phí lúc 02:00 UTC đọc được số mới.",
+     "when": "Dời giờ khi một job ban đêm khác cần số vào giờ khác.",
+     "example": "Với mặc định 1, lượt kiểm chạy ngay sau 01:00 UTC (08:00 giờ Việt Nam), trước đối soát chi phí lúc 02:00 UTC."
+    }
+   }
+  },
+  {
+   "key": "cis.spend.ce_stale_after_hours",
+   "app": "cis",
+   "area": "spend",
+   "label": "Cost Explorer figures: hours before they show as stale",
+   "description": "AI & spend > Spend (the forecast and the By app tab) marks the stored Cost Explorer figures stale when the newest fetch of either snapshot (shared.cost_explorer_snapshot, shared.cost_explorer_app_snapshot) is older than this many hours, or when nothing is stored (api/services/cost_explorer_daily.py freshness). Display only: it never triggers a Cost Explorer call.",
+   "value_type": "int",
+   "unit": "hours",
+   "min_value": 1,
+   "max_value": 720,
+   "allowed_values": null,
+   "default_value": 36,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How old the stored AWS bill figures may get before the Spend page marks them stale.",
+     "raise": "The stale mark appears later; a check that stopped running goes unnoticed for longer.",
+     "lower": "The stale mark appears sooner, also after a short delay of the daily check.",
+     "when": "Keep it a little above a day while the daily check is on; raise it when the check is off on purpose.",
+     "example": "With the default 36 hours, figures last fetched yesterday morning are fine, figures from two days ago show Stale."
+    },
+    "vi": {
+     "what": "Số hoá đơn AWS đã lưu được cũ tối đa bao lâu trước khi trang Spend đánh dấu là cũ.",
+     "raise": "Dấu cũ hiện muộn hơn; lượt kiểm ngừng chạy lâu hơn mới bị phát hiện.",
+     "lower": "Dấu cũ hiện sớm hơn, kể cả khi lượt kiểm hằng ngày chỉ trễ một chút.",
+     "when": "Giữ ở mức hơn một ngày một chút khi lượt kiểm hằng ngày đang bật; tăng lên khi cố ý tắt lượt kiểm.",
+     "example": "Với mặc định 36 giờ, số lấy sáng hôm qua vẫn ổn, số lấy từ hai ngày trước hiện Stale."
     }
    }
   },
