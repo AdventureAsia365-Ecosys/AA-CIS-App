@@ -50251,6 +50251,221 @@
         ]
       }
     },
+    "/admin/tours/{tour_id}/fact-draft": {
+      "delete": {
+        "operationId": "discard_fact_draft_admin_tours__tour_id__fact_draft_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tour_id",
+            "required": true,
+            "schema": {
+              "title": "Tour Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Discard Fact Draft",
+        "tags": [
+          "admin-pipeline"
+        ]
+      },
+      "get": {
+        "operationId": "get_fact_draft_admin_tours__tour_id__fact_draft_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tour_id",
+            "required": true,
+            "schema": {
+              "title": "Tour Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Fact Draft",
+        "tags": [
+          "admin-pipeline"
+        ]
+      }
+    },
+    "/admin/tours/{tour_id}/fact-draft/publish": {
+      "post": {
+        "description": "Write the open sheet draft into the tour through the gate (see the module doc).",
+        "operationId": "publish_fact_draft_admin_tours__tour_id__fact_draft_publish_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tour_id",
+            "required": true,
+            "schema": {
+              "title": "Tour Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Publish Fact Draft",
+        "tags": [
+          "admin-pipeline"
+        ]
+      }
+    },
     "/admin/tours/{tour_id}/generated/{content_id}": {
       "patch": {
         "operationId": "update_generated_content_fields_admin_tours__tour_id__generated__content_id__patch",
@@ -51975,7 +52190,7 @@
     },
     "/admin/upload-staging/{staging_id}/merge-preview": {
       "get": {
-        "description": "AA-1146 T1: what a merge of this staged re-import into its tour would do, field by field: ``auto`` (nobody\nedited it by hand: the sheet's value is taken), ``conflicts`` (a person edited it: choose incoming or current),\n``unchanged``. Nothing is written.",
+        "description": "AA-1146 T1: what a merge of this staged re-import into its tour would do, field by field: ``auto`` (nobody\nedited it by hand: the sheet's value is taken), ``conflicts`` (a person edited it: choose incoming or current),\n``unchanged``. ``read_only``: fields the caller may not change (D5: the price text without reference_price.write);\n``open_draft``: the tour already has a sheet draft waiting (a merge is refused until it is published or discarded).\nNothing is written.",
         "operationId": "merge_preview_admin_upload_staging__staging_id__merge_preview_get",
         "parameters": [
           {

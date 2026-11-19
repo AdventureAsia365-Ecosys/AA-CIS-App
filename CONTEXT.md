@@ -5037,7 +5037,8 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     tour's wording is a **draft version**: a new `generated_content` row (`status` draft, `origin` human,
     `parent_version_num`, `edit_reason`, `author_id`; editors in `edit_diff.editors`), one open draft per tour, copied
     from the live version; the live version is never edited in place any more (`PATCH .../generated/{id}` on it → 409
-    `edit_live_version`). Routes (`api/routers/admin_pipeline/drafts.py`): `GET|PUT|DELETE /admin/tours/{id}/draft`
+    `edit_live_version`; on a person's open draft → 409 `edit_draft_version`: drafts are saved only through PUT /draft,
+    which keeps their editors). Routes (`api/routers/admin_pipeline/drafts.py`): `GET|PUT|DELETE /admin/tours/{id}/draft`
     (state + per-field word diff against the live version; save needs a reason; discard = status rejected),
     `POST .../draft/publish`, `POST /admin/tours/{id}/unlock` (master.admin, reason), `GET .../raw-revisions`.
     **One gate** for every publish route (Review Queue approve, promote, draft publish): a hand-edited version needs a
@@ -5057,8 +5058,17 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     (admin, customer_success; AA-1146 D5 — content_lead lost the reference price write). **Excel re-import (T1)**: the
     Duplicate Review offers "Merge field by field" (`GET /admin/upload-staging/{id}/merge-preview`, decide `merge`
     with `resolutions` + reason): fields nobody edited by hand take the sheet's value, hand-edited fields that differ
-    are conflicts the person resolves (keep / take), an empty cell never erases; the tour keeps its id, the merge is a
-    `raw_tour_revision` row (`excel_merge`, resolutions) and the published text stays until a version is published.
+    are conflicts the person resolves (keep / take), an empty cell never erases. **The result is a draft of the facts**
+    (`silver_aa_internal.raw_tour_fact_draft`, one open per tour; the tour is not touched): `GET|DELETE
+    /admin/tours/{id}/fact-draft`, `POST .../fact-draft/publish` (`api/routers/admin_pipeline/fact_drafts.py`) runs the
+    same two-person rule (the merge's author is the editor), the price rule, a live source and a stale check (409
+    `fact_draft_stale` when a field changed since the merge), then writes the facts with one `raw_tour_revision` row
+    (`excel_merge`, resolutions) and runs the source fan-out. Without `reference_price.write` a merge never changes
+    `price_raw`: taking the sheet's price is 403 `price_read_only`, an untouched price change is held back (`withheld`
+    in the result). **Re-check verdicts belong to the text they read**: the re-validation writes `revalidate_passed`
+    only while the version's `edited_at` is the one it read (a save during the run rolls the verdict back, result
+    `stale`). **Waves**: a tour skipped for its lock (or left out of the batch) is the terminal wave state `locked`
+    (who, when, why on the report row), so a wave holding one can complete.
   - **Atomize retires what the new text no longer has** (AA-645 step 0): the per-day path soft-deletes live atoms on a
     day the itinerary no longer has (and day-less legacy rows), also on an all-skipped run (C6); the legacy path (no
     `Day N —` headers, random ids) soft-deletes the tour's earlier atoms after a good read (L1). An atomize that changed

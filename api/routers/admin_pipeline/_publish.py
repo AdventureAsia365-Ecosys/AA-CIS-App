@@ -32,6 +32,21 @@ def request_perms(request: Request) -> frozenset:
     return frozenset(principal.perms)
 
 
+def may_edit_price(request: Request) -> bool:
+    """AA-1146 D5: may the caller change a source tour's price text (reference_price.write: admin, customer_success)?
+    A secret session without a role (the machine) may; a staff role without the capability may not."""
+    from api.core.staff_authz import REFERENCE_PRICE_WRITE
+    if (getattr(request, "headers", None) or {}).get("x-admin-role") is None:
+        return True
+    return REFERENCE_PRICE_WRITE in request_perms(request)
+
+
+def price_read_only() -> HTTPException:
+    """403 price_read_only: the D5 refusal of a price change (PATCH /raw, a merge, a fact draft's publish)."""
+    return HTTPException(status_code=403, headers={"X-Error-Code": "price_read_only"},
+                         detail="Prices are entered by the pricing team (Reference prices), not on the tour")
+
+
 async def enforce_publish_gate(conn: Any, request: Request, *, editors: Iterable[Optional[str]] = ()) -> None:
     """403 when cis.content.publish_two_person is on and the caller may not publish this version: no content.publish
     (``two_person_required``), or the caller wrote it (``same_person``; ``editors`` = everyone who wrote it). Reads

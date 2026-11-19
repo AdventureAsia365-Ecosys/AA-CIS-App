@@ -336,62 +336,77 @@ async def _merge_inputs(conn, staging_id: str) -> tuple:
 async def merge_preview(staging_id: str, request: Request, x_admin_secret: str = Header(None)):
     """AA-1146 T1: what a merge of this staged re-import into its tour would do, field by field: ``auto`` (nobody
     edited it by hand: the sheet's value is taken), ``conflicts`` (a person edited it: choose incoming or current),
-    ``unchanged``. Nothing is written."""
+    ``unchanged``. ``read_only``: fields the caller may not change (D5: the price text without reference_price.write);
+    ``open_draft``: the tour already has a sheet draft waiting (a merge is refused until it is published or discarded).
+    Nothing is written."""
+    from services.ingestion import excel_merge as em
+    from api.routers.admin_pipeline._publish import may_edit_price
+    from api.routers.admin_pipeline.fact_drafts import open_fact_draft
     verify_admin_secret(x_admin_secret)
     async with request.app.state.pool.acquire() as conn:
         async with conn.transaction():
             staging, current, owned, merge_plan = await _merge_inputs(conn, staging_id)
+            open_draft = await open_fact_draft(conn, current["tour_id"])
     return {"staging_id": staging_id, "tour_id": current["tour_id"], **merge_plan,
-            "hand_edited": sorted(owned)}
+            "hand_edited": sorted(owned), "read_only": [] if may_edit_price(request) else sorted(em.PRICE_FIELDS),
+            "open_draft": open_draft["id"] if open_draft else None}
+
+
+def _merge_changes(request: Request, merge_plan: dict, resolutions_in) -> tuple:
+    """(changes, resolutions, withheld) of a merge: the person's choices applied, then D5: without reference_price.write
+    choosing the sheet's price is refused (403 price_read_only) and an untouched price change is held back (the tour
+    keeps its price; the result names the sheet's value for the pricing team)."""
+    from services.ingestion import excel_merge as em
+    from api.routers.admin_pipeline._publish import may_edit_price, price_read_only
+    try:
+        changes, resolutions = em.resolve(merge_plan, resolutions_in)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail={"code": "merge_unresolved", "message": str(e),
+                                                     "conflicts": merge_plan["conflicts"]})
+    if may_edit_price(request):
+        return changes, resolutions, {}
+    if any(resolutions.get(f) == em.INCOMING for f in em.PRICE_FIELDS):
+        raise price_read_only()
+    changes, withheld = em.withhold(changes, em.PRICE_FIELDS)
+    return changes, resolutions, withheld
 
 
 async def _decide_merge(request: Request, staging_id: str, body: "DecideRequest", actor: str) -> dict:
     """AA-1146 T1: merge a staged re-import into its tour (same tour id), the hand edits winning unless the person
-    takes the sheet's value. One history row (excel_merge, with the resolutions), one audit row, the staging row
-    removed, all in one transaction; then the source fan-out marks what was written from the old facts. The published
-    text is not touched: it changes only when a person publishes a new version (or a rerun does, while unlocked)."""
+    takes the sheet's value. The result is a DRAFT of the tour's facts (silver_aa_internal.raw_tour_fact_draft): the
+    tour is not touched; it changes only when a person publishes the draft through the gate (POST
+    /admin/tours/{id}/fact-draft/publish, fact_drafts.py). One audit row, the staging row removed, in one
+    transaction."""
     from services.ingestion import excel_merge as em
-    from api.routers.admin_pipeline.tour_detail import _raw_json, _source_fanout_raw, record_raw_revision
+    from api.routers.admin_pipeline.fact_drafts import create_fact_draft
+    from api.routers.admin_pipeline.tour_detail import _raw_json
     from services.acp_shared.audit_log import write_audit_log
     reason = (body.reason or "").strip()
     if not 3 <= len(reason) <= 500:
         raise HTTPException(status_code=422, detail="Say why you merge this sheet (3 to 500 characters)")
-    pool = request.app.state.pool
-    async with pool.acquire() as conn:
+    async with request.app.state.pool.acquire() as conn:
         async with conn.transaction():
             staging, current, owned, merge_plan = await _merge_inputs(conn, staging_id)
-            try:
-                changes, resolutions = em.resolve(merge_plan, body.resolutions)
-            except ValueError as e:
-                raise HTTPException(status_code=422, detail={"code": "merge_unresolved", "message": str(e),
-                                                             "conflicts": merge_plan["conflicts"]})
+            changes, resolutions, withheld = _merge_changes(request, merge_plan, body.resolutions)
             tour_id = current["tour_id"]
-            revision, changed_at = None, None
+            before = {f: _raw_json(current[f]) for f in changes}
+            draft_id = None
             if changes:
-                fields = list(changes)
-                cols = ", ".join(f"{f} = ${i + 1}::jsonb" if f in em.JSONB_FIELDS else f"{f} = ${i + 1}"
-                                 for i, f in enumerate(fields))
-                changed_at = await conn.fetchval(
-                    f"UPDATE silver_aa_internal.raw_tours SET {cols} WHERE tour_id = ${len(fields) + 1}::uuid "
-                    "RETURNING now() AS changed_at", *[em.db_value(f, changes[f]) for f in fields], tour_id)
-                before = {f: _raw_json(current[f]) for f in fields}
-                revision = await record_raw_revision(conn, tour_id, source="excel_merge", before=before,
-                                                     after=changes, actor=actor, reason=reason,
-                                                     resolutions=resolutions)
-            await write_audit_log(conn, tenant_id=None, actor=actor, action="raw_tour.excel_merged",
+                draft_id = await create_fact_draft(conn, tour_id=tour_id, staging_id=staging_id, before=before,
+                                                   after=changes, resolutions=resolutions, author=actor, reason=reason)
+            await write_audit_log(conn, tenant_id=None, actor=actor, action="raw_tour.excel_merge_drafted",
                                   resource_type="raw_tour", resource_id=tour_id, details={
                                       "staging_id": staging_id, "fields": sorted(changes), "reason": reason,
                                       "resolutions": resolutions, "auto": [a["field"] for a in merge_plan["auto"]],
-                                      "before": {f: _raw_json(current[f]) for f in changes}, "after": changes,
-                                      "revision_num": revision})
+                                      "withheld": withheld, "before": before, "after": changes,
+                                      "fact_draft_id": draft_id})
             await conn.execute("DELETE FROM silver_aa_internal.upload_staging WHERE id = $1::uuid", staging_id)
-    if changes:
-        await _source_fanout_raw(pool, tour_id, changed_at, sorted(changes))
-    logger.info("staging_merged", staging_id=staging_id, tour_id=tour_id, fields=sorted(changes),
-                kept=sorted(f for f, c in resolutions.items() if c == em.CURRENT))
+    kept = sorted(f for f, c in resolutions.items() if c == em.CURRENT)
+    logger.info("staging_merged_as_draft", staging_id=staging_id, tour_id=tour_id, fields=sorted(changes), kept=kept,
+                withheld=sorted(withheld), fact_draft_id=draft_id)
     return {"staging_id": staging_id, "decision": "merge", "committed": True, "tour_id": tour_id,
-            "updated": sorted(changes), "kept": sorted(f for f, c in resolutions.items() if c == em.CURRENT),
-            "revision_num": revision}
+            "fact_draft_id": draft_id, "pending": sorted(changes), "kept": kept, "withheld": withheld,
+            "published": False}
 
 
 # Q6 (ADR 0015): the deleted state of the matched key, per staging row. A key is deleted when none of its versions is

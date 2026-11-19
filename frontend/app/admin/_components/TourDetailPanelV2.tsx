@@ -13,6 +13,7 @@ import { useScoreBands } from "./useQualityThresholds";
 import { SubjectLabelSection } from "../tenant-qa/quality/PieceLabel";
 import { can } from "@/lib/rbac";
 import TourDraftEditor from "./TourDraftEditor";
+import TourFactDraft from "./TourFactDraft";
 import { D as DRAFT_M } from "./tourDraft.messages";
 import type { TourDetailFull, HistoryRow, VersionContent } from "./tourDetail.types";
 export type { JudgeMeta, TourDetailFull } from "./tourDetail.types";
@@ -612,6 +613,7 @@ function TourDetailPanel({ tourId, tourName, rewriteCount = 0, onClose }: PanelP
             <div style={{ textAlign: "center", padding: 40, color: K.danger }}>{t("detailFailed")}</div>
           ) : tab === "original" ? (
             <div>
+              <TourFactDraft tourId={tourId} />
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 24px" }}>
                 <EditableField label={t("fTourName")} initialValue={raw?.src_name || ""} onSave={v => saveRaw("src_name", v)} onChange={v => setRawDraft(d => ({ ...d, src_name: v }))} readOnly={!canEditRaw} />
                 <EditableField label={t("fCountry")} initialValue={raw?.country || ""} onSave={v => saveRaw("country", v)} onChange={v => setRawDraft(d => ({ ...d, country: v }))} readOnly={!canEditRaw} />

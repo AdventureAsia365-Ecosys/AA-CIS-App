@@ -32,7 +32,7 @@ async def _revalidate_tour(content_id: str) -> dict:
                    gc.aa_name, gc.aa_subtitle, gc.aa_summary, gc.aa_description,
                    gc.aa_highlights, gc.aa_itineraries, gc.mobile_card_text,
                    gc.seo_title, gc.seo_meta, gc.seo_keywords_used, gc.og_tags,
-                   gc.brand_rules_version, gc.metadata,
+                   gc.brand_rules_version, gc.metadata, gc.edited_at,
                    rt.src_name, rt.country, rt.duration,
                    rt.src_subtitle, rt.src_summary, rt.src_description, rt.src_highlights,
                    rt.src_itineraries, rt.price_raw, rt.inclusions, rt.exclusions,
@@ -172,43 +172,13 @@ async def _revalidate_tour(content_id: str) -> dict:
         # moved before the DELETE, the SET NULL never fires; the lock order (published_tours row,
         # then the score row) is also the export upsert's, so the two cannot deadlock. The published
         # `quality_score` number stays as exported (same rule as 268); only the pointer moves.
-        async with conn.transaction():
-            new_score_id = await conn.fetchval("""
-                INSERT INTO silver_aa_internal.quality_scores (
-                    generated_content_id, tour_id, tenant_id,
-                    score_overall, score_brand, score_seo, score_structure, score_quality,
-                    passed_count, failed_count, failure_codes,
-                    brand_audit_status, brand_audit_codes, brand_audit_issues,
-                    brand_audit_fields, lessons_extracted, validator_fn_version, evaluated_at
-                ) VALUES (
-                    $1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11::jsonb,
-                    $12, $13::jsonb, $14::jsonb, $15::jsonb, $16::jsonb, 'v2-revalidate', NOW()
-                )
-                RETURNING id
-            """,
-                content_id, str(gc["tour_id"]), tenant_uuid, q_score,
-                float(_sub.get("brand", 0.0)), float(_sub.get("seo", 0.0)),
-                float(_sub.get("structure", 0.0)), float(_sub.get("quality", 0.0)),
-                int(result.get("passed_count", 0)), int(result.get("failed_count", 0)),
-                json.dumps(_fc), result.get("brand_audit_status", ""),
-                json.dumps(result.get("brand_audit_codes", [])),
-                json.dumps(result.get("brand_audit_issues", [])),
-                json.dumps(result.get("brand_audit_fields", [])),
-                json.dumps(result.get("lessons_extracted", [])),
-            )
-            repointed = await conn.execute("""
-                UPDATE gold_aa_internal.published_tours
-                SET quality_score_id = $1::uuid
-                WHERE generated_content_id = $2::uuid
-                  AND quality_score_id IS DISTINCT FROM $1::uuid
-            """, str(new_score_id), content_id)
-            await conn.execute("""
-                DELETE FROM silver_aa_internal.quality_scores
-                WHERE generated_content_id = $1::uuid AND id <> $2::uuid
-            """, content_id, str(new_score_id))
-            await conn.execute(
-                "UPDATE silver_aa_internal.generated_content SET revalidate_passed = $1 WHERE id = $2::uuid",
-                passed, content_id)
+        try:
+            async with conn.transaction():
+                new_score_id, repointed = await _write_verdict(conn, content_id, gc, tenant_uuid, result, passed)
+        except _StaleText:
+            logger.info("revalidate_tour_stale", content_id=content_id)
+            return {"content_id": content_id, "revalidate_passed": None, "stale": True,
+                    "message": "The text changed while the checks ran: run them again on the saved text"}
         # AA-1047 W1: the re-validation graph's REPORT-mode final contract (its last node), with the gate's outcome
         # (passed = approvable) and the stored text's sha; best-effort, never fails the re-validation.
         _reval_fc = result.get("final_contract")
@@ -230,3 +200,57 @@ async def _revalidate_tour(content_id: str) -> dict:
         }
     finally:
         await conn.close()
+
+
+class _StaleText(Exception):
+    """AA-1146: the version's text was saved again while its re-validation ran; the verdict is not for that text."""
+
+
+async def _write_verdict(conn, content_id: str, gc, tenant_uuid: str, result: dict, passed: bool):
+    """AA-983: the version's new score row, the published pointer moved to it, the old rows removed, then the verdict,
+    all in the caller's transaction. AA-1146: the verdict is written only while the version's edited_at is still the
+    one the run read (a save after that read raises _StaleText and the caller's transaction rolls back), so a publish
+    gate never sees TRUE for text nobody checked. Returns (new score id, the published re-point status)."""
+    q_score = float(result.get("quality_score", 0.0))
+    _sub = result.get("sub_scores", {})
+    _fc = result.get("failure_codes", [])
+    new_score_id = await conn.fetchval("""
+        INSERT INTO silver_aa_internal.quality_scores (
+            generated_content_id, tour_id, tenant_id,
+            score_overall, score_brand, score_seo, score_structure, score_quality,
+            passed_count, failed_count, failure_codes,
+            brand_audit_status, brand_audit_codes, brand_audit_issues,
+            brand_audit_fields, lessons_extracted, validator_fn_version, evaluated_at
+        ) VALUES (
+            $1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10, $11::jsonb,
+            $12, $13::jsonb, $14::jsonb, $15::jsonb, $16::jsonb, 'v2-revalidate', NOW()
+        )
+        RETURNING id
+    """,
+        content_id, str(gc["tour_id"]), tenant_uuid, q_score,
+        float(_sub.get("brand", 0.0)), float(_sub.get("seo", 0.0)),
+        float(_sub.get("structure", 0.0)), float(_sub.get("quality", 0.0)),
+        int(result.get("passed_count", 0)), int(result.get("failed_count", 0)),
+        json.dumps(_fc), result.get("brand_audit_status", ""),
+        json.dumps(result.get("brand_audit_codes", [])),
+        json.dumps(result.get("brand_audit_issues", [])),
+        json.dumps(result.get("brand_audit_fields", [])),
+        json.dumps(result.get("lessons_extracted", [])),
+    )
+    repointed = await conn.execute("""
+        UPDATE gold_aa_internal.published_tours
+        SET quality_score_id = $1::uuid
+        WHERE generated_content_id = $2::uuid
+          AND quality_score_id IS DISTINCT FROM $1::uuid
+    """, str(new_score_id), content_id)
+    await conn.execute("""
+        DELETE FROM silver_aa_internal.quality_scores
+        WHERE generated_content_id = $1::uuid AND id <> $2::uuid
+    """, content_id, str(new_score_id))
+    flagged = await conn.execute(
+        "UPDATE silver_aa_internal.generated_content SET revalidate_passed = $1"
+        " WHERE id = $2::uuid AND edited_at IS NOT DISTINCT FROM $3",
+        passed, content_id, gc.get("edited_at"))
+    if _rowcount(flagged) != 1:
+        raise _StaleText(content_id)
+    return new_score_id, repointed

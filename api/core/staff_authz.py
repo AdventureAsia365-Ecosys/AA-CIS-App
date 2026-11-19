@@ -507,18 +507,17 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/s1-batch/submit"): CONTENT_WRITE, ("POST", "/admin/s1/seo-prefetch"): CONTENT_WRITE,
     # admin_pipeline — Review Queue + tour edits, every staff role
     ("POST", "/admin/review-queue/{review_id}/approve"): any_of(CONTENT_PUBLISH, REVIEW_ACT),
-    ("POST", "/admin/review-queue/{review_id}/reject"): REVIEW_ACT,
-    ("POST", "/admin/review-queue/{review_id}/dismiss"): REVIEW_ACT,
-    ("POST", "/admin/review-queue/{review_id}/supersede"): REVIEW_ACT,
+    **{("POST", "/admin/review-queue/{review_id}/" + a): REVIEW_ACT for a in ("reject", "dismiss", "supersede")},
     # AA-845 — a reviewer marks one sentence "unsupported" (a1_claim_supported truth=False)
     ("POST", "/admin/review-queue/{review_id}/claims/label"): REVIEW_ACT,
-    ("PATCH", "/admin/tours/{tour_id}/country"): CONTENT_WRITE,
-    ("PATCH", "/admin/tours/{tour_id}/raw"): CONTENT_WRITE,
+    ("PATCH", "/admin/tours/{tour_id}/country"): CONTENT_WRITE, ("PATCH", "/admin/tours/{tour_id}/raw"): CONTENT_WRITE,
     ("PATCH", "/admin/tours/{tour_id}/generated/{content_id}"): CONTENT_WRITE,
     ("POST", "/admin/tours/{tour_id}/generated/{content_id}/revalidate"): CONTENT_WRITE,
     ("POST", "/admin/tours/{tour_id}/versions/{version_num}/promote"): any_of(CONTENT_PUBLISH, REVIEW_ACT),
     ("PUT", "/admin/tours/{tour_id}/draft"): CONTENT_WRITE, ("DELETE", "/admin/tours/{tour_id}/draft"): CONTENT_WRITE,
+    ("DELETE", "/admin/tours/{tour_id}/fact-draft"): CONTENT_WRITE,
     ("POST", "/admin/tours/{tour_id}/draft/publish"): any_of(CONTENT_PUBLISH, REVIEW_ACT),
+    ("POST", "/admin/tours/{tour_id}/fact-draft/publish"): any_of(CONTENT_PUBLISH, REVIEW_ACT),
     ("POST", "/admin/tours/{tour_id}/unlock"): MASTER_ADMIN,
     # admin_pipeline — brand rules + AA brand identity (Settings › Brand; §5.1 content.settings.write).
     # The brand-identity routes also take a tenant JWT (own brand, AA-424): POLICY applies to the

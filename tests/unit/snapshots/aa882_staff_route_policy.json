@@ -67,6 +67,10 @@
     "capability": "content.write",
     "module": "api.routers.admin_pipeline"
   },
+  "DELETE /admin/tours/{tour_id}/fact-draft": {
+    "capability": "content.write",
+    "module": "api.routers.admin_pipeline"
+  },
   "DELETE /admin/usage-explorer/views/{view_id}": {
     "capability": "spend.read",
     "module": "api.routers.admin_usage_explorer"
@@ -912,6 +916,10 @@
     "module": "api.routers.admin_pipeline"
   },
   "GET /admin/tours/{tour_id}/draft": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/tours/{tour_id}/fact-draft": {
     "capability": null,
     "module": "api.routers.admin_pipeline"
   },
@@ -1812,6 +1820,10 @@
     "module": "api.routers.admin_view_as"
   },
   "POST /admin/tours/{tour_id}/draft/publish": {
+    "capability": "content.publish|review.act",
+    "module": "api.routers.admin_pipeline"
+  },
+  "POST /admin/tours/{tour_id}/fact-draft/publish": {
     "capability": "content.publish|review.act",
     "module": "api.routers.admin_pipeline"
   },

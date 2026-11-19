@@ -200,6 +200,7 @@ def test_content_work_routes_are_the_every_staff_pages():
         "/admin/tours/{tour_id}/generated/{content_id}/revalidate",
         "/admin/tours/{tour_id}/versions/{version_num}/promote",
         "/admin/tours/{tour_id}/draft", "/admin/tours/{tour_id}/draft/publish",   # AA-1146: draft versions
+        "/admin/tours/{tour_id}/fact-draft", "/admin/tours/{tour_id}/fact-draft/publish",   # AA-1146 T1: sheet drafts
         "/admin/tours/{tour_id}/trash", "/admin/tours/{tour_id}/restore",
         "/admin/notifications/read-all", "/admin/notifications/{notif_id}/read",
         "/admin/notifications", "/admin/notifications/count",           # AA-1035 slice 2: notifications.read

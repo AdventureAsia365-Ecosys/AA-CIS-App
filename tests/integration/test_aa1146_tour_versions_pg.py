@@ -246,14 +246,130 @@ async def test_an_excel_reimport_merges_field_by_field_and_the_hand_edit_wins(co
         await ap.decide_staging(staging, body, _request(conn), x_admin_secret="s")
     assert e.value.status_code == 422 and e.value.detail["code"] == "merge_unresolved"
     body = ap.DecideRequest(decision="merge", resolutions={"inclusions": "current"}, reason="zz new supplier sheet")
-    with patch.object(ap.tour_detail, "_source_fanout_raw", AsyncMock()):
-        out = await ap.decide_staging(staging, body, _request(conn), x_admin_secret="s")
-    assert out["updated"] == ["duration"] and out["kept"] == ["inclusions"]
+    out = await ap.decide_staging(staging, body, _request(conn), x_admin_secret="s")
+    assert out["pending"] == ["duration"] and out["kept"] == ["inclusions"] and out["published"] is False
+    # T1: the result is a draft, the tour is untouched until a person publishes it
+    row = await conn.fetchrow("SELECT duration, inclusions FROM silver_aa_internal.raw_tours WHERE tour_id = $1::uuid",
+                              tour_id)
+    assert (row["duration"], row["inclusions"]) == ("3 days", "Water, picnic lunch")
+    assert not await conn.fetchval("SELECT count(*) AS n FROM silver_aa_internal.upload_staging WHERE id = $1::uuid",
+                                   staging)
+    state = await ap.get_fact_draft(tour_id, _request(conn), x_admin_secret="s")
+    assert state["draft"]["id"] == out["fact_draft_id"] and state["draft"]["stale"] == []
+    fields = [(f["field"], f["before"], f["after"]) for f in state["draft"]["fields"]]
+    assert fields == [("duration", "3 days", "4 days")]
+    with patch.object(ap.tour_detail, "_source_fanout_raw", AsyncMock()) as fan:
+        pub = await ap.publish_fact_draft(tour_id, _request(conn, role="content", user=LEAD), x_admin_secret="s")
+    assert pub["updated"] == ["duration"] and fan.await_args.args[3] == ["duration"]
     row = await conn.fetchrow("SELECT duration, inclusions FROM silver_aa_internal.raw_tours WHERE tour_id = $1::uuid",
                               tour_id)
     assert (row["duration"], row["inclusions"]) == ("4 days", "Water, picnic lunch")
-    rev = await conn.fetchrow("SELECT source, resolutions::text AS r FROM silver_aa_internal.raw_tour_revision "
+    rev = await conn.fetchrow("SELECT source, resolutions::text AS r, actor FROM silver_aa_internal.raw_tour_revision "
                               "WHERE tour_id = $1::uuid ORDER BY revision_num DESC LIMIT 1", tour_id)
     assert rev["source"] == "excel_merge" and json.loads(rev["r"]) == {"inclusions": "current"}
-    assert not await conn.fetchval("SELECT count(*) AS n FROM silver_aa_internal.upload_staging WHERE id = $1::uuid",
-                                   staging)
+    assert rev["actor"] == f"admin:{EDITOR}"            # the person who chose the values; the audit row names LEAD
+    d = await conn.fetchrow("SELECT status, decided_by, revision_num FROM silver_aa_internal.raw_tour_fact_draft "
+                            "WHERE id = $1", out["fact_draft_id"])
+    assert (d["status"], d["decided_by"]) == ("published", f"admin:{LEAD}") and d["revision_num"]
+    assert (await ap.get_fact_draft(tour_id, _request(conn), x_admin_secret="s"))["draft"] is None
+
+
+async def _staged(conn, tour_id, payload):
+    return str(await conn.fetchval(
+        "INSERT INTO silver_aa_internal.upload_staging (batch_id, tenant_id, parsed_payload, matched_tour_id) "
+        "VALUES ($1, $2, $3::jsonb, $4) RETURNING id", uuid.UUID(BATCH_ID), MASTER, json.dumps(payload),
+        uuid.UUID(tour_id)))
+
+
+@pytest.mark.asyncio
+async def test_a_merge_never_changes_the_price_without_the_pricing_role(conn):
+    tour_id, _ = await _tour(conn)
+    with patch.object(ap.tour_detail, "_source_fanout_raw", AsyncMock()):     # an admin set the price by hand
+        await ap.update_raw_tour_fields(tour_id, _request(conn, role="admin", body={"price_raw": "From 320 USD"}),
+                                        x_admin_secret="s")
+    staging = await _staged(conn, tour_id, {"price_raw": "From 290 USD", "duration": "4 days"})
+    preview = await ap.merge_preview(staging, _request(conn, role="content"), x_admin_secret="s")
+    assert preview["read_only"] == ["price_raw"] and [c["field"] for c in preview["conflicts"]] == ["price_raw"]
+    for role in ("content", "content_lead"):          # choosing the sheet's price is refused
+        with pytest.raises(HTTPException) as e:
+            await ap.decide_staging(staging, ap.DecideRequest(decision="merge", resolutions={"price_raw": "incoming"},
+                                                              reason="zz new sheet"),
+                                    _request(conn, role=role), x_admin_secret="s")
+        assert e.value.status_code == 403
+    out = await ap.decide_staging(staging, ap.DecideRequest(decision="merge", resolutions={"price_raw": "current"},
+                                                            reason="zz new sheet"), _request(conn), x_admin_secret="s")
+    assert out["pending"] == ["duration"] and out["kept"] == ["price_raw"]
+    # an untouched price on another tour: held back for content, named in the result
+    tour2, _ = await _tour(conn)
+    staging2 = await _staged(conn, tour2, {"price_raw": "From 290 USD"})
+    out2 = await ap.decide_staging(staging2, ap.DecideRequest(decision="merge", resolutions={}, reason="zz new sheet"),
+                                   _request(conn), x_admin_secret="s")
+    assert out2["withheld"] == {"price_raw": "From 290 USD"} and out2["fact_draft_id"] is None
+    assert await conn.fetchval("SELECT price_raw FROM silver_aa_internal.raw_tours WHERE tour_id = $1::uuid",
+                               tour2) == "From 300 USD"
+
+
+@pytest.mark.asyncio
+async def test_a_sheet_draft_is_refused_when_stale_twice_open_or_by_its_author_under_two_person(conn):
+    tour_id, _ = await _tour(conn)
+    staging = await _staged(conn, tour_id, {"duration": "4 days"})
+    out = await ap.decide_staging(staging, ap.DecideRequest(decision="merge", resolutions={}, reason="zz new sheet"),
+                                  _request(conn, role="content_lead", user=LEAD), x_admin_secret="s")
+    again = await _staged(conn, tour_id, {"duration": "5 days"})
+    with pytest.raises(HTTPException) as e:            # one open sheet draft per tour
+        await ap.decide_staging(again, ap.DecideRequest(decision="merge", resolutions={}, reason="zz newer sheet"),
+                                _request(conn), x_admin_secret="s")
+    assert e.value.status_code == 409 and e.value.detail["code"] == "fact_draft_open"
+    await _switch(conn, True)
+    with pytest.raises(HTTPException) as e:
+        await ap.publish_fact_draft(tour_id, _request(conn, role="content_lead", user=LEAD), x_admin_secret="s")
+    assert e.value.status_code == 403 and e.value.detail["code"] == "same_person"
+    with patch.object(ap.tour_detail, "_source_fanout_raw", AsyncMock()):     # someone edits the tour meanwhile
+        await ap.update_raw_tour_fields(tour_id, _request(conn, body={"duration": "3 days and 2 nights"}),
+                                        x_admin_secret="s")
+    other = "00000000-0000-4000-8000-0000000000e3"
+    with pytest.raises(HTTPException) as e:
+        await ap.publish_fact_draft(tour_id, _request(conn, role="content_lead", user=other), x_admin_secret="s")
+    assert e.value.status_code == 409 and e.value.detail["code"] == "fact_draft_stale"
+    gone = await ap.discard_fact_draft(tour_id, _request(conn), x_admin_secret="s")
+    assert gone["discarded"] == out["fact_draft_id"]
+    assert await conn.fetchval("SELECT duration FROM silver_aa_internal.raw_tours WHERE tour_id = $1::uuid",
+                               tour_id) == "3 days and 2 nights"
+
+
+@pytest.mark.asyncio
+async def test_an_open_draft_is_edited_only_through_the_draft_editor(conn):
+    tour_id, _ = await _tour(conn)
+    out = await ap.put_tour_draft(tour_id, _request(conn), ap.drafts.DraftSave(
+        fields={"aa_name": "Ombre Lake Trail"}, reason="zz clearer name"))
+    req = _request(conn, role="content_lead", user=LEAD, body={"aa_summary": "My own words"})
+    with pytest.raises(HTTPException) as e:
+        await ap.update_generated_content_fields(tour_id, out["draft"]["id"], req, x_admin_secret="s")
+    assert e.value.status_code == 409 and e.value.detail["code"] == "edit_draft_version"
+
+
+@pytest.mark.asyncio
+async def test_a_check_that_ran_on_older_text_never_passes_the_newer_text(conn):
+    tour_id, _ = await _tour(conn)
+    out = await ap.put_tour_draft(tour_id, _request(conn), ap.drafts.DraftSave(
+        fields={"aa_name": "Ombre Lake Trail"}, reason="zz clearer name"))
+    vid = out["draft"]["id"]
+    read = await conn.fetchrow("SELECT tour_id, edited_at FROM silver_aa_internal.generated_content "
+                               "WHERE id = $1::uuid", vid)        # the checks start on text A
+    await conn.execute("UPDATE silver_aa_internal.generated_content SET edited_at = edited_at + interval '1 second', "
+                       "aa_name = 'Ombre Lake Path', revalidate_passed = NULL WHERE id = $1::uuid", vid)   # save B
+    result = {"quality_score": 9.0, "sub_scores": {}, "failure_codes": []}
+    with pytest.raises(ap._revalidate._StaleText):
+        async with conn.transaction():
+            await ap._revalidate._write_verdict(conn, vid, read, MASTER, result, True)
+    assert await conn.fetchval("SELECT revalidate_passed FROM silver_aa_internal.generated_content "
+                               "WHERE id = $1::uuid", vid) is None
+    with pytest.raises(HTTPException) as e:
+        await ap.publish_tour_draft(tour_id, _request(conn), x_admin_secret="s")
+    assert e.value.status_code == 409 and e.value.detail["code"] == "revalidate_required"
+    fresh = await conn.fetchrow("SELECT tour_id, edited_at FROM silver_aa_internal.generated_content "
+                                "WHERE id = $1::uuid", vid)        # a run on the saved text passes it
+    async with conn.transaction():
+        await ap._revalidate._write_verdict(conn, vid, fresh, MASTER, result, True)
+    assert await conn.fetchval("SELECT revalidate_passed FROM silver_aa_internal.generated_content "
+                               "WHERE id = $1::uuid", vid) is True

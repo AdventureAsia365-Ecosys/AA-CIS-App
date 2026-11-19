@@ -3,14 +3,18 @@
 // app/admin/upload/MergePanel.tsx — AA-1146 T1: the "Merge field by field" decision of a re-imported tour. Reads
 // GET /api/admin/upload-staging/{staging_id}/merge-preview: fields nobody edited by hand take the sheet's value; each
 // hand-edited field that differs is a choice (keep the hand edit, the default, or take the sheet's value); a reason is
-// required. The parent sends {decision: "merge", resolutions, reason} with the other decisions.
+// required. The parent sends {decision: "merge", resolutions, reason} with the other decisions. The merge becomes a
+// draft of the tour's facts, published from the tour drawer (TourFactDraft.tsx); a field the role may not change (the
+// price without reference_price.write, D5) keeps its value; a tour with a sheet draft waiting cannot take another.
 
 import { useEffect, useState } from "react";
 import { K, Badge, DataTable, Input, Select, useT, type ColumnDef } from "../../_kit";
 import { D } from "../_components/tourDraft.messages";
 
 interface MergeItem { field: string; current: unknown; incoming: unknown; hand_edited: boolean }
-interface MergePreview { auto: MergeItem[]; conflicts: MergeItem[]; unchanged: string[] }
+interface MergePreview {
+  auto: MergeItem[]; conflicts: MergeItem[]; unchanged: string[]; read_only?: string[]; open_draft?: number | null;
+}
 export interface MergeChoice { resolutions: Record<string, "incoming" | "current">; reason: string; ready: boolean }
 
 function show(v: unknown): string {
@@ -55,11 +59,16 @@ export default function MergePanel({ stagingId, onChange }: {
   // Tell the parent on each change, from the event (no effect: an effect on the callback would loop).
   function emit(nextChoices: Record<string, "incoming" | "current">, nextReason: string) {
     const r = nextReason.trim();
-    onChange({ resolutions: nextChoices, reason: r, ready: !!preview && r.length >= 3 && r.length <= 500 });
+    const ok = !!preview && !preview.open_draft && r.length >= 3 && r.length <= 500;
+    onChange({ resolutions: nextChoices, reason: r, ready: ok });
   }
 
   if (error) return <div style={{ padding: "8px 16px", fontSize: 12, color: K.danger }}>{error}</div>;
   if (!preview) return <div style={{ padding: "8px 16px", fontSize: 12, color: K.muted }}>{t("mergeLoading")}</div>;
+  if (preview.open_draft) {
+    return <div style={{ padding: "8px 16px", fontSize: 12, color: K.danger }}>{t("mergeOpenDraft")}</div>;
+  }
+  const readOnly = new Set(preview.read_only ?? []);
 
   const columns: ColumnDef<MergeItem, unknown>[] = [
     { id: "field", header: "", accessorFn: (c) => c.field,
@@ -68,7 +77,8 @@ export default function MergePanel({ stagingId, onChange }: {
     { id: "current", header: t("current"), accessorFn: (c) => show(c.current) },
     { id: "choice", header: "", accessorFn: (c) => choices[c.field] || "current",
       cell: ({ row: { original: c } }) => (
-        <Select value={choices[c.field] || "current"}
+        <Select value={choices[c.field] || "current"} disabled={readOnly.has(c.field)}
+          title={readOnly.has(c.field) ? t("mergePriceKept") : undefined}
           onChange={e => {
             const next = { ...choices, [c.field]: e.target.value as "incoming" | "current" };
             setChoices(next);
@@ -83,6 +93,8 @@ export default function MergePanel({ stagingId, onChange }: {
     <div style={{ padding: "10px 16px", borderTop: `1px solid ${K.line}` }}>
       <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.12em", color: K.muted,
         marginBottom: 6 }}>{t("mergeTitle")}</div>
+      <div style={{ fontSize: 12, color: K.muted, marginBottom: 6 }}>{t("mergeIsDraft")}</div>
+      {readOnly.size > 0 && <div style={{ fontSize: 12, color: K.muted, marginBottom: 6 }}>{t("mergePriceKept")}</div>}
       {preview.auto.length + preview.conflicts.length === 0 && (
         <div style={{ fontSize: 12, color: K.muted }}>{t("mergeNone")}</div>
       )}

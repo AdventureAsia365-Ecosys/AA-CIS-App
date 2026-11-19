@@ -466,12 +466,9 @@ async def update_raw_tour_fields(
         raise HTTPException(status_code=400, detail=f"Fields not allowed: {sorted(invalid)}")
     if not body:
         raise HTTPException(status_code=400, detail="No fields provided")
-    from api.core.staff_authz import REFERENCE_PRICE_WRITE
-    from api.routers.admin_pipeline._publish import request_actor, request_perms
-    if set(body) & _PRICE_RAW_FIELDS and request.headers.get("x-admin-role") is not None \
-            and REFERENCE_PRICE_WRITE not in request_perms(request):
-        raise HTTPException(status_code=403, headers={"X-Error-Code": "price_read_only"},
-                            detail="Prices are entered by the pricing team (Reference prices), not on the tour")
+    from api.routers.admin_pipeline._publish import may_edit_price, price_read_only, request_actor
+    if set(body) & _PRICE_RAW_FIELDS and not may_edit_price(request):
+        raise price_read_only()
 
     import json as _j_raw
     if "country" in body and body["country"] is not None:
@@ -565,13 +562,23 @@ async def _record_field_edit_signals(conn, content_id: str, before, body: dict, 
     return ids
 
 
-_LIVE_VERSION_LOCKED_SQL = """
-    SELECT 1 AS live FROM gold_aa_internal.published_tours p
-     WHERE p.generated_content_id = $1::uuid
-       AND EXISTS (SELECT 1 FROM information_schema.columns
-                    WHERE table_schema = 'silver_aa_internal' AND table_name = 'generated_content'
-                      AND column_name = 'origin')
+# AA-1146: which versions this route may not edit once CIS 457 exists: the live one ('live') and a person's open draft
+# ('draft': its saves go through PUT /draft, which keeps its editors for the two-person rule). to_jsonb reads origin
+# without failing before 457 (no column: never a draft); the information_schema test keeps the live rule off before it.
+_EDIT_REFUSED_SQL = """
+    SELECT CASE
+             WHEN to_jsonb(gc) ->> 'origin' = 'human' AND gc.status::text = 'draft' THEN 'draft'
+             WHEN EXISTS (SELECT 1 FROM gold_aa_internal.published_tours p WHERE p.generated_content_id = gc.id)
+                  AND EXISTS (SELECT 1 FROM information_schema.columns
+                               WHERE table_schema = 'silver_aa_internal' AND table_name = 'generated_content'
+                                 AND column_name = 'origin') THEN 'live'
+           END AS refused
+      FROM silver_aa_internal.generated_content gc WHERE gc.id = $1::uuid
 """
+_EDIT_REFUSALS = {
+    "live": ("edit_live_version", "This is the live version: save your change as a draft, then publish it"),
+    "draft": ("edit_draft_version", "This is a draft version: save your change in the draft editor (Rewrite tab)"),
+}
 
 
 @router.patch("/tours/{tour_id}/generated/{content_id}")
@@ -632,12 +639,12 @@ async def update_generated_content_fields(
             if before is None:
                 raise HTTPException(status_code=404, detail=f"Content {content_id} not found")
             # AA-1146: the live version is never edited in place once versions exist (CIS 457): a person's change of
-            # the live text is a draft version (PUT /admin/tours/{id}/draft), published through the gate.
-            if await conn.fetchval(_LIVE_VERSION_LOCKED_SQL, content_id):
-                raise HTTPException(
-                    status_code=409, headers={"X-Error-Code": "edit_live_version"},
-                    detail={"code": "edit_live_version",
-                            "message": "This is the live version: save your change as a draft, then publish it"})
+            # the live text is a draft version (PUT /admin/tours/{id}/draft), published through the gate. A person's
+            # open draft is saved only there too: an edit here would drop its editors (the two-person rule).
+            refused = _EDIT_REFUSALS.get(await conn.fetchval(_EDIT_REFUSED_SQL, content_id))
+            if refused:
+                raise HTTPException(status_code=409, headers={"X-Error-Code": refused[0]},
+                                    detail={"code": refused[0], "message": refused[1]})
             signal_ids = await _record_field_edit_signals(conn, content_id, before, body, fields,
                                                           reviewed_by_value or reviewer_handle)
             edit_diff = {"fields": fields, "reviewer_handle": reviewer_handle}

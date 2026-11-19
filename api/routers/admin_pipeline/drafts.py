@@ -57,6 +57,7 @@ _COLS = ", ".join(f"gc.{f}" for f in td.DRAFT_FIELDS)
 _DRAFT_SQL = f"""
     SELECT gc.id::text AS id, gc.version_num, gc.status::text AS status, gc.tenant_id, gc.origin,
            gc.parent_version_num, gc.edit_reason, gc.author_id, gc.edit_diff, gc.revalidate_passed, gc.human_edited,
+           gc.reviewed_by::text AS reviewed_by,
            gc.created_at, gc.edited_at, {_COLS}
       FROM silver_aa_internal.generated_content gc
      WHERE gc.tour_id = $1::uuid AND gc.status = 'draft' AND gc.origin = 'human'
@@ -74,12 +75,21 @@ def _iso(v):
     return v.isoformat() if v is not None else None
 
 
+def _draft_editors(d) -> list:
+    """Everyone who wrote the draft: its author, the editors of its saves and a hand editor of the row (reviewed_by,
+    set by an inline edit of a version), as versions._version_editors counts them for a promote."""
+    editors = td.editors_of(d["edit_diff"], d["author_id"])
+    if d["reviewed_by"]:
+        editors.append(f"admin:{d['reviewed_by']}")
+    return editors
+
+
 def _draft_out(d) -> Optional[dict]:
     if d is None:
         return None
     return {"id": d["id"], "version_num": d["version_num"], "base_version_num": d["parent_version_num"],
             "reason": d["edit_reason"], "author": d["author_id"],
-            "editors": td.editors_of(d["edit_diff"], d["author_id"]),
+            "editors": _draft_editors(d),
             "checks_passed": d["revalidate_passed"], "created_at": _iso(d["created_at"]),
             "edited_at": _iso(d["edited_at"]), "fields": td.fields_of(d)}
 
@@ -257,7 +267,7 @@ async def publish_tour_draft(tour_id: str, request: Request, x_admin_secret: str
                 raise HTTPException(status_code=404, detail="This tour has no open draft")
             await conn.execute(
                 "SELECT 1 AS ok FROM silver_aa_internal.generated_content WHERE id = $1::uuid FOR UPDATE", draft["id"])
-            await enforce_publish_gate(conn, request, editors=td.editors_of(draft["edit_diff"], draft["author_id"]))
+            await enforce_publish_gate(conn, request, editors=_draft_editors(draft))
             if draft["revalidate_passed"] is not True:
                 raise HTTPException(
                     status_code=409, headers={"X-Error-Code": "revalidate_required"},

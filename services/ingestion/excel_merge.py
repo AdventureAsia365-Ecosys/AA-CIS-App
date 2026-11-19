@@ -9,6 +9,12 @@ every hand edit; the merge keeps the tour and compares each field:
 - a field a person edited (a ``staff_edit`` row of silver_aa_internal.raw_tour_revision, or a field a person kept in an
   earlier merge) is a ``conflict``: the person resolves it, ``incoming`` (the sheet) or ``current`` (the hand edit).
 
+The result is a DRAFT of the tour's facts (silver_aa_internal.raw_tour_fact_draft, CIS 457), never a write into the
+tour: it goes live only through the publish gate (POST /admin/tours/{id}/fact-draft/publish,
+api/routers/admin_pipeline/fact_drafts.py), which refuses a draft whose base values changed since the merge
+(:func:`stale_fields`). D5 (tech lead S285): a person without reference_price.write never changes the price text through
+a merge either (:func:`withhold`; choosing the sheet's price is refused by the route).
+
 Pure: no DB. The route is POST /admin/upload-staging/{staging_id}/decide with decision ``merge``; the preview is GET
 /admin/upload-staging/{staging_id}/merge-preview (api/routers/admin_pipeline/uploads.py).
 """
@@ -24,6 +30,8 @@ MERGE_FIELDS: tuple[str, ...] = (
     "best_time_to_go", "feature",
 )
 JSONB_FIELDS = frozenset({"src_highlights", "activities"})
+# D5: the price text feeds the reference price Booking reads; only reference_price.write changes it (tour_detail.py).
+PRICE_FIELDS = frozenset({"price_raw"})
 INCOMING, CURRENT = "incoming", "current"
 
 
@@ -100,6 +108,20 @@ def resolve(merge_plan: Mapping[str, Any], resolutions: Optional[Mapping[str, st
     return changes, {f: resolutions[f] for f in conflicts}
 
 
+def withhold(changes: Mapping[str, Any], blocked: Iterable[str]) -> tuple[dict, dict]:
+    """(the changes without the ``blocked`` fields, {field: the sheet's value} of the fields held back). A field held
+    back keeps the tour's value; the result names it so the person can hand it to whoever may enter it."""
+    blocked = set(blocked)
+    return ({f: v for f, v in changes.items() if f not in blocked},
+            {f: v for f, v in changes.items() if f in blocked})
+
+
+def stale_fields(current: Mapping[str, Any], before: Mapping[str, Any]) -> list[str]:
+    """The fields of a draft whose value on the tour is no longer the one the draft was merged from (someone edited the
+    tour since): publishing it would silently undo that edit."""
+    return sorted(f for f, v in before.items() if _norm(current.get(f)) != _norm(v))
+
+
 def db_value(field: str, value: Any) -> Any:
     """The value to bind for ``field`` (JSONB columns as JSON text)."""
     if field in JSONB_FIELDS and value is not None and not isinstance(value, str):
@@ -107,4 +129,5 @@ def db_value(field: str, value: Any) -> Any:
     return value
 
 
-__all__ = ["CURRENT", "INCOMING", "JSONB_FIELDS", "MERGE_FIELDS", "db_value", "hand_edited_fields", "plan", "resolve"]
+__all__ = ["CURRENT", "INCOMING", "JSONB_FIELDS", "MERGE_FIELDS", "PRICE_FIELDS", "db_value", "hand_edited_fields",
+           "plan", "resolve", "stale_fields", "withhold"]
