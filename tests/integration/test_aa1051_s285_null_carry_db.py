@@ -102,6 +102,8 @@ def _pres(name: str):
                   if i["writer"] == "a1" and not i["trap"] and splits.split_of(i["sample_id"]) == "gate")
     assert gate
     base = {k: v for k, v in pr.load("w5-s1").doc.items() if k != "sample"}
+    # S285 l29: w5-s1 is registered (>= 25 ids); a draft copy takes the fixture's few GATE items
+    base.update(status="draft", registered_by=None, registered_on=None)
     null = pr.from_doc({**base, "golden_set": {"name": name, "version": "1.0.0"}, "sample_ids": gate})
     proof = pr.from_doc({**base, "golden_set": {"name": name, "version": "1.1.0"}, "sample_ids": gate})
     return null, proof
