@@ -127,7 +127,7 @@ _INSERT_DRAFT_SQL = """
         mobile_card_text, seo_title, seo_meta, seo_keywords_used, og_tags,
         model_editorial, model_schema, prompt_version, brand_rules_version,
         status, retry_count, metadata, fallback_used, human_edited, edited_at, edit_diff, revalidate_passed,
-        reviewed_by, satellite_used, fs_id, origin, parent_version_num, edit_reason, author_id
+        satellite_used, fs_id, origin, parent_version_num, edit_reason, author_id
     )
     SELECT g.tour_id, g.tenant_id,
            (SELECT MAX(x.version_num) + 1 FROM silver_aa_internal.generated_content x WHERE x.tour_id = g.tour_id),
@@ -136,9 +136,9 @@ _INSERT_DRAFT_SQL = """
            g.model_editorial, g.model_schema, g.prompt_version, g.brand_rules_version,
            'draft', 0, g.metadata - 'final_contract' - 'final_contract_log' - 's1_job_id' - 'recompose_of',
            false, true, now(), $3::jsonb, NULL,
-           $4::uuid, false, g.fs_id, 'human', g.version_num, $5, $6
+           false, g.fs_id, 'human', g.version_num, $4, $5
       FROM silver_aa_internal.generated_content g
-     WHERE g.id = $2::uuid
+     WHERE g.id = $2::uuid AND g.tour_id = $1::uuid
     RETURNING id::text AS id
 """
 
@@ -161,10 +161,6 @@ async def _base_version(conn, tour_id: str, base_version_num: Optional[int]):
     if not newest:
         raise HTTPException(status_code=409, detail="This tour has no written version yet: run the rewrite first")
     return newest
-
-
-def _reviewer_uuid(actor: str) -> Optional[str]:
-    return actor.split(":", 1)[1] if actor.startswith("admin:") else None
 
 
 @router.put("/tours/{tour_id}/draft")
@@ -190,9 +186,10 @@ async def put_tour_draft(tour_id: str, request: Request, body: DraftSave = Body(
             created = draft is None
             if created:
                 base_id = await _base_version(conn, tour_id, body.base_version_num)
+                # the author is author_id (reviewed_by, an admin_users FK, stays NULL: the editors are in edit_diff)
                 draft_id = await conn.fetchval(
                     _INSERT_DRAFT_SQL, tour_id, base_id, json.dumps(td.with_editor({}, actor, fields, reason)),
-                    _reviewer_uuid(actor), reason, actor)
+                    reason, actor)
                 draft, _live = await _read(conn, tour_id)
             else:
                 draft_id = draft["id"]

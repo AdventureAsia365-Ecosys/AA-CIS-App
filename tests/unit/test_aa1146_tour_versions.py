@@ -194,3 +194,72 @@ def test_unlock_is_master_admin_and_drafts_are_content_work():
     for method in ("PUT", "DELETE"):
         assert denial_reason(principal_from_role("content"), method, "/admin/tours/{tour_id}/draft") is None
         assert denial_reason(principal_from_role("viewer"), method, "/admin/tours/{tour_id}/draft") is not None
+
+
+# ── process_export: an automatic exit never replaces a locked Master; a person's publish sets / lifts the lock ──────
+
+from unittest.mock import patch  # noqa: E402
+
+GCID = "00000000-0000-4000-8000-00000000c0de"
+TOUR = "00000000-0000-4000-8000-00000000700a"
+
+
+@pytest.fixture
+def _db_url(monkeypatch):
+    monkeypatch.delenv("SECRET_DB_ARN", raising=False)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test/test")
+    monkeypatch.delenv("TENANT_SLUG", raising=False)
+
+
+def _gc_row(**extra):
+    return {"id": GCID, "tour_id": TOUR, "tenant_id": GCID, "batch_id": None, "aa_name": "Zz Tour",
+            "aa_highlights": "[]", "seo_keywords_used": "[]", "og_tags": "{}", "quality_score_id": None,
+            "quality_score": 9.0, "country": "Vietnam", "duration": "5 days", "src_source_status": "active",
+            "src_deleted_at": None, **extra}
+
+
+def _conn(*rows):
+    conn = AsyncMock()
+    conn.fetchrow = AsyncMock(side_effect=list(rows))
+    conn.execute = AsyncMock()
+    conn.close = AsyncMock()
+    return conn
+
+
+@pytest.mark.parametrize("exit_name", ["auto_publish", "recompose", "lambda"])
+def test_an_automatic_publish_over_a_locked_master_is_refused(_db_url, monkeypatch, exit_name):
+    from services.export import handler
+
+    async def _locked(conn, tour_id):
+        return {"locked": True, "by": "admin:zz", "at": None, "reason": "zz edit"}
+    monkeypatch.setattr(human_lock, "lock_of", _locked)
+    conn = _conn(_gc_row())
+    with patch("services.export.handler.asyncpg.connect", AsyncMock(return_value=conn)), \
+         patch("services.jobs.a3_atomize_job.enqueue_a3_atomize", AsyncMock()) as atomize:
+        with pytest.raises(human_lock.HumanLockedError):
+            asyncio.run(handler.process_export(GCID, contract_exit=exit_name))
+    assert conn.fetchrow.await_count == 1                       # no INSERT INTO published_tours
+    assert "SET status = 'hitl'" in conn.execute.await_args.args[0]
+    atomize.assert_not_called()
+
+
+@pytest.mark.parametrize("row_extra,locks", [({"origin": "human", "human_edited": True, "edit_reason": "zz why"}, True),
+                                              ({"origin": "llm", "human_edited": False}, False)])
+def test_a_person_publish_sets_or_lifts_the_lock(_db_url, monkeypatch, row_extra, locks):
+    from services.export import handler
+    set_lock, clear_lock = AsyncMock(return_value=True), AsyncMock(return_value=None)
+    monkeypatch.setattr(human_lock, "set_lock", set_lock)
+    monkeypatch.setattr(human_lock, "clear_lock", clear_lock)
+    conn = _conn(_gc_row(**row_extra))
+    published = SimpleNamespace(extra={"catalog_id": "pt-zz"}, events=[], recompute=[])
+    with patch("services.export.handler.asyncpg.connect", AsyncMock(return_value=conn)), \
+         patch("services.tour_lifecycle.publish", AsyncMock(return_value=published)), \
+         patch("services.jobs.a3_atomize_job.enqueue_a3_atomize", AsyncMock()):
+        asyncio.run(handler.process_export(GCID, contract_exit="human_publish", lock_by="admin:zz-lead"))
+    if locks:
+        set_lock.assert_awaited_once()
+        assert set_lock.await_args.kwargs == {"by": "admin:zz-lead", "reason": "zz why"}
+        clear_lock.assert_not_called()
+    else:
+        clear_lock.assert_awaited_once()
+        set_lock.assert_not_called()
