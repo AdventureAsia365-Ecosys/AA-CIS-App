@@ -4761,7 +4761,7 @@ non-inferiority margin, the pinned judge, the cap) is registered and matches its
 estimate (the larger of R2's and the pinned judge priced from `shared.llm_model_catalog` on that model's own past judge
 tokens) fits, a null run with the same judge and golden version came out non_inferior first (T9 / S1 / T2), and the
 D12 caps and minimum samples in force (re-read before the file is checked) hold (settings
-`cis.spend.writer_proof_*_cap_usd`, defaults null $5, T9 $15, S1 $8, T2 $5, $33 in total, read against the ledger; minimum
+`cis.spend.writer_proof_*_cap_usd`, defaults null $5, T9 $15, S1 $8, T2 $6.5 (CIS 460, S285), $33 in total, read against the ledger; minimum
 samples `cis.quality.writer_proof_*_min_items`). `runner campaign` is the DRY plan of all four in order. `runner report` gives the
 pre-registered verdict, the targets and the cost and requests per object from `shared.llm_call_log`.
 S283: the judge may be a **pinned claim instrument** (`judge.instrument`, `services/writer_proof/instrument.py`): the
@@ -4788,6 +4788,11 @@ version (same sample ids on GATE, every stored column of `shared.eval_golden_ite
 the writer's judge source never reads them (T9). It never carries back to an earlier version. The plan reports
 `null_run.rule` (`same_golden_version` | `golden_carry`), `golden_carried_from`, `items_compared` and `sample_items`;
 a run that cannot be carried is named in the blocking line with what differs. `same_instrument` stays strict.
+S285 **fire share** (`services/writer_proof/fire_share.py`): the claim judge's price uses a measured share of
+claims the R1 fire sends on per writer (`instrument.FIRE_SHARE`; a writer without one is planned at every claim). The
+tool measures it by running the fire step alone on a proof's stored control outputs (DRY RUN first, then `--live
+--confirm CONFIRM --cap-usd <n>` within the D12 caps, a per-call cap, ledger rows on `adhoc_aa1051`), printing counts
+only and the `FIRE_SHARE` entry to pin in a reviewed PR.
 _Avoid_: A/B test (a proof has a fixed pre-registered rule), experiment.
 
 **Scope (writing memory)**:

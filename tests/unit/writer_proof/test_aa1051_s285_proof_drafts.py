@@ -36,7 +36,8 @@ NEW_GATE = {"w5-s1": ["s1-052", "s1-053", "s1-057", "s1-058", "s1-060", "s1-061"
 # the 12 t9_blog GATE items the null run drew on Dev (S284 plan, sample_resolved 12 of 12)
 NULL_SAMPLE = ["t9b-006", "t9b-008", "t9b-013", "t9b-014", "t9b-019", "t9b-020", "t9b-024", "t9b-025", "t9b-028",
                "t9b-029", "t9b-033", "t9b-034"]
-CAPS = {"w5-t9": 15.0, "w5-s1": 8.0, "w5-t2": 5.0}       # tech lead, 19/11 (= the D12 caps)
+# tech lead, 19/11 (= the D12 caps); S285 C2: T2 raised from 5 to 6.5 USD with all 20 GATE samples (CIS 460)
+CAPS = {"w5-t9": 15.0, "w5-s1": 8.0, "w5-t2": 6.5}
 # GATE items whose stored OUTPUT is over the eval judge's evidence cap (eval_judge OUTPUT_CHARS): their control can
 # never be judged (InputOverCap), so they could never pair; measured on the fixture's stored text before any run
 OVER_EVIDENCE_CAP = {"s1-027"}

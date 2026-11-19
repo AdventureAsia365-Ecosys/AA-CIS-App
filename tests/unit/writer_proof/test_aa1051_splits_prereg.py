@@ -112,8 +112,13 @@ def test_shipped_drafts_are_valid_drafts_within_d12(pid):
         pr.require_registered(pre)
 
 
-def test_d12_caps_add_up_to_the_total():
-    assert sum(pr.workflow_cap(w) for w in pr.WORKFLOWS) == pr.total_cap() == 33.0
+def test_d12_caps_and_the_total():
+    # root ADR 0020 D12 summed the four caps to the 33 USD total; S285 C2 (tech lead, 19/11/2026, CIS 460) raised the
+    # T2 cap to 6.5 and kept the total: the caps now add up to 34.5, so the total binds only if every proof spent its
+    # whole cap (the spend gate checks ledger + reservations + cap against it on every run)
+    caps = {w: pr.workflow_cap(w) for w in pr.WORKFLOWS}
+    assert caps == {"null": 5.0, "t9": 15.0, "s1": 8.0, "t2": 6.5} and pr.total_cap() == 33.0
+    assert sum(caps.values()) == 34.5 and all(c <= pr.total_cap() for c in caps.values())
     assert spend.W5_STAGE == cfg.W5_STAGE
     from services.jobs.writing_memory_job import R2
     assert spend.R2_JOB_KIND == R2 and spend.R2_RUN_CAP_USD == cfg.R2_RUN_CAP_USD
