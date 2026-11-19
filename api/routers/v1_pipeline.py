@@ -534,7 +534,10 @@ _APPROVE_GATE_SQL = """
 async def _enforce_publish_gate_for_review(conn, request: Request, review_id: str, tenant_id: str) -> None:
     """AA-1146 D1: the publish gate of a Review Queue approve (api/routers/admin_pipeline/_publish.py)."""
     from api.routers.admin_pipeline._publish import enforce_publish_gate
+    from api.services import content_publish_gate
     from services.content_generation import tour_draft as td
+    if not await content_publish_gate.switch_on(conn):   # off (Dev): nothing to check, no extra read
+        return
     row = await conn.fetchrow("""
         SELECT gc.reviewed_by::text AS reviewed_by, gc.edit_diff
           FROM silver_aa_internal.review_queue rq

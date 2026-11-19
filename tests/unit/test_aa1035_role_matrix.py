@@ -34,7 +34,8 @@ EXPECTED_PERMS = {
     "content_lead": {"content.read", "content.write", "review.act", "master.admin", "atoms.write", "photos.write",
                      "a4.unpublish", "quality.write", "content.settings.write", "catalog.read", "tenant_content.read",
                      "lab.read", "wave.run", "notifications.read",
-                     "reference_price.read", "reference_price.write",   # AA-1091
+                     "reference_price.read",   # AA-1091 (write dropped in AA-1146 D5)
+                     "content.publish",   # AA-1146 D1
                      "learn.preview",   # AA-1105 (AA Academy drafts)
                      "docs.read"},      # AA-1133 B7: every staff role reads /admin/docs
     "content": {"content.read", "content.write", "review.act", "catalog.read", "notifications.read",

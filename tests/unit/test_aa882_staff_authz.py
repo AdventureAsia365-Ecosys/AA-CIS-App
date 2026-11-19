@@ -76,6 +76,7 @@ def test_role_perms_match_the_s241_matrix():
         "settings.write", "settings.approve",              # S279 thresholds L1 (Platform › Settings, admin only)
         "learn.preview",                                   # AA-1105 AA Academy drafts (admin, content_lead)
         "docs.read",                                       # AA-1133 B7 the docs reader (every role)
+        "content.publish",                                 # AA-1146 D1 (admin, content_lead)
     }
     # admin holds every role capability but the Lab-only logged read of ai_ops and the book-scoped Tenant QA read of
     # customer_success (admin reads tenant text in its own right: tenant_content.read)
@@ -198,6 +199,7 @@ def test_content_work_routes_are_the_every_staff_pages():
         "/admin/tours/{tour_id}/generated/{content_id}",
         "/admin/tours/{tour_id}/generated/{content_id}/revalidate",
         "/admin/tours/{tour_id}/versions/{version_num}/promote",
+        "/admin/tours/{tour_id}/draft", "/admin/tours/{tour_id}/draft/publish",   # AA-1146: draft versions
         "/admin/tours/{tour_id}/trash", "/admin/tours/{tour_id}/restore",
         "/admin/notifications/read-all", "/admin/notifications/{notif_id}/read",
         "/admin/notifications", "/admin/notifications/count",           # AA-1035 slice 2: notifications.read

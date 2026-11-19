@@ -28,7 +28,7 @@ def test_every_part_file_is_in_the_package_tuple():
 def test_one_router_with_every_route_on_it():
     assert all(getattr(p, "router", ap.router) is ap.router for p in _parts())
     routes = [r for r in ap.router.routes if isinstance(r, APIRoute)]
-    assert len(routes) == 57
+    assert len(routes) == 64   # AA-1146: + draft (GET, PUT, DELETE, publish), unlock, raw-revisions, merge-preview
     assert all(r.path.startswith("/admin/") for r in routes)
 
 

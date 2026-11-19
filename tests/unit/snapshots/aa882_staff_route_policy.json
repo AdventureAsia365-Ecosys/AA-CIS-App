@@ -63,6 +63,10 @@
     "capability": "tenant.write",
     "module": "api.routers.admin_tenant_subscription"
   },
+  "DELETE /admin/tours/{tour_id}/draft": {
+    "capability": "content.write",
+    "module": "api.routers.admin_pipeline"
+  },
   "DELETE /admin/usage-explorer/views/{view_id}": {
     "capability": "spend.read",
     "module": "api.routers.admin_usage_explorer"
@@ -907,6 +911,10 @@
     "capability": null,
     "module": "api.routers.admin_pipeline"
   },
+  "GET /admin/tours/{tour_id}/draft": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
   "GET /admin/tours/{tour_id}/history": {
     "capability": null,
     "module": "api.routers.admin_pipeline"
@@ -914,6 +922,10 @@
   "GET /admin/tours/{tour_id}/lifecycle-preview": {
     "capability": "master.admin",
     "module": "api.routers.admin"
+  },
+  "GET /admin/tours/{tour_id}/raw-revisions": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
   },
   "GET /admin/tours/{tour_id}/seo-context": {
     "capability": null,
@@ -948,6 +960,10 @@
     "module": "api.routers.admin_pipeline"
   },
   "GET /admin/upload-staging/{batch_id}": {
+    "capability": null,
+    "module": "api.routers.admin_pipeline"
+  },
+  "GET /admin/upload-staging/{staging_id}/merge-preview": {
     "capability": null,
     "module": "api.routers.admin_pipeline"
   },
@@ -1644,7 +1660,7 @@
     "module": "api.routers.admin_reports"
   },
   "POST /admin/review-queue/{review_id}/approve": {
-    "capability": "review.act",
+    "capability": "content.publish|review.act",
     "module": "api.routers.admin_pipeline"
   },
   "POST /admin/review-queue/{review_id}/claims/label": {
@@ -1795,12 +1811,20 @@
     "capability": "tenant.view_as",
     "module": "api.routers.admin_view_as"
   },
+  "POST /admin/tours/{tour_id}/draft/publish": {
+    "capability": "content.publish|review.act",
+    "module": "api.routers.admin_pipeline"
+  },
   "POST /admin/tours/{tour_id}/generated/{content_id}/revalidate": {
     "capability": "content.write",
     "module": "api.routers.admin_pipeline"
   },
+  "POST /admin/tours/{tour_id}/unlock": {
+    "capability": "master.admin",
+    "module": "api.routers.admin_pipeline"
+  },
   "POST /admin/tours/{tour_id}/versions/{version_num}/promote": {
-    "capability": "content.write",
+    "capability": "content.publish|review.act",
     "module": "api.routers.admin_pipeline"
   },
   "POST /admin/trip-pages/recheck": {
@@ -1964,7 +1988,7 @@
     "module": "api.routers.admin_writing_memory"
   },
   "POST /v1/pipeline/review-queue/{review_id}/approve": {
-    "capability": "review.act",
+    "capability": "content.publish|review.act",
     "module": "api.routers.v1_pipeline"
   },
   "POST /v1/pipeline/review-queue/{review_id}/reject": {
@@ -2050,5 +2074,9 @@
   "PUT /admin/tenants/{tenant_id}/tripplanner-site/lead-route": {
     "capability": "tenant.write",
     "module": "api.routers.admin_tenant_subscription"
+  },
+  "PUT /admin/tours/{tour_id}/draft": {
+    "capability": "content.write",
+    "module": "api.routers.admin_pipeline"
   }
 }

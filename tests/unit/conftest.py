@@ -87,6 +87,28 @@ async def _label_route_seeds(conn, atoms, tenant_id, groups_out=None):
     return [(a, t) for a, t in atoms]
 
 
+async def _switch_off(conn):
+    return False
+
+
+async def _no_locks(conn, tour_ids):
+    return {}
+
+
+@pytest.fixture(autouse=True)
+def _content_publish_gate_off(request, monkeypatch):
+    """AA-1146 — the publish routes read the two-person switch (api/services/content_publish_gate.switch_on, a savepoint
+    and a fetchrow) and the hand-edit lock (services/content_generation/human_lock.locks_of) on their connection. Unit
+    tests script conn.fetchrow side-effects in call order with plain mocks, so both read as "off / unlocked" here; the
+    real reads are tested with the markers ``real_publish_switch`` / ``real_human_lock``."""
+    if "real_publish_switch" not in request.keywords:
+        from api.services import content_publish_gate
+        monkeypatch.setattr(content_publish_gate, "switch_on", _switch_off)
+    if "real_human_lock" not in request.keywords:
+        from services.content_generation import human_lock
+        monkeypatch.setattr(human_lock, "locks_of", _no_locks)
+
+
 @pytest.fixture(autouse=True)
 def _atom_seed_label_only(request, monkeypatch):
     if "real_atom_seed" in request.keywords:

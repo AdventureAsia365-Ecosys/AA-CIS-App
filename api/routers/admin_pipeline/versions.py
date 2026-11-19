@@ -15,8 +15,8 @@ def _version_editors(gc) -> list:
     """AA-1146: the people who wrote a version's current text: the draft editors (edit_diff.editors), its author and
     the last hand editor (generated_content.reviewed_by, AA-232: the editor's admin id)."""
     from services.content_generation import tour_draft as td
-    out = td.editors_of(gc["edit_diff"], gc.get("author_id") if hasattr(gc, "get") else None)
-    if gc["reviewed_by"]:
+    out = td.editors_of(gc.get("edit_diff"), gc.get("author_id"))
+    if gc.get("reviewed_by"):
         out.append(f"admin:{gc['reviewed_by']}")
     return out
 
@@ -70,7 +70,7 @@ async def promote_tour_version(
                 detail=(f"v{version_num} is '{gc['status']}', not approved: only a version that passed the publish "
                         "gate can be made current. Approve it in the Review Queue instead."),
             )
-        if gc["human_edited"] and gc["revalidate_passed"] is not True:
+        if gc.get("human_edited") and gc.get("revalidate_passed") is not True:
             raise HTTPException(
                 status_code=409, headers={"X-Error-Code": "revalidate_required"},
                 detail={"code": "revalidate_required",

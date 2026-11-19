@@ -17,7 +17,7 @@ def request_actor(request: Request) -> str:
     identity = request_staff_identity(request)
     admin_id = getattr(identity, "admin_id", None) if identity is not None else None
     if not admin_id:
-        raw = request.headers.get("x-admin-user-id")
+        raw = (getattr(request, "headers", None) or {}).get("x-admin-user-id")
         try:
             admin_id = str(UUID(raw)) if raw else None
         except (ValueError, AttributeError):
@@ -27,7 +27,8 @@ def request_actor(request: Request) -> str:
 
 def request_perms(request: Request) -> frozenset:
     """The caller's role capabilities (empty for the machine)."""
-    principal = principal_from_role(request.headers.get("x-admin-role"), request_staff_identity(request))
+    principal = principal_from_role((getattr(request, "headers", None) or {}).get("x-admin-role"),
+                                    request_staff_identity(request))
     return frozenset(principal.perms)
 
 

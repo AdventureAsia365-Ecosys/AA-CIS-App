@@ -10,7 +10,9 @@ markers = ["real_atom_seed: run with the real AA-768 atom seed helper (no confte
            "real_subject_gate: run with the real AA-1039 AA-subject gate hooks (no conftest stub)",
            "real_put_back_guard: run with the real AA-1039 put-back read of Ready to publish and publish (no stub)",
            "real_cassette: run with the AA-900 cassette recorder on (the test replaces its DB write)",
-           "real_factsheet_store: run with the AA-1047 FactSheet store on (the test gives it a fake connection)"]
+           "real_factsheet_store: run with the AA-1047 FactSheet store on (the test gives it a fake connection)",
+           "real_publish_switch: read the AA-1146 two-person publish switch for real (no conftest stub: off)",
+           "real_human_lock: read the AA-1146 hand-edit lock for real (no conftest stub: unlocked)"]
 
 [tool.coverage.run]
 omit = [
