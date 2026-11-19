@@ -12,9 +12,14 @@ no new parser. An edit (PATCH /v1/tours/versions/{id}, action=edit) is checked a
 
 * sets a key that is not wording (WORDING_FIELDS): duration, price, inclusions, a day list ... (``field``);
 * changes the day structure of the itinerary: another set of "Day N" markers than the base itinerary (``days``);
-* brings a figure the base never states: "3 days" where AA says 4, "$450", "5 hours", "07:30" (``figure``);
-* names a place the base never names, in the highlights or the itinerary (``place``);
-* drops or adds a "not included" item group (flights, visa, tips, meals ...) (``not_included``).
+* brings a figure the base never states: "3 days" where AA says 4, "$450", "5 hours", "07:30" (``figure``); a
+  duration spelled out ("a two-day walk", "three nights") is read as its figure;
+* names a place the base never names, in the highlights or the itinerary (``place``); the place base is the parent's
+  highlights and itinerary plus the Master and raw texts, never the parent's name / summary / SEO lines, so a place
+  first slipped into the summary (where places are free) cannot clear it for the itinerary in a second edit;
+* drops or adds a "not included" item group (flights, visa, tips, meals ...) (``not_included``);
+* newly says an item group is included that the source excludes, or that no base text names outside a "not
+  included" line ("flights included", "visa included") (``included``).
 
 Kept free: every sentence that keeps those facts, dropping a figure or a place (less detail is not a different
 tour), reordering, tone, brand words in the name / subtitle / summary / SEO lines (places are checked only where a
@@ -30,6 +35,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import asdict, dataclass
 from typing import Any, Iterable, Optional
 
@@ -49,8 +55,24 @@ PLACE_FIELDS = ("highlights", "itineraries")
 # Figure roles that are facts (s1_facts.number_role): an ordinal ("12th-century") is not. A label stays: the reader
 # takes "USD 390" for a label (a capitalised word before the figure), and a new "Day 5" is a new day anyway.
 _FACT_ROLES = ("figure", "clock", "label")
-MESSAGE = ("This edit changes a tour fact (days, places, figures or what is not included). Only the wording can "
-           "change; the facts come from Adventure Asia.")
+MESSAGE = ("This edit changes a tour fact (days, places, figures or what is or is not included). Only the wording "
+           "can change; the facts come from Adventure Asia.")
+# Durations spelled out ("a two-day walk", "three nights", "twelve hours"): the FactSheet reader sees digit figures
+# only, and copy usually spells a duration out. "one" is left out ("one day you will ..." is an idiom, not a figure).
+_NUMBER_WORDS = {w: str(i) for i, w in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen "
+    "eighteen nineteen twenty".split()) if i >= 2}
+_NUMBER_WORDS.update({"thirty": "30", "forty": "40", "fifty": "50"})
+_WORD_FIGURE_RE = re.compile(r"\b(?P<num>" + "|".join(_NUMBER_WORDS) + r")[^\S\n]*[-–][^\S\n]*(?P<unit>"
+                             r"days?|nights?|hours?|hrs?|weeks?)\b|\b(?P<num2>" + "|".join(_NUMBER_WORDS)
+                             + r")[^\S\n]+(?P<unit2>days?|nights?|hours?|hrs?|weeks?)\b", re.I)
+# A clause that says an item is included ("Price includes flights", "Visa included", "covers all meals").
+_INCLUDED_RE = re.compile(r"\binclud(?:e|es|ed|ing)\b|\bcover(?:s|ed)?\b|\bprovided\b|\bcomes\s+with\b|"
+                          r"\bwe\s+(?:arrange|provide)\b", re.I)
+# Clause ends inside a sentence ("Flights are not included, but the visa is included" holds two claims) and the
+# exceptions an inclusion claim carries ("everything is covered except the visa": the visa is not claimed).
+_CLAUSE_SPLIT_RE = re.compile(r";|\bbut\b|\bwhile\b|\bwhereas\b", re.I)
+_EXCEPT_RE = re.compile(r"\bexcept\b|\bother\s+than\b|\bapart\s+from\b|\bbesides\b", re.I)
 
 
 @dataclass(frozen=True)
@@ -81,10 +103,21 @@ def merge_edit(parent: dict, edited: dict) -> tuple[dict, list[Locked]]:
     return out, locked
 
 
+def _word_figures(text: str) -> list[tuple[str, Optional[str], str]]:
+    """(number, unit, span) of every spelled-out duration in ``text`` ("two-day" -> ("2", "day"))."""
+    out = []
+    for m in _WORD_FIGURE_RE.finditer(text or ""):
+        word = (m["num"] or m["num2"]).lower()
+        unit = (m["unit"] or m["unit2"]).lower()
+        out.append((_NUMBER_WORDS[word], s1_facts._UNIT_OF.get(unit), m.group(0)))
+    return out
+
+
 def _figures(text: str) -> list[tuple[str, Optional[str], str]]:
-    """(number, unit, span) of every fact figure in ``text`` (a range gives both ends)."""
+    """(number, unit, span) of every fact figure in ``text`` (a range gives both ends), spelled-out durations
+    included."""
     return [(n, m["unit"], m["span"]) for m in s1_facts.number_mentions(text) if m["role"] in _FACT_ROLES
-            for n in m["numbers"]]
+            for n in m["numbers"]] + _word_figures(text)
 
 
 def _figure_known(number: str, unit: Optional[str], base: set[tuple[str, Optional[str]]]) -> bool:
@@ -117,13 +150,62 @@ def _places(text: str, lower: set[str]) -> dict[str, str]:
 
 
 def _not_included(texts: Iterable[str]) -> set[str]:
-    """The item groups (s1_facts.ITEM_GROUPS) of every "not included" sentence of the texts."""
+    """The item groups (s1_facts.ITEM_GROUPS) of every "not included" clause of the texts ("Lodges are included, but
+    flights are not included" excludes flights only)."""
     out: set[str] = set()
     for text in texts:
         for sent in s1_facts.sentences(text):
-            if s1_facts._NOT_INCLUDED_RE.search(sent):
-                out.update(s1_facts.item_groups(sent))
+            for clause in _CLAUSE_SPLIT_RE.split(sent):
+                if s1_facts._NOT_INCLUDED_RE.search(clause):
+                    out.update(s1_facts.item_groups(clause))
     return out
+
+
+def _clauses(text: str) -> list[str]:
+    """The clauses of every sentence of ``text``, each cut before an "except" / "other than"."""
+    return [_EXCEPT_RE.split(c)[0] for sent in s1_facts.sentences(text) for c in _CLAUSE_SPLIT_RE.split(sent)
+            if c.strip()]
+
+
+def _claimed_included(texts: Iterable[str]) -> set[str]:
+    """The item groups the texts say are included: a clause (up to any "except") that has an inclusion verb and is
+    neither a "not included" nor an optional one."""
+    out: set[str] = set()
+    for text in texts:
+        for clause in _clauses(text):
+            if (_INCLUDED_RE.search(clause) and not s1_facts._NOT_INCLUDED_RE.search(clause)
+                    and not s1_facts._OPTIONAL_RE.search(clause)):
+                out.update(s1_facts.item_groups(clause))
+    return out
+
+
+def _excluded_groups(base_texts: Iterable[str], source_exclusions: str) -> set[str]:
+    """The item groups the base excludes: every unconditional line of the raw exclusions ("meals not mentioned in the
+    itinerary" depends on the itinerary) and every "not included" sentence of the base texts."""
+    out = {g for line in s1_facts.item_lines(source_exclusions) if not s1_facts._CONDITIONAL_RE.search(line)
+           for g in s1_facts.item_groups(line)}
+    return out | _not_included(base_texts)
+
+
+def _mentioned_groups(texts: Iterable[str]) -> set[str]:
+    """The item groups the texts name in a clause that is not a "not included" one."""
+    return {g for text in texts for sent in s1_facts.sentences(text) for clause in _CLAUSE_SPLIT_RE.split(sent)
+            if not s1_facts._NOT_INCLUDED_RE.search(clause) for g in s1_facts.item_groups(clause)}
+
+
+def _check_included(changed_texts: list[str], parent_texts: list[str], base_texts: list[str],
+                    source_exclusions: str) -> list[Locked]:
+    """A new inclusion claim is locked when the base excludes the group ("flights included" where the source lists
+    flights as excluded; "meals included" where it excludes any meal) or no base text names it outside a "not
+    included" line. A claim the version already makes is kept (it was checked when it was written)."""
+    new_claims = _claimed_included(changed_texts) - _claimed_included(parent_texts)
+    if not new_claims:
+        return []
+    excluded = _excluded_groups(parent_texts + base_texts, source_exclusions)
+    if excluded & set(s1_facts.MEAL_GROUPS):
+        excluded.add("meals")
+    known = _mentioned_groups(parent_texts + base_texts)
+    return [Locked("content", "included", g) for g in sorted(new_claims) if g in excluded or g not in known]
 
 
 def _check_days(parent: dict, new: dict, master_itinerary: str) -> list[Locked]:
@@ -152,24 +234,32 @@ def check_edit(parent: dict, edited: dict, base_texts: Iterable[str], master_iti
                source_exclusions: str = "") -> tuple[dict, list[Locked]]:
     """(new content, locked facts) of an agency edit of ``parent`` (the version it edits). ``base_texts``: the Master
     and raw source texts the tour's facts come from; ``source_exclusions``: the raw exclusions field, whose item groups
-    the copy may also say are not included. An empty locked list means the edit may be saved."""
+    the copy may also say are not included (and may never say are included). An empty locked list means the edit may
+    be saved."""
     new, locked = merge_edit(parent, edited)
-    base_list = [text_of(parent.get(f)) for f in WORDING_FIELDS] + [t for t in base_texts if t]
-    base = "\n".join(base_list)
+    source = [t for t in base_texts if t]
+    parent_texts = [text_of(parent.get(f)) for f in WORDING_FIELDS]
+    base = "\n".join(parent_texts + source)
     base_figures = {(n, u) for n, u, _s in _figures(base)}
-    base_words = _words(base)
+    # Places: only where a place is a fact (the parent's highlights / itinerary) plus the Master and raw texts.
+    place_base = "\n".join([text_of(parent.get(f)) for f in PLACE_FIELDS] + source)
+    base_words = _words(place_base)
     lower = s1_facts._lower_vocab({"base": base, "new": "\n".join(text_of(new.get(f)) for f in WORDING_FIELDS)})
-    base_places = set(_places(base, lower))
+    base_places = set(_places(place_base, lower))
     changed = [f for f in WORDING_FIELDS if text_of(new.get(f)) != text_of(parent.get(f))]
     for f in changed:
         locked += _check_field(f, text_of(new.get(f)), base_figures, base_places, base_words, lower)
     if "itineraries" in changed:
         locked += _check_days(parent, new, master_itinerary)
     if changed:
-        was = _not_included(text_of(parent.get(f)) for f in WORDING_FIELDS)
+        was = _not_included(parent_texts)
         now = _not_included(text_of(new.get(f)) for f in WORDING_FIELDS)
-        allowed = was | _not_included(base_list[len(WORDING_FIELDS):]) | set(s1_facts.item_groups(source_exclusions))
+        allowed = was | _not_included(source) | set(s1_facts.item_groups(source_exclusions))
         locked += [Locked("content", "not_included", g) for g in sorted((was - now) | (now - allowed))]
+        # The raw exclusions list names its groups without a "not included" word: never a base of an inclusion.
+        excl = (source_exclusions or "").strip()
+        positive = [t for t in source if t.strip() != excl]
+        locked += _check_included([text_of(new.get(f)) for f in changed], parent_texts, positive, source_exclusions)
     return new, locked
 
 

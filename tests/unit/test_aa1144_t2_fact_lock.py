@@ -87,6 +87,75 @@ def test_an_exclusion_the_source_states_may_be_added():
     assert locked == []
 
 
+@pytest.mark.parametrize("summary,expected", [
+    ("A two-day walk through Lumora Valley.", ("summary", "figure", "two-day")),
+    ("Two days walking through Lumora Valley.", ("summary", "figure", "Two days")),
+    ("Five nights under the stars in Lumora Valley.", ("summary", "figure", "Five nights")),
+    ("A walk of twelve hours a day.", ("summary", "figure", "twelve hours")),
+], ids=["two-day", "two-days", "five-nights", "twelve-hours"])
+def test_a_spelled_out_duration_is_a_figure(summary, expected):
+    _new, locked = _check({"summary": summary + " International flights are not included."})
+    assert expected in locked, locked
+
+
+@pytest.mark.parametrize("summary", [
+    "Four days in Lumora Valley.", "Three nights in Lumora Valley lodges.", "A four-day trek, three nights out.",
+    "One day you will walk Lumora Valley.",
+], ids=["four-days", "three-nights", "both", "one-idiom"])
+def test_a_spelled_out_duration_the_base_states_passes(summary):
+    _new, locked = _check({"summary": summary + " International flights are not included."})
+    assert locked == [], locked
+
+
+@pytest.mark.parametrize("edited,expected", [
+    ({"summary": "Price includes international flights and all meals. Flights are not included."},
+     ("content", "included", "flights")),
+    ({"highlights": ["Visa included", "Sunrise over Brinmoor Ridge"]}, ("content", "included", "visa")),
+    ({"summary": "A four-day walk; travel insurance is included. International flights are not included."},
+     ("content", "included", "insurance")),
+    ({"highlights": ["All meals included", "Sunrise over Brinmoor Ridge"]}, ("content", "included", "meals")),
+], ids=["flights-excluded", "visa-excluded", "insurance-never-named", "meals-never-named"])
+def test_a_new_inclusion_claim_against_the_base_is_locked(edited, expected):
+    _new, locked = _check(edited)
+    assert expected in locked, locked
+
+
+@pytest.mark.parametrize("edited", [
+    {"highlights": ["Guide included all the way", "Sunrise over Brinmoor Ridge"]},
+    {"summary": "Accommodation is included, but international flights are not included."},
+    {"summary": "Everything is covered except the visa. International flights are not included."},
+], ids=["guide-in-source", "accommodation-but-flights", "except-clause"])
+def test_an_inclusion_claim_the_base_supports_passes(edited):
+    _new, locked = _check(edited)
+    assert locked == [], locked
+
+
+def test_meals_included_is_locked_when_the_source_excludes_a_meal():
+    new, locked = lock.check_edit(PARENT, {"highlights": ["Meals included", "Night at Tessaly Lodge"]},
+                                  BASE + ["Breakfast at the lodge", "Dinner"], "", "Dinner")
+    assert ("content", "included", "meals") in [(x.field, x.fact, x.value) for x in locked]
+
+
+def test_an_inclusion_claim_the_version_already_makes_is_kept():
+    parent = {**PARENT, "subtitle": "Ridges and lakes, visa included"}
+    _new, locked = _check({"summary": "Walk Lumora Valley. International flights are not included."}, parent=parent)
+    assert locked == []
+
+
+def test_a_place_slipped_into_the_summary_never_clears_the_itinerary():
+    first_new, first = _check({"summary": "A four-day walk to Halvaris Bay. International flights are not included."})
+    assert first == []                                  # the summary is free wording
+    itinerary = ITINERARY.replace("Day 3: Descend to Orrin Lake.", "Day 3: Descend to Halvaris Bay.")
+    _new, second = _check({"itineraries": itinerary}, parent=first_new)
+    assert ("itineraries", "place", "Halvaris Bay") in second, second
+
+
+def test_a_place_the_master_names_may_move_into_the_itinerary():
+    itinerary = ITINERARY.replace("Day 3: Descend to Orrin Lake.", "Day 3: Descend to Orrin Lake and Selwen Falls.")
+    _new, locked = _check({"itineraries": itinerary}, base=BASE + ["Selwen Falls is on the way down."])
+    assert locked == []
+
+
 def test_the_master_itinerary_is_the_day_base_when_the_version_has_none():
     parent = {**PARENT, "itineraries": ""}
     _new, locked = _check({"itineraries": "Day 1: Kestrel Town.\nDay 2: Brinmoor Ridge."}, parent=parent,
