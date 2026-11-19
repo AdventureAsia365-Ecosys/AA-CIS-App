@@ -242,7 +242,8 @@ def test_the_shipped_lock_and_the_registered_files_agree():
 
 def test_caps_and_minimum_samples_come_from_the_settings_registry(monkeypatch):
     from shared import settings
-    defaults = {"null": (5.0, 12), "t9": (15.0, 12), "s1": (8.0, 25), "t2": (5.0, 20)}
+    # S285 C2 (CIS 460): the T2 cap default is 6.5 (tech lead, 19/11/2026); the others are the D12 numbers
+    defaults = {"null": (5.0, 12), "t9": (15.0, 12), "s1": (8.0, 25), "t2": (6.5, 20)}
     assert {w: (pr.workflow_cap(w), pr.min_items(w)) for w in pr.WORKFLOWS} == defaults
     for w, spec in pr.WORKFLOWS.items():
         assert settings.definition(spec["cap_setting"]).default_value == defaults[w][0]
