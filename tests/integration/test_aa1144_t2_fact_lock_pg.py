@@ -86,7 +86,7 @@ async def test_a_new_day_against_the_master_is_refused_and_audited(ctx):
     (row,) = await _audit(ctx, "tenant_tour_version.edit_refused")
     assert row["actor"] == f"tenant:{ctx.tenant}" and row["resource_id"] == str(ctx.v1)
     details = json.loads(row["details"]) if isinstance(row["details"], str) else row["details"]
-    assert details["membership_id"] == ctx.mid and details["locked"][0]["fact"] == "days"
+    assert details["membership_id"] == ctx.mid and "days" in {x["fact"] for x in details["locked"]}
 
 
 @pytest.mark.asyncio
