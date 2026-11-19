@@ -118,6 +118,36 @@ def _differing_columns(a: dict, b: dict) -> list[str]:
     return [c for c in ITEM_COLUMNS + SPLIT_COLUMNS if a.get(c) != b.get(c)]
 
 
+def _gate_differences(g_old: dict, g_new: dict, new_items: list[dict], writer: str, v_new: str) -> list[str]:
+    """The GATE items of `writer` removed, moved, added or changed between two versions. Pure."""
+    out: list[str] = []
+    side_new = {it["sample_id"]: it.get("eval_split") for it in new_items if it.get("writer") == writer}
+    for sid in sorted(set(g_old) - set(g_new)):
+        out.append(f"{writer} GATE item {sid} moved to {side_new[sid]} in {v_new}" if side_new.get(sid)
+                   else f"{writer} GATE item {sid} is missing from {v_new}")
+    out.extend(f"{writer} GATE item {sid} was added in {v_new}" for sid in sorted(set(g_new) - set(g_old)))
+    for sid in sorted(set(g_old) & set(g_new)):
+        cols = _differing_columns(g_old[sid], g_new[sid])
+        if cols:
+            out.append(f"{writer} GATE item {sid} differs in {', '.join(cols)}")
+    return out
+
+
+def _sample_problems(null: pr.Prereg, old_items: list[dict], g_old: dict, v_old: str) -> tuple[list[str], int]:
+    """The items the null run evaluated (its sample, resolved on the old version as its report resolves it) must be
+    GATE items of its writer there. (problems, distinct sample items). Pure."""
+    res = pr.resolve(null, old_items)
+    sample = list(res.doc.get("sample_ids") or []) + list(res.doc.get("noise_sample_ids") or [])
+    out: list[str] = []
+    off = sorted(set(sample) - set(g_old))
+    if off:
+        out.append(f"{len(off)} items of the null run's sample are not {null.writer} GATE items of {v_old} "
+                   f"(e.g. {off[0]})")
+    if not sample:
+        out.append("the null run's sample is empty")
+    return out, len(set(sample))
+
+
 def null_covers(null: pr.Prereg, pre: pr.Prereg, old: Optional[dict], new: Optional[dict]) -> dict:
     """Rule (c): does every GATE item of the null run's writer read the same in the proof's golden version?
     `old` / `new`: `read_items` of the null run's and the proof's version ({"version", "shared_inputs", "items"}),
@@ -129,9 +159,7 @@ def null_covers(null: pr.Prereg, pre: pr.Prereg, old: Optional[dict], new: Optio
     out: dict[str, Any] = {"ok": False, "golden_carried_from": v_old, "golden_carried_to": v_new,
                            "items_compared": 0, "sample_items": 0, "differs": []}
     differs: list[str] = out["differs"]
-    for ver, got in ((v_old, old), (v_new, new)):
-        if got is None:
-            differs.append(f"golden {name}@{ver} is not stored")
+    differs.extend(f"golden {name}@{ver} is not stored" for ver, got in ((v_old, old), (v_new, new)) if got is None)
     if differs:
         return out
     differs.extend(_side_problems(old["items"], writer, f"{name}@{v_old}")
@@ -139,29 +167,13 @@ def null_covers(null: pr.Prereg, pre: pr.Prereg, old: Optional[dict], new: Optio
     g_old, g_new = _gate(old["items"], writer), _gate(new["items"], writer)
     if not g_old:
         differs.append(f"{name}@{v_old} has no {writer} GATE item")
-    side_new = {it["sample_id"]: it.get("eval_split") for it in new["items"] if it.get("writer") == writer}
-    for sid in sorted(set(g_old) - set(g_new)):
-        differs.append(f"{writer} GATE item {sid} moved to {side_new[sid]} in {v_new}" if side_new.get(sid)
-                       else f"{writer} GATE item {sid} is missing from {v_new}")
-    for sid in sorted(set(g_new) - set(g_old)):
-        differs.append(f"{writer} GATE item {sid} was added in {v_new}")
-    for sid in sorted(set(g_old) & set(g_new)):
-        cols = _differing_columns(g_old[sid], g_new[sid])
-        if cols:
-            differs.append(f"{writer} GATE item {sid} differs in {', '.join(cols)}")
-    # the items the null run evaluated: its sample, resolved on the old version as its report resolves it
-    res = pr.resolve(null, old["items"])
-    sample = list(res.doc.get("sample_ids") or []) + list(res.doc.get("noise_sample_ids") or [])
-    off = sorted(set(sample) - set(g_old))
-    if off:
-        differs.append(f"{len(off)} items of the null run's sample are not {writer} GATE items of {v_old} "
-                       f"(e.g. {off[0]})")
-    if not sample:
-        differs.append("the null run's sample is empty")
+    differs.extend(_gate_differences(g_old, g_new, new["items"], writer, v_new))
+    sample_problems, n_sample = _sample_problems(null, old["items"], g_old, v_old)
+    differs.extend(sample_problems)
     if writer not in NO_SHARED_INPUT_WRITERS and old.get("shared_inputs") != new.get("shared_inputs"):
         differs.append(f"the shared inputs the {writer} judge source reads differ between {v_old} and {v_new}")
     out["items_compared"] = len(g_old)
-    out["sample_items"] = len(set(sample))
+    out["sample_items"] = n_sample
     out["ok"] = not differs
     return out
 

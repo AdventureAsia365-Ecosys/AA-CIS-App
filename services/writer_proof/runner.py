@@ -61,6 +61,7 @@ import sys
 from typing import Any, Optional
 
 from services.writer_proof import cost_report, decision, power, price, spend
+from services.writer_proof import null_carry as nc
 from services.writer_proof import prereg as pr
 
 GOALS = {"non_inferior": "non_inferior", "improve": "improve"}
@@ -310,6 +311,33 @@ def same_instrument(a: pr.Prereg, b: pr.Prereg) -> bool:
             and (a.doc.get("golden_set") or {}) == (b.doc.get("golden_set") or {}))
 
 
+async def _golden_carry(pre: pr.Prereg, others: list[pr.Prereg], load, verdict_of,
+                        checked: list[dict]) -> tuple[Optional[dict], list[str]]:
+    """S285: a non_inferior null run of an EARLIER version of the same golden set with the same judge (rules (a), (b)),
+    newest version first, whose writer's GATE items are identical in the proof's version (rule (c)). (the pass or
+    None, the lines naming the null runs that were not carried). READ ONLY."""
+    not_carried: list[str] = []
+    later = []
+    for n in others:
+        why = nc.carry_problem(n, pre)
+        if why is None:
+            later.append(n)
+        elif nc.judge_pin(n) == nc.judge_pin(pre) and nc.golden_of(n)[0] == nc.golden_of(pre)[0]:
+            not_carried.append(f"registered null run {n.id} is not carried: {why}")
+    for n in sorted(later, key=lambda x: nc.semver(nc.golden_of(x)[1]), reverse=True):
+        if await verdict_of(n, nc.CARRY_RULE) != "non_inferior":
+            continue
+        old, new = await load(n, pre)
+        cover = nc.null_covers(n, pre, old, new)
+        checked[-1]["carry"] = cover
+        if cover["ok"]:
+            return ({"required": True, "passed_by": n.id, "rule": nc.CARRY_RULE,
+                     "golden_carried_from": cover["golden_carried_from"], "items_compared": cover["items_compared"],
+                     "sample_items": cover["sample_items"]}, not_carried)
+        not_carried.append(nc.blocking_line(n, pre, cover))
+    return None, not_carried
+
+
 async def null_gate(pool, pre: pr.Prereg, *, nulls: Optional[list[pr.Prereg]] = None, golden_items=None) -> dict:
     """S280 (root ADR 0020 W5: "a null run comes first, to prove that the eval itself is stable"): a T9 / S1 / T2 proof
     is planned only after a registered null run with the SAME pinned judge and golden version came out non_inferior
@@ -321,7 +349,6 @@ async def null_gate(pool, pre: pr.Prereg, *, nulls: Optional[list[pr.Prereg]] = 
     (null_carry.null_covers). It is reported as `rule` "golden_carry" with `golden_carried_from` (the null run's
     version), `items_compared` and `sample_items`; one that cannot be carried is named with what differs.
     `golden_items(null, pre)`: the two versions' stored items (null_carry.load_pair), injectable for tests."""
-    from services.writer_proof import null_carry as nc
     if pre.workflow == "null":
         return {"required": False}
     registered = pr.registered_files("null") if nulls is None else nulls
@@ -339,29 +366,11 @@ async def null_gate(pool, pre: pr.Prereg, *, nulls: Optional[list[pr.Prereg]] = 
     for n in candidates:
         if await verdict_of(n, nc.SAME_RULE) == "non_inferior":
             return {"required": True, "passed_by": n.id, "rule": nc.SAME_RULE, "checked": checked, "ignored": ignored}
-    # S285: a null run of an earlier version of the same golden set (rules (a) and (b)), newest version first
-    not_carried: list[str] = []
-    later = []
-    for n in registered:
-        if n in candidates:
-            continue
-        why = nc.carry_problem(n, pre)
-        if why is None:
-            later.append(n)
-        elif nc.judge_pin(n) == nc.judge_pin(pre) and nc.golden_of(n)[0] == nc.golden_of(pre)[0]:
-            not_carried.append(f"registered null run {n.id} is not carried: {why}")
     load = golden_items or (lambda a, b: nc.load_pair(pool, a, b))
-    for n in sorted(later, key=lambda x: nc.semver(nc.golden_of(x)[1]), reverse=True):
-        if await verdict_of(n, nc.CARRY_RULE) != "non_inferior":
-            continue
-        old, new = await load(n, pre)
-        cover = nc.null_covers(n, pre, old, new)
-        checked[-1]["carry"] = cover
-        if cover["ok"]:
-            return {"required": True, "passed_by": n.id, "rule": nc.CARRY_RULE,
-                    "golden_carried_from": cover["golden_carried_from"], "items_compared": cover["items_compared"],
-                    "sample_items": cover["sample_items"], "checked": checked, "ignored": ignored}
-        not_carried.append(nc.blocking_line(n, pre, cover))
+    carried, not_carried = await _golden_carry(pre, [n for n in registered if n not in candidates], load,
+                                               verdict_of, checked)
+    if carried is not None:
+        return {**carried, "checked": checked, "ignored": ignored}
     judge = pre.doc.get("judge") or {}
     why = "".join(f"; registered null run {i['file']} ignored: {i['why']}" for i in ignored)
     why += "".join(f"; {x}" for x in not_carried)
