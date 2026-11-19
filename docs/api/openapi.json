@@ -11226,6 +11226,76 @@
         "title": "StudioAddOnState",
         "type": "object"
       },
+      "StudioAppearanceIn": {
+        "additionalProperties": false,
+        "properties": {
+          "locale": {
+            "enum": [
+              "en",
+              "vi"
+            ],
+            "title": "Locale",
+            "type": "string"
+          },
+          "theme": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "maxProperties": 6,
+            "title": "Theme",
+            "type": "object"
+          }
+        },
+        "required": [
+          "theme",
+          "locale"
+        ],
+        "title": "StudioAppearanceIn",
+        "type": "object"
+      },
+      "StudioLeadRouteIn": {
+        "additionalProperties": false,
+        "properties": {
+          "lead_channel": {
+            "enum": [
+              "none",
+              "webhook",
+              "email"
+            ],
+            "title": "Lead Channel",
+            "type": "string"
+          },
+          "lead_email": {
+            "anyOf": [
+              {
+                "maxLength": 354,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Email"
+          },
+          "lead_webhook_url": {
+            "anyOf": [
+              {
+                "maxLength": 600,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Webhook Url"
+          }
+        },
+        "required": [
+          "lead_channel"
+        ],
+        "title": "StudioLeadRouteIn",
+        "type": "object"
+      },
       "SubscriptionTermsIn": {
         "properties": {
           "agreed_currency": {
@@ -61783,6 +61853,124 @@
           }
         ],
         "summary": "Turn automatic drafts of posts about a discontinued tour on or off (Content studio owner)",
+        "tags": [
+          "tenant-account"
+        ]
+      }
+    },
+    "/v1/account/tripplanner": {
+      "get": {
+        "operationId": "get_account_tripplanner_v1_account_tripplanner_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TripPlannerModule"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "The agency's Trip planner: addresses, domains, lead route, look, quota",
+        "tags": [
+          "tenant-account"
+        ]
+      }
+    },
+    "/v1/account/tripplanner/appearance": {
+      "put": {
+        "operationId": "put_account_tripplanner_appearance_v1_account_tripplanner_appearance_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudioAppearanceIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TripPlannerModule"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "The planner's brand colours and language (Content studio owner)",
+        "tags": [
+          "tenant-account"
+        ]
+      }
+    },
+    "/v1/account/tripplanner/lead-route": {
+      "put": {
+        "operationId": "put_account_tripplanner_lead_route_v1_account_tripplanner_lead_route_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudioLeadRouteIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TripPlannerModule"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Where the planner's leads go while the agency has no CRM (Content studio owner)",
         "tags": [
           "tenant-account"
         ]

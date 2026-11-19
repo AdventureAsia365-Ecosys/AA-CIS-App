@@ -3320,7 +3320,12 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   case; locale en | vi). The Tenant 360 editor's checks apply, plus an e-mail domain that is plainly internal is
   refused (`lead_email_not_public`, for staff too); a write needs an active Trip planner (409 `tripplanner_not_active`)
   and is audited as `crm-member:<id>` (`tenant.tripplanner_lead_route_changed` / `_appearance_changed`). Leads, usage
-  and the webhook key are TripPlanner's (lead.submitted.v1 1.1); CIS reads none of them for this.
+  and the webhook key are TripPlanner's (lead.submitted.v1 1.1); CIS reads none of them for this. An agency WITHOUT
+  the CRM add-on has no CRM agency, so its Content studio owner edits the same route and look from the studio with its
+  own tenant token (`api/routers/v1_account_tripplanner.py`: `GET /v1/account/tripplanner`, `PUT .../lead-route`,
+  `PUT .../appearance`; every studio role reads, only the owner writes through the tenant role middleware, audited as
+  `membership:<id>`; no view-as access). That is where the e-mail / webhook route takes effect (`effective_channel`
+  is `crm` while `crm.core` is live).
   **R8 own domains (AA-1090, CIS 428 + 429, contract tenant.entitlements.v1 1.8; `docs/implementation-notes/AA-1090.md`):**
   `shared.tenant_tripplanner_domain` (one row per custom host of a tenant site; status pending / validating / attaching
   / active / removing / failed; no RLS, rule a allowlist) is edited on Tenant 360 › Subscription › TripPlanner own
