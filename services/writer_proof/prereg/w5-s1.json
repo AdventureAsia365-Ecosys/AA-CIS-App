@@ -7,7 +7,7 @@
   "registered_on": null,
   "golden_set": {
     "name": "aa729",
-    "version": "1.5.0"
+    "version": "1.7.0"
   },
   "eval_split": "gate",
   "sample_ids": [
@@ -25,7 +25,17 @@
     "s1-036",
     "s1-037",
     "s1-044",
-    "s1-047"
+    "s1-047",
+    "s1-052",
+    "s1-053",
+    "s1-057",
+    "s1-058",
+    "s1-060",
+    "s1-061",
+    "s1-065",
+    "s1-067",
+    "s1-069",
+    "s1-072"
   ],
   "noise_sample_ids": [],
   "release_id": null,
@@ -112,5 +122,5 @@
     "claims_per_item": 68
   },
   "cap_usd": 8.0,
-  "note": "S1 proof (root ADR 0020 W5 item 3), re-drafted in S285 on the claim instrument judge. B = the current S1 writer (a1, the W3 contract graph, release_id null), A = the stored control of each item. Sample: the non-trap a1 GATE items of aa729@1.5.0 (16; the trap inj-s1-4 is excluded) less s1-027, whose stored OUTPUT (17,444 chars) is over the judge's evidence cap (eval_judge, 16,000): its control cannot be judged (InputOverCap, a counted error), so it could never pair and paired_all would make the verdict invalid; the rule is a property of the stored text, fixed before any run, not of a result (s1-015 is the next longest at 13,904: a longer B draft of it would be an error row too). 15 items. SHORT: the minimum in force (cis.quality.writer_proof_s1_min_items) is 25, so this draft cannot be registered until the tech lead lowers that setting to 15 or 10 more a1 samples whose ids fall on GATE are labelled into a new golden version; the 16 are not the stratified 25 the S271 audit named (Japan, Rajasthan, source contradictions, Optional-heavy). Judge: the pinned AA-1048 claim instrument v7 (R1 fire, then the two-step v7c / v7j, gpt-6-luna-openai@openai-direct, 3 votes), ADVISORY (v7 was no_go by one stored violation, precision 0.73, recall 0.88), the same judge and golden version as the registered null run w5-null-t9-blog-v7-g150, which came out non_inferior in S284 (mean diff -0.25 flagged claims per blog, upper bound 0.43 against margin 4.0, n 12): runner.null_gate opens this proof only through it. v7 was measured on t9_blog, t9_social and t2 claims only: on S1 text it is outside its measured domain (no a1 fire share, so the plan prices every claim as fired: an upper estimate). Primary metric fail_claims_per_item, rule non_inferior, margin 4.0 flagged claims per tour (the null run's scale), writer_sd 4.9 (Poisson spread of the flagged count of each of two draws at 68 claims: sqrt(2 x 10.3 x 68 / 60) rounded up; floor 3.4), power 0.85 at n 15 (3.5 gives 0.76). Targets on arm B: writer cost <= 0.065 USD per tour (the writer path's ledger rows: the a1 rewrite with its own in-graph judge, brand audit and source facts; every row but the eval judge's), no hard stop; the blind 2-pass panel ($0) supplies the serious-error rate (v2 baseline 0.0015 per sentence, bootstrap upper bound of the difference <= +0.003) and day loss 0 (external). Cap 8 USD (D12); the run command uses 7.6."
+  "note": "S1 proof (root ADR 0020 W5 item 3), re-drafted in S285 on golden aa729@1.7.0 and the claim instrument judge. B = the current S1 writer (a1, the W3 contract graph, release_id null), A = the stored control of each item. Sample: every non-trap a1 GATE item of aa729@1.7.0 (26 under split rule aa1051-split-v1; the trap inj-s1-4 is excluded) less s1-027, whose stored OUTPUT (17,444 chars) is over the judge's evidence cap (eval_judge, 16,000): its control cannot be judged (InputOverCap, a counted error), so it could never pair and paired_all would make the verdict invalid; the rule is a property of the stored text, fixed before any run, not of a result (s1-015, about 13,900, is the longest kept). 25 items = the minimum in force (cis.quality.writer_proof_s1_min_items): the 15 of 1.5.0 plus the 10 GATE ids of the S285 S1 addendum (s1-052, 053, 057, 058, 060, 061, 065, 067, 069, 072), the stratified picks the S271 audit named, each declared for a GATE position before any label (the side is a hash of the id, never of a label): Japan 3, Rajasthan 2, a source contradiction 4 (a stated length against the text), Optional-heavy 4 (overlapping; 7 countries), every output under 12,000 chars. Labels (the AA-729 round-1 protocol): the S285 agent panel, three independent lenses (source fidelity, voice and policy, the customer reader), then one full-source verifier per sample; agreed when the verifier matches the lens majority, a dispute decided by the orchestrator's rule (follow the lens majority only when the verifier's sole fail ground is one it ruled a pipeline gap elsewhere in the set, else the verifier); pending tech lead review (fixture label_history). No S1 GATE item was disputed (the one S1 dispute is on CAL). GATE labels: 20 fail / 5 pass (the new 10: 6 / 4). Judge: the pinned AA-1048 claim instrument v7 (R1 fire, then the two-step v7c / v7j, gpt-6-luna-openai@openai-direct, 3 votes), ADVISORY (v7 was no_go by one stored violation, precision 0.73, recall 0.88), the judge of the registered null run w5-null-t9-blog-v7-g150, which came out non_inferior on aa729@1.5.0 in S284 (mean diff -0.25 flagged claims per blog, upper bound 0.43 against margin 4.0, n 12). That null run is pinned to 1.5.0, so runner.null_gate opens this proof by the golden carry rule (services/writer_proof/null_carry.py, S285): a non_inferior null run of an earlier version of the same golden set with the same judge pin opens a proof on a later version when every GATE item of its writer (t9_blog) is byte-identical there, item and stored side; 1.7.0 = 1.5.0 plus S1 and T2 samples only, and the plan reports rule golden_carry, golden_carried_from 1.5.0. v7 was measured on t9_blog, t9_social and t2 claims only: on S1 text it is outside its measured domain (no a1 fire share, so the plan prices every claim as fired: an upper estimate). Primary metric fail_claims_per_item, rule non_inferior, margin 4.0 flagged claims per tour (the null run's scale), writer_sd 4.9 (Poisson spread of the flagged count of each of two draws at 68 claims: sqrt(2 x 10.3 x 68 / 60) rounded up; floor 3.4): power about 0.96 at n 25 (0.85 at n 15). Targets on arm B: writer cost <= 0.065 USD per tour (the writer path's ledger rows: the a1 rewrite with its own in-graph judge, brand audit and source facts; every row but the eval judge's), no hard stop; the blind 2-pass panel ($0) supplies the serious-error rate (v2 baseline 0.0015 per sentence, bootstrap upper bound of the difference <= +0.003) and day loss 0 (external). Cap 8 USD (D12); the run command uses 7.6."
 }
