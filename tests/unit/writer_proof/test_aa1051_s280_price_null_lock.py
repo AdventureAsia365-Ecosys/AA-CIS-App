@@ -206,7 +206,7 @@ def test_a_registered_file_must_match_the_lock():
     assert "not in registered.lock.json" in pr.registered_lock_problem(pre, {})
     assert "edited after it was registered" in pr.registered_lock_problem(pre, {pre.id: "e" * 64})
     assert pr.registered_lock_problem(pre, {pre.id: pre.sha256}) is None
-    assert pr.registered_lock_problem(pr.load("w5-t2"), {}) is None                 # a draft is not locked
+    assert pr.registered_lock_problem(pr.load("w5-null-t9-blog"), {}) is None       # a draft is not locked
 
 
 def test_load_refuses_a_registered_file_outside_the_lock(tmp_path, monkeypatch):

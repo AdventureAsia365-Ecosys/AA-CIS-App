@@ -102,8 +102,8 @@ def _doc(**over) -> dict:
     return d
 
 
-# S285: w5-t9 is registered once its DRY plan passes; test_aa1051_s285_proof_drafts covers it either way
-@pytest.mark.parametrize("pid", ["w5-null-t9-blog", "w5-s1", "w5-t2"])
+# S285: w5-t9, w5-s1 and w5-t2 are registered once their DRY plans pass; test_aa1051_s285_proof_drafts covers them
+@pytest.mark.parametrize("pid", ["w5-null-t9-blog"])
 def test_shipped_drafts_are_valid_drafts_within_d12(pid):
     pre = pr.load(pid)
     assert not pre.registered and pre.doc["eval_split"] == "gate"

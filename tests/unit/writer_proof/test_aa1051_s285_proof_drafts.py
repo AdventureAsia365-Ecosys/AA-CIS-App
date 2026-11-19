@@ -101,6 +101,19 @@ def test_the_s285_additions_are_on_gate_and_meet_the_minimum_in_force(pid):
 
 
 @pytest.mark.parametrize("pid", ["w5-s1", "w5-t2"])
+def test_s1_and_t2_are_registered_by_the_tech_lead_and_locked(pid):
+    """S285 l29: registered once each DRY plan's only blocking line was the draft status (tech lead decisions C1-C3,
+    labels E4). The lock entry is the file's sha, the run gate accepts the file, and the sample stays the full GATE
+    list (test_each_sample_is_every_non_trap_gate_item_of_its_writer)."""
+    pre = pr.load(pid)
+    assert pre.registered and pre.doc["registered_by"] == "tech_lead" and pre.doc["registered_on"] == "2026-11-19"
+    assert pr.read_lock()[pid] == pre.sha256 == pr.sha256_of(json.loads(pr.path_for(pid).read_text()))
+    pr.require_registered(pre)                                             # no PreregRefused
+    assert pr.registration_problems(pre.doc) == [] and pr.problems(pre.doc) == []
+    assert pre.doc["cap_usd"] == CAPS[pid] and pre.doc.get("sample") is None
+
+
+@pytest.mark.parametrize("pid", ["w5-s1", "w5-t2"])
 def test_the_null_run_is_carried_to_the_redrafted_proof(monkeypatch, pid):
     """The registered null run (1.5.0) opens the 1.7.0 draft through the golden carry when its t9_blog GATE items read
     the same in both versions (faked stored rows of invented text; null_carry's own tests cover every difference)."""
@@ -179,6 +192,7 @@ def test_registration_preview_of_the_shipped_drafts_is_clean(pid):
 ])
 def test_registration_preview_names_the_sample_shortfall(pid, keep, needle):
     d = json.loads(json.dumps(pr.load(pid).doc))
+    d.update(status="draft", registered_by=None, registered_on=None)        # S285 l29: both files are registered now
     d["sample_ids"] = d["sample_ids"][:keep]                               # the 1.5.0-sized draft
     assert pr.registration_problems(d) == [needle]
 
@@ -200,6 +214,7 @@ def test_registration_preview_keeps_a_named_registrant_and_flags_a_missing_write
 def test_a_drafts_plan_lists_what_registration_would_refuse(fakes):
     fakes["version"] = "1.7.0"
     d = json.loads(json.dumps(pr.load("w5-s1").doc))
+    d.update(status="draft", registered_by=None, registered_on=None)        # S285 l29: w5-s1 is registered now
     d["sample_ids"] = d["sample_ids"][:15]
     out = asyncio.run(runner.plan(_Pool(), pr.from_doc(d)))
     assert out["registration_problems"] == ["a registered s1 proof needs >= 25 sample ids, has 15"]
