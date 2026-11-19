@@ -59,7 +59,8 @@ async def test_419_registered_and_the_rows_are_the_compiled_defaults(conn):
     seed = open(M419, encoding="utf-8").read()
     for key, v in SEED_419.items():
         assert f'"key": "{key}"' in seed and f'"default_value": {v},' in seed.split(f'"key": "{key}"', 1)[1]
-    assert sum(v for k, v in SEED_419.items() if k != "cis.spend.writer_proof_total_cap_usd") == SEED_419["cis.spend.writer_proof_total_cap_usd"]
+    total = "cis.spend.writer_proof_total_cap_usd"
+    assert sum(v for k, v in SEED_419.items() if k != total) == SEED_419[total] == CAPS[total]
 
 
 @pytest.mark.asyncio
