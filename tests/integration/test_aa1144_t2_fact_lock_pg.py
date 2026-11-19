@@ -1,6 +1,6 @@
 """AA-1144 (S285 decision D8) — PATCH /v1/tours/versions/{id} edit against real Postgres, as aa_app_user.
 
-  - the tenant pool reads the AA Master of the tour (CIS 239 master read) for the fact base: a version without an
+  - the tenant pool reads the AA Master of the tour (CIS 239 master read, replayed by conftest) for the fact base: a version without an
     itinerary is checked against the Master's days, so adding a day is a 422 fact_locked and nothing is inserted;
   - a wording edit inserts the merged content (the version's itinerary kept) with the member from the token as
     edited_by_user, and one acp_shared.audit_log row (tenant_tour_version.edited, hashes only) is written on the main
@@ -39,7 +39,7 @@ async def ctx():
     tr = conn.transaction()
     await tr.start()
     try:
-        await install_ttv_live_standin(conn, master_read=True)
+        await install_ttv_live_standin(conn)   # the replayed 239 already grants the master read on published_tours
         pt = await seed_published_tour(conn, name="Lumora Valley Trek")
         await conn.execute("UPDATE gold_aa_internal.published_tours SET tenant_id = $2::uuid, aa_itineraries = $3 "
                            "WHERE id = $1", pt, AA_MASTER, MASTER_ITINERARY)
