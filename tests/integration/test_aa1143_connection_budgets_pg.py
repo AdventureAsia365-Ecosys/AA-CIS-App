@@ -94,7 +94,7 @@ async def test_a_first_total_then_a_share_moves_the_cis_cap(conn):
     assert [(r["app"], r["version"]) for r in versions] == [(None, 1), ("crm", 1), ("tripplanner", 1), ("crm", 2)]
     assert await _cap(conn) == Decimal("34.00")
     puts = [s for s in SENT if s[0] == "PUT"]
-    assert puts[-1][2]["shares"][KEY] == "2.00"
+    assert {"connection_key": KEY, "share_usd": "2.00"} in puts[-1][2]["shares"]
     assert await conn.fetchval("SELECT count(*) AS n FROM acp_shared.audit_log WHERE action = $1 AND resource_id = $2",
                                budgets.AUDIT_ACTION, KEY) == 3
 

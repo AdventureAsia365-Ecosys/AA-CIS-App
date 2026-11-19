@@ -161,7 +161,8 @@ def world(monkeypatch):
         if method == "PUT":
             return w["crm_put"]
         if path == budgets.CRM_SHARES_PATH:
-            return 200, {"shares": {"zz-a": "5.00"}, "updated_at": "2026-11-19T00:00:00+00:00"}
+            return 200, {"shares": [{"connection_key": "zz-a", "share_usd": "5.00"}],
+                         "updated_at": "2026-11-19T00:00:00+00:00"}
         return 200, {"settings": [{"key": rules.CRM_CAP_KEY, "value": {"zz-a": 5}}]}
 
     monkeypatch.setattr(conn_registry, "fetch_connections", fetch_connections)
@@ -192,7 +193,7 @@ async def test_a_higher_crm_share_writes_cis_first_then_sends_the_copy(world):
     assert out["cis_remainder_usd"] == 92.0 and out["crm_sync"] == {"sent": True, "error": None}
     assert world["inserted"] == [[("crm", D("8.00"), 2)]]
     puts = [e for e in world["log"] if e[0] == "crm" and e[1] == "PUT"]
-    assert puts[0][3]["shares"] == {"zz-a": "8.00"}
+    assert puts[0][3]["shares"] == [{"connection_key": "zz-a", "share_usd": "8.00"}]
     order = [e[0] if e[0] == "crm" else e[1] for e in world["log"]]
     assert order.index("INSERT shared.llm_connection_budget") < order.index("crm")
 
@@ -213,7 +214,8 @@ async def test_a_lower_crm_share_is_sent_first_and_a_refusal_writes_nothing(worl
 async def test_a_failed_send_after_a_rise_is_reported_not_raised(world):
     world["crm_put"] = (503, {"detail": "crm_unavailable"})
     out = await budgets.save(FakePool(world), "Bearer zz", "zz-a", shares={"crm": 9}, reason=REASON, actor="admin:zz")
-    assert out["crm_sync"] == {"sent": False, "error": "crm_unavailable"} and world["rows"][("zz-a", "crm")] == D("9.00")
+    assert out["crm_sync"] == {"sent": False, "error": "crm_unavailable"}
+    assert world["rows"][("zz-a", "crm")] == D("9.00")
 
 
 @pytest.mark.asyncio

@@ -141,8 +141,12 @@ class BudgetEditRefused(ValueError):
     """A connection budget change the rules refuse (422), with a stable ``code`` for the page."""
 
     def __init__(self, code: str, message: str):
-        super().__init__(message)
+        super().__init__(code, message)
         self.code = code
+        self.message = message
+
+    def __str__(self) -> str:
+        return self.message
 
 
 def usd_amount(value: Any, what: str) -> Decimal:
@@ -201,6 +205,7 @@ def plan_edit(apps: Iterable[str], before_total: Optional[Decimal], before_share
     if new_total != before_total:
         changes.append((None, new_total))
     # Shares that go down first, then the total, then the shares that go up (one INSERT keeps this order in its ids).
+
     def rank(change):
         app, new = change
         if app is None:

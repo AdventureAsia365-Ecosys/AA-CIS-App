@@ -124,6 +124,18 @@ def crm_copy(rows: dict[str, dict[Optional[str], Any]]) -> dict[str, str]:
     return out
 
 
+def _copy_map(items: Any) -> dict:
+    """{connection key: USD} from crm.ops.v1 1.16's list of {connection_key, share_usd}. ValueError on another shape."""
+    if not isinstance(items, list):
+        raise ValueError("not a list")
+    out = {}
+    for item in items:
+        if not isinstance(item, dict) or not isinstance(item.get("connection_key"), str):
+            raise ValueError("not an item")
+        out[item["connection_key"]] = item.get("share_usd")
+    return out
+
+
 async def _crm_get(authorization: Optional[str], path: str, params: Optional[dict] = None) -> tuple[Any, Any]:
     status, body = await crm_console.crm_ops_call("GET", path, authorization, params=params)
     if status != 200:
@@ -137,9 +149,9 @@ async def crm_state(authorization: Optional[str]) -> dict:
     ai), each read on its own. Never raises."""
     copy_body, copy_error = await _crm_get(authorization, CRM_SHARES_PATH)
     copy = None
-    if copy_body is not None and isinstance(copy_body.get("shares"), dict):
+    if copy_body is not None:
         try:
-            copy = {k: float(v) for k, v in rules.budget_map(copy_body["shares"]).items()}
+            copy = {k: float(v) for k, v in rules.budget_map(_copy_map(copy_body.get("shares"))).items()}
         except ValueError:
             copy_error = "crm_copy_unreadable"
     settings_body, settings_error = await _crm_get(authorization, "/settings", {"area": rules.CRM_CAP_AREA})
@@ -239,8 +251,9 @@ async def history(pool: Any, connection_key: str, limit: int = 100) -> dict:
 
 async def send_crm_copy(authorization: Optional[str], copy: dict[str, str], *, reason: str) -> Optional[str]:
     """PUT the CRM's whole copy. None when the CRM took it, else the reason it did not. Never raises."""
+    items = [{"connection_key": k, "share_usd": v} for k, v in sorted(copy.items())]
     status, body = await crm_console.crm_ops_call("PUT", CRM_SHARES_PATH, authorization,
-                                                  json={"shares": copy, "reason": reason[:rules.REASON_MAX]})
+                                                  json={"shares": items, "reason": reason[:rules.REASON_MAX]})
     if status == 200:
         return None
     code = body.get("detail") if isinstance(body.get("detail"), str) else None

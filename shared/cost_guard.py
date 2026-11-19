@@ -519,8 +519,8 @@ def policy_of(policies: dict, connection_key: str) -> ConnectionCostPolicy:
 
 
 async def connection_month_spend(conn, connection_keys: list[str]) -> dict[str, tuple[float, int]]:
-    """{connection_key: (USD, calls)} logged this UTC month (account = the key) that the CIS remainder pays for (AA-1143:
-    an app with its own share counts only above it); keys with no row are absent."""
+    """{connection_key: (USD, calls)} logged this UTC month (account = the key) that the CIS remainder pays for
+    (AA-1143: an app with its own share counts only above it); keys with no row are absent."""
     if not connection_keys:
         return {}
     try:
