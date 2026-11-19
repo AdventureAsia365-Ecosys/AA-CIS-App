@@ -177,7 +177,8 @@ def test_seed_keeps_the_cis_cap_or_lowers_it_to_the_provider_budget(cur):
 
 
 def test_seed_rows_name_the_migration(cur):
-    rows = _rows(cur, "SELECT DISTINCT actor, version FROM shared.llm_connection_budget WHERE connection_key LIKE 'zz-%%'")
+    rows = _rows(cur, "SELECT DISTINCT actor, version FROM shared.llm_connection_budget "
+                      "WHERE connection_key LIKE 'zz-%%'")
     assert rows == [{"actor": "migration:456", "version": 1}]
 
 
