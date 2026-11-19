@@ -13,9 +13,9 @@
 --          values in sum by hand (acc1: provider 100, CIS 95, CRM 5; acc2 the same way), so P - C is the CRM share
 --          today. AI gateway > Budgets compares the row with the CRM setting (crm.ops.v1 relay) and flags a difference;
 --        - no tripplanner or booking row: TripPlanner stays inside the CIS remainder (as today), Booking has no AI.
---      At commit CIS 455's apply trigger sets monthly_budget_usd to the remainder: P - (P - C) = C when P >= C, so the
+--      After each INSERT statement CIS 455's apply trigger sets monthly_budget_usd to the remainder: P - (P - C) = C when P >= C, so the
 --      CIS cap is unchanged; P when P < C or C is NULL (the provider budget, declared by the tech lead, now bounds
---      CIS too). The file checks both before it commits (SET CONSTRAINTS ... IMMEDIATE) and logs one NOTICE per
+--      CIS too). The file checks both before it commits and logs one NOTICE per
 --      connection. No connection is uncapped at any point: the rows and the cap change in the same transaction.
 --   2. catalog.v_llm_connection_cap_v2 (security_barrier, owner catalog_owner, SELECT to tripplanner only), one row per
 --      connection that has a total and per app (shared.llm_app_profile, plus cis):
@@ -125,9 +125,7 @@ SELECT s.connection_key, 'crm', s.provider_usd - s.cis_before, 1,
    AND EXISTS (SELECT 1 FROM shared.llm_app_profile a WHERE a.app = 'crm')
 ON CONFLICT ON CONSTRAINT llm_connection_budget_version_key DO NOTHING;
 
--- The apply trigger now (it would run at COMMIT): the CIS caps become the remainders, then the check below.
-SET CONSTRAINTS ALL IMMEDIATE;
-
+-- 455's apply trigger ran after each INSERT statement: the CIS caps are the remainders now. The check:
 DO $$
 DECLARE
     r record;
@@ -162,8 +160,6 @@ BEGIN
         RAISE EXCEPTION 'migration 456: the seed does not match today''s values: %', bad;
     END IF;
 END $$;
-
-SET CONSTRAINTS ALL DEFERRED;
 
 -- ── 2. The v2 cap view (catalog recipe) ──────────────────────────────────────────────────────────────────────────
 -- What catalog_owner reads: the rows in force (455's view), and the columns CIS 323 / 347 / 452 granted already (the

@@ -154,10 +154,6 @@ def _add(cur, key, app, usd, version, reason="zz test: a change of at least twen
                    VALUES (%s, %s, %s, %s, %s, 'admin:zz')""", (key, app, usd, version, reason))
 
 
-def _commit_point(cur):
-    cur.execute("SET CONSTRAINTS ALL IMMEDIATE")
-
-
 # ── 456: the seed ────────────────────────────────────────────────────────────────────────────────────────────────
 
 def test_registered_once(cur):
@@ -189,7 +185,6 @@ def test_seed_rows_name_the_migration(cur):
 
 def test_a_share_change_moves_the_cis_remainder_at_commit(cur):
     _add(cur, "zz-split", "crm", 8, 2)
-    _commit_point(cur)
     assert _cis_cap(cur, "zz-split") == 92.0
     assert _current(cur)[("zz-split", "crm")] == 8.0
 
@@ -197,25 +192,29 @@ def test_a_share_change_moves_the_cis_remainder_at_commit(cur):
 def test_a_tripplanner_share_and_a_removed_share(cur):
     _add(cur, "zz-split", "tripplanner", 10, 1)
     _add(cur, "zz-split", "crm", None, 2)                     # the CRM share removed
-    _commit_point(cur)
     assert _cis_cap(cur, "zz-split") == 90.0
     assert ("zz-split", "crm") not in _current(cur)
 
 
-def test_shares_above_the_total_are_refused_at_commit(cur):
+def test_one_statement_lowers_the_total_and_a_share_together(cur):
+    cur.execute("""INSERT INTO shared.llm_connection_budget (connection_key, app, budget_usd, version, reason, actor)
+                   VALUES ('zz-split', NULL, 3, 2, 'zz test: a change of at least twenty characters', 'admin:zz'),
+                          ('zz-split', 'crm', 1, 2, 'zz test: a change of at least twenty characters', 'admin:zz')""")
+    assert _cis_cap(cur, "zz-split") == 2.0
+
+
+def test_shares_above_the_total_are_refused(cur):
     import psycopg2
 
-    _add(cur, "zz-even", "tripplanner", 26, 1)               # 26 + the CRM's 5 > 30
     with pytest.raises(psycopg2.errors.CheckViolation, match="add up to more than the total"):
-        _commit_point(cur)
+        _add(cur, "zz-even", "tripplanner", 26, 1)           # 26 + the CRM's 5 > 30
 
 
 def test_lowering_the_total_under_the_shares_is_refused(cur):
     import psycopg2
 
-    _add(cur, "zz-split", None, 4, 2)                         # the CRM holds 5
     with pytest.raises(psycopg2.errors.CheckViolation, match="add up to more than the total"):
-        _commit_point(cur)
+        _add(cur, "zz-split", None, 4, 2)                     # the CRM holds 5
 
 
 def test_cis_never_has_a_row_and_a_total_is_never_removed(cur):
@@ -233,9 +232,8 @@ def test_a_share_needs_a_total(cur):
     import psycopg2
 
     _insert_connection(cur, "zz-bare", None)
-    _add(cur, "zz-bare", "tripplanner", 1, 1)
     with pytest.raises(psycopg2.errors.CheckViolation, match="needs the connection's total"):
-        _commit_point(cur)
+        _add(cur, "zz-bare", "tripplanner", 1, 1)
 
 
 def test_rows_are_append_only(cur):
@@ -259,7 +257,6 @@ def test_a_reason_is_twenty_characters(cur):
 def test_cis_app_writes_rows_and_reads_the_current_view(cur):
     cur.execute("SET LOCAL ROLE cis_app")
     _add(cur, "zz-even", "crm", 4, 2)
-    _commit_point(cur)
     assert _current(cur)[("zz-even", "crm")] == 4.0
     assert _cis_cap(cur, "zz-even") == 26.0
 
@@ -288,7 +285,6 @@ def test_view_shape_owner_and_consumer(cur):
 
 def test_view_pool_and_own_share(cur):
     _add(cur, "zz-split", "tripplanner", 10, 1)               # total 100, crm 5, tripplanner 10: CIS 85
-    _commit_point(cur)
     _spend(cur, "zz-split", "cis", 80)
     _spend(cur, "zz-split", None, 3)                          # an old row without app counts as CIS
     _spend(cur, "zz-split", "tripplanner", 12)                # 2 above its share: into the CIS pool

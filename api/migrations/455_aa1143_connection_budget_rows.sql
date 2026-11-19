@@ -1,4 +1,3 @@
--- migrate: expand
 -- Migration 455: AA-1143 (tech lead decision G3, S285 19/11/2026; root ADR 0009 decision 6) — one budget per LLM
 -- connection as rows: the connection's total (its provider budget) and one fixed-USD share row per app, CIS taking the
 -- remainder. The table and its rules; CIS 456 (same PR) seeds it from today's values and publishes it to TripPlanner.
@@ -24,14 +23,15 @@
 --   2. shared.llm_connection_budget_current (view): the row in force per (connection_key, app), removed shares left out.
 --   3. Two triggers:
 --        - llm_connection_budget_append_only (BEFORE UPDATE / DELETE, and BEFORE TRUNCATE): refuses both;
---        - llm_connection_budget_apply (CONSTRAINT trigger AFTER INSERT, DEFERRABLE INITIALLY DEFERRED, so it runs at
---          COMMIT on the transaction's final rows): refuses a commit that leaves a connection's app shares adding up to
---          more than its total (no over-allocation is ever stored), and sets the connection's
+--        - llm_connection_budget_apply (AFTER INSERT, FOR EACH STATEMENT with the transition table, so it runs once on
+--          the rows in force after the whole statement; not deferred: X1 forbids trigger work after the role switch's
+--          post-check): refuses a statement that leaves a connection's app shares adding up to more than its total (no
+--          over-allocation is ever stored), and sets the connection's
 --          shared.llm_provider_connection.monthly_budget_usd to the CIS remainder (total minus the other apps' shares).
 --          monthly_budget_usd stays the number the CIS gateway enforces (shared/llm_client/connection_budget.py, the
 --          registry cache: no new read on the call path), so the remainder follows any share in the same transaction;
 --          the CIS admin API refuses a direct edit of it for a connection that has a total (AA-CIS-App code PR).
---   4. Grants: cis_app SELECT, INSERT on the table (its identity sequence: USAGE), SELECT on the view. No other role:
+--   4. Grants: cis_app SELECT, INSERT on the table (an identity column needs no sequence grant), SELECT on the view. No other role:
 --      TripPlanner reads through the catalog view of CIS 456, the CRM through its own copy (crm.ops.v1, root ADR
 --      0008a: no grant either way).
 --   5. Register 455.
@@ -39,9 +39,10 @@
 -- Behaviour on apply. None: the table is empty until CIS 456 seeds it; no running code reads it (the code PR feature-
 -- detects it, SQLSTATE 42P01 keeps today's reads).
 --
--- Class: EXPAND (root ADR 0017 decision 3): new table, view and functions only; the FKs from the new table add their RI
--- triggers on shared.llm_provider_connection and shared.llm_app_profile (allowed). Ships in one migration-only PR with
--- the contract file 456 (batch cis 455-456). DM-6.1: no personal data (actor is a staff id, as in Settings). DM-7.1:
+-- Class: CONTRACT (root ADR 0017 decision 3; no migrate directive line): new objects only (table, view, functions,
+-- triggers, grants on them), but written with re-runnable DDL (CREATE OR REPLACE, DROP TRIGGER IF EXISTS) and guard
+-- blocks, which the expand lint does not take; it ships in one migration-only PR with the contract file 456 (batch cis
+-- 455-456) anyway, applied together by Infra Migration Apply. DM-6.1: no personal data (actor is a staff id, as in Settings). DM-7.1:
 -- one new table, its retention row is in root docs/architecture/data-standards/02-data-management.md (kept: a config
 -- audit trail of a few rows a month). MIG-6: no SECURITY DEFINER routine (the apply trigger runs as the writer: cis_app
 -- holds UPDATE on monthly_budget_usd, updated_at, updated_by since 310).
@@ -132,35 +133,43 @@ $fn$;
 CREATE OR REPLACE FUNCTION shared.llm_connection_budget_apply() RETURNS trigger
     LANGUAGE plpgsql AS $fn$
 DECLARE
+    r        record;
     v_total  numeric;
     v_shares numeric;
     v_cis    numeric;
 BEGIN
-    SELECT budget_usd INTO v_total
-      FROM shared.llm_connection_budget_current
-     WHERE connection_key = NEW.connection_key AND app IS NULL;
-    IF v_total IS NULL THEN
-        RAISE EXCEPTION 'connection %: an app share needs the connection''s total first', NEW.connection_key
-            USING ERRCODE = 'check_violation';
-    END IF;
-    SELECT coalesce(sum(budget_usd), 0) INTO v_shares
-      FROM shared.llm_connection_budget_current
-     WHERE connection_key = NEW.connection_key AND app IS NOT NULL;
-    IF v_shares > v_total THEN
-        RAISE EXCEPTION 'connection %: the app shares (% USD) add up to more than the total (% USD)',
-            NEW.connection_key, v_shares, v_total USING ERRCODE = 'check_violation';
-    END IF;
-    v_cis := v_total - v_shares;
-    UPDATE shared.llm_provider_connection
-       SET monthly_budget_usd = v_cis, updated_at = now(), updated_by = left(NEW.actor, 128)
-     WHERE connection_key = NEW.connection_key
-       AND monthly_budget_usd IS DISTINCT FROM v_cis;
+    -- One pass per connection the statement wrote, on the rows in force after the whole statement.
+    FOR r IN
+        SELECT n.connection_key, (array_agg(n.actor ORDER BY n.id DESC))[1] AS actor
+          FROM new_rows n
+         GROUP BY n.connection_key
+    LOOP
+        SELECT budget_usd INTO v_total
+          FROM shared.llm_connection_budget_current
+         WHERE connection_key = r.connection_key AND app IS NULL;
+        IF v_total IS NULL THEN
+            RAISE EXCEPTION 'connection %: an app share needs the connection''s total first', r.connection_key
+                USING ERRCODE = 'check_violation';
+        END IF;
+        SELECT coalesce(sum(budget_usd), 0) INTO v_shares
+          FROM shared.llm_connection_budget_current
+         WHERE connection_key = r.connection_key AND app IS NOT NULL;
+        IF v_shares > v_total THEN
+            RAISE EXCEPTION 'connection %: the app shares (% USD) add up to more than the total (% USD)',
+                r.connection_key, v_shares, v_total USING ERRCODE = 'check_violation';
+        END IF;
+        v_cis := v_total - v_shares;
+        UPDATE shared.llm_provider_connection
+           SET monthly_budget_usd = v_cis, updated_at = now(), updated_by = left(r.actor, 128)
+         WHERE connection_key = r.connection_key
+           AND monthly_budget_usd IS DISTINCT FROM v_cis;
+    END LOOP;
     RETURN NULL;
 END
 $fn$;
 
 COMMENT ON FUNCTION shared.llm_connection_budget_apply() IS
-    'AA-1143 (CIS 455): at commit, refuses app shares above the connection''s total and sets '
+    'AA-1143 (CIS 455): after each INSERT statement, refuses app shares above the connection''s total and sets '
     'llm_provider_connection.monthly_budget_usd to the CIS remainder (what the CIS gateway enforces).';
 
 DROP TRIGGER IF EXISTS llm_connection_budget_append_only ON shared.llm_connection_budget;
@@ -172,14 +181,13 @@ CREATE TRIGGER llm_connection_budget_append_only_truncate
     BEFORE TRUNCATE ON shared.llm_connection_budget
     FOR EACH STATEMENT EXECUTE FUNCTION shared.llm_connection_budget_append_only();
 DROP TRIGGER IF EXISTS llm_connection_budget_apply ON shared.llm_connection_budget;
-CREATE CONSTRAINT TRIGGER llm_connection_budget_apply
+CREATE TRIGGER llm_connection_budget_apply
     AFTER INSERT ON shared.llm_connection_budget
-    DEFERRABLE INITIALLY DEFERRED
-    FOR EACH ROW EXECUTE FUNCTION shared.llm_connection_budget_apply();
+    REFERENCING NEW TABLE AS new_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION shared.llm_connection_budget_apply();
 
 -- ── 4. Grants ────────────────────────────────────────────────────────────────────────────────────────────────────
 GRANT SELECT, INSERT ON shared.llm_connection_budget TO cis_app;
-GRANT USAGE ON SEQUENCE shared.llm_connection_budget_id_seq TO cis_app;
 GRANT SELECT ON shared.llm_connection_budget_current TO cis_app;
 
 -- ── 5. Register ──────────────────────────────────────────────────────────────────────────────────────────────────
