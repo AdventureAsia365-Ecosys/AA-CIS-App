@@ -40,7 +40,8 @@ import {
 import { STATS } from "./messages";
 import { fetchJson, EmptyState, ErrorState } from "../../_components/auditPanels";
 
-/** A badge or label holding one long token (a check id, a gate key): it may break anywhere and never outgrows its row. */
+/** A badge or label holding one long token (a check id, a gate key): it may break anywhere and never outgrows its
+ *  row. */
 const tokenBadge: React.CSSProperties = { maxWidth: "100%", overflowWrap: "anywhere" };
 const tokenText: React.CSSProperties = { minWidth: 0, overflowWrap: "anywhere" };
 

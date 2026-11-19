@@ -16,7 +16,8 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { PROFILE_APPS, appliesKey } from "./aiGateway.ts";
+import { PROFILE_APPS } from "./aiGateway.ts";
+import { appliesKey } from "./appProfileApplies.ts";
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 /** Source without comments, so a comment that quotes a style never satisfies a check. */
@@ -65,7 +66,8 @@ test("TenantSelect: the search placeholder fits the 200 px filter-bar box (EN an
   assert.equal(found.length, 2, "English and Vietnamese");
   // ~7 px a character at the kit sm input size; 200 px less padding leaves room for about 22 characters
   for (const text of found) assert.ok(text.length <= 18, `"${text}" is cut in the inline search box`);
-  assert.match(code("../app/admin/_components/TenantSelect.tsx"), /inlineSearchStyle: React\.CSSProperties = \{ width: 200/);
+  const select = code("../app/admin/_components/TenantSelect.tsx");
+  assert.match(select, /inlineSearchStyle: React\.CSSProperties = \{ width: 200/);
 });
 
 test("App profiles: 'Takes effect' is worded per app", () => {
