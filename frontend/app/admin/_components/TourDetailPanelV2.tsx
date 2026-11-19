@@ -11,6 +11,9 @@ import { M } from "./tour.messages";
 import { scoreTone, type ScoreBands } from "@/lib/qualityThresholds";
 import { useScoreBands } from "./useQualityThresholds";
 import { SubjectLabelSection } from "../tenant-qa/quality/PieceLabel";
+import { can } from "@/lib/rbac";
+import TourDraftEditor from "./TourDraftEditor";
+import { D as DRAFT_M } from "./tourDraft.messages";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -148,7 +151,7 @@ function commaToArray(text: string): string[] {
 
 // ── EditableField ─────────────────────────────────────────────────────────────
 
-function EditableField({ label, initialValue, onSave, onChange, rows, charLimit, placeholder }: {
+function EditableField({ label, initialValue, onSave, onChange, rows, charLimit, placeholder, readOnly, hint }: {
   label: string;
   initialValue: string;
   onSave: (v: string) => Promise<void>;
@@ -156,6 +159,9 @@ function EditableField({ label, initialValue, onSave, onChange, rows, charLimit,
   rows?: number;
   charLimit?: number;
   placeholder?: string;
+  // AA-1146: a field the caller's role may not change is shown read-only (the backend refuses it anyway)
+  readOnly?: boolean;
+  hint?: string;
 }) {
   const t = useT(M);
   const [value, setValue] = useState(initialValue);
@@ -171,7 +177,7 @@ function EditableField({ label, initialValue, onSave, onChange, rows, charLimit,
   }
 
   async function handleBlur() {
-    if (value === lastSaved || state === "saving") return;
+    if (readOnly || value === lastSaved || state === "saving") return;
     setState("saving");
     try {
       await onSave(value);
@@ -222,6 +228,7 @@ function EditableField({ label, initialValue, onSave, onChange, rows, charLimit,
           onChange={e => handleChange(e.target.value)}
           onBlur={handleBlur}
           placeholder={placeholder}
+          readOnly={readOnly}
           style={inputStyle}
         />
       ) : (
@@ -231,9 +238,11 @@ function EditableField({ label, initialValue, onSave, onChange, rows, charLimit,
           onChange={e => handleChange(e.target.value)}
           onBlur={handleBlur}
           placeholder={placeholder}
+          readOnly={readOnly}
           style={inputStyle}
         />
       )}
+      {hint && <div style={{ fontSize: 11, color: K.muted, marginTop: 3 }}>{hint}</div>}
     </div>
   );
 }
@@ -394,7 +403,11 @@ function TourDetailPanel({ tourId, tourName, rewriteCount = 0, onClose }: PanelP
   const bands = useScoreBands();
   const t = useT(M);
   const toast = useToast();
-  const { isAdmin } = useAdminIdentity();
+  const { isAdmin, role } = useAdminIdentity();
+  const td = useT(DRAFT_M);
+  // AA-1146: the source tour's fields follow the role (content.write); the price text only reference_price.write (D5)
+  const canEditRaw = can(role, "content.write");
+  const canEditPrice = can(role, "reference_price.write");
   const rel = useRelTime();
   const [detail, setDetail] = useState<TourDetailFull | null>(null);
   const [loading, setLoading] = useState(true);
@@ -493,8 +506,15 @@ function TourDetailPanel({ tourId, tourName, rewriteCount = 0, onClose }: PanelP
   async function saveAllRaw() {
     setSavingAll(true);
     try {
-      const body: Record<string, string | string[]> = { ...rawDraft };
-      body.src_highlights = textToArray(rawDraft.src_highlights ?? "");
+      const r0 = detail?.raw;
+      const body: Record<string, string | string[]> = {};
+      for (const [k, v] of Object.entries(rawDraft)) {
+        if (k === "price_raw" && !canEditPrice) continue;
+        const before = k === "src_highlights" ? arrayToText(r0?.src_highlights)
+          : String((r0 as unknown as Record<string, unknown> | undefined)?.[k] ?? "");
+        if (v !== before) body[k] = k === "src_highlights" ? textToArray(v ?? "") : v;
+      }
+      if (Object.keys(body).length === 0) { showToast(t("allSaved"), "success"); return; }
       const res = await fetch(`/api/admin/tours/${tourId}/raw`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -658,15 +678,15 @@ function TourDetailPanel({ tourId, tourName, rewriteCount = 0, onClose }: PanelP
           ) : tab === "original" ? (
             <div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 24px" }}>
-                <EditableField label={t("fTourName")} initialValue={raw?.src_name || ""} onSave={v => saveRaw("src_name", v)} onChange={v => setRawDraft(d => ({ ...d, src_name: v }))} />
-                <EditableField label={t("fCountry")} initialValue={raw?.country || ""} onSave={v => saveRaw("country", v)} onChange={v => setRawDraft(d => ({ ...d, country: v }))} />
-                <EditableField label={t("fDuration")} initialValue={raw?.duration || ""} onSave={v => saveRaw("duration", v)} onChange={v => setRawDraft(d => ({ ...d, duration: v }))} />
-                <EditableField label={t("fGroupSize")} initialValue={raw?.group_size || ""} onSave={v => saveRaw("group_size", v)} onChange={v => setRawDraft(d => ({ ...d, group_size: v }))} />
-                <EditableField label={t("fPrice")} initialValue={raw?.price_raw || ""} onSave={v => saveRaw("price_raw", v)} onChange={v => setRawDraft(d => ({ ...d, price_raw: v }))} />
-                <EditableField label={t("fPeriod")} initialValue={raw?.period || ""} onSave={v => saveRaw("period", v)} onChange={v => setRawDraft(d => ({ ...d, period: v }))} />
-                <EditableField label={t("fProvider")} initialValue={raw?.provider || ""} onSave={v => saveRaw("provider", v)} onChange={v => setRawDraft(d => ({ ...d, provider: v }))} />
+                <EditableField label={t("fTourName")} initialValue={raw?.src_name || ""} onSave={v => saveRaw("src_name", v)} onChange={v => setRawDraft(d => ({ ...d, src_name: v }))} readOnly={!canEditRaw} />
+                <EditableField label={t("fCountry")} initialValue={raw?.country || ""} onSave={v => saveRaw("country", v)} onChange={v => setRawDraft(d => ({ ...d, country: v }))} readOnly={!canEditRaw} />
+                <EditableField label={t("fDuration")} initialValue={raw?.duration || ""} onSave={v => saveRaw("duration", v)} onChange={v => setRawDraft(d => ({ ...d, duration: v }))} readOnly={!canEditRaw} />
+                <EditableField label={t("fGroupSize")} initialValue={raw?.group_size || ""} onSave={v => saveRaw("group_size", v)} onChange={v => setRawDraft(d => ({ ...d, group_size: v }))} readOnly={!canEditRaw} />
+                <EditableField label={t("fPrice")} initialValue={raw?.price_raw || ""} onSave={v => saveRaw("price_raw", v)} onChange={v => setRawDraft(d => ({ ...d, price_raw: v }))} readOnly={!canEditPrice} hint={canEditPrice ? undefined : td("priceReadOnly")} />
+                <EditableField label={t("fPeriod")} initialValue={raw?.period || ""} onSave={v => saveRaw("period", v)} onChange={v => setRawDraft(d => ({ ...d, period: v }))} readOnly={!canEditRaw} />
+                <EditableField label={t("fProvider")} initialValue={raw?.provider || ""} onSave={v => saveRaw("provider", v)} onChange={v => setRawDraft(d => ({ ...d, provider: v }))} readOnly={!canEditRaw} />
               </div>
-              <EditableField label={t("fSummary")} initialValue={raw?.src_summary || ""} onSave={v => saveRaw("src_summary", v)} onChange={v => setRawDraft(d => ({ ...d, src_summary: v }))} rows={6} />
+              <EditableField label={t("fSummary")} initialValue={raw?.src_summary || ""} onSave={v => saveRaw("src_summary", v)} onChange={v => setRawDraft(d => ({ ...d, src_summary: v }))} rows={6} readOnly={!canEditRaw} />
               <EditableField
                 label={t("fHighlightsLines")}
                 initialValue={arrayToText(raw?.src_highlights)}
@@ -674,16 +694,21 @@ function TourDetailPanel({ tourId, tourName, rewriteCount = 0, onClose }: PanelP
                 onChange={v => setRawDraft(d => ({ ...d, src_highlights: v }))}
                 rows={4}
                 placeholder={t("fHighlightPlaceholder")}
+                readOnly={!canEditRaw}
               />
-              <EditableField label={t("fItineraries")} initialValue={raw?.src_itineraries || ""} onSave={v => saveRaw("src_itineraries", v)} onChange={v => setRawDraft(d => ({ ...d, src_itineraries: v }))} rows={10} />
-              <EditableField label={t("fDescription")} initialValue={raw?.src_description || ""} onSave={v => saveRaw("src_description", v)} onChange={v => setRawDraft(d => ({ ...d, src_description: v }))} rows={6} />
-              <EditableField label={t("fInclusions")} initialValue={raw?.inclusions || ""} onSave={v => saveRaw("inclusions", v)} onChange={v => setRawDraft(d => ({ ...d, inclusions: v }))} rows={4} />
-              <EditableField label={t("fExclusions")} initialValue={raw?.exclusions || ""} onSave={v => saveRaw("exclusions", v)} onChange={v => setRawDraft(d => ({ ...d, exclusions: v }))} rows={4} />
-              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
-                <Button variant="primary" onClick={saveAllRaw} disabled={savingAll}>
-                  {savingAll ? t("saving") : t("saveAll")}
-                </Button>
-              </div>
+              <EditableField label={t("fItineraries")} initialValue={raw?.src_itineraries || ""} onSave={v => saveRaw("src_itineraries", v)} onChange={v => setRawDraft(d => ({ ...d, src_itineraries: v }))} rows={10} readOnly={!canEditRaw} />
+              <EditableField label={t("fDescription")} initialValue={raw?.src_description || ""} onSave={v => saveRaw("src_description", v)} onChange={v => setRawDraft(d => ({ ...d, src_description: v }))} rows={6} readOnly={!canEditRaw} />
+              <EditableField label={t("fInclusions")} initialValue={raw?.inclusions || ""} onSave={v => saveRaw("inclusions", v)} onChange={v => setRawDraft(d => ({ ...d, inclusions: v }))} rows={4} readOnly={!canEditRaw} />
+              <EditableField label={t("fExclusions")} initialValue={raw?.exclusions || ""} onSave={v => saveRaw("exclusions", v)} onChange={v => setRawDraft(d => ({ ...d, exclusions: v }))} rows={4} readOnly={!canEditRaw} />
+              {canEditRaw ? (
+                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+                  <Button variant="primary" onClick={saveAllRaw} disabled={savingAll}>
+                    {savingAll ? t("saving") : t("saveAll")}
+                  </Button>
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: K.muted, marginTop: 8 }}>{td("readOnly")}</div>
+              )}
             </div>
           ) : tab === "rewrite" ? (
             gen ? (
@@ -752,6 +777,9 @@ function TourDetailPanel({ tourId, tourName, rewriteCount = 0, onClose }: PanelP
                 })()}
                 {/* AA-1033: the generated fields below are AI-written and editable here. */}
                 <AiNotice style={{ marginBottom: 16 }} />
+                {/* AA-1146: edits make a draft version (diff, checks, publish through the gate); the old inline
+                    editor stays only until the database update of the versions is applied (503). */}
+                <TourDraftEditor tourId={tourId} fallback={<>
                 <EditableField label={t("fAaName")} initialValue={gen.aa_name || ""} onSave={v => saveGenerated("aa_name", v)} />
                 <EditableField label={t("fSubtitle")} initialValue={gen.aa_subtitle || ""} onSave={v => saveGenerated("aa_subtitle", v)} />
                 <EditableField label={t("fSummary")} initialValue={gen.aa_summary || ""} onSave={v => saveGenerated("aa_summary", v)} rows={6} />
@@ -770,6 +798,7 @@ function TourDetailPanel({ tourId, tourName, rewriteCount = 0, onClose }: PanelP
                   onSave={v => saveGenerated("seo_keywords_used", commaToArray(v))}
                   placeholder={t("keywordsPlaceholder")}
                 />
+                </>} />
                 {/* AA-923 WM-32 — the human label of this rewrite (the T9 piece label criteria), admin only */}
                 <div style={{ marginTop: 20, paddingTop: 12, borderTop: `1px solid ${K.line}` }}>
                   <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: K.muted2, marginBottom: 6 }}>

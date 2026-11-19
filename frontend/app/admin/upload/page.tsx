@@ -13,6 +13,7 @@ import {
 } from "../../_kit";
 import { phoneCardColumns } from "@/lib/tableSort";
 import { UP } from "./messages";
+import MergePanel, { type MergeChoice } from "./MergePanel";
 
 const TENANT_ID = "00000000-0000-0000-0000-000000000001";
 
@@ -725,11 +726,14 @@ function UploadHistorySection({ history, loading, onRefresh }: {
 
 // ─── DuplicateReview (Step 5) ─────────────────────────────────────────────────
 
-type Decision = "bypass" | "replace" | "keep_both" | "restore" | "create_new";
+type Decision = "bypass" | "replace" | "keep_both" | "restore" | "create_new" | "merge";
 
 // Message keys (messages.ts).
-const DECISION_LABELS: Record<"bypass" | "replace" | "keep_both", "decBypass" | "decReplace" | "decKeepBoth"> = {
+// AA-1146 T1: "merge" keeps the tour and its hand edits, taking the untouched fields from the sheet (MergePanel).
+const DECISION_LABELS: Record<"bypass" | "merge" | "replace" | "keep_both",
+  "decBypass" | "decMerge" | "decReplace" | "decKeepBoth"> = {
   bypass:    "decBypass",
+  merge:     "decMerge",
   replace:   "decReplace",
   keep_both: "decKeepBoth",
 };
@@ -744,7 +748,7 @@ const DELETED_DECISION_LABELS: Record<"bypass" | "restore" | "create_new", "decB
 
 function decisionLabels(
   item: StagingItem,
-): Record<string, "decBypass" | "decReplace" | "decKeepBoth" | "decRestore" | "decCreateNew"> {
+): Record<string, "decBypass" | "decMerge" | "decReplace" | "decKeepBoth" | "decRestore" | "decCreateNew"> {
   return item.matched_deleted ? DELETED_DECISION_LABELS : DECISION_LABELS;
 }
 
@@ -763,6 +767,7 @@ function DuplicateReviewStep({
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState<Record<string, boolean>>({});
   const [error, setError]         = useState("");
+  const [merges, setMerges]       = useState<Record<string, MergeChoice>>({});
 
   useEffect(() => {
     async function fetchAll() {
@@ -794,11 +799,19 @@ function DuplicateReviewStep({
     for (const item of items) {
       if (submitted[item.staging_id]) continue;
       const dec = decisions[item.staging_id] || "bypass";
+      const merge = merges[item.staging_id];
+      if (dec === "merge" && !merge?.ready) {
+        results[item.staging_id] = false;
+        failures.push(`${item.incoming.src_name || "—"}: ${t("mergeNeedsReason")}`);
+        continue;
+      }
       try {
         const res = await fetch(`/api/admin/upload-staging/${item.staging_id}/decide`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ decision: dec }),
+          body: JSON.stringify(dec === "merge"
+            ? { decision: dec, resolutions: merge.resolutions, reason: merge.reason }
+            : { decision: dec }),
         });
         results[item.staging_id] = res.ok;
         if (!res.ok) {
@@ -969,6 +982,10 @@ function DuplicateReviewStep({
                     ))}
                   </Select>
                 </div>
+              )}
+              {!submitted[item.staging_id] && decisions[item.staging_id] === "merge" && (
+                <MergePanel stagingId={item.staging_id}
+                  onChange={choice => setMerges(prev => ({ ...prev, [item.staging_id]: choice }))} />
               )}
             </div>
           ))}
