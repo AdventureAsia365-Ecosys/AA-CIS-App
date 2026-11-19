@@ -39,7 +39,8 @@ plan    reads the DB (READ ONLY): the pre-registration (valid, registered, golde
         spend so far, the lock (no earlier result under another sha), and the power check when an R1 report is given.
         S280: the pinned judge priced from shared.llm_model_catalog (price.py; each arm is gated on the larger of
         R2's estimate and the catalog one) and, for T9 / S1 / T2, a null run with the same judge and golden version
-        that came out non_inferior (null_gate).
+        that came out non_inferior (null_gate; S285: or one of an earlier version of the same golden set whose
+        writer's GATE items are byte-identical in the proof's version, null_carry.py, reported as golden_carry).
 draft   fills a draft's sample from the GATE side (seeded hash, no data-driven choice) and prints it; a person saves it
         as prereg/<id>.json with status registered in a reviewed PR. Nothing is written.
 run     everything `plan` checks, plus: a registered file, an adequate power check, the spend gate (--confirm CONFIRM
@@ -301,31 +302,69 @@ def _power_blocking(pw: dict) -> list[str]:
 
 def same_instrument(a: pr.Prereg, b: pr.Prereg) -> bool:
     """True when two pre-registrations pin the same judge (model, connection and, S283, claim instrument) on the same
-    golden version. Pure."""
+    golden version. Pure. Strict for every caller; S285: the null gate's carry to a later golden version is a separate
+    rule (null_carry.null_covers), never a looser same_instrument."""
     ja, jb = a.doc.get("judge") or {}, b.doc.get("judge") or {}
     key = ("model_key", "connection", "instrument")
     return (tuple(ja.get(k) for k in key) == tuple(jb.get(k) for k in key)
             and (a.doc.get("golden_set") or {}) == (b.doc.get("golden_set") or {}))
 
 
-async def null_gate(pool, pre: pr.Prereg, *, nulls: Optional[list[pr.Prereg]] = None) -> dict:
+async def null_gate(pool, pre: pr.Prereg, *, nulls: Optional[list[pr.Prereg]] = None, golden_items=None) -> dict:
     """S280 (root ADR 0020 W5: "a null run comes first, to prove that the eval itself is stable"): a T9 / S1 / T2 proof
     is planned only after a registered null run with the SAME pinned judge and golden version came out non_inferior
-    (its `report`). The null run itself passes. {"required", "passed_by", "checked", "blocking"} (READ ONLY)."""
+    (its `report`). The null run itself passes. {"required", "passed_by", "rule", "checked", "blocking"} (READ ONLY).
+
+    S285 (tech lead: a reviewed code change instead of a paid re-verify + new null run): when no null run of the
+    proof's golden version passes, a non_inferior null run pinned to an EARLIER version of the same golden set, with
+    the same judge, opens the proof if every GATE item of its writer is byte-identical in the proof's version
+    (null_carry.null_covers). It is reported as `rule` "golden_carry" with `golden_carried_from` (the null run's
+    version), `items_compared` and `sample_items`; one that cannot be carried is named with what differs.
+    `golden_items(null, pre)`: the two versions' stored items (null_carry.load_pair), injectable for tests."""
+    from services.writer_proof import null_carry as nc
     if pre.workflow == "null":
         return {"required": False}
-    candidates = [n for n in (pr.registered_files("null") if nulls is None else nulls) if same_instrument(n, pre)]
+    registered = pr.registered_files("null") if nulls is None else nulls
+    candidates = [n for n in registered if same_instrument(n, pre)]
     # a registered null run that no longer loads (lock mismatch, a raised minimum sample) is named with its reason
     ignored = pr.unloadable_registered("null") if nulls is None else []
-    checked = []
-    for n in candidates:
+    checked: list[dict] = []
+
+    async def verdict_of(n: pr.Prereg, rule: str) -> Optional[str]:
         rep = await report(pool, n)
         verdict = ((rep.get("decision") or {}).get("verdict")) if rep.get("ok") else None
-        checked.append({"prereg": n.id, "verdict": verdict, "refused": rep.get("refused")})
-        if verdict == "non_inferior":
-            return {"required": True, "passed_by": n.id, "checked": checked, "ignored": ignored}
+        checked.append({"prereg": n.id, "rule": rule, "verdict": verdict, "refused": rep.get("refused")})
+        return verdict
+
+    for n in candidates:
+        if await verdict_of(n, nc.SAME_RULE) == "non_inferior":
+            return {"required": True, "passed_by": n.id, "rule": nc.SAME_RULE, "checked": checked, "ignored": ignored}
+    # S285: a null run of an earlier version of the same golden set (rules (a) and (b)), newest version first
+    not_carried: list[str] = []
+    later = []
+    for n in registered:
+        if n in candidates:
+            continue
+        why = nc.carry_problem(n, pre)
+        if why is None:
+            later.append(n)
+        elif nc.judge_pin(n) == nc.judge_pin(pre) and nc.golden_of(n)[0] == nc.golden_of(pre)[0]:
+            not_carried.append(f"registered null run {n.id} is not carried: {why}")
+    load = golden_items or (lambda a, b: nc.load_pair(pool, a, b))
+    for n in sorted(later, key=lambda x: nc.semver(nc.golden_of(x)[1]), reverse=True):
+        if await verdict_of(n, nc.CARRY_RULE) != "non_inferior":
+            continue
+        old, new = await load(n, pre)
+        cover = nc.null_covers(n, pre, old, new)
+        checked[-1]["carry"] = cover
+        if cover["ok"]:
+            return {"required": True, "passed_by": n.id, "rule": nc.CARRY_RULE,
+                    "golden_carried_from": cover["golden_carried_from"], "items_compared": cover["items_compared"],
+                    "sample_items": cover["sample_items"], "checked": checked, "ignored": ignored}
+        not_carried.append(nc.blocking_line(n, pre, cover))
     judge = pre.doc.get("judge") or {}
     why = "".join(f"; registered null run {i['file']} ignored: {i['why']}" for i in ignored)
+    why += "".join(f"; {x}" for x in not_carried)
     return {"required": True, "passed_by": None, "checked": checked, "ignored": ignored,
             "blocking": (f"no null run with the same judge ({_judge_label(judge)}) and "
                          f"golden version came out non_inferior yet: run the null run first (root ADR 0020 W5){why}")}
