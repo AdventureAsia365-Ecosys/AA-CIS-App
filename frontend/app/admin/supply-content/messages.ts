@@ -26,6 +26,10 @@ export const SC = defineMessages(
     anyStatus: "Any status",
     type: "Type",
     hotelsAndServices: "Hotels and services",
+    openDraft: "Open draft",
+    anyDraft: "With or without a draft",
+    withOpenDraft: "Draft waiting for review",
+    withoutOpenDraft: "No open draft",
     typePlural: (label: string) => `${label}s`,
     listDescription:
       "Customer-facing text and photos CIS writes for AA-Booking hotels and services. Booking shows only a published version; a facts change in Booking makes it stale until a new version is published.",
@@ -149,6 +153,10 @@ export const SC = defineMessages(
     anyStatus: "Mọi trạng thái",
     type: "Loại",
     hotelsAndServices: "Khách sạn và dịch vụ",
+    openDraft: "Bản nháp đang mở",
+    anyDraft: "Có hoặc không có bản nháp",
+    withOpenDraft: "Có bản nháp chờ duyệt",
+    withoutOpenDraft: "Không có bản nháp đang mở",
     typePlural: (label: string) => label,
     listDescription:
       "Văn bản và ảnh hiển thị cho khách mà CIS viết cho các khách sạn và dịch vụ của AA-Booking. Booking chỉ hiện phiên bản đã đăng; dữ kiện trong Booking đổi thì nội dung thành lỗi thời cho đến khi một phiên bản mới được đăng.",

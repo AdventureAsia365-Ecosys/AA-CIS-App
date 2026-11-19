@@ -79,12 +79,30 @@ async def _review_row(conn, status: str, created_at=None):
         tour, gc, MASTER, status, created_at)
 
 
-async def _supply(conn, status: str, updated_at=None):
-    await conn.execute(
+_VERSION_SQL = (
+    "INSERT INTO shared.supply_content_version (entity_id, content_version, supply_version, origin, description, "
+    "highlights, good_to_know, photos, status, created_by, created_at, reviewed_by, reviewed_at) VALUES ($1, $2, 1, "
+    "'llm', 'A quiet lodge on an invented river.', ARRAY[]::text[], ARRAY[]::text[], '[]'::jsonb, $3, 'test:AA-1156', "
+    "COALESCE($4, now()), $5, $6) RETURNING id")
+
+
+async def _supply(conn, status: str, updated_at=None, *, draft: bool = False, draft_at=None):
+    """A supply entity in ``status`` (published and stale get an approved version first, as after a publish);
+    ``draft`` adds one open draft version created at ``draft_at``."""
+    entity_id = await conn.fetchval(
         "INSERT INTO shared.supply_entity (source_system, source_id, entity_type, title, facts, "
         "applied_supply_version, active, content_status, updated_at) VALUES ('booking', $1, 'hotel', "
-        "'Lantern River Lodge', '{}'::jsonb, 1, true, $2, COALESCE($3, now()))",
-        str(uuid.uuid4()), status, updated_at)
+        "'Lantern River Lodge', '{}'::jsonb, 1, true, $2, COALESCE($3, now())) RETURNING id",
+        str(uuid.uuid4()), "stale" if status == "published" else status, updated_at)
+    number = 1
+    if status in ("published", "stale"):
+        approved = await conn.fetchval(_VERSION_SQL, entity_id, number, "approved", LONG_AGO, "test:AA-1156",
+                                       LONG_AGO)
+        await conn.execute("UPDATE shared.supply_entity SET content_status = $2, published_version_id = $3, "
+                           "updated_at = COALESCE($4, now()) WHERE id = $1", entity_id, status, approved, updated_at)
+        number += 1
+    if draft:
+        await conn.fetchval(_VERSION_SQL, entity_id, number, "draft", draft_at, None, None)
 
 
 async def _aa_item(conn, *, publish: bool):
@@ -122,7 +140,7 @@ async def _page_totals(conn, monkeypatch) -> dict:
     monkeypatch.setattr(admin_content_quality, "verify_admin_secret", lambda _s: None)
     req = _req(conn)
     review = await admin_pipeline.admin_review_queue(req, x_admin_secret="x", page_size=1)   # page default: pending
-    supply_drafts = await supply.list_entities(conn, status="in_review", limit=1, offset=0)
+    supply_drafts = await supply.list_entities(conn, has_draft=True, limit=1, offset=0)
     supply_none = await supply.list_entities(conn, status="draft", limit=1, offset=0)
     aa = await store.list_items(conn, kind=None, locale=None, status="draft", country=None, limit=1, offset=0)
     cards = await admin_content_quality.list_place_cards(req, limit=1, offset=0, status="auto_checked", q=None,
@@ -145,7 +163,11 @@ async def test_every_tile_counts_what_its_target_page_lists(conn, monkeypatch):
     before = {k: t.count for k, t in (await _summary(conn, "admin")).items()}
     for status in ("pending", "pending", "approved", "rejected"):
         await _review_row(conn, status)
-    for status in ("in_review", "draft", "draft", "stale"):
+    # waiting for review: a first draft (in_review) and redrafts that keep the entity's status (stale after new facts
+    # from Booking, published after a human edit); not waiting: no text yet (the other tile) and stale with no redraft
+    for status in ("in_review", "stale", "published"):
+        await _supply(conn, status, draft=True)
+    for status in ("draft", "draft", "stale", "published"):
         await _supply(conn, status)
     await _aa_item(conn, publish=False)
     await _aa_item(conn, publish=True)
@@ -158,7 +180,7 @@ async def test_every_tile_counts_what_its_target_page_lists(conn, monkeypatch):
     assert list(tiles) == [t.key for t in admin_my_work.TILES]
     assert all(t.available for t in tiles.values())
     assert {k: t.count for k, t in tiles.items()} == await _page_totals(conn, monkeypatch)
-    added = {"review_waiting": 2, "supply_drafts": 1, "supply_no_description": 2, "aa_content_drafts": 1,
+    added = {"review_waiting": 2, "supply_drafts": 3, "supply_no_description": 2, "aa_content_drafts": 1,
              "place_cards_to_review": 2, "compliance_holds": 1}
     assert {k: tiles[k].count - before[k] for k in added} == added
 
@@ -167,7 +189,9 @@ async def test_every_tile_counts_what_its_target_page_lists(conn, monkeypatch):
 async def test_the_oldest_time_is_the_oldest_waiting_item(conn):
     await _review_row(conn, "pending", created_at=LONG_AGO)
     await _review_row(conn, "approved", created_at=LONG_AGO - timedelta(days=30))   # closed: not waiting
-    await _supply(conn, "in_review", updated_at=LONG_AGO)
+    # the drafts tile dates an item by its oldest open draft: a redraft does not move the entity row
+    await _supply(conn, "stale", updated_at=LONG_AGO - timedelta(days=30), draft=True, draft_at=LONG_AGO)
+    await _supply(conn, "draft", updated_at=LONG_AGO - timedelta(days=60))   # no draft: not in the drafts tile
     await _card(conn, "auto_checked", created_at=LONG_AGO)
     await _card(conn, "verified", created_at=LONG_AGO - timedelta(days=30))
     tiles = await _summary(conn, "admin")

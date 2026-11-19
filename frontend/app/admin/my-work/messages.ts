@@ -27,9 +27,11 @@ export const MY_WORK = defineMessages(
     review_waiting: "Review Queue: waiting",
     review_waiting_info: "Rewrites the quality gate held for a person (the Review Queue's default view: pending).",
     supply_drafts: "Supply copy: drafts to review",
-    supply_drafts_info: "Hotels and services with a written draft that waits for review (status: Draft to review).",
+    supply_drafts_info: "Hotels and services with a written draft that waits for review, first drafts and redrafts "
+      + "of published or stale content alike (filter: Draft waiting for review).",
     supply_no_description: "Hotels and services with no description",
-    supply_no_description_info: "Booking shows no CIS text for these yet (status: No content yet).",
+    supply_no_description_info: "Booking shows no CIS text for these and no draft was ever written (status: No content "
+      + "yet). Stale items wait for their automatic redraft and are not counted here.",
     aa_content_drafts: "AA content: drafts",
     aa_content_drafts_info: "AA content items with a draft waiting to be published (status: Draft).",
     place_cards_to_review: "Place cards to review",
@@ -62,9 +64,11 @@ export const MY_WORK = defineMessages(
     review_waiting_info: "Các bản viết lại bị cổng chất lượng giữ lại chờ người duyệt (mặc định của Review Queue: "
       + "pending).",
     supply_drafts: "Nội dung NCC: bản nháp chờ duyệt",
-    supply_drafts_info: "Khách sạn và dịch vụ có bản nháp đang chờ duyệt (trạng thái: Draft to review).",
+    supply_drafts_info: "Khách sạn và dịch vụ có bản nháp đang chờ duyệt, gồm cả bản nháp đầu và bản viết lại của nội "
+      + "dung đã xuất bản hoặc đã cũ (bộ lọc: Có bản nháp chờ duyệt).",
     supply_no_description: "Khách sạn và dịch vụ chưa có mô tả",
-    supply_no_description_info: "Booking chưa hiện chữ nào của CIS cho các mục này (trạng thái: No content yet).",
+    supply_no_description_info: "Booking chưa hiện chữ nào của CIS và chưa từng có bản nháp (trạng thái: No content "
+      + "yet). Mục đã cũ (stale) đang chờ bản viết lại tự động nên không tính ở đây.",
     aa_content_drafts: "AA content: bản nháp",
     aa_content_drafts_info: "Các mục AA content có bản nháp chờ xuất bản (trạng thái: Draft).",
     place_cards_to_review: "Place card cần xem",

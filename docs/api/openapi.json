@@ -44255,6 +44255,24 @@
             }
           },
           {
+            "description": "true: only entities with an open draft (any content status); false: only entities without one",
+            "in": "query",
+            "name": "has_draft",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "true: only entities with an open draft (any content status); false: only entities without one",
+              "title": "Has Draft"
+            }
+          },
+          {
             "in": "query",
             "name": "limit",
             "required": false,

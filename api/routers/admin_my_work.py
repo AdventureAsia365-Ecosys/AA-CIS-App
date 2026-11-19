@@ -6,7 +6,7 @@
 
       key                     needs           target page (filter)                       counted by
       review_waiting          review.act      /admin/review (its default: pending)       review_queue_summary
-      supply_drafts           content.write   /admin/supply-content?status=in_review     supply_content.status_summary
+      supply_drafts           content.write   /admin/supply-content?has_draft=1          supply_content.status_summary
       supply_no_description   content.write   /admin/supply-content?status=draft         supply_content.status_summary
       aa_content_drafts       content.write   /admin/aa-content?status=draft             aa_content.store.summary
       place_cards_to_review   quality.write   /admin/places/cards?status=auto_checked    place_card_list.summary
@@ -43,9 +43,19 @@ async def _review_waiting(conn) -> dict:
     return await review_queue_summary(conn, status="pending")
 
 
-async def _supply(conn, status: str) -> dict:
+async def _supply_drafts(conn) -> dict:
+    # by open draft version, not by entity status: a redraft of published or stale content (new facts from Booking,
+    # or a human edit) keeps the entity's status, and only a 'draft' entity moves to 'in_review'
     from services.supply_content import review
-    return await review.status_summary(conn, status=status)
+    return await review.status_summary(conn, has_draft=True)
+
+
+async def _supply_no_description(conn) -> dict:
+    # status 'draft' never has an open draft (the first draft moves it to in_review). A 'stale' entity with no new draft
+    # yet is left out: Booking shows no text for it either, but the automatic redraft job is already queued for it
+    # (the supply feed board on the page shows that job's failures)
+    from services.supply_content import review
+    return await review.status_summary(conn, status="draft")
 
 
 async def _aa_content_drafts(conn) -> dict:
@@ -76,8 +86,8 @@ class Tile:
 # the two in step).
 TILES: tuple[Tile, ...] = (
     Tile("review_waiting", REVIEW_ACT, {}, _review_waiting),
-    Tile("supply_drafts", CONTENT_WRITE, {"status": "in_review"}, lambda c: _supply(c, "in_review")),
-    Tile("supply_no_description", CONTENT_WRITE, {"status": "draft"}, lambda c: _supply(c, "draft")),
+    Tile("supply_drafts", CONTENT_WRITE, {"has_draft": "1"}, _supply_drafts),
+    Tile("supply_no_description", CONTENT_WRITE, {"status": "draft"}, _supply_no_description),
     Tile("aa_content_drafts", CONTENT_WRITE, {"status": "draft"}, _aa_content_drafts),
     Tile("place_cards_to_review", QUALITY_WRITE, {"status": "auto_checked"}, _place_cards),
     Tile("compliance_holds", QUALITY_WRITE, {}, _compliance),

@@ -65,9 +65,12 @@ def _raise(e: review.ReviewError):
 async def list_supply_content(request: Request,
                               status: Optional[str] = Query(None, pattern="^(" + "|".join(STATUSES) + ")$"),
                               entity_type: Optional[str] = Query(None, pattern="^(hotel|service)$"),
+                              has_draft: Optional[bool] = Query(
+                                  None, description="true: only entities with an open draft (any content status); "
+                                                    "false: only entities without one"),
                               limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0)):
-    return await review.list_entities(request.app.state.pool, status=status, entity_type=entity_type, limit=limit,
-                                      offset=offset)
+    return await review.list_entities(request.app.state.pool, status=status, entity_type=entity_type,
+                                      has_draft=has_draft, limit=limit, offset=offset)
 
 
 @router.get("/status", summary="The Booking supply feed: cursor, lag, last error, draft jobs, cost today")

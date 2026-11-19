@@ -5,7 +5,8 @@
 //   3. the content roles land on My work, admin on Overview, the viewer on the Review Queue; every landing page is
 //      allowed for its role (the proxy redirect cannot loop);
 //   4. tileHref adds the backend's filter as a stable query string; unknown keys are not drawn;
-//   5. the target pages read the filter the backend sends (?status= on Supply copy, AA content, Place cards) or open on
+//   5. the target pages read the filter the backend sends (?has_draft= and ?status= on Supply copy, ?status= on AA
+//      content and Place cards) or open on
 //      it by default (Review Queue: pending; Compliance: open).
 // Run: npm run test:unit.
 
@@ -17,6 +18,7 @@ import { fileURLToPath } from "node:url";
 
 import { MY_WORK_TILES, knownTiles, tileDef, tileHref, totalWaiting } from "./myWork.ts";
 import { STAFF_ROLES, can, canSeePage, landingPage } from "./rbac.ts";
+import { filtersFromSearch, listUrl } from "./supplyContent.ts";
 
 const FRONTEND = fileURLToPath(new URL("..", import.meta.url));
 const read = (rel) => readFileSync(join(FRONTEND, rel), "utf8");
@@ -47,7 +49,7 @@ test("3. landing pages: content roles My work, admin Overview, viewer Review Que
 
 test("4. tileHref and knownTiles", () => {
   const def = tileDef("supply_drafts");
-  assert.equal(tileHref(def, { status: "in_review" }), "/admin/supply-content?status=in_review");
+  assert.equal(tileHref(def, { has_draft: "1" }), "/admin/supply-content?has_draft=1");
   assert.equal(tileHref(tileDef("review_waiting"), {}), "/admin/review");
   assert.equal(tileHref({ path: "/x" }, { b: "2", a: "1" }), "/x?a=1&b=2");
   const shown = knownTiles({ role: "content", generated_at: "", tiles: [
@@ -64,6 +66,10 @@ test("4. tileHref and knownTiles", () => {
 test("5. the target pages read the tile's filter, or open on it by default", () => {
   assert.match(read("app/admin/supply-content/SupplyContentList.tsx"), /useLinkFilters\(filtersFromSearch, /);
   assert.match(read("lib/supplyContent.ts"), /export function filtersFromSearch/);
+  // the drafts tile sends ?has_draft=1: the page reads it and sends it on to the API
+  assert.deepEqual(filtersFromSearch("?has_draft=1"), { status: "", type: "", hasDraft: "1" });
+  assert.equal(filtersFromSearch("?has_draft=yes").hasDraft, "");
+  assert.match(listUrl(filtersFromSearch("?has_draft=1"), 0, 25), /[?&]has_draft=1&/);
   assert.match(read("app/admin/aa-content/AaContentConsole.tsx"), /useLinkFilters\(filtersFromSearch, /);
   assert.match(read("app/admin/places/cards/page.tsx"), /status: p\.get\("status"\)/);
   assert.match(read("app/admin/review/page.tsx"), /useState\("pending"\)/);

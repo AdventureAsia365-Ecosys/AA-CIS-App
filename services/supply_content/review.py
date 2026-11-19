@@ -95,21 +95,29 @@ def diff(base: Optional[dict], draft: Optional[dict]) -> list[str]:
                                      tofile=f"v{draft['content_version']}", lineterm=""))
 
 
-# The list's filter ($1 content_status, $2 entity_type; NULL = any): one text for the page (list_entities) and the
-# My work tiles (status_summary, AA-1156), so a tile counts exactly the rows the page lists for the same filter.
-LIST_FILTER_SQL = "($1::text IS NULL OR e.content_status = $1) AND ($2::text IS NULL OR e.entity_type = $2)"
+# The list's filter ($1 content_status, $2 entity_type, $3 has an open draft; NULL = any): one text for the page
+# (list_entities) and the My work tiles (status_summary, AA-1156), so a tile counts exactly the rows the page lists
+# for the same filter. An open draft is a version with status 'draft', whatever the entity's content_status: a redraft
+# of published or stale content keeps the entity's status (only a 'draft' entity moves to 'in_review').
+OPEN_DRAFT_SQL = "EXISTS (SELECT 1 FROM shared.supply_content_version v WHERE v.entity_id = e.id AND v.status = 'draft')"
+LIST_FILTER_SQL = ("($1::text IS NULL OR e.content_status = $1) AND ($2::text IS NULL OR e.entity_type = $2) "
+                   f"AND ($3::boolean IS NULL OR $3 = {OPEN_DRAFT_SQL})")
 
 
-async def status_summary(pool, *, status: Optional[str] = None, entity_type: Optional[str] = None) -> dict:
-    """AA-1156 My work: how many entities the list shows for this filter and the oldest ``updated_at`` among them (the
-    entity row moves when its content status changes, so it is about when the item entered this state)."""
-    row = await pool.fetchrow(f"SELECT count(*) AS n, min(e.updated_at) AS oldest FROM shared.supply_entity e "
-                              f"WHERE {LIST_FILTER_SQL}", status, entity_type)
+async def status_summary(pool, *, status: Optional[str] = None, entity_type: Optional[str] = None,
+                         has_draft: Optional[bool] = None) -> dict:
+    """AA-1156 My work: how many entities the list shows for this filter and when the oldest of them entered it. With
+    ``has_draft`` true that is the creation of the entity's oldest open draft (a redraft does not move the entity
+    row); otherwise the entity's ``updated_at`` (the row moves when its content status changes)."""
+    row = await pool.fetchrow(
+        "SELECT count(*) AS n, min(CASE WHEN $3 THEN (SELECT min(v.created_at) FROM shared.supply_content_version v "
+        "WHERE v.entity_id = e.id AND v.status = 'draft') ELSE e.updated_at END) AS oldest "
+        f"FROM shared.supply_entity e WHERE {LIST_FILTER_SQL}", status, entity_type, has_draft)
     return {"count": int(row["n"] or 0), "oldest_at": row["oldest"]}
 
 
 async def list_entities(pool, *, status: Optional[str] = None, entity_type: Optional[str] = None,
-                        limit: int = 50, offset: int = 0) -> dict:
+                        has_draft: Optional[bool] = None, limit: int = 50, offset: int = 0) -> dict:
     rows = await pool.fetch(
         f"""
         SELECT e.id::text AS id, e.source_id, e.entity_type, e.service_type, e.title, e.country_code,
@@ -120,8 +128,8 @@ async def list_entities(pool, *, status: Optional[str] = None, entity_type: Opti
           FROM shared.supply_entity e
          WHERE {LIST_FILTER_SQL}
          ORDER BY e.updated_at DESC, e.id
-         LIMIT $3 OFFSET $4
-        """, status, entity_type, limit, offset)
+         LIMIT $4 OFFSET $5
+        """, status, entity_type, has_draft, limit, offset)
     counts = await pool.fetch("SELECT content_status, count(*) AS n FROM shared.supply_entity GROUP BY 1")
     return {"items": [{k: _iso(r[k]) for k in r.keys() if k != "total"} for r in rows],
             "total": int(rows[0]["total"]) if rows else 0,

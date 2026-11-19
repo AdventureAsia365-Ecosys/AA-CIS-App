@@ -125,17 +125,23 @@ export interface Detail {
 
 // ── helpers ───────────────────────────────────────────────────────────────────────────────────────────────────────
 
-export interface ListFilters { status: ContentStatus | ""; type: EntityType | "" }
+/** `hasDraft`: "1" only entities with an open draft (whatever their content status: a redraft of published or stale
+ *  content keeps that status), "0" only entities without one, "" any. */
+export type DraftFilter = "" | "1" | "0";
+export interface ListFilters { status: ContentStatus | ""; type: EntityType | ""; hasDraft: DraftFilter }
+export const NO_FILTERS: ListFilters = { status: "", type: "", hasDraft: "" };
 
-/** AA-1156: the list filters a link carries (`?status=` and `?type=`, e.g. the My work tiles); an unknown value is
- *  ignored (no filter), never sent to the API. */
+/** AA-1156: the list filters a link carries (`?status=`, `?type=`, `?has_draft=`, e.g. the My work tiles); an unknown
+ *  value is ignored (no filter), never sent to the API. */
 export function filtersFromSearch(search: string): ListFilters {
   const p = new URLSearchParams(search);
   const status = p.get("status") ?? "";
   const type = p.get("type") ?? "";
+  const hasDraft = p.get("has_draft") ?? "";
   return {
     status: (CONTENT_STATUSES as readonly string[]).includes(status) ? (status as ContentStatus) : "",
     type: (ENTITY_TYPES as readonly string[]).includes(type) ? (type as EntityType) : "",
+    hasDraft: hasDraft === "1" || hasDraft === "0" ? hasDraft : "",
   };
 }
 
@@ -144,6 +150,7 @@ export function listUrl(f: ListFilters, pageIndex: number, pageSize: number): st
   const q = new URLSearchParams();
   if (f.status) q.set("status", f.status);
   if (f.type) q.set("entity_type", f.type);
+  if (f.hasDraft) q.set("has_draft", f.hasDraft);
   q.set("limit", String(pageSize));
   q.set("offset", String(Math.max(0, pageIndex) * pageSize));
   return `${SUPPLY_API}?${q.toString()}`;

@@ -33,11 +33,13 @@ import {
   CONTENT_STATUSES,
   ENTITY_TYPES,
   STATUS_TONE,
+  NO_FILTERS,
   detailHref,
   filtersFromSearch,
   listUrl,
   supplyErrorText,
   type ContentStatus,
+  type DraftFilter,
   type EntityType,
   type FeedStatus,
   type ListFilters,
@@ -50,7 +52,6 @@ import { SC } from "./messages";
 import { useSupplyText } from "./useSupplyText";
 
 export const LIST_KEY = ["supply-content-list"] as const;
-const NO_FILTERS: ListFilters = { status: "", type: "" };
 const PAGE_SIZES = [25, 50, 100];
 
 async function getJson<T>(url: string, w: SupplyWords): Promise<T> {
@@ -67,7 +68,7 @@ export default function SupplyContentList() {
   const { formatDateTime } = useFormat();
   const qc = useQueryClient();
   const router = useRouter();
-  // AA-1156: a link may open the list filtered (?status=, the My work tiles)
+  // AA-1156: a link may open the list filtered (?status=, ?has_draft=, the My work tiles)
   const [filters, setFilters] = useLinkFilters(filtersFromSearch, NO_FILTERS);
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(PAGE_SIZES[0]);
@@ -122,7 +123,7 @@ export default function SupplyContentList() {
 
   const refresh = () => { void qc.invalidateQueries({ queryKey: LIST_KEY }); };
   const counts = list.data?.by_status ?? {};
-  const filtered = !!(filters.status || filters.type);
+  const filtered = !!(filters.status || filters.type || filters.hasDraft);
 
   const filterBar = (
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", minWidth: 0 }}>
@@ -135,6 +136,12 @@ export default function SupplyContentList() {
         onChange={(e) => setFilter("type", e.target.value as EntityType | "")} style={selectStyle}>
         <option value="">{t("hotelsAndServices")}</option>
         {ENTITY_TYPES.map((et) => <option key={et} value={et}>{t("typePlural", st.type[et])}</option>)}
+      </Select>
+      <Select aria-label={t("openDraft")} value={filters.hasDraft}
+        onChange={(e) => setFilter("hasDraft", e.target.value as DraftFilter)} style={selectStyle}>
+        <option value="">{t("anyDraft")}</option>
+        <option value="1">{t("withOpenDraft")}</option>
+        <option value="0">{t("withoutOpenDraft")}</option>
       </Select>
     </div>
   );

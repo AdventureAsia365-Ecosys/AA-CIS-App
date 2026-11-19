@@ -102,7 +102,7 @@ def test_the_machine_and_a_wrong_secret_are_refused(client):
 def test_the_filters_are_the_target_pages_filters(client):
     tiles = {t["key"]: t for t in _get(client, "admin").json()["tiles"]}
     assert tiles["review_waiting"]["filter"] == {}               # the Review Queue opens on pending
-    assert tiles["supply_drafts"]["filter"] == {"status": "in_review"}
+    assert tiles["supply_drafts"]["filter"] == {"has_draft": "1"}    # by open draft, not by entity status
     assert tiles["supply_no_description"]["filter"] == {"status": "draft"}
     assert tiles["aa_content_drafts"]["filter"] == {"status": "draft"}
     assert tiles["place_cards_to_review"]["filter"] == {"status": "auto_checked"}
@@ -129,12 +129,38 @@ def test_the_real_tiles_use_the_target_pages_count_helpers():
     # the supply list and its summary both read LIST_FILTER_SQL (the list query and the summary are f-strings)
     src = (REPO / "services" / "supply_content" / "review.py").read_text()
     assert src.count("WHERE {LIST_FILTER_SQL}") == 2
+    assert "{OPEN_DRAFT_SQL}" in src.split("LIST_FILTER_SQL = ", 1)[1].split("\n\n", 1)[0]
     assert store._LIST_FROM in store.SUMMARY_SQL and store._LIST_FROM in store.COUNT_SQL
     assert atc.FILTER_SQL in atc.COUNT_SQL and atc.FILTER_SQL in atc.SUMMARY_SQL and atc.FILTER_SQL in atc.LIST_SQL
     cq = (REPO / "api" / "routers" / "admin_content_quality.py").read_text()
     assert "place_card_list.list_filter(status, q)" in cq
     rq = (REPO / "api" / "routers" / "admin_pipeline" / "review.py").read_text()
     assert rq.count("_review_queue_where(") == 3   # the definition, the page, the tile
+
+
+def test_the_supply_list_route_reads_the_drafts_tile_filter(monkeypatch):
+    """The drafts tile sends ?has_draft=1: the list route turns it into has_draft=True for the shared WHERE."""
+    from api.routers import admin_supply_content
+    from services.supply_content import review
+
+    seen: list[dict] = []
+
+    async def fake_list(_pool, **kw):
+        seen.append(kw)
+        return {"items": [], "total": 0, "by_status": {}}
+
+    monkeypatch.setattr(review, "list_entities", fake_list)
+    monkeypatch.setattr(admin, "ADMIN_SECRET", SECRET)
+    app = FastAPI()
+    app.include_router(admin_supply_content.router)
+    app.state.pool = _Pool()
+    c = TestClient(app)
+    headers = {"x-admin-secret": SECRET, "x-admin-role": "content"}
+    for query, want in (("?has_draft=1", True), ("?has_draft=0", False), ("", None)):
+        r = c.get(f"/admin/supply-content{query}", headers=headers)
+        assert r.status_code == 200, r.text
+        assert seen[-1]["has_draft"] is want, query
+    assert c.get("/admin/supply-content?has_draft=maybe", headers=headers).status_code == 422
 
 
 def _ts_tiles() -> dict[str, str]:
