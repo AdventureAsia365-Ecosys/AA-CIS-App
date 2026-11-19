@@ -188,7 +188,8 @@ async def _price_and_null_run(pool, pre: pr.Prereg, out: dict, estimates: dict[s
 def _unjudgeable(pre: pr.Prereg, price_check: dict) -> list[str]:
     """S285: a blocking line when a claim instrument judge priced fewer control outputs than the sample has items (an
     item without a stored control, or over the eval judge's evidence cap, `eval_judge.InputOverCap`): such an item can
-    never pair, so `paired_all` would make the paid verdict invalid. A plain judge's price does not read outputs. Pure."""
+    never pair, so `paired_all` would make the paid verdict invalid. A plain judge's price does not read outputs.
+    Pure."""
     if not (pre.doc.get("judge") or {}).get("instrument"):
         return []
     priced = ((price_check.get("judge") or {}).get("call") or {}).get("outputs")

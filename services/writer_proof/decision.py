@@ -151,7 +151,8 @@ def targets(doc: dict, computed: dict[str, Optional[float]]) -> list[dict]:
 def computed_metrics(b_rows: list[dict], per_object: Optional[dict] = None) -> dict[str, Optional[float]]:
     """The arm-B values of the computed metrics: rates over the candidate rows with a verdict, and the cost /
     requests medians per object from cost_report.attribute (`per_object`: {result_id: {cost_usd, requests,
-    writer_requests, writer_cost_usd}}; S285: writer_cost_per_object_usd is the writer-role share, without the judge)."""
+    writer_requests, writer_cost_usd}}; S285: writer_cost_per_object_usd is the writer-role share, without the
+    judge)."""
     cand = [r for r in b_rows if r.get("arm") == "candidate" and r.get("mode") == "regenerate"
             and r.get("verdict") in ("pass", "fail")]
     out: dict[str, Optional[float]] = {k: None for k in (
