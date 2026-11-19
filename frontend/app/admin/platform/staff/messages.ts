@@ -8,12 +8,13 @@ import { defineMessages } from "../../../_kit/core/i18n";
 
 export const BOOKING_ROLE = defineMessages(
   {
-    admin: "Booking admin", sales: "Sales", contracting: "Contracting", content_creator: "Content creator",
+    // AA-1150: contracting is shown as "Product & operations"; content_creator is retired (only shown on an old grant).
+    admin: "Booking admin", sales: "Sales", contracting: "Product & operations", content_creator: "Content creator (retired)",
     finance: "Finance",
   },
   {
-    admin: "Quản trị Booking", sales: "Kinh doanh", contracting: "Hợp đồng", content_creator: "Người tạo nội dung",
-    finance: "Tài chính",
+    admin: "Quản trị Booking", sales: "Kinh doanh", contracting: "Sản phẩm & điều hành",
+    content_creator: "Người tạo nội dung (đã bỏ)", finance: "Tài chính",
   },
 );
 
@@ -214,18 +215,30 @@ export const MANAGE = defineMessages(
     crmHint: "Pick any; none means no CRM staff access.",
     crmUnavailable: "CRM roles can be set once the database update for them is applied on this server.",
     crmChange: (from: string, to: string) => ` CRM role: ${from} → ${to}.`,
-    presetTitle: "Platform owner preset",
-    presetNote:
-      "One save gives CIS Administrator, Booking admin and CRM Agency admin. Other CRM roles are kept. It does not make the person a directory owner.",
-    presetHas: "This account already has every admin role.",
-    presetApply: "Apply preset",
-    presetQ: "Give every admin role?",
-    presetBody: "gets CIS Administrator, Booking admin and CRM Agency admin in one change. They sign in again to use the new access.",
-    presetDone: "Platform owner preset saved in CIS and the company sign-in. The person signs in again to use it.",
+    // AA-1150: the three people-role presets (lean staff roles); every other role is behind "Show all roles".
+    rolesTitle: "Role",
+    rolesNote:
+      "Pick the person's role in the company. A preset sets their CIS, Booking and CRM roles in one change; it never makes them a directory owner.",
+    adminTitle: "Administrator",
+    adminNote: "CIS Administrator, Booking admin and CRM Agency admin. Other CRM roles are kept.",
+    ownerTitle: "Business owner",
+    ownerNote: "CIS Administrator and Booking admin. CRM roles are not changed.",
+    contentOpsTitle: "Content + Product & operations",
+    contentOpsNote:
+      "CIS Content Lead. No Booking role and no CRM role for now: the combined Booking role comes with custom roles.",
+    presetCurrent: "Current",
+    presetApply: "Apply",
+    presetQ: (name: string) => `Apply the ${name} preset?`,
+    presetBody: "gets these roles in one change; they sign in again to use the new access:",
+    presetReplaces: " It replaces the roles the account holds now, so access they give ends.",
+    presetDone: (name: string) => `${name} preset saved in CIS and the company sign-in. The person signs in again to use it.`,
+    showAllRoles: "Show all roles",
+    hideAllRoles: "Hide all roles",
+    customRoles: "Custom (show all roles)",
     // AA-1091: the "Pricing team" preset (the customer-service team enters prices in CIS and Booking)
     pricingTitle: "Pricing team preset",
     pricingNote:
-      "One save gives what the customer-service team needs to enter prices: CIS Customer Success (Reference prices) and Booking Contracting (supplier rates, pricing rules, trip plans, departures). It only adds: a role that already has these rights is kept, and it never replaces another role. CRM roles are not changed.",
+      "One save gives what the customer-service team needs to enter prices: CIS Customer Success (Reference prices) and Booking Product & operations (supplier rates, pricing rules, trip plans, departures). It only adds: a role that already has these rights is kept, and it never replaces another role. CRM roles are not changed.",
     pricingBlocked: (roles: string) =>
       `This account holds ${roles}. Each app gives one role per person, so the preset would replace it and remove its rights. Change the roles by hand above if that is what you want.`,
     pricingCisRole: (r: string) => `CIS ${r}`,
@@ -319,17 +332,28 @@ export const MANAGE = defineMessages(
     crmHint: "Chọn tuỳ ý; không chọn nghĩa là không có quyền nhân sự CRM.",
     crmUnavailable: "Vai trò CRM đặt được khi bản cập nhật cơ sở dữ liệu cho chúng đã được áp dụng trên máy chủ này.",
     crmChange: (from: string, to: string) => ` Vai trò CRM: ${from} → ${to}.`,
-    presetTitle: "Mẫu chủ sở hữu nền tảng",
-    presetNote:
-      "Một lần lưu cấp Quản trị viên CIS, Quản trị Booking và Quản trị đại lý CRM. Các vai trò CRM khác được giữ nguyên. Không biến người đó thành chủ sở hữu danh bạ.",
-    presetHas: "Tài khoản này đã có mọi vai trò quản trị.",
-    presetApply: "Áp dụng mẫu",
-    presetQ: "Cấp mọi vai trò quản trị?",
-    presetBody: "nhận Quản trị viên CIS, Quản trị Booking và Quản trị đại lý CRM trong một lần thay đổi. Họ đăng nhập lại để dùng quyền mới.",
-    presetDone: "Đã lưu mẫu chủ sở hữu nền tảng trong CIS và hệ thống đăng nhập công ty. Người đó đăng nhập lại để dùng.",
+    rolesTitle: "Vai trò",
+    rolesNote:
+      "Chọn vai trò của người này trong công ty. Một mẫu đặt vai trò CIS, Booking và CRM trong một lần thay đổi; mẫu không bao giờ biến họ thành chủ sở hữu danh bạ.",
+    adminTitle: "Quản trị viên",
+    adminNote: "Quản trị viên CIS, Quản trị Booking và Quản trị đại lý CRM. Các vai trò CRM khác được giữ nguyên.",
+    ownerTitle: "Chủ doanh nghiệp",
+    ownerNote: "Quản trị viên CIS và Quản trị Booking. Vai trò CRM không đổi.",
+    contentOpsTitle: "Nội dung + Sản phẩm & điều hành",
+    contentOpsNote:
+      "Trưởng nhóm nội dung trong CIS. Tạm thời không có vai trò Booking và CRM: vai trò Booking gộp sẽ có cùng vai trò tuỳ chỉnh.",
+    presetCurrent: "Đang dùng",
+    presetApply: "Áp dụng",
+    presetQ: (name: string) => `Áp dụng mẫu ${name}?`,
+    presetBody: "nhận các vai trò sau trong một lần thay đổi; họ đăng nhập lại để dùng quyền mới:",
+    presetReplaces: " Mẫu này thay các vai trò tài khoản đang giữ, nên quyền của chúng sẽ hết.",
+    presetDone: (name: string) => `Đã lưu mẫu ${name} trong CIS và hệ thống đăng nhập công ty. Người đó đăng nhập lại để dùng.`,
+    showAllRoles: "Hiện mọi vai trò",
+    hideAllRoles: "Ẩn bớt vai trò",
+    customRoles: "Tuỳ chỉnh (hiện mọi vai trò)",
     pricingTitle: "Mẫu nhóm nhập giá",
     pricingNote:
-      "Một lần lưu cấp đủ quyền để nhóm chăm sóc khách hàng nhập giá: Customer Success trong CIS (Giá tham khảo) và Hợp đồng trong Booking (giá nhà cung cấp, quy tắc giá, kế hoạch tour, ngày khởi hành). Mẫu này chỉ thêm quyền: vai trò đã có các quyền này được giữ nguyên, và không bao giờ thay một vai trò khác. Vai trò CRM không đổi.",
+      "Một lần lưu cấp đủ quyền để nhóm chăm sóc khách hàng nhập giá: Customer Success trong CIS (Giá tham khảo) và Sản phẩm & điều hành trong Booking (giá nhà cung cấp, quy tắc giá, kế hoạch tour, ngày khởi hành). Mẫu này chỉ thêm quyền: vai trò đã có các quyền này được giữ nguyên, và không bao giờ thay một vai trò khác. Vai trò CRM không đổi.",
     pricingBlocked: (roles: string) =>
       `Tài khoản này đang giữ ${roles}. Mỗi ứng dụng chỉ cho một vai trò mỗi người, nên mẫu này sẽ thay vai trò đó và làm mất quyền của nó. Nếu đúng ý bạn, hãy đổi vai trò bằng tay ở phía trên.`,
     pricingCisRole: (r: string) => `CIS ${r}`,

@@ -3,8 +3,9 @@
   GET   /admin/platform/staff                       every CIS staff account (shared.admin_users) + counts + viewer
   GET   /admin/platform/staff/{staff_id}            one account
   POST  /admin/platform/staff                       create (C6)
-  PATCH /admin/platform/staff/{staff_id}/roles      CIS role, Booking grant and/or CRM roles (C6, AA-1031), or the
-                                                    "platform_owner" preset (AA-1031)
+  PATCH /admin/platform/staff/{staff_id}/roles      CIS role, Booking grant and/or CRM roles (C6, AA-1031), or a
+                                                    preset: platform_owner ("Administrator", AA-1031), pricing_team
+                                                    (AA-1091), business_owner / content_ops (AA-1150)
   POST  /admin/platform/staff/{staff_id}/disable    (C6)
   POST  /admin/platform/staff/{staff_id}/enable     (C6)
   POST  /admin/platform/staff/{staff_id}/sign-out   "reset": end every session, re-enable if disabled (C6)
@@ -79,10 +80,13 @@ _SELECT_WITH_CRM = _SELECT.replace("g.role AS booking_role, ", "g.role AS bookin
 
 # AA-1035 R2: staff_directory.CIS_ROLES / BOOKING_ROLES (root ADR 0019 d3; reviewer is no longer assignable).
 CisRole = Literal["admin", "content_lead", "content", "tenant_qa", "customer_success", "support", "finance", "ai_ops"]
-BookingRole = Literal["admin", "sales", "contracting", "content_creator", "finance"]
+# AA-1150: content_creator is retired (staff_directory.RETIRED_BOOKING_ROLES): never granted again, Sync removes it.
+BookingRole = Literal["admin", "sales", "contracting", "finance"]
 CrmRole = Literal["platform_admin", "ops", "support"]
-# AA-1091: pricing_team = CIS customer_success + Booking contracting (staff_directory.PRESET_PRICING_TEAM)
-Preset = Literal["platform_owner", "pricing_team"]
+# AA-1091: pricing_team = CIS customer_success + Booking contracting (staff_directory.PRESET_PRICING_TEAM).
+# AA-1150 lean people-role presets: platform_owner is "Administrator"; business_owner = CIS admin + Booking admin;
+# content_ops = CIS content_lead, no Booking role, no CRM role.
+Preset = Literal["platform_owner", "pricing_team", "business_owner", "content_ops"]
 
 
 async def _select_sql(conn: Any) -> tuple[str, bool]:
@@ -181,7 +185,8 @@ class ChangeRolesBody(BaseModel):
     (or null) removes every CRM role. ``"preset": "platform_owner"`` (AA-1031) is sent alone and sets CIS admin +
     Booking admin + CRM Agency admin; ``"preset": "pricing_team"`` (AA-1091) gives CIS customer_success + Booking
     contracting, keeping a role that already has those rights; it only adds (409 preset_would_replace rather than
-    replace another role)."""
+    replace another role). AA-1150: ``"business_owner"`` = CIS admin + Booking admin (CRM unchanged);
+    ``"content_ops"`` = CIS content_lead, no Booking role, no CRM role."""
     model_config = ConfigDict(extra="forbid")
     role: Optional[CisRole] = None
     booking_role: Optional[BookingRole] = None

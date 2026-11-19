@@ -23,6 +23,11 @@
 // "Platform owner" preset (CIS Administrator + Booking admin + CRM Agency admin in one save, PATCH …/roles
 // {"preset": "platform_owner"}). Until the database update for CRM roles is applied the list says
 // crm_roles_available: false and the CRM field is read-only.
+//
+// AA-1150 (lean staff roles step 1): the three people-role presets come first, "Administrator" (the platform_owner
+// preset), "Business owner" and "Content + Product & operations" (PATCH …/roles {"preset": …}; in Add staff the
+// preset fills the role fields); the CIS / Booking / CRM fields and the Pricing team preset sit behind "Show all
+// roles". Booking content_creator is retired: never offered, an old grant shows as "(retired)" and Sync removes it.
 
 import { useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, Mail, RefreshCw, XCircle } from "lucide-react";
@@ -31,7 +36,15 @@ import { Button, ConfirmModal, Field, K, Modal, RADIUS, sans, useT, Checkbox, In
 import { ASSIGNABLE_STAFF_ROLES, isStaffRole, staffErrorMessage } from "@/lib/rbac";
 import { RBAC_MESSAGES } from "@/lib/rbac.messages";
 import type { Translator } from "../../../_kit/core/i18n";
+import {
+  BOOKING_ROLES, CRM_ROLES, PEOPLE_PRESETS, PEOPLE_PRESET_ROLES, RETIRED_BOOKING_ROLES, createRoles, crmRolesOf,
+  peoplePresetOf, type CrmRole, type PeoplePreset,
+} from "@/lib/staffPresets";
 import { BOOKING_ROLE, CRM_ROLE, MANAGE } from "./messages";
+
+// AA-1150: the roles and presets live in lib/staffPresets.ts (unit-tested there); re-exported for the directory page.
+export { BOOKING_ROLES, CRM_ROLES, crmRolesOf };
+export type { BookingRole, CrmRole } from "@/lib/staffPresets";
 
 // Mirrors the backend row (api/routers/admin_platform.py STAFF_COLUMNS).
 export interface StaffAccount {
@@ -61,20 +74,10 @@ export type InviteStatus = "sent" | "queued" | "not_sent";
 
 type InviteFields = Pick<StaffAccount, "invite_status" | "last_invited_at" | "last_invite_requested_at" | "last_invite_not_sent_at">;
 
-export const BOOKING_ROLES = ["admin", "sales", "contracting", "content_creator", "finance"] as const;
-export type BookingRole = (typeof BOOKING_ROLES)[number];
-/** English Booking role names (the `en` side of ./messages.ts BOOKING_ROLE). */
-export const BOOKING_ROLE_LABEL: Record<BookingRole, string> = BOOKING_ROLE.en;
+type BookingRoleLabelKey = keyof typeof BOOKING_ROLE.en;
+/** English Booking role names (the `en` side of ./messages.ts BOOKING_ROLE), retired roles included. */
+export const BOOKING_ROLE_LABEL: Record<BookingRoleLabelKey, string> = BOOKING_ROLE.en;
 
-/** AA-1031: the CRM staff roles in display order (backend staff_directory.CRM_ROLES). */
-export const CRM_ROLES = ["platform_admin", "ops", "support"] as const;
-export type CrmRole = (typeof CRM_ROLES)[number];
-
-/** The account's CRM roles in CRM_ROLES order, unknown codes dropped. */
-export function crmRolesOf(s: Pick<StaffAccount, "crm_roles">): CrmRole[] {
-  const held = new Set(s.crm_roles ?? []);
-  return CRM_ROLES.filter((r) => held.has(r));
-}
 
 /** AA-1091: the roles of the "Pricing team" preset (backend staff_directory.PRICING_KEEP_*: a role with the rights is
  *  kept). CIS: reference_price.write; Booking: pricing / supply / trip plan writes. */
@@ -96,8 +99,12 @@ export function pricingTeamPlan(s: Pick<StaffAccount, "role" | "booking_role">):
   const bkKept = bk !== null && PRICING_BOOKING_ROLES.includes(bk);
   return {
     cis: cisFill ? { from: s.role, to: "customer_success" } : null,
-    booking: !bkKept && bk === null ? { from: null, to: "contracting" } : null,
-    blocked: { cis: !cisKept && !cisFill ? s.role : null, booking: !bkKept && bk !== null ? bk : null },
+    // AA-1150: a retired grant (content_creator) gives nothing, so it is an empty slot (backend pricing_team_plan).
+    booking: !bkKept && (bk === null || RETIRED_BOOKING_ROLES.includes(bk)) ? { from: bk, to: "contracting" } : null,
+    blocked: {
+      cis: !cisKept && !cisFill ? s.role : null,
+      booking: !bkKept && bk !== null && !RETIRED_BOOKING_ROLES.includes(bk) ? bk : null,
+    },
   };
 }
 
@@ -106,10 +113,8 @@ export function hasPricingTeamRoles(s: Pick<StaffAccount, "role" | "booking_role
   return PRICING_CIS_ROLES.includes(s.role) && PRICING_BOOKING_ROLES.includes(s.booking_role ?? "");
 }
 
-/** The "Platform owner" preset is already in place: CIS admin, Booking admin and CRM Agency admin. */
-export function hasPlatformOwnerRoles(s: Pick<StaffAccount, "role" | "booking_role" | "crm_roles">): boolean {
-  return s.role === "admin" && s.booking_role === "admin" && crmRolesOf(s).includes("platform_admin");
-}
+
+
 
 /** AA-994: the staff label helpers in the UI language — CIS role, Booking role and "Last invited" in words. */
 export function useStaffWords() {
@@ -120,7 +125,10 @@ export function useStaffWords() {
   return useMemo(() => ({
     roleLabel: (r: string) => (isStaffRole(r) ? role(r) : r),
     bookingRoleLabel: (r: string | null) =>
-      (!r ? m("none") : Object.hasOwn(BOOKING_ROLE_LABEL, r) ? booking(r as BookingRole) : r),
+      (!r ? m("none") : Object.hasOwn(BOOKING_ROLE_LABEL, r) ? booking(r as BookingRoleLabelKey) : r),
+    /** AA-1150: a people-role preset's name and what it gives. */
+    presetTitle: (p: PeoplePreset) => m(PRESET_WORDS[p].title),
+    presetNote: (p: PeoplePreset) => m(PRESET_WORDS[p].note),
     /** AA-1031: CRM roles in words ("Agency admin, Support"), or "None". */
     crmRolesLabel: (roles: readonly string[] | null | undefined) => {
       const known = CRM_ROLES.filter((r) => (roles ?? []).includes(r));
@@ -141,6 +149,12 @@ export function useStaffWords() {
     },
   }), [m, role, booking, crm]);
 }
+
+const PRESET_WORDS = {
+  platform_owner: { title: "adminTitle", note: "adminNote" },
+  business_owner: { title: "ownerTitle", note: "ownerNote" },
+  content_ops: { title: "contentOpsTitle", note: "contentOpsNote" },
+} as const;
 
 /** The refusal words of staffWrite(), in the UI language. */
 interface WriteWords {
@@ -313,6 +327,8 @@ function BookingRoleSelect({ id, value, onChange }: { id: string; value: string;
   return (
     <Select id={id} value={value} onChange={(e) => onChange(e.target.value)} style={fieldStyle}>
       <option value="">{m("noBooking")}</option>
+      {/* AA-1150: a retired grant shows its role, never selectable (Sync or a change removes it). */}
+      {RETIRED_BOOKING_ROLES.includes(value) && <option value={value} disabled>{bookingRoleLabel(value)}</option>}
       {BOOKING_ROLES.map((r) => <option key={r} value={r}>{bookingRoleLabel(r)}</option>)}
     </Select>
   );
@@ -363,10 +379,13 @@ export function CreateStaffModal({ open, onClose, onDone, crmAvailable = true }:
   const refresh = useRefreshStaff();
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
+  // AA-1150: a people-role preset by default; "custom" shows the CIS / Booking / CRM fields.
+  const [access, setAccess] = useState<PeoplePreset | "custom">("content_ops");
   const [role, setRole] = useState<string>("content");
   const [booking, setBooking] = useState<string>("");
   const [crmRoles, setCrmRoles] = useState<CrmRole[]>([]);
   const [sendInvite, setSendInvite] = useState(true);
+  const { presetTitle, presetNote } = useStaffWords();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -375,7 +394,8 @@ export function CreateStaffModal({ open, onClose, onDone, crmAvailable = true }:
   const canSubmit = domainOk && name.trim().length > 0 && !busy;
 
   const reset = () => {
-    setEmail(""); setName(""); setRole("content"); setBooking(""); setCrmRoles([]); setSendInvite(true); setError(null);
+    setEmail(""); setName(""); setAccess("content_ops"); setRole("content"); setBooking(""); setCrmRoles([]);
+    setSendInvite(true); setError(null);
   };
   const close = () => { if (!busy) { reset(); onClose(); } };
 
@@ -383,10 +403,11 @@ export function CreateStaffModal({ open, onClose, onDone, crmAvailable = true }:
     if (!canSubmit) return;
     setBusy(true);
     setError(null);
+    const roles = createRoles(access, { role, booking, crm: crmRoles });
     const outcome = await staffWrite("POST", API, "", w,
       {
-        email: normalized, display_name: name.trim(), role, booking_role: booking || null, send_invite: sendInvite,
-        ...(crmRoles.length ? { crm_roles: crmRoles } : {}),
+        email: normalized, display_name: name.trim(), role: roles.role, booking_role: roles.booking,
+        send_invite: sendInvite, ...(roles.crm.length ? { crm_roles: roles.crm } : {}),
       });
     setBusy(false);
     if (outcome.kind === "error") {
@@ -421,15 +442,27 @@ export function CreateStaffModal({ open, onClose, onDone, crmAvailable = true }:
           <Input id="staff-create-name" type="text" autoComplete="off" value={name} maxLength={120}
             onChange={(e) => setName(e.target.value)} style={fieldStyle} />
         </Label>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14 }}>
-          <Label text={m("cisRole")} htmlFor="staff-create-role">
-            <CisRoleSelect id="staff-create-role" value={role} onChange={setRole} />
-          </Label>
-          <Label text={m("bookingRole")} htmlFor="staff-create-booking">
-            <BookingRoleSelect id="staff-create-booking" value={booking} onChange={setBooking} />
-          </Label>
-        </div>
-        <CrmRolesField idPrefix="staff-create" value={crmRoles} onChange={setCrmRoles} disabled={!crmAvailable} />
+        <Label text={m("rolesTitle")} htmlFor="staff-create-access"
+          hint={access === "custom" ? undefined : presetNote(access)}>
+          <Select id="staff-create-access" data-testid="staff-create-access" value={access} style={fieldStyle}
+            onChange={(e) => setAccess(e.target.value as PeoplePreset | "custom")}>
+            {PEOPLE_PRESETS.map((p) => <option key={p} value={p}>{presetTitle(p)}</option>)}
+            <option value="custom">{m("customRoles")}</option>
+          </Select>
+        </Label>
+        {access === "custom" && (
+          <>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14 }}>
+              <Label text={m("cisRole")} htmlFor="staff-create-role">
+                <CisRoleSelect id="staff-create-role" value={role} onChange={setRole} />
+              </Label>
+              <Label text={m("bookingRole")} htmlFor="staff-create-booking">
+                <BookingRoleSelect id="staff-create-booking" value={booking} onChange={setBooking} />
+              </Label>
+            </div>
+            <CrmRolesField idPrefix="staff-create" value={crmRoles} onChange={setCrmRoles} disabled={!crmAvailable} />
+          </>
+        )}
         <label htmlFor="staff-create-invite" style={{ display: "flex", gap: 9, alignItems: "flex-start", cursor: "pointer" }}>
           <Checkbox id="staff-create-invite" checked={sendInvite} data-testid="staff-create-invite"
             onChange={(e) => setSendInvite(e.target.checked)} style={{ marginTop: 3, accentColor: K.accent }} />
@@ -447,7 +480,7 @@ export function CreateStaffModal({ open, onClose, onDone, crmAvailable = true }:
 
 // ── Manage one account (drawer) ──────────────────────────────────────────────────────────────────
 
-type Confirm = null | "disable" | "sign-out" | "preset" | "pricing";
+type Confirm = null | "disable" | "sign-out" | "pricing" | PeoplePreset;
 
 export function StaffManagePanel({ staff, selfId, onOutcome, crmAvailable = true }: {
   staff: StaffAccount;
@@ -466,6 +499,7 @@ export function StaffManagePanel({ staff, selfId, onOutcome, crmAvailable = true
   const [crmRoles, setCrmRoles] = useState<CrmRole[]>(savedCrm);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<Confirm>(null);
+  const [showAll, setShowAll] = useState(false);   // AA-1150: every other role is behind "Show all roles"
 
   const isSelf = !!selfId && selfId === staff.id;
   const base = `${API}/${encodeURIComponent(staff.id)}`;
@@ -495,7 +529,6 @@ export function StaffManagePanel({ staff, selfId, onOutcome, crmAvailable = true
     if (crmChanged) body.crm_roles = crmRoles;
     void run("roles", "PATCH", `${base}/roles`, m("rolesSaved"), body);
   };
-  const presetInPlace = hasPlatformOwnerRoles(staff);
   const pricingInPlace = hasPricingTeamRoles(staff);   // AA-1091
   const pricing = pricingTeamPlan(staff);
   const pricingBlocked = [
@@ -512,21 +545,63 @@ export function StaffManagePanel({ staff, selfId, onOutcome, crmAvailable = true
       {!staff.email && (
         <Note>{m("noEmail")}</Note>
       )}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12 }}>
-        <Label text={m("cisRole")} htmlFor={`staff-role-${staff.id}`}
-          hint={isSelf ? m("ownRole") : undefined}>
-          <CisRoleSelect id={`staff-role-${staff.id}`} value={role} onChange={setRole} disabled={isSelf} />
-        </Label>
-        <Label text={m("bookingRole")} htmlFor={`staff-booking-${staff.id}`}>
-          <BookingRoleSelect id={`staff-booking-${staff.id}`} value={booking} onChange={setBooking} />
-        </Label>
-      </div>
-      <CrmRolesField idPrefix={`staff-${staff.id}`} value={crmRoles} onChange={setCrmRoles} disabled={!crmAvailable} />
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <Button size="sm" variant="primary" onClick={saveRoles}
-          disabled={(!roleChanged && !bookingChanged && !crmChanged) || !!busy}>
-          {busy === "roles" ? m("saving") : m("saveRoles")}
+      {/* AA-1150: the three people-role presets. Every viewer of this panel is a platform owner (canWriteStaff) and
+          the backend re-checks it. */}
+      {staff.is_active && (
+        <PeoplePresets staff={staff} isSelf={isSelf} busy={!!busy} crmAvailable={crmAvailable} onApply={setConfirm} />
+      )}
+      <div>
+        <Button size="sm" variant="ghost" testId="staff-show-all-roles" aria-expanded={showAll}
+          onClick={() => setShowAll((v) => !v)}>
+          {showAll ? m("hideAllRoles") : m("showAllRoles")}
         </Button>
+      </div>
+      {showAll && (
+        <div data-testid="staff-all-roles" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12 }}>
+            <Label text={m("cisRole")} htmlFor={`staff-role-${staff.id}`}
+              hint={isSelf ? m("ownRole") : undefined}>
+              <CisRoleSelect id={`staff-role-${staff.id}`} value={role} onChange={setRole} disabled={isSelf} />
+            </Label>
+            <Label text={m("bookingRole")} htmlFor={`staff-booking-${staff.id}`}>
+              <BookingRoleSelect id={`staff-booking-${staff.id}`} value={booking} onChange={setBooking} />
+            </Label>
+          </div>
+          <CrmRolesField idPrefix={`staff-${staff.id}`} value={crmRoles} onChange={setCrmRoles} disabled={!crmAvailable} />
+          <div>
+            <Button size="sm" variant="primary" onClick={saveRoles}
+              disabled={(!roleChanged && !bookingChanged && !crmChanged) || !!busy}>
+              {busy === "roles" ? m("saving") : m("saveRoles")}
+            </Button>
+          </div>
+          <div style={{ fontSize: 12, color: K.muted, lineHeight: 1.5 }}>
+            {m("eachChange")}
+            {roleChanged && role !== staff.role && m("cisChange", roleLabel(staff.role), roleLabel(role))}
+            {bookingChanged && m("bookingChange", bookingRoleLabel(staff.booking_role), bookingRoleLabel(booking || null))}
+            {crmChanged && m("crmChange", crmRolesLabel(savedCrm), crmRolesLabel(crmRoles))}
+          </div>
+          {/* AA-1091: the "Pricing team" preset (CIS customer_success + Booking contracting; adds only, never replaces
+              a role, CRM untouched). */}
+          {staff.is_active && (
+            <div data-testid="staff-pricing-preset" style={{
+              display: "flex", gap: 10, alignItems: "flex-start", flexWrap: "wrap", padding: "10px 12px",
+              background: K.line2, borderRadius: RADIUS.sm,
+            }}>
+              <span style={{ flex: "1 1 220px", minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: K.ink3 }}>{m("pricingTitle")}</span>
+                <span style={{ fontSize: 12, color: K.muted, lineHeight: 1.45 }}>
+                  {pricingInPlace ? m("pricingHas") : pricingBlocked ? m("pricingBlocked", pricingBlocked) : m("pricingNote")}
+                </span>
+              </span>
+              <Button size="sm" variant="secondary" testId="staff-pricing-preset-apply" onClick={() => setConfirm("pricing")}
+                disabled={pricingInPlace || !!pricingBlocked || !!busy}>
+                {m("pricingApply")}
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         {staff.is_active ? (
           <Button size="sm" variant="danger" onClick={() => setConfirm("disable")} disabled={isSelf || !!busy}
             title={isSelf ? m("selfDisable") : m("disableTitle")}>
@@ -557,51 +632,6 @@ export function StaffManagePanel({ staff, selfId, onOutcome, crmAvailable = true
           </Button>
         )}
       </div>
-      <div style={{ fontSize: 12, color: K.muted, lineHeight: 1.5 }}>
-        {m("eachChange")}
-        {roleChanged && role !== staff.role && m("cisChange", roleLabel(staff.role), roleLabel(role))}
-        {bookingChanged && m("bookingChange", bookingRoleLabel(staff.booking_role), bookingRoleLabel(booking || null))}
-        {crmChanged && m("crmChange", crmRolesLabel(savedCrm), crmRolesLabel(crmRoles))}
-      </div>
-
-      {/* AA-1031: the "Platform owner" preset. Every viewer of this panel is a platform owner (canWriteStaff), and
-          the backend re-checks it; the preset only raises roles, so it is offered on one's own row too. */}
-      {staff.is_active && (
-        <div data-testid="staff-preset" style={{
-          display: "flex", gap: 10, alignItems: "flex-start", flexWrap: "wrap", padding: "10px 12px",
-          background: K.line2, borderRadius: RADIUS.sm,
-        }}>
-          <span style={{ flex: "1 1 220px", minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: K.ink3 }}>{m("presetTitle")}</span>
-            <span style={{ fontSize: 12, color: K.muted, lineHeight: 1.45 }}>
-              {presetInPlace ? m("presetHas") : m("presetNote")}
-            </span>
-          </span>
-          <Button size="sm" variant="secondary" testId="staff-preset-apply" onClick={() => setConfirm("preset")}
-            disabled={presetInPlace || !crmAvailable || !!busy} title={!crmAvailable ? m("crmUnavailable") : undefined}>
-            {m("presetApply")}
-          </Button>
-        </div>
-      )}
-      {/* AA-1091: the "Pricing team" preset (CIS customer_success + Booking contracting; adds only, never replaces a
-          role, CRM untouched). */}
-      {staff.is_active && (
-        <div data-testid="staff-pricing-preset" style={{
-          display: "flex", gap: 10, alignItems: "flex-start", flexWrap: "wrap", padding: "10px 12px",
-          background: K.line2, borderRadius: RADIUS.sm,
-        }}>
-          <span style={{ flex: "1 1 220px", minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: K.ink3 }}>{m("pricingTitle")}</span>
-            <span style={{ fontSize: 12, color: K.muted, lineHeight: 1.45 }}>
-              {pricingInPlace ? m("pricingHas") : pricingBlocked ? m("pricingBlocked", pricingBlocked) : m("pricingNote")}
-            </span>
-          </span>
-          <Button size="sm" variant="secondary" testId="staff-pricing-preset-apply" onClick={() => setConfirm("pricing")}
-            disabled={pricingInPlace || !!pricingBlocked || !!busy}>
-            {m("pricingApply")}
-          </Button>
-        </div>
-      )}
 
       <ConfirmModal
         open={confirm === "disable"}
@@ -615,17 +645,9 @@ export function StaffManagePanel({ staff, selfId, onOutcome, crmAvailable = true
         </>}
         onConfirm={() => void run("disable", "POST", `${base}/disable`, m("disabledDone"))}
       />
-      <ConfirmModal
-        open={confirm === "preset"}
+      <PresetConfirm staff={staff} preset={isPeoplePreset(confirm) ? confirm : null} busy={busy === "preset"}
         onClose={() => setConfirm(null)}
-        busy={busy === "preset"}
-        title={m("presetQ")}
-        confirmLabel={m("presetApply")}
-        body={<>
-          <strong>{staff.display_name || staff.username}</strong> {m("presetBody")}
-        </>}
-        onConfirm={() => void run("preset", "PATCH", `${base}/roles`, m("presetDone"), { preset: "platform_owner" })}
-      />
+        onConfirm={(p, done) => void run("preset", "PATCH", `${base}/roles`, done, { preset: p })} />
       <ConfirmModal
         open={confirm === "pricing"}
         onClose={() => setConfirm(null)}
@@ -655,6 +677,91 @@ export function StaffManagePanel({ staff, selfId, onOutcome, crmAvailable = true
           : m("signedOutEnabled"))}
       />
     </section>
+  );
+}
+
+function isPeoplePreset(c: Confirm): c is PeoplePreset {
+  return (PEOPLE_PRESETS as readonly string[]).includes(c ?? "");
+}
+
+/** AA-1150: a preset that writes CRM roles (Administrator adds Agency admin, Content + Product & operations removes
+ *  them) needs the CRM table; Business owner leaves the CRM roles alone. */
+function presetNeedsCrm(p: PeoplePreset): boolean {
+  return PEOPLE_PRESET_ROLES[p].crm !== null;
+}
+
+/** AA-1150: the three people-role presets, one row each: what it gives, then "Current" or Apply. Content + Product &
+ *  operations demotes, so it is not offered on one's own row (the backend refuses a self-demotion too). */
+function PeoplePresets({ staff, isSelf, busy, crmAvailable, onApply }: {
+  staff: StaffAccount;
+  isSelf: boolean;
+  busy: boolean;
+  crmAvailable: boolean;
+  onApply: (p: PeoplePreset) => void;
+}) {
+  const m = useT(MANAGE);
+  const { presetTitle, presetNote } = useStaffWords();
+  const current = peoplePresetOf(staff);
+  return (
+    <div role="group" aria-label={m("rolesTitle")} data-testid="staff-presets"
+      style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        <span style={{ fontSize: 12.5, fontWeight: 600, color: K.ink3 }}>{m("rolesTitle")}</span>
+        <span style={{ fontSize: 12, color: K.muted, lineHeight: 1.45 }}>{m("rolesNote")}</span>
+      </span>
+      {PEOPLE_PRESETS.map((p) => {
+        const blocked = (presetNeedsCrm(p) && !crmAvailable) || (isSelf && p === "content_ops");
+        return (
+          <div key={p} data-testid={`staff-preset-${p}`} style={{
+            display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", padding: "10px 12px",
+            background: current === p ? K.successSoft : K.line2, borderRadius: RADIUS.sm,
+          }}>
+            <span style={{ flex: "1 1 220px", minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: K.ink3 }}>{presetTitle(p)}</span>
+              <span style={{ fontSize: 12, color: K.muted, lineHeight: 1.45 }}>{presetNote(p)}</span>
+            </span>
+            {current === p ? (
+              <span data-testid={`staff-preset-${p}-current`} style={{ fontSize: 12.5, fontWeight: 600, color: K.success }}>
+                {m("presetCurrent")}
+              </span>
+            ) : (
+              <Button size="sm" variant="secondary" testId={`staff-preset-${p}-apply`} onClick={() => onApply(p)}
+                disabled={busy || blocked}
+                title={isSelf && p === "content_ops" ? m("ownRole") : presetNeedsCrm(p) && !crmAvailable ? m("crmUnavailable") : undefined}>
+                {m("presetApply")}
+              </Button>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** AA-1150: confirm one people-role preset (what it gives; Content + Product & operations replaces roles). */
+function PresetConfirm({ staff, preset, busy, onClose, onConfirm }: {
+  staff: StaffAccount;
+  preset: PeoplePreset | null;
+  busy: boolean;
+  onClose: () => void;
+  onConfirm: (p: PeoplePreset, done: string) => void;
+}) {
+  const m = useT(MANAGE);
+  const { presetTitle, presetNote } = useStaffWords();
+  const name = preset ? presetTitle(preset) : "";
+  return (
+    <ConfirmModal
+      open={preset !== null}
+      onClose={onClose}
+      busy={busy}
+      title={m("presetQ", name)}
+      confirmLabel={m("presetApply")}
+      body={preset && <>
+        <strong>{staff.display_name || staff.username}</strong> {m("presetBody")} {presetNote(preset)}
+        {preset === "content_ops" && m("presetReplaces")}
+      </>}
+      onConfirm={() => preset && onConfirm(preset, m("presetDone", name))}
+    />
   );
 }
 

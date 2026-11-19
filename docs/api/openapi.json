@@ -2559,7 +2559,7 @@
       },
       "ChangeRolesBody": {
         "additionalProperties": false,
-        "description": "Only the fields sent are changed; ``\"booking_role\": null`` removes the Booking grant, ``\"crm_roles\": []``\n(or null) removes every CRM role. ``\"preset\": \"platform_owner\"`` (AA-1031) is sent alone and sets CIS admin +\nBooking admin + CRM Agency admin; ``\"preset\": \"pricing_team\"`` (AA-1091) gives CIS customer_success + Booking\ncontracting, keeping a role that already has those rights; it only adds (409 preset_would_replace rather than\nreplace another role).",
+        "description": "Only the fields sent are changed; ``\"booking_role\": null`` removes the Booking grant, ``\"crm_roles\": []``\n(or null) removes every CRM role. ``\"preset\": \"platform_owner\"`` (AA-1031) is sent alone and sets CIS admin +\nBooking admin + CRM Agency admin; ``\"preset\": \"pricing_team\"`` (AA-1091) gives CIS customer_success + Booking\ncontracting, keeping a role that already has those rights; it only adds (409 preset_would_replace rather than\nreplace another role). AA-1150: ``\"business_owner\"`` = CIS admin + Booking admin (CRM unchanged);\n``\"content_ops\"`` = CIS content_lead, no Booking role, no CRM role.",
         "properties": {
           "booking_role": {
             "anyOf": [
@@ -2568,7 +2568,6 @@
                   "admin",
                   "sales",
                   "contracting",
-                  "content_creator",
                   "finance"
                 ],
                 "type": "string"
@@ -2604,7 +2603,9 @@
               {
                 "enum": [
                   "platform_owner",
-                  "pricing_team"
+                  "pricing_team",
+                  "business_owner",
+                  "content_ops"
                 ],
                 "type": "string"
               },
@@ -3121,7 +3122,6 @@
                   "admin",
                   "sales",
                   "contracting",
-                  "content_creator",
                   "finance"
                 ],
                 "type": "string"

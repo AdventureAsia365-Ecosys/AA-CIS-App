@@ -114,8 +114,14 @@ CIS_ROLES: tuple[str, ...] = (
 # remove them (a leftover membership is drift), and a group the pool no longer has counts as removed
 # (CognitoDirectory.remove_from_group). cis-reviewer goes from the pool after the alias removal (AA-CIS-Infra).
 RETIRED_CIS_GROUPS: tuple[str, ...] = ("cis-reviewer",)
-# staff_app_grant_role_chk (CIS 363 added finance: Booking reads it from the group booking-finance, root ADR 0019 d9)
-BOOKING_ROLES: tuple[str, ...] = ("admin", "sales", "contracting", "content_creator", "finance")
+# staff_app_grant_role_chk (CIS 363 added finance: Booking reads it from the group booking-finance, root ADR 0019 d9).
+# AA-1150 (lean staff roles step 1, S285 T13): content_creator is no longer assignable (the CHECK still allows it until
+# no grant holds it); "contracting" is shown as "Product & operations".
+BOOKING_ROLES: tuple[str, ...] = ("admin", "sales", "contracting", "finance")
+# AA-1150: Booking roles the directory no longer grants. A grant row that still holds one is retired by Sync (the row
+# is deleted in the same audited transaction) and its WORKFORCE group is removed like any other unwanted group (the
+# pool keeps the group until AA-CIS-Infra drops it; a missing group counts as removed).
+RETIRED_BOOKING_ROLES: tuple[str, ...] = ("content_creator",)
 APP_BOOKING = "booking"
 # AA-1031 (migration 330, staff_crm_grant_role_chk): the AA-Partner staff roles, a SET per person, and their WORKFORCE
 # groups (root ADR 0006b decision 6). Spelled out: the group names carry a hyphen the role codes do not.
@@ -138,7 +144,15 @@ PRESET_CRM_ROLE = "platform_admin"
 # sales, finance, content_creator) is NEVER replaced: one person holds one role per app, so the preset refuses with 409
 # preset_would_replace and the owner sets the roles by hand. CRM roles are untouched.
 PRESET_PRICING_TEAM = "pricing_team"
-PRESETS: tuple[str, ...] = (PRESET_PLATFORM_OWNER, PRESET_PRICING_TEAM)
+# AA-1150 (lean staff roles step 1, tech lead S285): the three people-role presets of the Staff page. "Administrator"
+# is the platform_owner preset above (CIS admin + Booking admin + CRM Agency admin). "Business owner" = CIS admin +
+# Booking admin; CRM roles are left as they are (no read-only CRM role exists yet). "Content + Product & operations"
+# = CIS content_lead, NO Booking role and no CRM role (decision Q1: no interim Booking grant until custom roles). Every
+# preset leaves the owner flag (is_owner) alone, like the others.
+PRESET_BUSINESS_OWNER = "business_owner"
+PRESET_CONTENT_OPS = "content_ops"
+CONTENT_OPS_CIS_ROLE = "content_lead"
+PRESETS: tuple[str, ...] = (PRESET_PLATFORM_OWNER, PRESET_PRICING_TEAM, PRESET_BUSINESS_OWNER, PRESET_CONTENT_OPS)
 PRICING_CIS_ROLE = "customer_success"
 PRICING_KEEP_CIS_ROLES = frozenset({"admin", "content_lead", "customer_success"})
 PRICING_FILL_CIS_ROLES = frozenset({"viewer"})          # the read-only role: nothing is lost by raising it
@@ -232,7 +246,10 @@ def crm_group(role: str) -> str:
 
 
 CIS_GROUPS: tuple[str, ...] = tuple(cis_group(r) for r in CIS_ROLES) + RETIRED_CIS_GROUPS
-BOOKING_GROUPS: tuple[str, ...] = tuple(booking_group(r) for r in BOOKING_ROLES)
+# AA-1150: the retired Booking groups (booking-content_creator) are in the list Sync and create-over-an-existing-user
+# remove, after the assignable ones.
+RETIRED_BOOKING_GROUPS: tuple[str, ...] = tuple(booking_group(r) for r in RETIRED_BOOKING_ROLES)
+BOOKING_GROUPS: tuple[str, ...] = tuple(booking_group(r) for r in BOOKING_ROLES) + RETIRED_BOOKING_GROUPS
 CRM_GROUPS: tuple[str, ...] = tuple(crm_group(r) for r in CRM_ROLES)
 
 
@@ -804,7 +821,7 @@ def pricing_team_plan(old_role: Optional[str], old_booking: Optional[str], booki
         else:
             lost.append(f"CIS {old_role}")
     if old_booking not in PRICING_KEEP_BOOKING_ROLES:
-        if old_booking is None:
+        if old_booking is None or old_booking in RETIRED_BOOKING_ROLES:   # AA-1150: a retired grant gives nothing
             booking_role = new_booking = PRICING_BOOKING_ROLE
         else:
             lost.append(f"Booking {old_booking}")
@@ -826,19 +843,24 @@ async def change_roles(pool: Any, cognito: CognitoDirectory, *, actor_id: str, s
     (``details.preset``). ``preset="pricing_team"`` (AA-1091) gives CIS ``customer_success`` and Booking
     ``contracting`` where the slot is empty (CIS viewer, no Booking grant), keeps a role that already has those
     rights, refuses (409 ``preset_would_replace``) when it would replace any other role, and leaves the CRM roles as
-    they are. A preset cannot be combined with the other fields. The owner flag is never set here."""
+    they are. AA-1150, the lean people-role presets: ``preset="business_owner"`` sets CIS ``admin`` and Booking
+    ``admin`` and leaves the CRM roles as they are; ``preset="content_ops"`` ("Content + Product & operations") sets
+    CIS ``content_lead`` and removes the Booking grant and every CRM role (it replaces, so the self-demote and
+    last-owner guards apply). A preset cannot be combined with the other fields. The owner flag is never set here."""
     if preset is not None:
         if preset not in PRESETS:
             raise StaffDirectoryError(400, f"Unknown preset; the presets are {', '.join(PRESETS)}", "preset")
         if role is not _UNSET or booking_role is not _UNSET or crm_roles is not _UNSET:
             raise StaffDirectoryError(400, "A preset sets every role itself; send it alone", "preset_conflict")
-        if preset == PRESET_PLATFORM_OWNER:
+        if preset in (PRESET_PLATFORM_OWNER, PRESET_BUSINESS_OWNER):
             role, booking_role = PRESET_CIS_ROLE, PRESET_BOOKING_ROLE
+        elif preset == PRESET_CONTENT_OPS:
+            role, booking_role, crm_roles = CONTENT_OPS_CIS_ROLE, None, []
     elif role is _UNSET and booking_role is _UNSET and crm_roles is _UNSET:
         raise StaffDirectoryError(400, "Nothing to change: give a CIS role, a Booking role and/or CRM roles", "empty")
     new_role = require_cis_role(role) if role is not _UNSET else None
     new_booking = require_booking_role(booking_role) if booking_role is not _UNSET else None
-    crm_given = preset == PRESET_PLATFORM_OWNER or crm_roles is not _UNSET
+    crm_given = preset == PRESET_PLATFORM_OWNER or crm_roles is not _UNSET   # content_ops set crm_roles = [] above
     asked_crm = require_crm_roles(crm_roles) if crm_roles is not _UNSET else ()
 
     async with pool.acquire() as conn:
@@ -1032,13 +1054,22 @@ async def sync_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, sta
     Active row: AdminCreateUser (SUPPRESS; an existing user is fine), AdminEnableUser, add ``cis-<role>`` (and
     ``booking-<role>``, and the CRM groups), remove every other CIS / Booking / CRM staff group (CRM only once
     migration 330 is applied). Inactive row: AdminDisableUser, then
-    AdminUserGlobalSignOut (no user is created for an inactive row)."""
+    AdminUserGlobalSignOut (no user is created for an inactive row).
+
+    AA-1150: a Booking grant of a retired role (:data:`RETIRED_BOOKING_ROLES`, ``content_creator``) is deleted in the
+    same transaction, with a ``staff.roles_changed`` row (``details.retired_booking_role``), active row or not; the
+    active row's Sync then removes its group with the other unwanted ones."""
     async with pool.acquire() as conn:
         async with conn.transaction():
             await _require_owner(conn, actor_id)
             target = await _load_target(conn, staff_id)
             staff_id = target["id"]
             booking = await conn.fetchval(SQL_GRANT, staff_id, APP_BOOKING)
+            if booking in RETIRED_BOOKING_ROLES:
+                await conn.execute(SQL_DELETE_GRANT, staff_id, APP_BOOKING)
+                await _audit(conn, actor_id, StaffAudit.ROLES_CHANGED, staff_id, {
+                    "booking_role": {"before": booking, "after": None}, "retired_booking_role": booking})
+                booking = None
             crm_ok = await crm_grants_available(conn)
             crm = await _crm_roles(conn, staff_id) if crm_ok else ()
     email = target["email"]

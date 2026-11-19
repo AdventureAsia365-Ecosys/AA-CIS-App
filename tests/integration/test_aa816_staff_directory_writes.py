@@ -99,9 +99,9 @@ async def test_create_change_disable_enable_against_postgres(env):
 
     # The Booking grant: change (upsert), then remove.
     await sd.change_roles(pool, cognito, actor_id=owner, staff_id=res.staff_id, role="content",
-                          booking_role="content_creator")
+                          booking_role="contracting")
     assert await pool.fetchval("SELECT role FROM shared.staff_app_grant WHERE admin_user_id = $1::uuid",
-                               res.staff_id) == "content_creator"
+                               res.staff_id) == "contracting"
     assert await pool.fetchval("SELECT role::text FROM shared.admin_users WHERE id = $1::uuid",
                                res.staff_id) == "content"
     await sd.change_roles(pool, cognito, actor_id=owner, staff_id=res.staff_id, booking_role=None)
@@ -225,3 +225,37 @@ async def test_crm_roles_and_the_platform_owner_preset_against_postgres(env):
                            res.staff_id)
     await sd.change_roles(pool, cognito, actor_id=owner, staff_id=res.staff_id, crm_roles=[])
     assert await crm_of(res.staff_id) == []
+
+
+@pytest.mark.asyncio
+async def test_sync_retires_a_content_creator_grant_against_postgres(env):
+    """AA-1150: a grant of the retired Booking role content_creator (still allowed by the CIS 363 CHECK) is deleted by
+    Sync with its staff.roles_changed row, and booking-content_creator is removed from the user; the "Content +
+    Product & operations" preset then sets content_lead with no Booking grant."""
+    pool, owner, tag, emails = env
+    email = f"aa1150.{tag}@adventure.asia"
+    emails.append(email)
+    cognito = RecordingCognito()
+    res = await sd.create_staff(pool, cognito, actor_id=owner, email=email, display_name="Retired Grant",
+                                role="content")
+    await pool.execute("INSERT INTO shared.staff_app_grant (admin_user_id, app, role) VALUES ($1::uuid, 'booking', "
+                       "'content_creator')", res.staff_id)
+    cognito.calls.clear()
+
+    synced = await sd.sync_staff(pool, cognito, actor_id=owner, staff_id=res.staff_id)
+    assert synced.status == sd.STATUS_OK
+    assert await pool.fetchval("SELECT count(*) FROM shared.staff_app_grant WHERE admin_user_id = $1::uuid",
+                               res.staff_id) == 0
+    assert ("remove", email, "booking-content_creator") in cognito.calls
+    assert not any(c[0] == "add" and c[2].startswith("booking-") for c in cognito.calls)
+    audit = await pool.fetch("SELECT action, details FROM acp_shared.audit_log WHERE resource_type = 'admin_user' "
+                             "AND resource_id = $1 ORDER BY created_at", res.staff_id)
+    retired = [json.loads(a["details"]) for a in audit if a["action"] == "staff.roles_changed"]
+    assert retired == [{"booking_role": {"before": "content_creator", "after": None},
+                        "retired_booking_role": "content_creator"}]
+
+    await sd.change_roles(pool, cognito, actor_id=owner, staff_id=res.staff_id, preset="content_ops")
+    row = await pool.fetchrow("SELECT u.role::text AS role, g.role AS booking FROM shared.admin_users u "
+                              "LEFT JOIN shared.staff_app_grant g ON g.admin_user_id = u.id AND g.app = 'booking' "
+                              "WHERE u.id = $1::uuid", res.staff_id)
+    assert (row["role"], row["booking"]) == ("content_lead", None)
