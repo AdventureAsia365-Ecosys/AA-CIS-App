@@ -103,10 +103,10 @@ def pick_facts(facts: list[dict]) -> list[dict]:
     """AA-814 precedence: one fact per subject (facts_store.subject_key: kind, title, country). When the writing
     tenant has its own fact on a subject, the platform facts on that subject are dropped; within one scope the latest
     stated (then latest edited) fact wins. AA-1144 (D7): a tenant fact of a kind the agency no longer writes is left
-    out first, so it neither reaches the writer nor replaces a platform fact. The input order is kept for the facts that stay, so the seed reads as
-    before for a tenant with no overrides."""
+    out first, so it neither reaches the writer nor replaces a platform fact. The input order is kept for the facts
+    that stay, so the seed reads as before for a tenant with no overrides."""
     best: dict[tuple, dict] = {}
-    facts = [f for f in facts if f.get("scope") != "tenant" or agency_may_write(f.get("kind"))]   # AA-1144 (D7)
+    facts = [f for f in facts if f.get("scope") != "tenant" or agency_may_write(f.get("kind"))]   # AA-1144 D7
     for f in facts:
         key = subject_key(f)
         if key not in best or _rank(f) < _rank(best[key]):
