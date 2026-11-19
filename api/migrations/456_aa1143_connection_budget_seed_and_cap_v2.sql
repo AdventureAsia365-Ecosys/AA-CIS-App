@@ -44,8 +44,8 @@
 --
 -- Recipe. The X1 S22 catalog recipe (as 347 / 452): GRANT CREATE ON SCHEMA catalog TO catalog_owner; SET LOCAL ROLE
 -- catalog_owner; the view DDL; SET LOCAL ROLE cis_owner; REVOKE CREATE. Never RESET ROLE, no SECURITY DEFINER, no role
--- DDL. The conftest replay skips this file; tests/integration/test_aa1143_migration_455_456.py applies it the DB Migrate
--- way and undoes it.
+-- DDL. The conftest replay runs only the settings-seed block of this file;
+-- tests/integration/test_aa1143_migration_455_456.py applies the whole file the DB Migrate way and undoes it.
 --
 -- Number. 455 (same PR) comes first; renumber both together (see 455).
 --

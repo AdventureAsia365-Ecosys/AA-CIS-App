@@ -26,6 +26,7 @@ from _constants import (  # noqa: F401 — re-exported for test imports
     SAMPLE_TOUR, SAMPLE_SEO, SAMPLE_GENERATED, TENANT_ID, BATCH_ID
 )
 from _replay_guard import SUPERUSER_HINT, exit_message, first_line, replay_problems
+from _replay_parts import replay_part
 
 # ── Connection params ─────────────────────────────────────────────
 DB_HOST = os.environ.get("CIS_TEST_DB_HOST", "127.0.0.1")
@@ -508,8 +509,9 @@ def _apply_schema(conn):
         and not f.startswith('401')
         # AA-1094 (S278): 404 creates catalog.v_tenant_tour_v1 (catalog recipe; needs 359, 379 and tenant_tour_versions):
         # test_aa1094_migration_404 applies 253 ... 359 + 379 + 404 the DB Migrate way in a rolled-back transaction.
-        # S279: 410/415; S281: 429; S282: 432 (test_aa1107_*); 438 / S283 444: test_aa1116_*; 452 aa1113; 456 aa1143.
-        and not f.startswith(('404', '410', '415', '429', '432', '438', '444', '452', '456'))
+        # S279: 410/415; S281: 429; S282: 432 (test_aa1107_*); 438 / S283 444: test_aa1116_*; S284 452: test_aa1113_*.
+        # (S285 456: only its settings row is replayed, see _replay_parts.py.)
+        and not f.startswith(('404', '410', '415', '429', '432', '438', '444', '452'))
     ])
 
     for mf in migration_files:
@@ -537,35 +539,8 @@ def _apply_schema(conn):
                 CREATE UNIQUE INDEX IF NOT EXISTS destinations_lower_name_uidx
                     ON shared.destinations (lower(name));
             """ + sql
-        if mf.startswith("273_"):
-            # AA-645 d06: 273's catalog part needs 253-258 (skipped here) and the catalog recipe. Replay only its
-            # part 1, the published_tours.updated_at column the publish code writes; not registered, so
-            # test_aa645_migration_273 can apply the whole file the DB Migrate way.
-            part1 = sql.split("-- ── 1. The column")[1].split("GRANT CREATE ON SCHEMA catalog")[0]
-            part1 = part1.split("\n", 1)[1]
-            sql = "BEGIN;\n" + part1 + "COMMIT;\n"
-        if mf.startswith("274_"):
-            # AA-986 L3/L4: 274's part B (the catalog views) needs 253-258 (skipped here) and the catalog recipe.
-            # Replay only part A, shared.notifications under RLS (the tenant-scoped /v1/notifications reads it); not
-            # registered, so test_aa986_migration_274 can apply the whole file the DB Migrate way.
-            part_a = sql.split("-- ── Part A")[1].split("-- ── Part B")[0]
-            part_a = part_a.split("\n", 1)[1]
-            sql = "BEGIN;\n" + part_a + "COMMIT;\n"
-        if mf.startswith("278_"):
-            # AA-835: 278's part B (catalog.v_supply_content) needs 245's owners and the catalog recipe. Replay only
-            # part A, the shared.supply_* tables the S6 code writes; not registered, so test_aa835_migration_278 can
-            # apply the whole file the DB Migrate way.
-            part_a = sql.split("-- ── Part A")[1].split("-- ── Part B")[0]
-            part_a = part_a.split("\n", 1)[1]
-            sql = "BEGIN;\n" + part_a + "COMMIT;\n"
-        if mf.startswith("279_"):
-            # AA-851: 279's part B (catalog.v_country, v_destination.country_iso2) needs 245's owners, 253-258 and the
-            # catalog recipe. Replay only part A (shared.countries, the resolver, raw_tours / destinations
-            # country_iso2 + trigger, the orphan report); not registered, so test_aa851_migration_279 can apply the
-            # whole file the DB Migrate way.
-            part_a = sql.split("-- ── Part A")[1].split("-- ── Part B")[0]
-            part_a = part_a.split("\n", 1)[1]
-            sql = "BEGIN;\n" + part_a + "COMMIT;\n"
+        # 273 / 274 / 278 / 279 / 456: only the part the replay can run (tests/integration/_replay_parts.py)
+        sql = replay_part(mf, sql)
         if mf.startswith("262_"):
             # AA-859 wave 3: CI's legacy app_user is a LOGIN role here (ci.yml creates it; Dev has no grant for it)
             # and holds 005's grants on tenant_brand_rules. 262's guard 1 refuses a login role with privileges on

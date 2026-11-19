@@ -72,7 +72,9 @@ LATER = [os.path.join(os.path.dirname(MIGRATION), f) for f in
           "376_llm_anthropic_api_catalog_fallbacks.sql",
           # AA-1095 (S278): 406's acc1 connection, cost policy and deployments live on the tables _undo drops, and its
           # account env CHECK replaces 304's
-          "406_llm_acc1_bedrock_connection.sql")]
+          "406_llm_acc1_bedrock_connection.sql",
+          # AA-1143 (S285): 455's budget rows reference the connection table (dropped by _undo); empty in the replay
+          "455_aa1143_connection_budget_rows.sql")]
 # AA-1024 l22 (G8): every migration after 304 that names a table _undo drops (or 304's catalog capabilities column)
 # is in LATER above or here, with the reason it need not be re-run; tests/unit/test_aa1024_replay_later_list.py fails
 # on a new one in neither list (lessons S259..S270: a new FK / CHECK / grant / row on these tables broke this module
@@ -104,6 +106,10 @@ NOT_LATER = {
     # in a comment.
     "453_aa1113_connection_provider_budget_setting.sql": "a settings row only; the connection table is named in a "
                                                          "comment",
+    # AA-1143 (S285): the conftest replay skips 456 (catalog recipe) but for its settings row;
+    # test_aa1143_migration_455_456 applies it the DB Migrate way and undoes it, so this module never sees its rows.
+    "456_aa1143_connection_budget_seed_and_cap_v2.sql": "skipped by the conftest replay (catalog recipe); "
+                                                        "test_aa1143_migration_455_456 applies and undoes it",
 }
 # AA-1042 (S269): the Opus 4.6 / 4.5 candidates CIS 376 switches on for their Anthropic API row (acc3 rows stay off).
 API_ONLY_376 = {"opus-4-6": "claude-opus-4-6", "opus-4-5": "claude-opus-4-5-20251101"}
@@ -147,6 +153,9 @@ def cur():
 
 def _undo(c):
     """The pre-304 state: no new tables, no capabilities column, the 181 / 169 / 226 CHECKs, 304 unregistered."""
+    c.execute("DROP VIEW IF EXISTS shared.llm_connection_budget_current")  # 455: over the budget table
+    c.execute("DROP TABLE IF EXISTS shared.llm_connection_budget")        # 455: references the connection table
+    c.execute("DELETE FROM shared.schema_versions WHERE version = '455'")
     c.execute("DROP TABLE IF EXISTS shared.llm_capacity_limit")           # 348: references the connection table
     c.execute("DELETE FROM shared.schema_versions WHERE version = '348'")
     c.execute("DROP TABLE IF EXISTS shared.provider_credit_topup")        # 342: references the connection table

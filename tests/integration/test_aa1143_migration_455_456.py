@@ -2,11 +2,11 @@
 app, CIS takes the remainder), the seed from today's values, and TripPlanner's v2 cap view.
 
 455 is replayed by conftest like every plain file (the table is empty there). 456 needs the catalog recipe (245's
-owners) and conftest skips it: this module builds on test_aa860_migration_246's module fixture (Dev after 244 + 245,
-db_migrator with rl-002's memberships), writes the state the seed reads (invented connections with a CIS monthly
-budget, an approved provider budget value), then applies 456 twice as db_migrator under the live-owner switch (errors
-NOT swallowed). Teardown removes the rows (replica mode: both tables are append-only), the view, the grant, the setting
-key and the registration, so later modules see the replay state.
+owners) and conftest replays only its settings row (unregistered): this module builds on test_aa860_migration_246's
+module fixture (Dev after 244 + 245, db_migrator with rl-002's memberships), writes the state the seed reads
+(invented connections with a CIS monthly budget, an approved provider budget value), then applies 456 twice as
+db_migrator under the live-owner switch (errors NOT swallowed). Teardown removes the rows (replica mode: both tables
+are append-only), the view, the grant, the setting key and the registration, so later modules see the replay state.
 
   * 455: the rules of the table (append-only, no cis row, a share needs a total, shares never above the total at
     commit, the remainder written to monthly_budget_usd at commit, the current view);
