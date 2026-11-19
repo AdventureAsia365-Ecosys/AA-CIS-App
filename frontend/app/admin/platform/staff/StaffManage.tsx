@@ -374,8 +374,8 @@ export function CreateStaffModal({ open, onClose, onDone, crmAvailable = true }:
   const refresh = useRefreshStaff();
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
-  // AA-1150: a people-role preset by default; "custom" shows the CIS / Booking / CRM fields.
-  const [access, setAccess] = useState<PeoplePreset | "custom">("content_ops");
+  // AA-1150: least privilege by default (CIS content, no Booking / CRM role, as before); a preset is a deliberate choice.
+  const [access, setAccess] = useState<PeoplePreset | "custom">("custom");
   const [role, setRole] = useState<string>("content");
   const [booking, setBooking] = useState<string>("");
   const [crmRoles, setCrmRoles] = useState<CrmRole[]>([]);
@@ -388,7 +388,7 @@ export function CreateStaffModal({ open, onClose, onDone, crmAvailable = true }:
   const canSubmit = domainOk && name.trim().length > 0 && !busy;
 
   const reset = () => {
-    setEmail(""); setName(""); setAccess("content_ops"); setRole("content"); setBooking(""); setCrmRoles([]);
+    setEmail(""); setName(""); setAccess("custom"); setRole("content"); setBooking(""); setCrmRoles([]);
     setSendInvite(true); setError(null);
   };
   const close = () => { if (!busy) { reset(); onClose(); } };
