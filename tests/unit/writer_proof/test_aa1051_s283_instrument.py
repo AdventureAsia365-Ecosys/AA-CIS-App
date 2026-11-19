@@ -338,7 +338,7 @@ def test_instrument_output_is_the_mean_over_the_sample_outputs():
     one = price.output_cost({"fields": 2, "claims": 4}, got["steps"], votes=3, fire_share=0.278, margin=1.3)
     assert got["usd"] == pytest.approx(one) and got["outputs"] == 2 and got["pricing"] == "ledger_mean"
     assert got["fire_share"] == 0.278 and got["fire_share_source"] == wi.FIRE_SHARE_SOURCE
-    assert price.instrument_output(p, wi.instruments(p), "a1", [OUTPUT], measured, min_samples=5,
+    assert price.instrument_output(p, wi.instruments(p), "zz_writer", [OUTPUT], measured, min_samples=5,
                                    margin=1.3)["fire_share"] == 1.0           # no measurement: every claim planned
     assert price.instrument_output(p, wi.instruments(p), "t9_blog", [], measured, min_samples=5,
                                    margin=1.3)["usd"] is None

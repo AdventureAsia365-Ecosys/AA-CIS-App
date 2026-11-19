@@ -297,3 +297,10 @@ def test_a_prereg_without_a_claim_instrument_has_no_fire_step(monkeypatch):
     pre = SimpleNamespace(id="w5-s1", writer="a1", workflow="s1", doc=doc)
     got = asyncio.run(fs.read_inputs(_Pool(_Conn(None)), pre))
     assert got["pinned"] is None and any("names no claim instrument" in b for b in got["blocking"])
+
+
+def test_the_a1_fire_share_is_the_s285_measurement():
+    # AA-1051 S285 C1: R1 fire 6797de2f on the 25 w5-s1 GATE controls (aa729@1.7.0), 400 of 1669 claims fired,
+    # planning share rounded up to 0.24 (fire_share_entry of services/writer_proof/fire_share.py).
+    assert wi.FIRE_SHARE[IID]["a1"] == 0.24
+    assert "6797de2f" in wi.FIRE_SHARE_SOURCE and "5b24602e" in wi.FIRE_SHARE_SOURCE

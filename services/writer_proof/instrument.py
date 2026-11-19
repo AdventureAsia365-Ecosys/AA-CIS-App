@@ -60,10 +60,12 @@ ADVISORY = {"aa1048-two-step-v7": ("AA-1048 v7 gated run 46d645c4 was no_go by o
                                    "dropped 68 %, stored violations kept 88 % against the 90 % bar; precision 0.73, "
                                    "recall 0.88); the tech lead allowed it as an advisory W5 judge (S283)")}
 # Planning only (price.py): the share of claims the R1 fire fired per writer, measured on the v7 fresh pool fire
-# (run 5b24602e, S282: 62 of 223 t9_blog, 72 of 187 t9_social, 16 of 71 t2 claims). A measurement, not a policy value:
+# (run 5b24602e, S282: 62 of 223 t9_blog, 72 of 187 t9_social, 16 of 71 t2 claims; run 6797de2f, S285: a1 400 of 1669
+# claims on the w5-s1 GATE controls). A measurement, not a policy value:
 # it sizes the estimate; the run itself is held by the per-call cap. A writer without a measurement plans every claim.
-FIRE_SHARE = {"aa1048-two-step-v7": {"t9_blog": 0.278, "t9_social": 0.385, "t2": 0.225}}
-FIRE_SHARE_SOURCE = "R1 fire 5b24602e on the AA-1048 v7 fresh pool (S282)"
+FIRE_SHARE = {"aa1048-two-step-v7": {"t9_blog": 0.278, "t9_social": 0.385, "t2": 0.225, "a1": 0.24}}
+FIRE_SHARE_SOURCE = ("R1 fire 5b24602e on the AA-1048 v7 fresh pool (S282); a1: R1 fire 6797de2f on the w5-s1 GATE "
+                     "controls, aa729@1.7.0 (S285)")
 CLAIM_CLASS = "claim.unsupported"
 STEPS = ("fire", "classify", "judge")
 CONCURRENCY = 10            # technical-constant: calls in flight per output (provider latency, not policy)
