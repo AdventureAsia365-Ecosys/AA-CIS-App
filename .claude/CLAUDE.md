@@ -70,6 +70,9 @@ git, Linear and the session logs (`AA-Ecosys/docs/sessions/`), not here. Rewritt
   `AA-Ecosys/docs/adr/`). Large specs: run `/grill-with-docs` before coding.
 - Language: talk to Nghiệp in Vietnamese; code, comments, commits, PRs, Linear in English.
 - Never start/stop infrastructure (ECS scale, RDS, NAT) on your own.
+- Lean repo (AA-1161): commit code, tests, config, text docs and only a few compressed key screenshots (at most
+  500 KiB each, 10 MiB per PR; compress with AA-Ecosys `tools/docs/compress_images.py`). Build artifacts (`dist/`, zips),
+  binaries and files over 5 MiB stay out of git (CI / S3 / Drive); `tools/repo/lean_guard.py` refuses them at push and in CI.
 
 ## Tests
 ```bash
