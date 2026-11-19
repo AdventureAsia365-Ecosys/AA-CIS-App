@@ -2,9 +2,9 @@
   "format": 1,
   "id": "w5-t9",
   "workflow": "t9",
-  "status": "draft",
-  "registered_by": null,
-  "registered_on": null,
+  "status": "registered",
+  "registered_by": "tech_lead",
+  "registered_on": "2026-11-19",
   "golden_set": {
     "name": "aa729",
     "version": "1.5.0"
