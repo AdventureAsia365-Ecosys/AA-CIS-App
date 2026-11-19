@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from typing import Callable, Optional
 from shared.secrets import get_database_url
 from shared.tour_liveness import SOURCE_NOT_LIVE, SourceNotLiveError, SourceState, source_state
+from services.content_generation import human_lock as _human_lock   # AA-1146: the hand-edit lock of a Master
 
 logger = structlog.get_logger()
 
@@ -598,18 +599,9 @@ async def _refuse_policy_review(conn, silver: str, version_id: str, tour_id: str
     raise _lc_policy.PolicyReviewRequiredError(version_id, review_id)
 
 
-def _import_human_lock():
-    """AA-1146: services.content_generation.human_lock, or None where the package is absent (the legacy Lambda)."""
-    try:
-        from services.content_generation import human_lock
-    except ImportError:
-        return None
-    return human_lock
-
-
 async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomize_force: bool = False,
                          atomize_created_by: str = "system:a3_publish", contract_exit: str = "publish",
-                         lock_by: Optional[str] = None, lock_reason: Optional[str] = None) -> dict:
+                         **lock) -> dict:
     """Publish one approved version as the tour's Master Content and enqueue its A3 atomize.
 
     AA-645 step 0 (C2): the admin "promote" (make an older version current again) publishes through here too, with
@@ -623,13 +615,7 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
     run), ``approve`` (Review Queue), ``promote`` (rollback), ``lambda`` (the legacy handler), ``recompose``
     (AA-1049 path A-new: a code-recomposed version of a served Master, ``content_generation/s1_recompose_store``).
     Every caller names its exit (topology test). It never blocks the publish.
-
-    AA-1146 (CIS 457): ``human_publish`` is a person's draft version published through the publish gate. An automatic
-    exit (``auto_publish``, ``recompose``, ``lambda``) over a Master a person locked is refused: the version leaves
-    'approved' for 'hitl' (as the other refusals) and ``HumanLockedError`` is raised. A human exit (``approve``,
-    ``promote``, ``human_publish``) locks the Master when the version is a person's text (``origin`` human or
-    ``human_edited``; ``lock_by`` / ``lock_reason`` name who and why) and lifts the lock when it publishes a writer's
-    version."""
+    AA-1146: the hand-edit lock (human_lock.guard_export / after_export; ``lock``: lock_by, lock_reason)."""
     conn = await asyncpg.connect(get_database_url())
     tenant_slug = os.environ.get("TENANT_SLUG", "aa_internal")
     silver = f"silver_{tenant_slug}"
@@ -684,21 +670,7 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
 
         if not src.live:
             await _refuse_not_live(src)
-
-        # AA-1146: an automatic exit never replaces a Master a person locked (the legacy Lambda package may ship without
-        # services/content_generation: no lock check there, as before).
-        _human_lock = _import_human_lock()
-        if _human_lock is not None and contract_exit in _human_lock.AUTOMATIC_EXITS:
-            lock = await _human_lock.lock_of(conn, str(tour_id))
-            if lock is not None:
-                logger.warning("export_refused_human_lock", version_id=version_id, tour_id=str(tour_id),
-                               exit=contract_exit, locked_by=lock.get("by"))
-                await conn.execute(f"""
-                    UPDATE {silver}.generated_content
-                    SET status = 'hitl'
-                    WHERE id = $1::uuid AND status = 'approved'
-                """, version_id)
-                raise _human_lock.HumanLockedError(str(tour_id), lock)
+        await _human_lock.guard_export(conn, silver, version_id, str(tour_id), contract_exit)   # AA-1146
 
         # 2. Insert into published catalog (gold). AA-986 L2: through the tour lifecycle service (ADR 0015
         # decision 2, `publish`): the insert, "never two active Masters per key" and the `restored` record of a key
@@ -746,13 +718,7 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
         catalog_id = published.extra["catalog_id"]
         logger.info("export_done", catalog_id=catalog_id, version_id=version_id,
                     lifecycle_events=[e["event"] for e in published.events])
-        # AA-1146: a person's publish of a hand-edited version locks the Master; of a writer's version, lifts the lock.
-        if _human_lock is not None and contract_exit in _human_lock.HUMAN_EXITS:
-            if _human_lock.is_human_version(row):
-                await _human_lock.set_lock(conn, str(tour_id), by=lock_by or "admin",
-                                           reason=lock_reason or row.get("edit_reason"))
-            else:
-                await _human_lock.clear_lock(conn, str(tour_id))
+        await _human_lock.after_export(conn, str(tour_id), row, contract_exit, **lock)   # AA-1146
         # AA-987: a publish that closes a paused / retired key (`restored`) brings the tour back on TripPlanner now,
         # not after its 30-min cache. The publish transaction is committed; best-effort, never raises.
         if published.events:
@@ -852,13 +818,8 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
         if record_s1_exit is not None:
             await record_s1_exit(conn, version_id, contract_exit, actual="published")
 
-        return {
-            "status":     "exported",
-            "catalog_id": catalog_id,
-            "version_id": version_id,
-            "tour_id":    str(tour_id),
-            "atomize_job_id": atomize_job_id,
-        }
+        return {"status": "exported", "catalog_id": catalog_id, "version_id": version_id, "tour_id": str(tour_id),
+                "atomize_job_id": atomize_job_id}
     finally:
         await conn.close()
 

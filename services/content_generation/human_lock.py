@@ -94,11 +94,42 @@ async def clear_lock(conn: Any, tour_id: str) -> Optional[dict]:
     return _out(row) if row else None
 
 
+async def guard_export(conn: Any, silver: str, version_id: str, tour_id: str, contract_exit: str) -> None:
+    """process_export: an automatic exit never replaces a Master a person locked. The version leaves 'approved' for
+    'hitl' (the other publish refusals do the same: no approved version without its Master) and HumanLockedError is
+    raised before any publish write. A human exit passes."""
+    if contract_exit not in AUTOMATIC_EXITS:
+        return
+    lock = await lock_of(conn, tour_id)
+    if lock is None:
+        return
+    logger.warning("export_refused_human_lock", version_id=version_id, tour_id=tour_id, exit=contract_exit,
+                   locked_by=lock.get("by"))
+    await conn.execute(f"""
+        UPDATE {silver}.generated_content
+        SET status = 'hitl'
+        WHERE id = $1::uuid AND status = 'approved'
+    """, version_id)
+    raise HumanLockedError(tour_id, lock)
+
+
+async def after_export(conn: Any, tour_id: str, row: Any, contract_exit: str, *, lock_by: Optional[str] = None,
+                       lock_reason: Optional[str] = None) -> None:
+    """process_export, after the publish: a person's publish of a hand-edited version locks the Master (``lock_by``
+    the person, ``lock_reason`` or the draft's reason); of a writer's version, lifts the lock. Automatic exits: nothing."""
+    if contract_exit not in HUMAN_EXITS:
+        return
+    if is_human_version(row):
+        await set_lock(conn, tour_id, by=lock_by or "admin", reason=lock_reason or row.get("edit_reason"))
+    else:
+        await clear_lock(conn, tour_id)
+
+
 def is_human_version(row: Any) -> bool:
     """Is a generated_content row a person's text (a draft version, or an edited one)?"""
     get = row.get if hasattr(row, "get") else (lambda k, d=None: row[k] if k in row else d)
     return get("origin") == "human" or bool(get("human_edited"))
 
 
-__all__ = ["AUTOMATIC_EXITS", "HUMAN_EXITS", "HumanLockedError", "SKIP_REASON", "clear_lock", "is_human_version",
-           "lock_of", "locks_of", "set_lock"]
+__all__ = ["AUTOMATIC_EXITS", "HUMAN_EXITS", "HumanLockedError", "SKIP_REASON", "after_export", "clear_lock",
+           "guard_export", "is_human_version", "lock_of", "locks_of", "set_lock"]
