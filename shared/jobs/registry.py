@@ -181,6 +181,13 @@ class JobContext:
         return self.job.id
 
     def add_cost(self, usd: Optional[float]) -> None:
+        """Adds the handler's own NON-LLM spend (DataForSEO, Geoapify credits, Cost Explorer requests, ...).
+
+        LLM and embedding spend never goes here: every gateway call inside a job writes a shared.llm_call_log row
+        tagged with the job id (the worker binds it, call_log.bind_job), and the runner adds that ledger sum to
+        shared.job.cost_usd at each save (AA-1078 cost stamp). Passing an LLM result's cost here counts it twice
+        (AA-1051 follow-up, S286: the W5 proofs showed exactly twice the ledger). A cap that needs the job's LLM
+        spend so far reads ``queue.llm_spend``. Guard: tests/unit/test_aa1051_add_cost_non_llm_only.py."""
         self.cost_usd += float(usd or 0.0)
 
     async def progress(self, **fields: Any) -> None:

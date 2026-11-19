@@ -79,6 +79,12 @@ def _stamp_sql(job_id_expr: str, handler_expr: str, *, row: str = "") -> str:
             f"'{COST_STAMP_KEY}', jsonb_build_object('llm_usd', {led}, 'at', now())) END")
 
 
+async def llm_spend(pool, job_id: str) -> float:
+    """The job's LLM spend so far: the shared.llm_call_log rows tagged with its id, every attempt (AA-1051 follow-up:
+    what a per-job cap counts, since a handler no longer reports LLM spend through ctx.add_cost)."""
+    return float(await pool.fetchval(f"SELECT {_ledger_sum_sql('$1::uuid')}::float", str(job_id)) or 0.0)
+
+
 def stamped_llm_usd(progress: Optional[dict]) -> float:
     """The LLM part stamped into cost_usd (0 when the row has no stamp)."""
     stamp = (progress or {}).get(COST_STAMP_KEY) if isinstance(progress, dict) else None

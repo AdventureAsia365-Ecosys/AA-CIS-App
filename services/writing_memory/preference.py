@@ -273,8 +273,7 @@ async def run_preference(pool, ctx, *, max_calls: int = cfg.MINE_MAX_CALLS) -> d
         month.charge(cost)
         run_budget.charge(cost)
         result["cost_usd"] = round(result["cost_usd"] + cost, 6)
-        if ctx is not None:
-            ctx.add_cost(cost)
+        if ctx is not None:     # the job's cost comes from the summary's llm_call_log row (AA-1051 follow-up)
             await ctx.progress(calls=result["calls"], cost_usd=result["cost_usd"])
         if d["summary"].upper() == "NONE":
             result["none"] += 1

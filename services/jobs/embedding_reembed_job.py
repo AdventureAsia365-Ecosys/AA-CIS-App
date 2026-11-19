@@ -9,7 +9,7 @@ Payload: {"mode": "dry_run" | "fill" | "probe", "column": "<schema.table.column>
 
 Paid calls: dry_run none; probe one embedding of a few words; fill one embedding call per page (Cohere: up to 96 texts
 per call; Titan: one request per text), stopped before a page that would cross the cap. The cap is per job: its retries
-(max_attempts 3) and releases on deploy share it (``shared.job.cost_usd``); a new job is a new cap (an operator's
+(max_attempts 3) and releases on deploy share it (the job's llm_call_log rows, ``queue.llm_spend``); a new job is a new cap (an operator's
 decision). A fill is resumable: it only reads rows whose shadow is still empty, so a retry, a release or a re-queue
 continues where it stopped. concurrency 1 (one re-embed at a time; they share the account's embedding quota),
 background (never takes the worker's last free slots).
@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import Optional
 
 from services.embeddings import reembed
+from shared.jobs import queue
 from shared.jobs.registry import JobContext, NonRetryable, enqueue, job_kind
 
 KIND = "embedding_reembed"
@@ -64,11 +65,12 @@ async def run(ctx: JobContext) -> Optional[dict]:
         elif p["mode"] == "probe":
             result = await reembed.probe(ctx.pool, p["space_key"])
         else:
-            spent_before = float(ctx.cost_usd or 0.0)     # earlier attempts of this job (retry, release on deploy)
+            # earlier attempts of this job (retry, release on deploy): their embed calls are on the ledger with the
+            # job id; the job's cost is that ledger sum, so fill() reports nothing through ctx.add_cost (AA-1051)
+            spent_before = await queue.llm_spend(ctx.pool, ctx.job_id)
             result = await reembed.fill(ctx.pool, p["column"], cost_cap_usd=p["cost_cap_usd"],
                                         batch_size=p.get("batch_size"), max_rows=p.get("max_rows"),
-                                        progress=ctx.progress, add_cost=ctx.add_cost,
-                                        already_spent=spent_before)
+                                        progress=ctx.progress, already_spent=spent_before)
     except reembed.ReembedRefused as e:
         raise NonRetryable(str(e))
     await ctx.progress(step="done")

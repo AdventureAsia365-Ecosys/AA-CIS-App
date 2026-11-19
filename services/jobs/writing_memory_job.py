@@ -168,7 +168,8 @@ async def run_r2_job(ctx: JobContext) -> dict:
         out = await run_with_pool(ctx.pool, conf, progress=lambda **f: _progress(ctx, **f))
     except R2Refused as e:
         raise NonRetryable(f"R2 refused: {e}")
-    ctx.add_cost(out.cost_usd)
+    # out.cost_usd is the run's llm_call_log sum: the runner already adds the job's ledger rows to shared.job.cost_usd,
+    # so it is reported in the result only, never through ctx.add_cost (AA-1051 follow-up: it doubled the job cost)
     result = {"run_id": out.run_id, "verdict": out.verdict, "stop_reason": out.stop_reason,
               "stopped_phase": out.stopped_phase, "cost_usd": round(out.cost_usd, 6), "judge_kappa": out.judge_kappa,
               "judge_counts": out.judge_counts, "kappa_strata_below": out.kappa_strata_below,
@@ -188,7 +189,7 @@ async def run_shadow_job(ctx: JobContext) -> dict:
         out = await run_shadow(ctx.pool, conf, progress=lambda **f: _progress(ctx, **f))
     except ShadowRefused as e:
         raise NonRetryable(f"shadow refused: {e}")
-    ctx.add_cost(out["cost_usd"])
+    # out["cost_usd"] is LLM spend already on the job through its llm_call_log rows (AA-1051 follow-up)
     return out
 
 

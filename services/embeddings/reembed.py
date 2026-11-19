@@ -16,7 +16,7 @@ Three modes, all for ONE column of ``shared.embedding_column``:
   serving vector also empties its shadow: trigger ``<column>__shadow_reset`` on CIS 329's function, so updated rows
   are re-read like new ones). Stops before a page whose estimate would cross ``cost_cap_usd`` (result
   ``stopped: cost_cap``), or after ``max_rows``. The cap covers the whole JOB: ``already_spent``
-  (``shared.job.cost_usd``, kept across retries and releases) counts against it. ``complete`` only when no row with a
+  (the job's llm_call_log rows, ``queue.llm_spend``, kept across retries and releases) counts against it. ``complete`` only when no row with a
   vector lacks a shadow vector, blank-text rows included (the swap refuses them too): their keys come back in
   ``blank_keys`` (runbook: purge or fix them).
 - ``probe``: one embedding of a few words in the target space (its deployments must be enabled), so the fallback model
@@ -180,7 +180,6 @@ async def fill(pool, column_key: str, *, cost_cap_usd: float, batch_size: Option
                max_rows: Optional[int] = None, pace_seconds: Optional[float] = None,
                embed_fn: Optional[Callable] = None,
                progress: Optional[Callable[..., Awaitable[None]]] = None,
-               add_cost: Optional[Callable[[float], None]] = None,
                already_spent: float = 0.0,
                sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep) -> dict:
     if not isinstance(cost_cap_usd, (int, float)) or isinstance(cost_cap_usd, bool) \
@@ -206,7 +205,8 @@ async def fill(pool, column_key: str, *, cost_cap_usd: float, batch_size: Option
         cast = cast_for(await _shadow_type(conn, col, shadow), target.dimension)
     upd = sources.update_sql(col, shadow, cast)
 
-    # The cap is the job's: what earlier attempts of this job spent (shared.job.cost_usd) counts against it.
+    # The cap is the job's: what earlier attempts of this job spent (their llm_call_log rows, queue.llm_spend) counts
+    # against it. The job's cost is that ledger, never a handler add_cost (AA-1051 follow-up: it counted twice).
     prior = max(0.0, float(already_spent or 0.0))
     spent, written, blank, calls = 0.0, 0, 0, 0
     blank_keys: list[list[str]] = []
@@ -246,8 +246,6 @@ async def fill(pool, column_key: str, *, cost_cap_usd: float, batch_size: Option
         calls += 1
         cost = float(resp.cost_usd or 0.0)
         spent += cost
-        if add_cost is not None:
-            add_cost(cost)
         await record_call_with_pool(
             pool, stage=stage, role="embed", model=resp.model_used, tokens_in=resp.input_tokens, tokens_out=0,
             cost_usd=resp.cost_usd,

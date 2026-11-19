@@ -608,9 +608,18 @@ def test_job_turns_a_refusal_into_non_retryable():
 def _job_ctx(payload, conn, cost_usd=0.0):
     async def prog(**kw):
         return None
-    ctx = SimpleNamespace(payload=payload, pool=FakePool(conn), cost_usd=cost_usd, progress=prog)
-    ctx.add_cost = lambda usd: setattr(ctx, "cost_usd", ctx.cost_usd + float(usd or 0.0))
+    # AA-1051 follow-up: the job's cost is its llm_call_log rows, never a handler add_cost (a call here is a bug)
+    ctx = SimpleNamespace(payload=payload, pool=FakePool(conn), cost_usd=cost_usd, progress=prog, job_id="job-1")
+    ctx.add_cost = lambda usd: pytest.fail(f"embedding spend reported through add_cost: {usd}")
     return ctx
+
+
+def _ledger(usd):
+    """queue.llm_spend of the job (what its earlier attempts' embed calls wrote to the ledger)."""
+    async def spend(pool, job_id):
+        assert job_id == "job-1"
+        return usd
+    return patch("shared.jobs.queue.llm_spend", spend)
 
 
 def _run_job(ctx):
@@ -623,14 +632,15 @@ def test_job_fill_cap_spans_retries_and_a_wrong_space_answer_is_not_retried(regi
     fn, calls = _fake_embed(cost=0.11)
     with _record_patch(), patch.object(reembed, "price_in", return_value=100.0), \
          patch("shared.llm_client.embed.embed", fn), patch.object(reembed, "OTHER_DEFAULTS",
-                                                                   {"batch_size": 16, "pace_seconds": 0}):
-        # attempt 2 of a job whose attempt 1 already spent 0.11 (shared.job.cost_usd): no new paid call
-        ctx = _job_ctx(payload, FakeConn([("h1", "x" * 4000)], estimate=None), cost_usd=0.11)
+                                                                   {"batch_size": 16, "pace_seconds": 0}), \
+         _ledger(0.11):
+        # attempt 2 of a job whose attempt 1 already spent 0.11 (its llm_call_log rows): no new paid call
+        ctx = _job_ctx(payload, FakeConn([("h1", "x" * 4000)], estimate=None))
         out = _run_job(ctx)
-    assert out["stopped"] == "cost_cap" and calls == [] and ctx.cost_usd == pytest.approx(0.11)
+    assert out["stopped"] == "cost_cap" and calls == []
 
     wrong, _ = _fake_embed(space_key=es.COHERE_V4_1536)
-    with _record_patch(), patch("shared.llm_client.embed.embed", wrong), \
+    with _record_patch(), patch("shared.llm_client.embed.embed", wrong), _ledger(0.0), \
          patch.object(reembed, "OTHER_DEFAULTS", {"batch_size": 16, "pace_seconds": 0}):
         ctx = _job_ctx({**payload, "cost_cap_usd": 1}, FakeConn([("h1", "a")], estimate=None))
         with pytest.raises(NonRetryable, match="not in titan"):
