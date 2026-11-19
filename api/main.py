@@ -389,7 +389,7 @@ app.include_router(admin_budgets_router)  # AA-649 — /admin/budgets (cost guar
 app.include_router(admin_ai_gateway_router)  # AA-804 — /admin/ai-gateway/{providers,trace} (AI providers page)
 app.include_router(admin_llm_route_control_router)  # AA-1042 — /admin/ai-gateway/route-control/* (Route control tab)
 app.include_router(admin_ai_gateway_spend_router)  # AA-1126 — /admin/ai-gateway/spend-controls, anomaly breaker reset
-app.include_router(admin_ai_gateway_budgets_router)  # AA-1143 — /admin/ai-gateway/connection-budgets (one budget per connection)
+app.include_router(admin_ai_gateway_budgets_router)  # AA-1143 — /admin/ai-gateway/connection-budgets
 app.include_router(admin_llm_route_router)  # AA-1042 — /admin/ai-gateway/route-* (Trace tab: trace, alerts)
 app.include_router(admin_llm_route_quality_router)  # AA-1042 — /admin/content-quality/fallback-writes (tenant_content)
 app.include_router(admin_usage_explorer_router)  # AA-1045 — /admin/usage-explorer/* (AI & spend › Usage explorer)
