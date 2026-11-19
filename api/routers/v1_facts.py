@@ -12,6 +12,12 @@ fact and the tenant's own valid facts; an own fact replaces the platform facts o
 country). To override a platform fact, the tenant writes an own fact with the same kind, title and country (the
 Content studio "Use my own" action pre-fills them).
 
+AA-1144 (S285 decision D7): an agency writes only `booking_terms` facts (facts_store.AGENCY_FACT_KINDS); all other
+product data is Adventure Asia's. POST of another kind, a PATCH that sets one, and a PATCH of an older own fact of
+another kind are 422. Such older facts are still listed (`read_only: true`) and may be deleted, but no writer reads
+them and they never replace a platform fact (`overridden_by` comes from the agency's own kinds only). `kinds` lists
+what the form may offer.
+
 Isolation. Tenant JWT (`get_tenant`); the tenant id comes from the token, never from the body or the path. Every query
 runs on the tenant pool (aa_app_user) through acquire_scoped_conn(FACTS_FLAG, fail closed): RLS `tenant_isolation`
 (CIS 229) admits only the tenant's own scope='tenant' rows for every command and `facts_platform_read` the platform
@@ -56,6 +62,7 @@ class TenantFact(BaseModel):
     created_at: Optional[str] = None
     updated_at: Optional[str] = None   # send back as expected_updated_at on PATCH
     expired: bool = False
+    read_only: bool = False              # AA-1144 (D7): an older own fact of a kind the agency no longer writes
     overridden_by: Optional[str] = None  # platform facts only: the own fact that replaces it in the writer seed
 
 
@@ -113,11 +120,13 @@ async def list_my_facts(request: Request, tenant=Depends(get_tenant)):
         platform = await fs.list_facts(conn, scope="platform", include_expired=False)
     logger.info("aa814_facts_read", tenant_id=str(tenant_id), used_tenant_pool=used_tenant_pool, own=len(own),
                 platform=len(platform))
-    live_own = {fs.subject_key(f): f["fact_id"] for f in own if not f["expired"]}
+    live_own = {fs.subject_key(f): f["fact_id"] for f in own if not f["expired"] and fs.agency_may_write(f["kind"])}
+    for f in own:
+        f["read_only"] = not fs.agency_may_write(f["kind"])
     for f in platform:
         f["overridden_by"] = live_own.get(fs.subject_key(f))
     return {"own": [_public(f) for f in own], "platform": [_public(f) for f in platform],
-            "kinds": list(fs.FACT_KINDS), "max_own": fs.MAX_TENANT_FACTS}
+            "kinds": list(fs.AGENCY_FACT_KINDS), "max_own": fs.MAX_TENANT_FACTS}
 
 
 @router.post("", status_code=201, response_model=TenantFact)

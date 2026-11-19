@@ -93,7 +93,8 @@ class TestFetchFactsForWriting:
             {"fact_id": "fact_1", "scope": "platform", "tenant_id": None,
              "title": "Visa", "body": "E-visa costs $30.", "stated_on": None, "provenance": "Admin"},
         ]
-        query, tenant_arg, country_arg = conn.fetch.call_args.args
+        query, tenant_arg, country_arg, kinds_arg = conn.fetch.call_args.args
+        assert kinds_arg == ["booking_terms"]   # AA-1144 (D7): only the agency's own kinds of its facts
         assert "scope = 'platform'" in query
         assert "scope = 'tenant' AND tenant_id = $1" in query
         assert "lower(country) = lower($2::text)" in query and country_arg is None

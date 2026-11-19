@@ -329,7 +329,8 @@ def test_raw_source_tour_reads_a_row_and_parses_json_highlights():
 # ------------------------------------------------------------------ T9: the facts budget is recorded
 
 def _fact(i: int, scope: str = "tenant") -> dict:
-    return {"fact_id": f"fact_{scope[0]}{i:03d}", "scope": scope, "tenant_id": None, "kind": "price",
+    # AA-1144 (D7): booking_terms, the one kind of a tenant fact a writer still reads
+    return {"fact_id": f"fact_{scope[0]}{i:03d}", "scope": scope, "tenant_id": None, "kind": "booking_terms",
             "title": f"Varn fact {i:03d}", "body": "b" * 1200, "provenance": "Varn board", "country": None,
             "stated_on": None, "valid_until": None, "updated_at": None}
 

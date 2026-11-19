@@ -152,9 +152,9 @@ def tenant_api(monkeypatch):
            provenance="Embassy site", country="Laos")
     db.add(fact_id="fact_platold", scope="platform", kind="price", title="Old promo", body="10% off.",
            provenance="Ops", valid_until=PAST)
-    db.add(fact_id="fact_aaown01", tenant_id=TENANT_A, kind="price", title="Mekong cruise price",
+    db.add(fact_id="fact_aaown01", tenant_id=TENANT_A, kind="booking_terms", title="Mekong cruise deposit",
            body="From $900 per person.", provenance="Our 2027 rate sheet")
-    db.add(fact_id="fact_bbown01", tenant_id=TENANT_B, kind="price", title="Mekong cruise price",
+    db.add(fact_id="fact_bbown01", tenant_id=TENANT_B, kind="booking_terms", title="Mekong cruise deposit",
            body="From $700 per person.", provenance="B rate sheet")
     calls = []
 
@@ -225,7 +225,8 @@ async def test_tenant_fact_limit():
     conn = AsyncMock()
     conn.fetchval = AsyncMock(return_value=fs.MAX_TENANT_FACTS)
     with pytest.raises(fs.FactError, match="at most"):
-        await fs.create_fact(conn, fs.FactFields(title="t", body="b", provenance="p"), scope="tenant",
+        await fs.create_fact(conn, fs.FactFields(kind="booking_terms", title="t", body="b", provenance="p"),
+                             scope="tenant",
                              tenant_id=uuid.UUID(TENANT_A), actor="tenant:x")
     conn.fetchrow.assert_not_called()
     with pytest.raises(fs.FactError, match="no tenant"):
@@ -235,7 +236,7 @@ async def test_tenant_fact_limit():
 
 # ── writer precedence + seed ─────────────────────────────────────────────────────────────────────
 
-def _f(fid, scope, title="Mekong cruise price", kind="price", country=None, stated=None, edited=T0, **kw):
+def _f(fid, scope, title="Mekong cruise deposit", kind="booking_terms", country=None, stated=None, edited=T0, **kw):
     return {"fact_id": fid, "scope": scope, "tenant_id": None, "kind": kind, "title": title, "body": f"body {fid}",
             "provenance": kw.get("provenance", f"src {fid}"), "country": country, "stated_on": stated,
             "valid_until": None, "updated_at": edited}
@@ -244,16 +245,16 @@ def _f(fid, scope, title="Mekong cruise price", kind="price", country=None, stat
 def test_tenant_fact_replaces_the_platform_facts_on_its_subject():
     plat = _f("fact_p1", "platform", stated=date(2027, 1, 1))
     other = _f("fact_p2", "platform", title="Laos visa", kind="visa_entry")
-    own = _f("fact_t1", "tenant", title="MEKONG  cruise price", stated=date(2026, 1, 1))
+    own = _f("fact_t1", "tenant", title="MEKONG  cruise deposit", stated=date(2026, 1, 1))
     kept = writer_facts.pick_facts([plat, other, own])
     assert [f["fact_id"] for f in kept] == ["fact_p2", "fact_t1"]       # input order kept
 
 
 def test_same_title_other_kind_or_country_is_another_subject():
-    plat = _f("fact_p1", "platform", country="Laos")
+    plat = _f("fact_p1", "platform", kind="price", country="Laos")
     own_any = _f("fact_t1", "tenant", country=None)
-    own_season = _f("fact_t2", "tenant", kind="season", country="Laos")
-    assert len(writer_facts.pick_facts([plat, own_any, own_season])) == 3
+    own_terms = _f("fact_t2", "tenant", country="Laos")
+    assert len(writer_facts.pick_facts([plat, own_any, own_terms])) == 3
 
 
 def test_inside_a_scope_the_latest_stated_then_latest_edit_wins():
@@ -275,7 +276,7 @@ def test_seed_entry_names_source_and_owner_and_keeps_the_head_line():
     block = writer_facts.format_facts_block([
         _f("fact_t1", "tenant", provenance="Our  2027 rate sheet"), _f("fact_p2", "platform", title="Laos visa")])
     first, second = block.split("\n\n")
-    assert first.splitlines() == ["[Fact id=fact_t1]", "Mekong cruise price: body fact_t1",
+    assert first.splitlines() == ["[Fact id=fact_t1]", "Mekong cruise deposit: body fact_t1",
                                   "Source: Our 2027 rate sheet; agency fact"]
     assert second.splitlines()[0] == "[Fact id=fact_p2]" and second.endswith("Source: src fact_p2; platform fact")
 
@@ -361,14 +362,14 @@ def test_list_shows_own_and_valid_platform_facts_only(tenant_api):
     body = r.json()
     assert [f["fact_id"] for f in body["own"]] == ["fact_aaown01"]
     assert {f["fact_id"] for f in body["platform"]} == {"fact_platvisa"}      # expired platform fact hidden
-    assert body["kinds"] == list(fs.FACT_KINDS) and body["max_own"] == fs.MAX_TENANT_FACTS
+    assert body["kinds"] == ["booking_terms"] and body["max_own"] == fs.MAX_TENANT_FACTS   # AA-1144 (D7)
     own = body["own"][0]
     assert "tenant_id" not in own and "updated_by" not in own
     assert tenant_api.calls[-1] == (TENANT_A, v1_facts.FACTS_FLAG, True)
 
 
 def test_a_platform_fact_the_tenant_replaces_says_so(tenant_api):
-    tenant_api.db.add(fact_id="fact_platmek", scope="platform", kind="price", title="Mekong Cruise Price",
+    tenant_api.db.add(fact_id="fact_platmek", scope="platform", kind="booking_terms", title="Mekong Cruise Deposit",
                       body="From $1000.", provenance="AA")
     plat = {f["fact_id"]: f for f in tenant_api.get("/v1/facts", headers=_h()).json()["platform"]}
     assert plat["fact_platmek"]["overridden_by"] == "fact_aaown01"
@@ -399,7 +400,7 @@ def test_body_cannot_name_a_tenant_or_scope(tenant_api):
 
 
 def test_create_edit_delete_own_fact_with_audit(tenant_api):
-    r = tenant_api.post("/v1/facts", json={"kind": "price", "title": "Halong cruise price", "body": "From $400.",
+    r = tenant_api.post("/v1/facts", json={"kind": "booking_terms", "title": "Halong cruise price", "body": "From $400.",
                                            "provenance": "Our sheet", "valid_until": FAR.isoformat()}, headers=_h())
     assert r.status_code == 201, r.text
     fact = r.json()
@@ -424,7 +425,8 @@ def test_create_edit_delete_own_fact_with_audit(tenant_api):
 
 def test_audit_failure_does_not_undo_the_write(tenant_api):
     tenant_api.audit.side_effect = RuntimeError("audit down")
-    r = tenant_api.post("/v1/facts", json={"title": "t", "body": "b", "provenance": "p"}, headers=_h())
+    r = tenant_api.post("/v1/facts", json={"kind": "booking_terms", "title": "t", "body": "b", "provenance": "p"},
+                        headers=_h())
     assert r.status_code == 201 and r.json()["fact_id"] in tenant_api.db.rows
 
 

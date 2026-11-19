@@ -32,7 +32,7 @@ from uuid import UUID
 
 import structlog
 
-from services.acp_shared.facts_store import subject_key
+from services.acp_shared.facts_store import AGENCY_FACT_KINDS, agency_may_write, subject_key
 
 logger = structlog.get_logger()
 
@@ -48,10 +48,13 @@ _ENTRY_SEPARATOR = "\n\n"
 # per-fact Jev relevance call on the T axis (S232: no Jev on T).
 # AA-814 (CIS 302): kind / valid_until — a fact after its valid_until never reaches a writer, and pick_facts() keeps
 # the tenant's fact over the platform facts on the same subject.
+# AA-1144 (S285 D7): of the tenant's own facts only the agency's kinds ($3, facts_store.AGENCY_FACT_KINDS) reach a
+# writer; an older own price / season / visa / transfer / other fact stays in the table (readable in Content studio)
+# but never feeds T9 or T2 and never replaces a platform fact. pick_facts() keeps the same rule for any other caller.
 _FACTS_QUERY = """
     SELECT fact_id, scope, tenant_id, kind, title, body, stated_on, valid_until, provenance, country, updated_at
     FROM acp_shared.facts
-    WHERE (scope = 'platform' OR (scope = 'tenant' AND tenant_id = $1))
+    WHERE (scope = 'platform' OR (scope = 'tenant' AND tenant_id = $1 AND kind = ANY($3::text[])))
       AND (country IS NULL OR $2::text IS NULL OR lower(country) = lower($2::text))
       AND (valid_until IS NULL OR valid_until >= current_date)
     ORDER BY scope, stated_on DESC NULLS LAST, fact_id
@@ -73,7 +76,7 @@ async def fetch_facts_for_writing(tenant_id: UUID, pool, country: str | None = N
     AA-1047 (Quality W1): `excluded_out`, when given, receives the picked facts the budget left out (the FactSheet
     records them with reason `facts_budget` instead of dropping them silently). The kept list is unchanged."""
     async with pool.acquire() as conn:
-        rows = await conn.fetch(_FACTS_QUERY, tenant_id, country)
+        rows = await conn.fetch(_FACTS_QUERY, tenant_id, country, list(AGENCY_FACT_KINDS))
     picked = pick_facts([dict(r) for r in rows])
     kept = budget_facts(picked)
     if excluded_out is not None:
@@ -99,9 +102,11 @@ def _rank(fact: dict) -> tuple:
 def pick_facts(facts: list[dict]) -> list[dict]:
     """AA-814 precedence: one fact per subject (facts_store.subject_key: kind, title, country). When the writing
     tenant has its own fact on a subject, the platform facts on that subject are dropped; within one scope the latest
-    stated (then latest edited) fact wins. The input order is kept for the facts that stay, so the seed reads as
-    before for a tenant with no overrides."""
+    stated (then latest edited) fact wins. AA-1144 (D7): a tenant fact of a kind the agency no longer writes is left
+    out first, so it neither reaches the writer nor replaces a platform fact. The input order is kept for the facts
+    that stay, so the seed reads as before for a tenant with no overrides."""
     best: dict[tuple, dict] = {}
+    facts = [f for f in facts if f.get("scope") != "tenant" or agency_may_write(f.get("kind"))]   # AA-1144 D7
     for f in facts:
         key = subject_key(f)
         if key not in best or _rank(f) < _rank(best[key]):

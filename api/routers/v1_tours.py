@@ -29,6 +29,7 @@ from shared.llm_client import tenant_budget
 from services.photos import covers as _covers
 from services.photos.sync import public_base
 from services.quality import final_contract  # AA-1047 W1 (REPORT-mode exit contract)
+from services.content_generation import t2_fact_lock  # AA-1144 D8: an agency edit keeps the tour facts
 from api.routers._tenant_projection import (
     project_billing, project_raw, project_tour, project_version,
     tenant_status_filter, tenant_version_status,
@@ -1275,7 +1276,7 @@ async def export_version_docx(
 class VersionActionRequest(_BM):
     action: str  # approve | reject | edit
     edited_content: Optional[dict] = None
-    edited_by: Optional[str] = None
+    edited_by: Optional[str] = None  # ignored since AA-1144: the editor is the member in the token
 
 
 # ── AA-859 W6: PATCH /v1/tours/versions/{id} on the tenant pool (T2_VERSION_WRITE_FLAG) ──────────────
@@ -1289,7 +1290,9 @@ class VersionActionRequest(_BM):
 #      it needs no grant. A duplicate number anyway (UNIQUE (tenant_id, published_tour_id,
 #      version_number), e.g. a concurrent rewrite on MAIN) -> 409 version_conflict, never a 500;
 #   3. approve / reject: status UPDATE.
-# No audit row, no enqueue, no external call: nothing here runs on MAIN after the transaction.
+# AA-1144 (D8): an edit lays its wording fields over the version and may not change a tour fact (422 fact_locked,
+# services/content_generation/t2_fact_lock.py); edited_by_user is the member in the token. One audit row per edit or
+# refusal, on MAIN after the transaction (best effort). No enqueue, no external call.
 # SQL in module constants so tests can mutate them (forgotten-WHERE, lock removed).
 AA859_TTV_LOCK_CLASS = 859
 VERSION_CONFLICT_DETAIL = "version_conflict: another edit of this tour was saved at the same time, reload and retry"
@@ -1339,16 +1342,29 @@ async def update_version(
     if body.action == "edit" and not body.edited_content:
         raise HTTPException(status_code=400, detail="edited_content is required for action=edit")
 
-    async with acquire_scoped_conn(
-        request, tenant_id, T2_VERSION_WRITE_FLAG, fail_closed=True,
-    ) as (conn, used_tenant_pool):
-        logger.info("aa859_t2_version_write", tenant_id=str(tenant_id), version_id=version_id,
-                    action=body.action, used_tenant_pool=used_tenant_pool)
-        return await _apply_version_action(conn, tenant_id, version_id, body, guarded=used_tenant_pool)
+    editor = f"tenant:{tenant_id}:{tenant['mid']}" if tenant.get("mid") else f"tenant:{tenant_id}"
+    audit = {"tenant_id": tenant_id, "actor": f"tenant:{tenant_id}", "version_id": version_id}
+    try:
+        async with acquire_scoped_conn(
+            request, tenant_id, T2_VERSION_WRITE_FLAG, fail_closed=True,
+        ) as (conn, used_tenant_pool):
+            logger.info("aa859_t2_version_write", tenant_id=str(tenant_id), version_id=version_id,
+                        action=body.action, used_tenant_pool=used_tenant_pool)
+            out = await _apply_version_action(conn, tenant_id, version_id, body, guarded=used_tenant_pool,
+                                              editor=editor)
+    except HTTPException as exc:
+        if isinstance(exc.detail, dict) and exc.detail.get("code") == t2_fact_lock.FACT_LOCKED:
+            await t2_fact_lock.audit(request.app.state.pool, **audit, details={
+                "membership_id": tenant.get("mid"), "locked": exc.detail["locked"]})
+        raise
+    if "changes" in out:
+        await t2_fact_lock.audit(request.app.state.pool, **audit, details={
+            "membership_id": tenant.get("mid"), "new_version_id": out["new_version_id"], "changes": out.pop("changes")})
+    return out
 
 
 async def _apply_version_action(conn, tenant_id, version_id: str, body: VersionActionRequest, *,
-                                guarded: bool) -> dict:
+                                guarded: bool, editor: str = "tenant") -> dict:
     """The route's statements on `conn`. guarded=True (tenant pool, inside acquire_scoped_conn's
     transaction): the edit takes the advisory lock and a duplicate version number is a 409. guarded=False
     (admin pool, flag off): the pre-AA-859 statements, unchanged."""
@@ -1359,12 +1375,16 @@ async def _apply_version_action(conn, tenant_id, version_id: str, body: VersionA
 
     if body.action == "edit":
         # Inline edit (edited_content checked non-empty before the acquire) → create new version
+        parent = t2_fact_lock.content_dict(row["rewritten_content"])
+        content, locked = await t2_fact_lock.check_against_base(conn, row["published_tour_id"], parent,
+                                                                body.edited_content)
+        if locked:
+            raise HTTPException(status_code=422, detail=t2_fact_lock.refusal(locked))
         if guarded:
             await conn.execute(_VERSION_EDIT_LOCK_SQL, AA859_TTV_LOCK_CLASS, str(tenant_id),
                                str(row["published_tour_id"]))
         next_ver = await conn.fetchval(_VERSION_NEXT_NUMBER_SQL, tenant_id, row["published_tour_id"])
-        args = (tenant_id, row["published_tour_id"], next_ver, version_id,
-                _json.dumps(body.edited_content), body.edited_by or "tenant")
+        args = (tenant_id, row["published_tour_id"], next_ver, version_id, _json.dumps(content), editor)
         if guarded:
             try:
                 new_id = await conn.fetchval(_VERSION_EDIT_INSERT_SQL, *args)
@@ -1375,13 +1395,9 @@ async def _apply_version_action(conn, tenant_id, version_id: str, body: VersionA
         else:
             new_id = await conn.fetchval(_VERSION_EDIT_INSERT_SQL, *args)
         # AA-1047 W1: the tenant's own text through the REPORT-mode final contract (log only; tenant-owned, BYO)
-        final_contract.log_tenant_edit(final_contract.T2, "tenant_edit", content=body.edited_content,
-                                       actual="pending")
-        return {
-            "status": "edited",
-            "new_version_id": str(new_id),
-            "version_number": next_ver,
-        }
+        final_contract.log_tenant_edit(final_contract.T2, "tenant_edit", content=content, actual="pending")
+        return {"status": "edited", "new_version_id": str(new_id), "version_number": next_ver,
+                "changes": t2_fact_lock.audit_changes(parent, content)}   # the route pops it into the audit row
 
     new_status = "approved" if body.action == "approve" else "rejected"
     await conn.execute(_VERSION_STATUS_UPDATE_SQL, new_status, version_id, tenant_id)
