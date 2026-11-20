@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -730,6 +730,48 @@
      "lower": "Xem lại dày hơn.",
      "when": "Rút ngắn khi tỷ giá biến động nhanh.",
      "example": "Với mặc định 3 tháng, giá VND đặt ngày 1/1 hiện nhãn cần xem lại từ ngày 1/4."
+    }
+   }
+  },
+  {
+   "key": "cis.content.ai_disclosure",
+   "app": "cis",
+   "area": "content",
+   "label": "AI disclosure wording on published and exported content",
+   "description": "The visible line that tells a reader a piece was written with AI (EU AI Act Art. 50): the last paragraph of a WordPress post and of the HTML exports, the last line of a Facebook post followed by social_tag, the trailer of the plain-text export and of the agency studio CSV / XLSX export. JSON {\"text\": {<two-letter language>: <line>}, \"social_tag\": <hashtag>}: the piece language picks the line, English (required) is the fallback. Every line non-empty, one line, at most 200 characters; the tag is one hashtag (# then 2 to 50 letters, digits or _). The line itself cannot be switched off: an empty or invalid value is refused, and a stored value that breaks the shape is ignored (the seeded wording is served). Read by services/acp_content_writing/ai_disclosure_setting.py (ai_marking, the publish dispatch and GET /v1/content-writing/ai-disclosure for the agency studio).",
+   "value_type": "json",
+   "unit": null,
+   "min_value": null,
+   "max_value": null,
+   "allowed_values": null,
+   "default_value": {
+    "text": {
+     "en": "This content was created with the help of AI.",
+     "vi": "Nội dung này được tạo với sự hỗ trợ của AI."
+    },
+    "social_tag": "#AIgenerated"
+   },
+   "scope_kind": "platform",
+   "impact": "high",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The sentence every published or exported piece ends with to say it was written with the help of AI: on WordPress posts, Facebook posts (followed by the hashtag), text downloads and the agencies' catalog exports. One line per language; the piece's language picks the line and English is used when there is none for it.",
+     "raise": "A longer or more specific wording explains more to the reader (for example who reviewed the text); keep it one line, at most 200 characters, and true for every piece.",
+     "lower": "A shorter wording takes less space at the end of a post; it can never be empty, because the disclosure itself cannot be switched off.",
+     "when": "Change it when legal counsel asks for a different wording, when a new market needs its own language line, or when a social platform asks for a different hashtag.",
+     "example": "With the default, an English post ends with: This content was created with the help of AI. A Facebook post adds #AIgenerated after it."
+    },
+    "vi": {
+     "what": "Câu mà mọi nội dung được đăng hoặc xuất ra đều kết thúc bằng, để nói rằng nội dung được viết với sự hỗ trợ của AI: trên bài WordPress, bài Facebook (kèm hashtag), tệp văn bản tải về và tệp xuất danh mục của đại lý. Mỗi ngôn ngữ một dòng; ngôn ngữ của nội dung chọn dòng, và dùng dòng tiếng Anh khi không có dòng cho ngôn ngữ đó.",
+     "raise": "Câu dài hơn hoặc cụ thể hơn giải thích rõ hơn cho người đọc (ví dụ ai đã duyệt nội dung); giữ trong một dòng, tối đa 200 ký tự, và đúng với mọi nội dung.",
+     "lower": "Câu ngắn hơn chiếm ít chỗ hơn ở cuối bài; không bao giờ được để trống, vì không thể tắt phần công bố này.",
+     "when": "Đổi khi luật sư yêu cầu câu khác, khi một thị trường mới cần dòng bằng ngôn ngữ riêng, hoặc khi một mạng xã hội yêu cầu hashtag khác.",
+     "example": "Với mặc định, một bài tiếng Anh kết thúc bằng: This content was created with the help of AI. Bài Facebook thêm #AIgenerated sau câu đó."
     }
    }
   },
