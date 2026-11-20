@@ -1,8 +1,9 @@
 """
 services.acp_content_writing.export — AA-569: tenant-facing content_piece download (My Content).
 
-Text export is always available (every channel — just `content_text` as-is, already citation-tag
--stripped by run_write_background()/quality_gates.py before persist, nothing further to do here).
+Text export is always available (every channel — `content_text`, already citation-tag-stripped by
+run_write_background()/quality_gates.py before persist, followed since AA-1168 by the AI disclosure
+line and its one-line machine-readable mark, render_content_text_to_plain()).
 HTML export is Blog-only: T9's blog prompt (AA-452, services/acp_content_writing/prompts.py) is
 the only channel instructed to write real markdown (`## ` H2 sections, `## FAQ` with `**Q: .../
 A:**` pairs) — every other channel's content_text is plain prose, so running it through a
@@ -49,12 +50,16 @@ def render_content_text_to_fragment(content_text: str, *, ai: Optional[dict] = N
     AA-1040 — `ai` (the piece's mark, ai_marking.piece_mark()): the `<article>` carries the
     `data-ai-*` attributes and, with `meta_tags`, the `<meta name="ai-*">` tags follow it on one
     line (after the article, so a CMS's paragraph filter never puts them inside the text). Every
-    caller with a real piece passes it; None keeps the AA-613 output byte for byte."""
+    caller with a real piece passes it; None keeps the AA-613 output byte for byte.
+
+    AA-1168 — with `ai`, the article also ends with the visible disclosure paragraph
+    (ai_marking.disclosure_html(): EU AI Act Art. 50, the reader of the post or embed sees it)."""
     body = markdown.markdown(content_text, extensions=["extra", "nl2br"])
     if ai is None:
         return f"<article>\n{body}\n</article>"
     tail = f"\n{ai_marking.html_meta_tags(ai)}" if meta_tags else ""
-    return f"<article{ai_marking.html_attributes(ai)}>\n{body}\n</article>{tail}"
+    return (f"<article{ai_marking.html_attributes(ai)}>\n{body}\n{ai_marking.disclosure_html(ai)}\n"
+            f"</article>{tail}")
 
 
 def render_content_text_to_document(content_text: str, *, title: str = "Content",
@@ -72,6 +77,13 @@ def render_content_text_to_document(content_text: str, *, title: str = "Content"
     )
 
 
+def render_content_text_to_plain(content_text: str, *, ai: dict) -> str:
+    """AA-1168 — the plain-text download (every channel): the piece text, then the visible disclosure line and the
+    one-line `AI-Content:` mark (ai_marking.text_with_disclosure()). A saved `.txt` file keeps no HTTP headers, so the
+    mark has to travel in the text itself."""
+    return ai_marking.text_with_disclosure(content_text, ai)
+
+
 def render_content_text_to_html(content_text: str, *, title: str = "Content") -> str:
     """Backward-compatible alias for the document mode (AA-569's original single-mode name).
     Kept so existing callers/tests don't break; new callers should pick document vs fragment
@@ -83,4 +95,5 @@ __all__ = [
     "render_content_text_to_html",
     "render_content_text_to_document",
     "render_content_text_to_fragment",
+    "render_content_text_to_plain",
 ]

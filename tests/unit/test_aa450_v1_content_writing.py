@@ -258,7 +258,8 @@ class TestExportPiece:
                 PIECE_ID, _make_request(), tenant={"sub": TENANT_ID}, format="text",
             )
         assert result.media_type == "text/plain"
-        assert result.body == b"Hello"
+        # AA-1168 — the text, then the AI disclosure line and the one-line machine mark (a saved .txt has no headers).
+        assert result.body.startswith(b"Hello\n\n---\nThis content was created with the help of AI.\nAI-Content: ")
 
     @pytest.mark.asyncio
     async def test_html_export_blog_channel(self):

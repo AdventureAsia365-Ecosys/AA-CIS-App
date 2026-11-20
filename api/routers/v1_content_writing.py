@@ -39,6 +39,7 @@ from services.acp_content_writing.ai_marking import response_headers as ai_respo
 from services.acp_content_writing.export import (
     render_content_text_to_document,
     render_content_text_to_fragment,
+    render_content_text_to_plain,
 )
 from services.acp_shared import atom_replaced
 from services.acp_shared.audit_log import TenantAuditAction, write_audit_log
@@ -216,7 +217,8 @@ async def export_piece(
         else:
             body = render_content_text_to_document(piece["content_text"], title="Blog post", ai=ai_mark)
     else:
-        body = piece["content_text"]
+        # AA-1168 — the saved .txt keeps no headers: the disclosure line and the AI-Content: mark end the text.
+        body = render_content_text_to_plain(piece["content_text"], ai=ai_mark)
 
     # AA-613 — audit every export so admin monitor can count exports per tenant/channel/time.
     # Best-effort: an audit failure must not block the tenant's download (this is the one export

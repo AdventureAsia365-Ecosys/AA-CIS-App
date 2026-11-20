@@ -46,6 +46,7 @@ class WordPressAdapter(CMSAdapter):
             "meta": {
                 "_yoast_wpseo_title": content.seo_title,
                 "_yoast_wpseo_metadesc": content.seo_meta,
+                **(content.meta or {}),
             },
         }
 

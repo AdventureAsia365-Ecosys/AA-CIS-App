@@ -5,7 +5,8 @@ Checks:
      tags on one line, the IPTC digital source type, the download headers;
   2. export: the fragment carries data-ai-* on <article> and the <meta> tags after it; the document puts them in the
      <head>; no `ai` keeps the AA-613 output byte for byte;
-  3. publish: the WordPress post body carries the mark; the Facebook message is the piece text unchanged;
+  3. publish: the WordPress post body carries the mark; the Facebook message is the piece text followed by the
+     AA-1168 disclosure line (no metadata field on the Page feed);
   4. the tenant projection carries `ai` and still nothing of writer_input;
   5. _finalize_piece stamps writer_input.ai_provenance with the ledger's writer model (best-effort), never for a
      failed piece; the export route sends the mark as headers.
@@ -127,14 +128,15 @@ async def test_wordpress_piece_without_provenance_still_marked():
 
 
 @pytest.mark.asyncio
-async def test_facebook_message_is_the_piece_text_unchanged():
+async def test_facebook_message_is_the_piece_text_then_the_disclosure():
     from services.acp_publish import dispatch
     fb = MagicMock()
     fb.create_post = AsyncMock(return_value=MagicMock(post_id="1_2", post_url="https://example.test/1_2"))
     piece = {"content_text": "A sunrise boat on the lake.", "created_at": CREATED, "ai_provenance": None}
     with patch.object(dispatch, "_facebook", return_value=fb):
         await dispatch.publish_to_channel("facebook", {}, piece, "k")
-    assert fb.create_post.call_args.args[0].message == "A sunrise boat on the lake."
+    assert fb.create_post.call_args.args[0].message == (
+        f"A sunrise boat on the lake.\n\n{ai_marking.DISCLOSURE_TEXT} {ai_marking.SOCIAL_DISCLOSURE_TAG}")
 
 
 def test_publish_sql_reads_created_at_and_only_the_provenance_key():
@@ -249,7 +251,8 @@ async def test_export_route_sends_the_mark_as_headers():
                                                      format="text", mode="document")
     assert html.headers["x-ai-generated"] == "true" and html.headers["x-ai-model"] == "writer-model-x"
     assert b'<article data-ai-generated="true"' in html.body and b'<meta name="ai-generated"' in html.body
-    assert text.headers["x-ai-generated"] == "true" and text.body == MD.encode()
+    assert text.headers["x-ai-generated"] == "true"
+    assert text.body == ai_marking.text_with_disclosure(MD, MARK).encode()   # AA-1168: the mark travels in the text
 
 
 # ── 6. T2 tenant tour versions (AA-1040) ──────────────────────────────────────────────────────────────────────

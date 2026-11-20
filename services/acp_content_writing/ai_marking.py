@@ -16,7 +16,15 @@ construction; what this module adds is a mark other software can read:
   the connected WordPress user may post unfiltered HTML, i.e. administrators and editors; other roles' posts keep the
   attributes only); the downloaded standalone document carries the same `<meta>` tags in its `<head>`;
 - **social posts:** none of the built channels' APIs has a label for a text post (Facebook Page feed); the mark
-  stays in the piece and its publish record. Per-platform notes: root `docs/architecture/ai-use-register.md`.
+  stays in the piece and its publish record, and the post text ends with the visible disclosure line plus the
+  `#AIgenerated` tag (AA-1168, :func:`social_message`). Per-platform notes: root `docs/architecture/ai-use-register.md`;
+- **visible disclosure (AA-1168):** every channel that shows the text also shows :data:`DISCLOSURE_TEXT`: the last
+  paragraph of the HTML `<article>` (:func:`disclosure_html`, WordPress and the HTML exports), the last line of a
+  Facebook post, and the trailer of the plain-text export, which adds one `AI-Content:` line software can parse
+  (:func:`text_with_disclosure`, a downloaded `.txt` keeps no headers);
+- **WordPress post meta (AA-1168):** the post also sends :func:`wordpress_post_meta` (`ai_generated`, …) in the REST
+  `meta` object; WordPress stores a key only when the site registered it (`register_post_meta`, `show_in_rest`),
+  otherwise it ignores it without an error, so the HTML mark above stays the one every site keeps.
 
 The meta names are plain, self-describing names (`ai-generated`, `ai-generator`, `ai-model`, `ai-generated-at`,
 `ai-human-edited`) plus the IPTC digital source type URI for content made by a trained model; there is no single
@@ -39,6 +47,12 @@ CATALOG_TEXT_FIELDS = frozenset({"aa_name", "aa_subtitle", "aa_summary", "aa_des
 # IPTC NewsCodes digital source type: "created by a trained algorithmic model" (cv.iptc.org digitalsourcetype).
 IPTC_DIGITAL_SOURCE_TYPE = "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia"
 WRITER_STAGE = "t9_write"
+# AA-1168 (EU AI Act Art. 50): the visible disclosure on every channel that shows the text, one wording everywhere.
+DISCLOSURE_TEXT = "This content was created with the help of AI."
+# A Facebook text post has no metadata field: the hashtag is the token software can find in the text itself.
+SOCIAL_DISCLOSURE_TAG = "#AIgenerated"
+# The plain-text export's machine-readable line starts with this label (then `key=value` pairs separated by "; ").
+TEXT_MARK_LABEL = "AI-Content:"
 
 # The writer model of the piece's final attempt: the newest billed t9_write ledger row of the request since the piece
 # row was created (shadow calls excluded). Reads through idx_llm_call_log_stage_created (stage, created_at DESC).
@@ -143,6 +157,53 @@ def html_meta_tags(mark: dict) -> str:
     return "".join(f'<meta name="{name}" content="{_attr(value)}">' for name, value in tags)
 
 
+def _mark_fields(mark: dict) -> list:
+    """(name, value) pairs of the mark in the order the meta tags use, the IPTC source type last."""
+    fields = [("ai-generated", "true"), ("ai-generator", mark.get("generator") or GENERATOR)]
+    if mark.get("model"):
+        fields.append(("ai-model", str(mark["model"])))
+    if mark.get("generated_at"):
+        fields.append(("ai-generated-at", str(mark["generated_at"])))
+    fields.append(("ai-human-edited", "true" if mark.get("human_edited") else "false"))
+    fields.append(("digital-source-type", IPTC_DIGITAL_SOURCE_TYPE))
+    return fields
+
+
+def disclosure_html(mark: Optional[dict] = None) -> str:
+    """AA-1168 — the visible disclosure as the last paragraph of the `<article>` (WordPress keeps `class`,
+    `data-*` and `<em>` for every role)."""
+    return f'<p class="ai-disclosure" data-ai-disclosure="true"><em>{html.escape(DISCLOSURE_TEXT)}</em></p>'
+
+
+def social_message(content_text: str, mark: Optional[dict] = None) -> str:
+    """AA-1168 — a social text post: the piece text, a blank line, the disclosure and the `#AIgenerated` tag."""
+    return f"{content_text.rstrip()}\n\n{DISCLOSURE_TEXT} {SOCIAL_DISCLOSURE_TAG}"
+
+
+def text_mark_line(mark: dict) -> str:
+    """AA-1168 — `AI-Content: ai-generated=true; ai-generator=…; …; digital-source-type=<IPTC URI>` (one line; line
+    breaks and the separator inside a value are replaced, so the line always parses)."""
+    def clean(value: str) -> str:
+        return " ".join(str(value).replace(";", ",").split())
+    return f"{TEXT_MARK_LABEL} " + "; ".join(f"{name}={clean(value)}" for name, value in _mark_fields(mark))
+
+
+def text_with_disclosure(content_text: str, mark: dict) -> str:
+    """AA-1168 — the plain-text export: the piece text, then a `---` rule, the disclosure line and the
+    machine-readable line (a saved `.txt` keeps no HTTP headers, so the mark travels in the text)."""
+    return f"{content_text.rstrip()}\n\n---\n{DISCLOSURE_TEXT}\n{text_mark_line(mark)}\n"
+
+
+def wordpress_post_meta(mark: dict) -> dict:
+    """AA-1168 — the REST `meta` keys of a WordPress post (`ai_generated`, `ai_generator`, …, string values). Stored
+    only when the site registered them; an unregistered key is ignored by WordPress, never an error."""
+    meta = {}
+    for name, value in _mark_fields(mark):
+        key = name.replace("-", "_")
+        meta[key if key.startswith("ai_") else f"ai_{key}"] = value   # digital-source-type -> ai_digital_source_type
+    return meta
+
+
 def response_headers(mark: dict) -> dict:
     """Headers of a download (text exports carry no markup, so the mark travels as headers)."""
     headers = {"X-AI-Generated": "true", "X-AI-Generator": mark.get("generator") or GENERATOR}
@@ -221,7 +282,9 @@ async def writer_answer(conn, request_id, piece_id) -> Optional[dict]:
     return out
 
 
-__all__ = ["ANSWER_KEY", "CATALOG_GENERATOR", "CATALOG_TEXT_FIELDS", "GENERATOR", "IPTC_DIGITAL_SOURCE_TYPE",
-           "PROVENANCE_KEY", "WRITER_ANSWER_SQL", "WRITER_MODEL_SQL", "docx_properties", "html_attributes",
-           "html_meta_tags", "piece_mark", "response_headers", "stamp", "tour_mark", "version_mark", "writer_answer",
+__all__ = ["ANSWER_KEY", "CATALOG_GENERATOR", "CATALOG_TEXT_FIELDS", "DISCLOSURE_TEXT", "GENERATOR",
+           "IPTC_DIGITAL_SOURCE_TYPE", "PROVENANCE_KEY", "SOCIAL_DISCLOSURE_TAG", "TEXT_MARK_LABEL",
+           "WRITER_ANSWER_SQL", "WRITER_MODEL_SQL", "disclosure_html", "docx_properties", "html_attributes",
+           "html_meta_tags", "piece_mark", "response_headers", "social_message", "stamp", "text_mark_line",
+           "text_with_disclosure", "tour_mark", "version_mark", "wordpress_post_meta", "writer_answer",
            "writer_model"]
