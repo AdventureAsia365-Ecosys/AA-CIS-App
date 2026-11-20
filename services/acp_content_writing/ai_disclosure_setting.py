@@ -22,6 +22,7 @@ the CIS 463 seed (tests/unit/test_aa1168_ai_disclosure_setting.py).
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any, Optional
 
 import structlog
@@ -40,6 +41,8 @@ TEXT_MAX_CHARS = 200  # technical-constant: the shape of a one-line disclosure (
 _LANG_RE = re.compile(r"^[a-z]{2}$")
 _TAG_RE = re.compile(r"^#[A-Za-z0-9_]{2,50}$")
 _FIELDS = frozenset({"text", "social_tag"})
+# security-invariant: the line is written unquoted into the agency CSV / XLSX export (CSV injection guard)
+_FORMULA_LEADS = frozenset("=+-@")
 
 
 def _line_problem(lang: Any, line: Any) -> Optional[str]:
@@ -47,8 +50,10 @@ def _line_problem(lang: Any, line: Any) -> Optional[str]:
         return f"language code {lang!r} must be two lowercase letters (en, vi, ...)"
     if not isinstance(line, str) or not line.strip():
         return f"the {lang} line must not be empty: the disclosure cannot be switched off"
-    if "\n" in line or "\r" in line:
-        return f"the {lang} line must be one line"
+    if any(unicodedata.category(ch)[0] == "C" or unicodedata.category(ch) in ("Zl", "Zp") for ch in line):
+        return f"the {lang} line must be one line of plain text (no tab, line break or control character)"
+    if line.strip()[0] in _FORMULA_LEADS:
+        return f"the {lang} line must not start with = + - or @ (a spreadsheet would read it as a formula)"
     if len(line.strip()) > TEXT_MAX_CHARS:
         return f"the {lang} line is longer than {TEXT_MAX_CHARS} characters"
     return None
@@ -86,7 +91,7 @@ def _normalized(value: dict) -> dict:
 
 def config() -> dict:
     """The disclosure in force: the setting's value when it reads and fits :func:`value_problem`, else :data:`DEFAULT`
-    (never raises; a refused stored value is logged once per read)."""
+    (never raises; a refused or unreadable stored value is logged at warning level on every read)."""
     try:
         from shared import settings
 

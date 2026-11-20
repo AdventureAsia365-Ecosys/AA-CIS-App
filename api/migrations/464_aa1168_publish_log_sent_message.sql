@@ -8,8 +8,8 @@
 --
 -- What:
 --   1. ALTER TABLE acp_shared.publish_log ADD COLUMN sent_message text: the exact post text the attempt sent (social
---      channels; written before the remote call by idempotency.claim, rewritten by finish to the text the post on the
---      channel carries). NULL for blog rows (WordPress finds a post by its revision slug) and for rows older than this
+--      channels; written before the remote call by idempotency.claim, replaced by idempotency.record_sent_message when a
+--      retry finds no earlier post and posts again). NULL for blog rows (WordPress finds a post by its revision slug) and for rows older than this
 --      file (the retry then rebuilds the message as before).
 --   2. Register 464.
 --
