@@ -57,26 +57,48 @@ def _slug(piece, key: str) -> str:
     return blog_slug(piece.get("slug") or piece.get("angle_name") or "", key)
 
 
+def piece_lang(piece) -> Optional[str]:
+    """AA-1168 — the language that picks the disclosure line of a piece: its `language` when the read selects one,
+    else None (English). acp_shared.content_piece has no language column today and every T9 piece is English."""
+    return piece.get("language") or None
+
+
 def facebook_message(piece) -> str:
-    """AA-1168 — the Facebook post text: the piece text, then the AI disclosure line and `#AIgenerated` (the Page
-    feed has no AI field for a text post, so the disclosure travels in the text). find_remote() matches this same
-    message, so a retry finds the post an earlier attempt created."""
-    return ai_marking.social_message(piece["content_text"], piece_ai_mark(piece))
+    """AA-1168 — the Facebook post text: the piece text, then the AI disclosure line and the tag in force (setting
+    cis.content.ai_disclosure; the Page feed has no AI field for a text post, so the disclosure travels in the
+    text)."""
+    return ai_marking.social_message(piece["content_text"], piece_ai_mark(piece), piece_lang(piece))
 
 
-async def find_remote(channel: str, creds: dict, piece, key: str) -> Optional[tuple]:
+def post_text(channel: str, piece) -> Optional[str]:
+    """AA-1168 — the exact text a social channel post will carry (stored on the publish_log row before the remote
+    call, CIS 464), None for the blog channel (WordPress finds a post by its revision slug)."""
+    return facebook_message(piece) if channel == "facebook" else None
+
+
+async def find_remote(channel: str, creds: dict, piece, key: str,
+                      sent_message: Optional[str] = None) -> Optional[tuple]:
     """AA-726 — (external_id, external_url) of a post an earlier attempt already created, or None (WordPress by
-    the revision slug, Facebook by the message). A lookup that fails raises, so the caller never posts blind."""
+    the revision slug, Facebook by the message). A lookup that fails raises, so the caller never posts blind.
+
+    AA-1168 — Facebook matches the message the earlier attempt stored (`sent_message`, publish_log.sent_message)
+    as well as the message rebuilt now: the disclosure wording is a setting and may have changed since that attempt.
+    A row older than CIS 464 has no stored message; the rebuilt one is then the only candidate (as before)."""
     if channel == "blog":
         result = await _wordpress(creds).find_post_by_slug(_slug(piece, key))
     else:
-        result = await _facebook(creds).find_recent_post(facebook_message(piece))
+        rebuilt = facebook_message(piece)
+        candidates = [m for m in (sent_message, rebuilt) if m]
+        result = await _facebook(creds).find_recent_post(*dict.fromkeys(candidates))
     return (str(result.post_id), result.post_url) if result else None
 
 
-async def publish_to_channel(channel: str, creds: dict, piece, key: str) -> tuple:
+async def publish_to_channel(channel: str, creds: dict, piece, key: str, message: Optional[str] = None) -> tuple:
     """Post `piece` to `channel`; returns (external_id, external_url), raises on any failure. One branch per
-    supported channel, each building its own adapter from that channel's creds shape."""
+    supported channel, each building its own adapter from that channel's creds shape.
+
+    AA-1168 — `message`: the social post text the route stored on the attempt's publish_log row (post_text()),
+    posted as is so the stored text and the post never differ; None builds it now (callers without a row)."""
     if channel == "blog":
         # AA-768 (S233) — the T9 blog's own SEO title/meta (fitted to the 45-60 / 140-155 band)
         # instead of the internal angle name and an empty meta.
@@ -91,7 +113,8 @@ async def publish_to_channel(channel: str, creds: dict, piece, key: str) -> tupl
         # meta too (kept by a site that registered the keys).
         mark = piece_ai_mark(piece)
         content = BlogContent(
-            title=title, content_html=render_content_text_to_fragment(piece["content_text"], ai=mark),
+            title=title, content_html=render_content_text_to_fragment(piece["content_text"], ai=mark,
+                                                                     lang=piece_lang(piece)),
             slug=_slug(piece, key), seo_title=title, seo_meta=piece.get("meta_description") or "",
             status="publish", meta=ai_marking.wordpress_post_meta(mark),
         )
@@ -99,8 +122,8 @@ async def publish_to_channel(channel: str, creds: dict, piece, key: str) -> tupl
     else:  # channel == "facebook" — the only other channel SUPPORTED_CHANNELS lets through
         # AA-1040 — the Graph API Page feed has no AI label for a text post; the mark stays in the piece
         # (writer_input.ai_provenance) and its publish_log row (root AI Use Register, "Machine-readable marking").
-        # AA-1168 — the post text ends with the visible disclosure and #AIgenerated (facebook_message()).
-        result = await _facebook(creds).create_post(SocialPost(message=facebook_message(piece)))
+        # AA-1168 — the post text ends with the visible disclosure and the tag in force (facebook_message()).
+        result = await _facebook(creds).create_post(SocialPost(message=message or facebook_message(piece)))
     return str(result.post_id), result.post_url
 
 
@@ -139,4 +162,5 @@ async def delete_remote(channel: str, creds: dict, external_id: str) -> str:
 
 
 __all__ = ["INTEGRATION_TYPE", "SUPPORTED_CHANNELS", "channel_display_name", "delete_remote", "facebook_message",
-           "find_remote", "other_account", "piece_ai_mark", "publish_to_channel", "put_back_remote"]
+           "find_remote", "other_account", "piece_ai_mark", "piece_lang", "post_text", "publish_to_channel",
+           "put_back_remote"]

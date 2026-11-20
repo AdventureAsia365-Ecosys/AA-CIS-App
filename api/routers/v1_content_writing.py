@@ -142,6 +142,23 @@ async def cta_check(body: CtaCheckBody, tenant=Depends(get_tenant)):
     return {"cta_warning": cta_warning(body.cta[:2000])}
 
 
+class AiDisclosure(BaseModel):
+    text: dict[str, str]
+    social_tag: str
+
+
+@router.get("/ai-disclosure", response_model=AiDisclosure,
+            summary="The AI disclosure wording in force (one line per language, English always present)")
+async def ai_disclosure(tenant=Depends(get_tenant)):
+    """AA-1168 — the visible AI disclosure line every published or exported piece ends with (EU AI Act Art. 50), as the
+    setting cis.content.ai_disclosure holds it (Platform › Settings): ``text`` per two-letter language (``en`` always
+    present, the fallback of the others) and the ``social_tag`` of a social post. The agency studio's CSV / XLSX export
+    ends with this line instead of a copy of it. No DB read in the request (the settings snapshot), no tenant data."""
+    from services.acp_content_writing import ai_disclosure_setting
+
+    return ai_disclosure_setting.config()
+
+
 @router.get("/pieces/{piece_id}", summary="Read a previously written content piece")
 async def get_piece(piece_id: UUID, request: Request, tenant=Depends(get_tenant)):
     tenant_id = UUID(tenant["sub"])

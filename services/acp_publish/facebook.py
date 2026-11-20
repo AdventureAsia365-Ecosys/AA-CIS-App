@@ -84,11 +84,14 @@ class FacebookAdapter(SocialAdapter):
             platform="facebook",
         )
 
-    async def find_recent_post(self, message: str) -> Optional[SocialPostResult]:
+    async def find_recent_post(self, message: str, *alternatives: str) -> Optional[SocialPostResult]:
         """AA-726 read-before-retry: a Page feed post carrying exactly this message, created by a
         previous attempt whose response was lost. Graph API has no client idempotency key, so
         the last 25 feed posts are matched on the full message text. Raises when the feed
-        cannot be read — the caller must not post again when it cannot tell."""
+        cannot be read — the caller must not post again when it cannot tell.
+
+        AA-1168 — `alternatives`: other texts the earlier attempt may have sent (the message stored on its
+        publish_log row and the one rebuilt with the disclosure wording in force now); one feed read matches any."""
         params = {"fields": "id,message", "limit": "25", "access_token": self.access_token}
         resp = await safe_http.request("GET", f"{self.api_base}/{_segment(self.page_id)}/feed", params=params,
                                        timeout=_TIMEOUT_S)
@@ -105,9 +108,9 @@ class FacebookAdapter(SocialAdapter):
         if status_code != 200 or not (isinstance(parsed_body, dict) and isinstance(parsed_body.get("data"), list)):
             raise RuntimeError(f"Facebook feed lookup {status_code}: {body_text[:300]}")
 
-        wanted = message.strip()
+        wanted = {m.strip() for m in (message, *alternatives) if m and m.strip()}
         for post in parsed_body["data"]:
-            if isinstance(post, dict) and "id" in post and (post.get("message") or "").strip() == wanted:
+            if isinstance(post, dict) and "id" in post and (post.get("message") or "").strip() in wanted:
                 return SocialPostResult(post_id=post["id"], post_url=f"https://www.facebook.com/{post['id']}",
                                         platform="facebook")
         return None
