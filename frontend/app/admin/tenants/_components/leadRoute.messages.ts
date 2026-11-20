@@ -40,6 +40,8 @@ export const T360_LEAD = defineMessages(
       "This URL points to a private or internal address. Use the agency's public https endpoint.",
     err_lead_email_required: "An e-mail route needs the agency's address.",
     err_lead_email_invalid: "Enter one valid e-mail address.",
+    err_lead_email_not_public:
+      "This address is on a private or internal domain. Use the agency's public e-mail address.",
     err_lead_channel_invalid: "Choose none, webhook or e-mail.",
   },
   {
@@ -78,6 +80,8 @@ export const T360_LEAD = defineMessages(
       "URL này trỏ tới địa chỉ riêng hoặc nội bộ. Dùng endpoint https công khai của đại lý.",
     err_lead_email_required: "Kênh e-mail cần địa chỉ của đại lý.",
     err_lead_email_invalid: "Nhập một địa chỉ e-mail hợp lệ.",
+    err_lead_email_not_public:
+      "Địa chỉ này thuộc tên miền riêng hoặc nội bộ. Dùng địa chỉ e-mail công khai của đại lý.",
     err_lead_channel_invalid: "Chọn không, webhook hoặc e-mail.",
   },
 );
