@@ -64,14 +64,14 @@ test("4. tileHref and knownTiles", () => {
 });
 
 test("5. the target pages read the tile's filter, or open on it by default", () => {
-  assert.match(read("app/admin/supply-content/SupplyContentList.tsx"), /useLinkFilters\(filtersFromSearch, /);
+  assert.match(read("app/admin/supply-content/SupplyContentList.tsx"), /useLinkFilters\(filtersFromSearch\)/);
   assert.match(read("lib/supplyContent.ts"), /export function filtersFromSearch/);
   // the drafts tile sends ?has_draft=1: the page reads it and sends it on to the API
   assert.deepEqual(filtersFromSearch("?has_draft=1"), { status: "", type: "", hasDraft: "1" });
   assert.equal(filtersFromSearch("?has_draft=yes").hasDraft, "");
   assert.match(listUrl(filtersFromSearch("?has_draft=1"), 0, 25), /[?&]has_draft=1&/);
-  assert.match(read("app/admin/aa-content/AaContentConsole.tsx"), /useLinkFilters\(filtersFromSearch, /);
-  assert.match(read("app/admin/places/cards/page.tsx"), /status: p\.get\("status"\)/);
+  assert.match(read("app/admin/aa-content/AaContentConsole.tsx"), /useLinkFilters\(filtersFromSearch\)/);
+  assert.match(read("app/admin/places/cards/page.tsx"), /useLinkFilters\(placeCardsViewFromSearch\)/);
   assert.match(read("app/admin/review/page.tsx"), /useState\("pending"\)/);
   assert.match(read("app/admin/tenant-qa/compliance/page.tsx"), /useState<StateTab>\("open"\)/);
 });

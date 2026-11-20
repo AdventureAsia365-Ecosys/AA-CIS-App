@@ -33,7 +33,6 @@ import {
   CONTENT_STATUSES,
   ENTITY_TYPES,
   STATUS_TONE,
-  NO_FILTERS,
   anyFilter,
   detailHref,
   filtersFromSearch,
@@ -70,7 +69,7 @@ export default function SupplyContentList() {
   const qc = useQueryClient();
   const router = useRouter();
   // AA-1156: a link may open the list filtered (?status=, ?has_draft=, the My work tiles)
-  const [filters, setFilters] = useLinkFilters(filtersFromSearch, NO_FILTERS);
+  const [filters, setFilters] = useLinkFilters(filtersFromSearch);
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(PAGE_SIZES[0]);
 
