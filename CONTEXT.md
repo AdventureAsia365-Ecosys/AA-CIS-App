@@ -1641,11 +1641,18 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     tenant edit (no migration). `services/acp_content_writing/ai_marking.py` builds the mark: `piece["ai"]` in the
     tenant JSON, `data-ai-*` on the `<article>` and `<meta name="ai-*">` tags in exports and the WordPress post, the
     `X-AI-*` headers of a download. Facebook Page text posts have no API label (the mark stays in the piece).
-    **AA-1168:** every channel that shows the text also shows the disclosure line (`ai_marking.DISCLOSURE_TEXT`): the
-    last paragraph of the `<article>` (WordPress post, HTML exports), the end of a Facebook post (plus `#AIgenerated`;
-    the retry lookup searches the same message), and the plain-text export, which also ends with one parseable
-    `AI-Content:` line (a saved `.txt` has no headers). WordPress posts also send the mark as REST post meta (`ai_*`
-    keys, stored only when the site registered them).
+    **AA-1168:** every channel that shows the text also shows the disclosure line: the last paragraph of the
+    `<article>` (WordPress post, HTML exports), the end of a Facebook post (plus the social tag), and the plain-text
+    export, which also ends with one parseable `AI-Content:` line (a saved `.txt` has no headers). WordPress posts also
+    send the mark as REST post meta (`ai_*` keys, stored only when the site registered them). The wording and the tag
+    are the setting `cis.content.ai_disclosure` (CIS 463, Platform › Settings, json `{"text": {<lang>: <line>},
+    "social_tag"}`, `services/acp_content_writing/ai_disclosure_setting.py`): the piece language picks the line, English
+    is required and the fallback; the line is a code invariant (an empty or malformed value is refused by the settings
+    API and ignored by the reader, which then serves the seed). `ai_marking.DISCLOSURE_TEXT` / `SOCIAL_DISCLOSURE_TAG`
+    are only that fallback. The Facebook text an attempt sends is stored on its row (`publish_log.sent_message`,
+    CIS 464) and the AA-726 retry looks for it as well as the message rebuilt now, so a wording change between an
+    attempt and its retry never duplicates a post. The agency studio export reads the wording from
+    `GET /v1/content-writing/ai-disclosure`.
     T2 versions: `project_version()` adds `ai` from `edit_source` (`tenant_edit` = human-edited) and the DOCX download
     carries it in its core properties (keywords `ai-generated`, comments).
     Master catalog text (A-series `published_tours.aa_*`, S1 writer): `project_tour()` adds `ai` (`generator`

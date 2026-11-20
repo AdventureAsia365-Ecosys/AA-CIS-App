@@ -256,8 +256,19 @@ def _definition(key: str) -> Definition:
         raise SettingsError(404, f"Unknown setting {key}", "unknown_setting") from None
 
 
+def shape_problem(key: str, value: Any) -> Optional[str]:
+    """Why ``value`` breaks the shape its key needs beyond the generic value-type check (None = fine). A json key with a
+    structured value names its check here: ``cis.content.ai_disclosure`` (AA-1168, CIS 463): an English line, every
+    line non-empty and one line, one hashtag; the disclosure can be reworded, never blanked."""
+    from services.acp_content_writing import ai_disclosure_setting
+
+    checks = {ai_disclosure_setting.KEY: ai_disclosure_setting.value_problem}
+    check = checks.get(key)
+    return check(value) if check else None
+
+
 def _check_value(d: Definition, value: Any) -> Any:
-    problem = settings.validate(d, value)
+    problem = settings.validate(d, value) or shape_problem(d.key, value)
     if problem:
         raise SettingsError(422, f"{d.label}: {problem}", "out_of_bounds")
     # S279 L2: the rules between quality keys (a cap under the pass line, a band's minimum under its maximum, an aim
@@ -287,7 +298,7 @@ async def _recheck_on_approval(conn: Any, d: Definition, proposal: dict) -> None
     """Refuse (409) an approval whose value no longer fits its definition or that breaks a rule between quality keys
     with the other approved values, now or once a future-dated approval takes effect."""
     value = proposal["value"]
-    problem = settings.validate(d, value)
+    problem = settings.validate(d, value) or shape_problem(d.key, value)
     if problem:
         raise SettingsError(409, f"{d.label}: {problem}", "out_of_bounds")
     from services.quality import quality_settings, settings_keys

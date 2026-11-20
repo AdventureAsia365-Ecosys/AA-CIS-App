@@ -106,7 +106,9 @@ REQUIRED_CIS_SCHEMA = 322
 # view) is not needed by this code.
 # 454 (AA-1133 — the docs reader's page feedback reads and writes acp_shared.docs_feedback; both feedback routes answer
 # 503 without it).
-REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 395, 397, 398, 402, 408, 409, 411, 420, 428, 435, 439, 443, 454)  # noqa: E501
+# 464 (AA-1168 follow-up — the publish route's claim() reads and writes acp_shared.publish_log.sent_message; every
+# publish fails without it). 463 (the disclosure wording setting) is not needed: the reader serves the compiled default.
+REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 395, 397, 398, 402, 408, 409, 411, 420, 428, 435, 439, 443, 454, 464)  # noqa: E501
 # Versions this code needs that were registered after a higher one (reserved numbers): 297 (AA-920 WM-25) was reserved
 # in S255 and applied after 299. max() is already 299 without it, so the version reported is capped below the lowest
 # listed version that is not registered (297 missing -> 296 -> "schema_behind").

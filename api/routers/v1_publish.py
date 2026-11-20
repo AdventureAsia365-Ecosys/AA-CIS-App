@@ -46,6 +46,7 @@ Manager and the publish_log bookkeeping.
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 from datetime import datetime, timezone
 from typing import Annotated, Optional
@@ -75,9 +76,9 @@ from services.acp_shared import subject_gate
 # AA-765: T11 channel dispatch (adapters, post building, remote lookup / delete) lives in services/acp_publish.
 from services.acp_publish.dispatch import (
     INTEGRATION_TYPE, SUPPORTED_CHANNELS, channel_display_name, delete_remote, find_remote, other_account,
-    publish_to_channel, put_back_remote,
+    post_text, publish_to_channel, put_back_remote,
 )
-from services.acp_publish.idempotency import claim, finish, publish_key
+from services.acp_publish.idempotency import claim, finish, publish_key, record_sent_message
 from api.routers._publish_checks import (PUBLISH_REQUEST_LIVE, REQUEST_LIVE_SQL,  # noqa: F401  AA-1127
                                          publishable_channel as _publishable_channel)
 from services.acp_publish import put_back as _pb
@@ -466,6 +467,29 @@ def _held_refusal(tenant: dict) -> JSONResponse:
     )
 
 
+async def _find_or_post(scope, tenant_id, piece_id, channel: str, creds: dict, piece, key: str,
+                        claimed, message: Optional[str]) -> tuple:
+    """The remote step of publish(): (external_id, external_url); raises on any failure.
+
+    AA-726 read-before-retry — a prior attempt may have posted although its response was lost, so it is looked up
+    first (a lookup that fails raises: never post blind). AA-1168 — Facebook matches the text that attempt stored
+    (claimed.prior_message, publish_log.sent_message) as well as the one rebuilt now (the AI disclosure wording is a
+    setting and may have changed). Nothing found and a different text to send: the new text is recorded on the row
+    before the post (a record that fails is a failed attempt, never a post the next retry could not find). `scope()`
+    opens publish()'s scoped tenant connection (the publish flag stays publish()'s own)."""
+    found = None
+    if claimed.prior_attempt:
+        found = await find_remote(channel, creds, piece, key, sent_message=claimed.prior_message)
+    if found:
+        logger.info("channel_publish_found_remote", tenant_id=tenant_id, piece_id=str(piece_id), channel=channel,
+                    external_id=found[0])
+        return found
+    if claimed.prior_attempt and message and message != claimed.prior_message:
+        async with scope() as (conn, _):
+            await record_sent_message(conn, publish_id=claimed.publish_id, tenant_id=tenant_id, sent_message=message)
+    return await publish_to_channel(channel, creds, piece, key, message=message)
+
+
 @router.post("/{piece_id}/publish")
 async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant),
                   body: Annotated[Optional[PublishBody], Body()] = None):
@@ -487,7 +511,9 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant),
     revision + channel, services/acp_publish/idempotency.py). The same revision already published
     is replayed from publish_log (no second post); one in flight returns 409; a retry after a
     lost response looks the post up on the remote first (WordPress by revision slug, Facebook by
-    message) before posting.
+    message) before posting. AA-1168: the Facebook message (with the AI disclosure wording, an admin setting) is
+    stored on the row before the remote call (publish_log.sent_message, CIS 464), and the retry looks for that
+    stored text as well as the one rebuilt now.
 
     AA-819 (AUP 2026-11) — per-tenant daily publish limit (services/acp_publish/daily_limit.py): code
     default 20 per UTC day, admin override shared.tenants.daily_publish_limit (migration 230; read only
@@ -575,10 +601,13 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant),
                            error=str(exc))
             raise HTTPException(status_code=503, detail=PUBLISH_ANYWAY_UNAVAILABLE,
                                 headers={"Retry-After": "60"}) from exc
+    # AA-1168: the exact social post text (piece text + the AI disclosure wording in force, an admin setting), stored
+    # on the row before the remote call (CIS 464) so a retry finds this post even after the wording changes.
+    message = post_text(channel, piece)
     # 2. claim (a savepoint inside the scoped transaction on the tenant pool)
     async with acquire_scoped_conn(request, tenant_id, PUBLISH_FLAG, fail_closed=True) as (conn, _):
         claimed = await claim(conn, piece_id=piece_id, tenant_id=tenant_id, channel=channel, key=key,
-                              daily_limit=limit)
+                              daily_limit=limit, sent_message=message)
 
     if claimed.state == "limited":
         logger.info("publish_daily_limit_reached", tenant_id=tenant_id, piece_id=str(piece_id), channel=channel,
@@ -596,17 +625,9 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant),
         return _publish_response(row, success=True, replayed=True)
 
     try:
-        found = None
-        if claimed.prior_attempt:
-            # AA-726 read-before-retry — an earlier attempt may have posted although its
-            # response was lost. A lookup that fails raises, so we never post blind.
-            found = await find_remote(channel, creds, piece, key)
-        if found:
-            external_id, external_url = found
-            logger.info("channel_publish_found_remote", tenant_id=tenant_id, piece_id=str(piece_id),
-                        channel=channel, external_id=external_id)
-        else:
-            external_id, external_url = await publish_to_channel(channel, creds, piece, key)
+        scope = functools.partial(acquire_scoped_conn, request, tenant_id, PUBLISH_FLAG, fail_closed=True)
+        external_id, external_url = await _find_or_post(scope, tenant_id, piece_id, channel, creds, piece, key,
+                                                        claimed, message)
         success = True
         error_msg = None
     except Exception as exc:  # noqa: BLE001 — the adapter already validated the response shape

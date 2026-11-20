@@ -18,10 +18,14 @@ construction; what this module adds is a mark other software can read:
 - **social posts:** none of the built channels' APIs has a label for a text post (Facebook Page feed); the mark
   stays in the piece and its publish record, and the post text ends with the visible disclosure line plus the
   `#AIgenerated` tag (AA-1168, :func:`social_message`). Per-platform notes: root `docs/architecture/ai-use-register.md`;
-- **visible disclosure (AA-1168):** every channel that shows the text also shows :data:`DISCLOSURE_TEXT`: the last
+- **visible disclosure (AA-1168):** every channel that shows the text also shows the disclosure line: the last
   paragraph of the HTML `<article>` (:func:`disclosure_html`, WordPress and the HTML exports), the last line of a
   Facebook post, and the trailer of the plain-text export, which adds one `AI-Content:` line software can parse
-  (:func:`text_with_disclosure`, a downloaded `.txt` keeps no headers);
+  (:func:`text_with_disclosure`, a downloaded `.txt` keeps no headers). The wording and the social tag are the setting
+  ``cis.content.ai_disclosure`` (CIS 463, Platform › Settings; ai_disclosure_setting.py): an administrator rewords
+  the line per language (the piece language picks it, English is the fallback), but the line itself is a code
+  invariant: every function below always appends it, and the setting refuses an empty value.
+  :data:`DISCLOSURE_TEXT` / :data:`SOCIAL_DISCLOSURE_TAG` are only the fallback when the setting cannot be read;
 - **WordPress post meta (AA-1168):** the post also sends :func:`wordpress_post_meta` (`ai_generated`, …) in the REST
   `meta` object; WordPress stores a key only when the site registered it (`register_post_meta`, `show_in_rest`),
   otherwise it ignores it without an error, so the HTML mark above stays the one every site keeps.
@@ -37,6 +41,8 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from services.acp_content_writing import ai_disclosure_setting
+
 PROVENANCE_KEY = "ai_provenance"
 GENERATOR = "Adventure Asia Content studio"
 # The A-series Master catalog text (gold_aa_internal.published_tours aa_* columns) is written by the S1 writer model.
@@ -47,10 +53,12 @@ CATALOG_TEXT_FIELDS = frozenset({"aa_name", "aa_subtitle", "aa_summary", "aa_des
 # IPTC NewsCodes digital source type: "created by a trained algorithmic model" (cv.iptc.org digitalsourcetype).
 IPTC_DIGITAL_SOURCE_TYPE = "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia"
 WRITER_STAGE = "t9_write"
-# AA-1168 (EU AI Act Art. 50): the visible disclosure on every channel that shows the text, one wording everywhere.
-DISCLOSURE_TEXT = "This content was created with the help of AI."
-# A Facebook text post has no metadata field: the hashtag is the token software can find in the text itself.
-SOCIAL_DISCLOSURE_TAG = "#AIgenerated"
+# AA-1168 (EU AI Act Art. 50): the visible disclosure on every channel that shows the text. The wording in force is the
+# setting cis.content.ai_disclosure (ai_disclosure_setting.config()); these two are only its fallback (the seed default
+# in English) when the setting cannot be read. A Facebook text post has no metadata field: the hashtag is the token
+# software can find in the text itself.
+DISCLOSURE_TEXT = ai_disclosure_setting.DEFAULT_TEXT_EN
+SOCIAL_DISCLOSURE_TAG = ai_disclosure_setting.DEFAULT_SOCIAL_TAG
 # The plain-text export's machine-readable line starts with this label (then `key=value` pairs separated by "; ").
 TEXT_MARK_LABEL = "AI-Content:"
 
@@ -169,15 +177,32 @@ def _mark_fields(mark: dict) -> list:
     return fields
 
 
-def disclosure_html(mark: Optional[dict] = None) -> str:
+def disclosure_text(lang: Optional[str] = None) -> str:
+    """AA-1168 — the disclosure line in force for a piece in ``lang`` (the setting cis.content.ai_disclosure; English
+    when the setting has no line for ``lang``; :data:`DISCLOSURE_TEXT` when the setting cannot be read). Never empty."""
+    return ai_disclosure_setting.text_for(lang) or DISCLOSURE_TEXT
+
+
+def social_tag() -> str:
+    """AA-1168 — the hashtag a social text post ends with (the setting's ``social_tag``). Never empty."""
+    return ai_disclosure_setting.social_tag() or SOCIAL_DISCLOSURE_TAG
+
+
+def disclosure_html(mark: Optional[dict] = None, lang: Optional[str] = None) -> str:
     """AA-1168 — the visible disclosure as the last paragraph of the `<article>` (WordPress keeps `class`,
-    `data-*` and `<em>` for every role)."""
-    return f'<p class="ai-disclosure" data-ai-disclosure="true"><em>{html.escape(DISCLOSURE_TEXT)}</em></p>'
+    `data-*` and `<em>` for every role). Always present: the setting rewords it, it never removes it."""
+    return f'<p class="ai-disclosure" data-ai-disclosure="true"><em>{html.escape(disclosure_text(lang))}</em></p>'
 
 
-def social_message(content_text: str, mark: Optional[dict] = None) -> str:
-    """AA-1168 — a social text post: the piece text, a blank line, the disclosure and the `#AIgenerated` tag."""
-    return f"{content_text.rstrip()}\n\n{DISCLOSURE_TEXT} {SOCIAL_DISCLOSURE_TAG}"
+def social_message(content_text: str, mark: Optional[dict] = None, lang: Optional[str] = None) -> str:
+    """AA-1168 — a social text post: the piece text, a blank line, the disclosure line and the tag in force (the mark
+    is not read, so a later edit stamp never changes the text). The wording can change between an attempt and its
+    retry: the publish route stores the message it sends (publish_log.sent_message, CIS 464) and the retry lookup
+    searches for the stored text first (services/acp_publish/dispatch.find_remote)."""
+    cfg = ai_disclosure_setting.config()
+    line = ai_disclosure_setting.text_for(lang, cfg) or DISCLOSURE_TEXT
+    tag = ai_disclosure_setting.social_tag(cfg) or SOCIAL_DISCLOSURE_TAG
+    return f"{content_text.rstrip()}\n\n{line} {tag}"
 
 
 def text_mark_line(mark: dict) -> str:
@@ -188,10 +213,10 @@ def text_mark_line(mark: dict) -> str:
     return f"{TEXT_MARK_LABEL} " + "; ".join(f"{name}={clean(value)}" for name, value in _mark_fields(mark))
 
 
-def text_with_disclosure(content_text: str, mark: dict) -> str:
-    """AA-1168 — the plain-text export: the piece text, then a `---` rule, the disclosure line and the
+def text_with_disclosure(content_text: str, mark: dict, lang: Optional[str] = None) -> str:
+    """AA-1168 — the plain-text export: the piece text, then a `---` rule, the disclosure line in force and the
     machine-readable line (a saved `.txt` keeps no HTTP headers, so the mark travels in the text)."""
-    return f"{content_text.rstrip()}\n\n---\n{DISCLOSURE_TEXT}\n{text_mark_line(mark)}\n"
+    return f"{content_text.rstrip()}\n\n---\n{disclosure_text(lang)}\n{text_mark_line(mark)}\n"
 
 
 def wordpress_post_meta(mark: dict) -> dict:
@@ -284,7 +309,7 @@ async def writer_answer(conn, request_id, piece_id) -> Optional[dict]:
 
 __all__ = ["ANSWER_KEY", "CATALOG_GENERATOR", "CATALOG_TEXT_FIELDS", "DISCLOSURE_TEXT", "GENERATOR",
            "IPTC_DIGITAL_SOURCE_TYPE", "PROVENANCE_KEY", "SOCIAL_DISCLOSURE_TAG", "TEXT_MARK_LABEL",
-           "WRITER_ANSWER_SQL", "WRITER_MODEL_SQL", "disclosure_html", "docx_properties", "html_attributes",
-           "html_meta_tags", "piece_mark", "response_headers", "social_message", "stamp", "text_mark_line",
-           "text_with_disclosure", "tour_mark", "version_mark", "wordpress_post_meta", "writer_answer",
-           "writer_model"]
+           "WRITER_ANSWER_SQL", "WRITER_MODEL_SQL", "disclosure_html", "disclosure_text", "docx_properties",
+           "html_attributes", "html_meta_tags", "piece_mark", "response_headers", "social_message", "social_tag",
+           "stamp", "text_mark_line", "text_with_disclosure", "tour_mark", "version_mark", "wordpress_post_meta",
+           "writer_answer", "writer_model"]

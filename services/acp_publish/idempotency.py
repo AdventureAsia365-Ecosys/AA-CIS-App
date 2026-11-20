@@ -18,6 +18,12 @@ AA-819 — `daily_limit` (services/acp_publish/daily_limit.py): checked only whe
 NEW counted row (a failed row turned back into `requested`, or a fresh insert), never on a replay, an
 in-flight 409 or a stale reclaim of an already-counted row. The count runs under a per-tenant advisory
 lock taken after this piece's row lock (one lock order for every caller).
+
+AA-1168 (CIS 464) — `sent_message`: the exact text a social post carries (piece text + the AI disclosure line, whose
+wording is an admin setting). A new row stores it at claim time, before the remote call; a prior attempt's row keeps
+the text that attempt sent (Claim.prior_message), so the retry looks for that text, not only for the one rebuilt with
+the wording in force now. When the retry finds nothing and posts again, record_sent_message() replaces the stored
+text right before the post (after the lookup, so an attempt that dies in between never loses the earlier text).
 """
 from __future__ import annotations
 
@@ -59,15 +65,16 @@ class Claim:
     row: Optional[dict] = None      # the published row, for state == "published"
     used: Optional[int] = None      # AA-819, state == "limited": publishes counted today
     limit: Optional[int] = None     # AA-819, state == "limited": the tenant's daily limit
+    prior_message: Optional[str] = None  # AA-1168, prior_attempt: the text the earlier attempt stored (or None)
 
 
 async def claim(conn, *, piece_id, tenant_id, channel: str, key: str,
-                daily_limit: Optional[int] = None) -> Claim:
+                daily_limit: Optional[int] = None, sent_message: Optional[str] = None) -> Claim:
     try:
         async with conn.transaction():
             rows = await conn.fetch(
                 f"""
-                SELECT {_ROW_COLS},
+                SELECT {_ROW_COLS}, sent_message,
                        requested_at < now() - make_interval(secs => $3) AS stale
                 FROM acp_shared.publish_log
                 WHERE piece_id = $1::uuid AND tenant_id = $2::uuid
@@ -89,7 +96,8 @@ async def claim(conn, *, piece_id, tenant_id, channel: str, key: str,
                     "UPDATE acp_shared.publish_log SET requested_at = now() WHERE publish_id = $1::uuid",
                     requested["publish_id"],
                 )
-                return Claim("claimed", publish_id=requested["publish_id"], prior_attempt=True)
+                return Claim("claimed", publish_id=requested["publish_id"], prior_attempt=True,
+                             prior_message=requested.get("sent_message"))
 
             # AA-819 — from here on the claim makes a new counted row: enforce the daily limit.
             if daily_limit is not None:
@@ -103,31 +111,44 @@ async def claim(conn, *, piece_id, tenant_id, channel: str, key: str,
             # response was lost, so it counts as a prior attempt.
             failed = next((r for r in rows if r["status"] == "failed"), None)
             if failed:
+                prior = failed["idempotency_key"] in (key, None)
+                # AA-1168: a prior attempt of this revision keeps the text it sent (the retry looks for it first); a
+                # failed row of another revision never posted this text, so it takes the new one.
                 await conn.execute(
                     """
                     UPDATE acp_shared.publish_log
                     SET status = 'requested', idempotency_key = $2, requested_at = now(),
-                        channel = $3, last_error = NULL
+                        channel = $3, last_error = NULL,
+                        sent_message = CASE WHEN $4 THEN sent_message ELSE $5 END
                     WHERE publish_id = $1::uuid
                     """,
-                    failed["publish_id"], key, channel,
+                    failed["publish_id"], key, channel, prior, sent_message,
                 )
-                prior = failed["idempotency_key"] in (key, None)
-                return Claim("claimed", publish_id=failed["publish_id"], prior_attempt=prior)
+                return Claim("claimed", publish_id=failed["publish_id"], prior_attempt=prior,
+                             prior_message=failed.get("sent_message") if prior else None)
 
             publish_id = await conn.fetchval(
                 """
                 INSERT INTO acp_shared.publish_log
-                    (piece_id, tenant_id, channel, status, idempotency_key, requested_at)
-                VALUES ($1::uuid, $2::uuid, $3, 'requested', $4, now())
+                    (piece_id, tenant_id, channel, status, idempotency_key, requested_at, sent_message)
+                VALUES ($1::uuid, $2::uuid, $3, 'requested', $4, now(), $5)
                 RETURNING publish_id::text
                 """,
-                piece_id, tenant_id, channel, key,
+                piece_id, tenant_id, channel, key, sent_message,
             )
             return Claim("claimed", publish_id=publish_id)
     except asyncpg.UniqueViolationError:
         # A concurrent call inserted/claimed the same key between our read and write.
         return Claim("in_progress")
+
+
+async def record_sent_message(conn, *, publish_id: str, tenant_id, sent_message: str) -> None:
+    """AA-1168 — a retry found no earlier post and is about to post `sent_message`: store it first, so a later retry
+    looks for the text actually sent. Raises on a DB error (the caller must not post without the record)."""
+    await conn.execute(
+        "UPDATE acp_shared.publish_log SET sent_message = $3 WHERE publish_id = $1::uuid AND tenant_id = $2::uuid",
+        publish_id, tenant_id, sent_message,
+    )
 
 
 async def finish(conn, *, publish_id: str, tenant_id, success: bool, external_id: Optional[str],

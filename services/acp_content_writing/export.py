@@ -40,7 +40,7 @@ _HTML_DOC_TEMPLATE = """<!DOCTYPE html>
 
 
 def render_content_text_to_fragment(content_text: str, *, ai: Optional[dict] = None,
-                                    meta_tags: bool = True) -> str:
+                                    meta_tags: bool = True, lang: Optional[str] = None) -> str:
     """AA-613 — convert a blog piece's markdown `content_text` into a bare HTML `<article>`
     fragment (no <html>/<head>/<style> wrapper). This is what gets PUBLISHED to a CMS
     (WordPress etc.) and what a tenant embeds into their own page — the surrounding document
@@ -53,17 +53,18 @@ def render_content_text_to_fragment(content_text: str, *, ai: Optional[dict] = N
     caller with a real piece passes it; None keeps the AA-613 output byte for byte.
 
     AA-1168 — with `ai`, the article also ends with the visible disclosure paragraph
-    (ai_marking.disclosure_html(): EU AI Act Art. 50, the reader of the post or embed sees it)."""
+    (ai_marking.disclosure_html(): EU AI Act Art. 50, the reader of the post or embed sees it), in the wording of the
+    setting cis.content.ai_disclosure for `lang` (None: English)."""
     body = markdown.markdown(content_text, extensions=["extra", "nl2br"])
     if ai is None:
         return f"<article>\n{body}\n</article>"
     tail = f"\n{ai_marking.html_meta_tags(ai)}" if meta_tags else ""
-    return (f"<article{ai_marking.html_attributes(ai)}>\n{body}\n{ai_marking.disclosure_html(ai)}\n"
+    return (f"<article{ai_marking.html_attributes(ai)}>\n{body}\n{ai_marking.disclosure_html(ai, lang)}\n"
             f"</article>{tail}")
 
 
 def render_content_text_to_document(content_text: str, *, title: str = "Content",
-                                    ai: Optional[dict] = None) -> str:
+                                    ai: Optional[dict] = None, lang: Optional[str] = None) -> str:
     """AA-613 — convert a blog piece's markdown `content_text` into a standalone, openable HTML
     document (full <html>/<head>/<style> chrome). This is the DOWNLOAD/preview mode — a real
     .html file a tenant can open directly, not a snippet meant to be inlined.
@@ -73,15 +74,15 @@ def render_content_text_to_document(content_text: str, *, title: str = "Content"
     return _HTML_DOC_TEMPLATE.format(
         title=html_escape.escape(title),
         ai_meta=f"{ai_marking.html_meta_tags(ai)}\n" if ai is not None else "",
-        body=render_content_text_to_fragment(content_text, ai=ai, meta_tags=False),
+        body=render_content_text_to_fragment(content_text, ai=ai, meta_tags=False, lang=lang),
     )
 
 
-def render_content_text_to_plain(content_text: str, *, ai: dict) -> str:
+def render_content_text_to_plain(content_text: str, *, ai: dict, lang: Optional[str] = None) -> str:
     """AA-1168 — the plain-text download (every channel): the piece text, then the visible disclosure line and the
     one-line `AI-Content:` mark (ai_marking.text_with_disclosure()). A saved `.txt` file keeps no HTTP headers, so the
     mark has to travel in the text itself."""
-    return ai_marking.text_with_disclosure(content_text, ai)
+    return ai_marking.text_with_disclosure(content_text, ai, lang)
 
 
 def render_content_text_to_html(content_text: str, *, title: str = "Content") -> str:
