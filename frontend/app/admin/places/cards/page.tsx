@@ -6,10 +6,11 @@
 // /admin/content-quality/place-cards* (BFF write rule content-quality/place-cards, TENANT_QA).
 //   AA-772 cards: verify / reject, build the missing cards for one tour (job); S234: review duplicate candidates and
 //   merge them into one card; AA-774 (S235): "Facts" opens a drawer to re-kind / edit / drop a card's facts.
-// View state (status, search, page) in the URL, read once hydrated (deep links never mismatch the server render).
+// View state (status, search, page) in the URL (lib/placeCardsView.ts), read with useLinkFilters (useSearchParams):
+// S286 live check F1, a window.location read during render missed the My work tile's ?status= on a client-side click.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
+import { Suspense, useCallback, useMemo, useState } from "react";
 import {
   K, mono,
   Button,
@@ -22,29 +23,18 @@ import type { Catalog, Messages } from "../../../_kit/core/i18n";
 import PlaceCardFactsDrawer from "./PlaceCardFactsDrawer";
 import type { DuplicateCluster, Paged, PlaceCard } from "./shared";
 import { CARD_STATUS, DUPLICATE_REASON, PC } from "./messages";
+import { useLinkFilters } from "../../_components/useLinkFilters";
+import { placeCardsSearch, placeCardsViewFromSearch, type PlaceCardsView } from "@/lib/placeCardsView";
 
 const PAGE_SIZE = 50;
 
-interface View { status: string; q: string; page: number }
-const EMPTY: View = { status: "", q: "", page: 0 };
-
-function readView(): View {
-  if (typeof window === "undefined") return { ...EMPTY };
-  const p = new URLSearchParams(window.location.search);
-  return { status: p.get("status") ?? "", q: p.get("q") ?? "", page: Math.max(0, (Number(p.get("page")) || 1) - 1) };
-}
+type View = PlaceCardsView;
 
 function writeView(v: View) {
   if (typeof window === "undefined") return;
-  const p = new URLSearchParams();
-  if (v.status) p.set("status", v.status);
-  if (v.q) p.set("q", v.q);
-  if (v.page) p.set("page", String(v.page + 1));
-  const qs = p.toString();
+  const qs = placeCardsSearch(v);
   window.history.replaceState(null, "", qs ? `?${qs}` : window.location.pathname);
 }
-
-const noopSubscribe = () => () => {};
 
 const inputStyle: React.CSSProperties = {
   fontSize: 12, padding: "6px 8px", border: `1px solid ${K.line}`, borderRadius: 6, background: K.card, color: K.ink3,
@@ -236,10 +226,9 @@ function PlaceCardsTable({ view, update }: { view: View; update: (p: Partial<Vie
 
 function Page() {
   const t = useT(PC);
-  const hydrated = useSyncExternalStore(noopSubscribe, () => true, () => false);
-  const [edited, setEdited] = useState<View | null>(null);
-  const view = edited ?? (hydrated ? readView() : EMPTY);
-  const update = (patch: Partial<View>) => { const n = { ...view, ...patch }; writeView(n); setEdited(n); };
+  // AA-1156: the My work tile opens this list on ?status=auto_checked
+  const [view, setView] = useLinkFilters(placeCardsViewFromSearch);
+  const update = (patch: Partial<View>) => { const n = { ...view, ...patch }; writeView(n); setView(n); };
   return (
     <PageFrame>
       <PageHeader title={t("title")} description={t("description")} />
@@ -251,5 +240,6 @@ function Page() {
 }
 
 export default function PlaceCardsPage() {
-  return <ToastProvider><Page /></ToastProvider>;
+  // useSearchParams (useLinkFilters): a Suspense boundary for `next build`.
+  return <ToastProvider><Suspense><Page /></Suspense></ToastProvider>;
 }

@@ -33,7 +33,6 @@ import {
 } from "../../_kit";
 import { can } from "@/lib/rbac";
 import {
-  EMPTY_FILTERS,
   KINDS,
   LOCALES,
   STATUSES,
@@ -70,7 +69,7 @@ export default function AaContentConsole() {
   const role = useAdminIdentity().role;
   const canWrite = can(role, "content.write");
   // AA-1156: a link may open the list filtered (?status=draft, the My work tile)
-  const [filters, setFilters] = useLinkFilters(filtersFromSearch, EMPTY_FILTERS);
+  const [filters, setFilters] = useLinkFilters(filtersFromSearch);
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(PAGE_SIZES[0]);
   const [openGroup, setOpenGroup] = useState<string | null>(null);
