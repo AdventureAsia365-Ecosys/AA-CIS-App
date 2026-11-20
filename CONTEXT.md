@@ -1641,6 +1641,11 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     tenant edit (no migration). `services/acp_content_writing/ai_marking.py` builds the mark: `piece["ai"]` in the
     tenant JSON, `data-ai-*` on the `<article>` and `<meta name="ai-*">` tags in exports and the WordPress post, the
     `X-AI-*` headers of a download. Facebook Page text posts have no API label (the mark stays in the piece).
+    **AA-1168:** every channel that shows the text also shows the disclosure line (`ai_marking.DISCLOSURE_TEXT`): the
+    last paragraph of the `<article>` (WordPress post, HTML exports), the end of a Facebook post (plus `#AIgenerated`;
+    the retry lookup searches the same message), and the plain-text export, which also ends with one parseable
+    `AI-Content:` line (a saved `.txt` has no headers). WordPress posts also send the mark as REST post meta (`ai_*`
+    keys, stored only when the site registered them).
     T2 versions: `project_version()` adds `ai` from `edit_source` (`tenant_edit` = human-edited) and the DOCX download
     carries it in its core properties (keywords `ai-generated`, comments).
     Master catalog text (A-series `published_tours.aa_*`, S1 writer): `project_tour()` adds `ai` (`generator`

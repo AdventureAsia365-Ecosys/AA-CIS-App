@@ -57,13 +57,20 @@ def _slug(piece, key: str) -> str:
     return blog_slug(piece.get("slug") or piece.get("angle_name") or "", key)
 
 
+def facebook_message(piece) -> str:
+    """AA-1168 — the Facebook post text: the piece text, then the AI disclosure line and `#AIgenerated` (the Page
+    feed has no AI field for a text post, so the disclosure travels in the text). find_remote() matches this same
+    message, so a retry finds the post an earlier attempt created."""
+    return ai_marking.social_message(piece["content_text"], piece_ai_mark(piece))
+
+
 async def find_remote(channel: str, creds: dict, piece, key: str) -> Optional[tuple]:
     """AA-726 — (external_id, external_url) of a post an earlier attempt already created, or None (WordPress by
     the revision slug, Facebook by the message). A lookup that fails raises, so the caller never posts blind."""
     if channel == "blog":
         result = await _wordpress(creds).find_post_by_slug(_slug(piece, key))
     else:
-        result = await _facebook(creds).find_recent_post(piece["content_text"])
+        result = await _facebook(creds).find_recent_post(facebook_message(piece))
     return (str(result.post_id), result.post_url) if result else None
 
 
@@ -80,16 +87,20 @@ async def publish_to_channel(channel: str, creds: dict, piece, key: str) -> tupl
         # chrome; the standalone-document mode is for tenant download, not publish).
         # AA-1040 — the fragment carries the machine-readable AI mark (data-ai-* on the <article>, then the
         # <meta name="ai-*"> tags), so the published page says the text is AI-generated.
+        # AA-1168 — the article ends with the visible disclosure line, and the post sends the mark as REST post
+        # meta too (kept by a site that registered the keys).
+        mark = piece_ai_mark(piece)
         content = BlogContent(
-            title=title, content_html=render_content_text_to_fragment(piece["content_text"], ai=piece_ai_mark(piece)),
+            title=title, content_html=render_content_text_to_fragment(piece["content_text"], ai=mark),
             slug=_slug(piece, key), seo_title=title, seo_meta=piece.get("meta_description") or "",
-            status="publish",
+            status="publish", meta=ai_marking.wordpress_post_meta(mark),
         )
         result = await _wordpress(creds).create_post(content)
     else:  # channel == "facebook" — the only other channel SUPPORTED_CHANNELS lets through
         # AA-1040 — the Graph API Page feed has no AI label for a text post; the mark stays in the piece
         # (writer_input.ai_provenance) and its publish_log row (root AI Use Register, "Machine-readable marking").
-        result = await _facebook(creds).create_post(SocialPost(message=piece["content_text"]))
+        # AA-1168 — the post text ends with the visible disclosure and #AIgenerated (facebook_message()).
+        result = await _facebook(creds).create_post(SocialPost(message=facebook_message(piece)))
     return str(result.post_id), result.post_url
 
 
@@ -127,5 +138,5 @@ async def delete_remote(channel: str, creds: dict, external_id: str) -> str:
     return await _facebook(creds).delete_post(external_id)
 
 
-__all__ = ["INTEGRATION_TYPE", "SUPPORTED_CHANNELS", "channel_display_name", "delete_remote", "find_remote",
-           "other_account", "piece_ai_mark", "publish_to_channel", "put_back_remote"]
+__all__ = ["INTEGRATION_TYPE", "SUPPORTED_CHANNELS", "channel_display_name", "delete_remote", "facebook_message",
+           "find_remote", "other_account", "piece_ai_mark", "publish_to_channel", "put_back_remote"]
