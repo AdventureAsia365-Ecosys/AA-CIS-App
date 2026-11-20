@@ -97,7 +97,7 @@ async def claim(conn, *, piece_id, tenant_id, channel: str, key: str,
                     requested["publish_id"],
                 )
                 return Claim("claimed", publish_id=requested["publish_id"], prior_attempt=True,
-                             prior_message=requested["sent_message"])
+                             prior_message=requested.get("sent_message"))
 
             # AA-819 — from here on the claim makes a new counted row: enforce the daily limit.
             if daily_limit is not None:
@@ -125,7 +125,7 @@ async def claim(conn, *, piece_id, tenant_id, channel: str, key: str,
                     failed["publish_id"], key, channel, prior, sent_message,
                 )
                 return Claim("claimed", publish_id=failed["publish_id"], prior_attempt=prior,
-                             prior_message=failed["sent_message"] if prior else None)
+                             prior_message=failed.get("sent_message") if prior else None)
 
             publish_id = await conn.fetchval(
                 """

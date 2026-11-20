@@ -128,3 +128,62 @@ async def test_unique_index_and_status_check(pool):
     await pool.execute(insert, piece, TENANT, "unpublished")    # history rows are not constrained
     with pytest.raises(asyncpg.CheckViolationError):
         await pool.execute(insert, str(uuid.uuid4()), TENANT, "bogus")
+
+
+# ── AA-1168 (CIS 464): the social post text an attempt sent, for the retry lookup ─────────────────────────────
+
+async def _claim_msg(pool, piece, key, message):
+    async with pool.acquire() as conn:
+        return await idem.claim(conn, piece_id=piece, tenant_id=TENANT, channel="facebook", key=key,
+                                sent_message=message)
+
+
+async def _stored(pool, publish_id):
+    return await pool.fetchval("SELECT sent_message AS ok FROM acp_shared.publish_log WHERE publish_id = $1::uuid",
+                               publish_id)
+
+
+@pytest.mark.asyncio
+async def test_aa1168_the_sent_text_is_stored_kept_on_a_retry_and_replaced_only_by_a_record(pool):
+    piece = str(uuid.uuid4())
+    key = idem.publish_key(piece, "facebook", "A quiet pier.")
+    first = await _claim_msg(pool, piece, key, "A quiet pier.\n\nOld wording. #OldTag")
+    assert not first.prior_attempt and first.prior_message is None
+    assert await _stored(pool, first.publish_id) == "A quiet pier.\n\nOld wording. #OldTag"
+
+    # the attempt died mid-call; the wording changed before the retry
+    await pool.execute("UPDATE acp_shared.publish_log SET requested_at = now() - interval '10 minutes' "
+                       "WHERE publish_id = $1::uuid", first.publish_id)
+    retry = await _claim_msg(pool, piece, key, "A quiet pier.\n\nNew wording. #NewTag")
+    assert retry.prior_attempt and retry.publish_id == first.publish_id
+    assert retry.prior_message == "A quiet pier.\n\nOld wording. #OldTag"
+    assert await _stored(pool, first.publish_id) == "A quiet pier.\n\nOld wording. #OldTag"   # kept for the lookup
+
+    async with pool.acquire() as conn:   # nothing found remotely: the route records the new text, then posts it
+        await idem.record_sent_message(conn, publish_id=retry.publish_id, tenant_id=TENANT,
+                                       sent_message="A quiet pier.\n\nNew wording. #NewTag")
+    assert await _stored(pool, first.publish_id) == "A quiet pier.\n\nNew wording. #NewTag"
+
+
+@pytest.mark.asyncio
+async def test_aa1168_a_failed_row_keeps_its_text_for_its_revision_and_takes_the_new_one_for_another(pool):
+    piece = str(uuid.uuid4())
+    key = idem.publish_key(piece, "facebook", "Lantern market.")
+    c = await _claim_msg(pool, piece, key, "Lantern market.\n\nOld wording. #OldTag")
+    await _finish(pool, c.publish_id, False)
+    same = await _claim_msg(pool, piece, key, "Lantern market.\n\nNew wording. #NewTag")
+    assert same.prior_attempt and same.prior_message == "Lantern market.\n\nOld wording. #OldTag"
+    assert await _stored(pool, c.publish_id) == "Lantern market.\n\nOld wording. #OldTag"
+    await _finish(pool, same.publish_id, False)
+
+    edited = idem.publish_key(piece, "facebook", "Lantern market at dusk.")
+    other = await _claim_msg(pool, piece, edited, "Lantern market at dusk.\n\nNew wording. #NewTag")
+    assert not other.prior_attempt and other.prior_message is None
+    assert await _stored(pool, c.publish_id) == "Lantern market at dusk.\n\nNew wording. #NewTag"
+
+
+@pytest.mark.asyncio
+async def test_aa1168_a_blog_claim_stores_no_text(pool):
+    piece = str(uuid.uuid4())
+    c = await _claim(pool, piece, idem.publish_key(piece, "blog", "text"))
+    assert await _stored(pool, c.publish_id) is None

@@ -46,6 +46,7 @@ Manager and the publish_log bookkeeping.
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 from datetime import datetime, timezone
 from typing import Annotated, Optional
@@ -466,6 +467,29 @@ def _held_refusal(tenant: dict) -> JSONResponse:
     )
 
 
+async def _find_or_post(scope, tenant_id, piece_id, channel: str, creds: dict, piece, key: str,
+                        claimed, message: Optional[str]) -> tuple:
+    """The remote step of publish(): (external_id, external_url); raises on any failure.
+
+    AA-726 read-before-retry — a prior attempt may have posted although its response was lost, so it is looked up
+    first (a lookup that fails raises: never post blind). AA-1168 — Facebook matches the text that attempt stored
+    (claimed.prior_message, publish_log.sent_message) as well as the one rebuilt now (the AI disclosure wording is a
+    setting and may have changed). Nothing found and a different text to send: the new text is recorded on the row
+    before the post (a record that fails is a failed attempt, never a post the next retry could not find). `scope()`
+    opens publish()'s scoped tenant connection (the publish flag stays publish()'s own)."""
+    found = None
+    if claimed.prior_attempt:
+        found = await find_remote(channel, creds, piece, key, sent_message=claimed.prior_message)
+    if found:
+        logger.info("channel_publish_found_remote", tenant_id=tenant_id, piece_id=str(piece_id), channel=channel,
+                    external_id=found[0])
+        return found
+    if claimed.prior_attempt and message and message != claimed.prior_message:
+        async with scope() as (conn, _):
+            await record_sent_message(conn, publish_id=claimed.publish_id, tenant_id=tenant_id, sent_message=message)
+    return await publish_to_channel(channel, creds, piece, key, message=message)
+
+
 @router.post("/{piece_id}/publish")
 async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant),
                   body: Annotated[Optional[PublishBody], Body()] = None):
@@ -601,24 +625,9 @@ async def publish(piece_id: UUID, request: Request, tenant=Depends(get_tenant),
         return _publish_response(row, success=True, replayed=True)
 
     try:
-        found = None
-        if claimed.prior_attempt:
-            # AA-726 read-before-retry — an earlier attempt may have posted although its
-            # response was lost. A lookup that fails raises, so we never post blind.
-            # AA-1168: Facebook matches the text that attempt stored as well as the one rebuilt now.
-            found = await find_remote(channel, creds, piece, key, sent_message=claimed.prior_message)
-        if found:
-            external_id, external_url = found
-            logger.info("channel_publish_found_remote", tenant_id=tenant_id, piece_id=str(piece_id),
-                        channel=channel, external_id=external_id)
-        else:
-            if claimed.prior_attempt and message and message != claimed.prior_message:
-                # AA-1168: nothing found, so this retry posts the text built now; record it first (a write that
-                # fails is a failed attempt, never a post the next retry could not find).
-                async with acquire_scoped_conn(request, tenant_id, PUBLISH_FLAG, fail_closed=True) as (conn, _):
-                    await record_sent_message(conn, publish_id=claimed.publish_id, tenant_id=tenant_id,
-                                              sent_message=message)
-            external_id, external_url = await publish_to_channel(channel, creds, piece, key, message=message)
+        scope = functools.partial(acquire_scoped_conn, request, tenant_id, PUBLISH_FLAG, fail_closed=True)
+        external_id, external_url = await _find_or_post(scope, tenant_id, piece_id, channel, creds, piece, key,
+                                                        claimed, message)
         success = True
         error_msg = None
     except Exception as exc:  # noqa: BLE001 — the adapter already validated the response shape
