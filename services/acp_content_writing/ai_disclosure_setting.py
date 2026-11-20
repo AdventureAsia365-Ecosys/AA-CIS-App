@@ -42,6 +42,34 @@ _TAG_RE = re.compile(r"^#[A-Za-z0-9_]{2,50}$")
 _FIELDS = frozenset({"text", "social_tag"})
 
 
+def _line_problem(lang: Any, line: Any) -> Optional[str]:
+    if not isinstance(lang, str) or not _LANG_RE.match(lang):
+        return f"language code {lang!r} must be two lowercase letters (en, vi, ...)"
+    if not isinstance(line, str) or not line.strip():
+        return f"the {lang} line must not be empty: the disclosure cannot be switched off"
+    if "\n" in line or "\r" in line:
+        return f"the {lang} line must be one line"
+    if len(line.strip()) > TEXT_MAX_CHARS:
+        return f"the {lang} line is longer than {TEXT_MAX_CHARS} characters"
+    return None
+
+
+def _text_problem(text: Any) -> Optional[str]:
+    if not isinstance(text, dict) or not text:
+        return "\"text\" must be an object of language code to disclosure line, with \"en\""
+    if FALLBACK_LANG not in text:
+        return "\"text\" must have an English line (\"en\"): it is the fallback of every other language"
+    return next((p for p in (_line_problem(lang, line) for lang, line in text.items()) if p), None)
+
+
+def _tag_problem(tag: Any) -> Optional[str]:
+    if not isinstance(tag, str) or not tag.strip():
+        return "\"social_tag\" must not be empty: a social post always carries the tag"
+    if not _TAG_RE.match(tag):
+        return "\"social_tag\" must be one hashtag: # then 2 to 50 letters, digits or _"
+    return None
+
+
 def value_problem(value: Any) -> Optional[str]:
     """Why ``value`` is not a valid disclosure setting (None when it is). The API answers 422 with this reason."""
     if not isinstance(value, dict):
@@ -49,26 +77,7 @@ def value_problem(value: Any) -> Optional[str]:
     extra = sorted(set(value) - _FIELDS)
     if extra:
         return f"unknown field {extra[0]!r} (allowed: text, social_tag)"
-    text = value.get("text")
-    if not isinstance(text, dict) or not text:
-        return "\"text\" must be an object of language code to disclosure line, with \"en\""
-    if FALLBACK_LANG not in text:
-        return "\"text\" must have an English line (\"en\"): it is the fallback of every other language"
-    for lang, line in text.items():
-        if not isinstance(lang, str) or not _LANG_RE.match(lang):
-            return f"language code {lang!r} must be two lowercase letters (en, vi, ...)"
-        if not isinstance(line, str) or not line.strip():
-            return f"the {lang} line must not be empty: the disclosure cannot be switched off"
-        if "\n" in line or "\r" in line:
-            return f"the {lang} line must be one line"
-        if len(line.strip()) > TEXT_MAX_CHARS:
-            return f"the {lang} line is longer than {TEXT_MAX_CHARS} characters"
-    tag = value.get("social_tag")
-    if not isinstance(tag, str) or not tag.strip():
-        return "\"social_tag\" must not be empty: a social post always carries the tag"
-    if not _TAG_RE.match(tag):
-        return "\"social_tag\" must be one hashtag: # then 2 to 50 letters, digits or _"
-    return None
+    return _text_problem(value.get("text")) or _tag_problem(value.get("social_tag"))
 
 
 def _normalized(value: dict) -> dict:
