@@ -511,7 +511,6 @@
   "frontend/app/admin/platform/staff/StaffDirectory.tsx::StaffDirectory": 19,
   "frontend/app/admin/platform/staff/StaffDirectory.tsx::StaffDrawer": 23,
   "frontend/app/admin/platform/staff/StaffManage.tsx::StaffManagePanel": 49,
-  "frontend/app/admin/platform/staff/StaffManage.tsx::pricingTeamPlan": 12,
   "frontend/app/admin/reference-prices/ReferencePricesConsole.tsx::ImportModal": 16,
   "frontend/app/admin/reference-prices/ReferencePricesConsole.tsx::ParseModal": 13,
   "frontend/app/admin/reference-prices/ReferencePricesConsole.tsx::PriceEditor": 17,

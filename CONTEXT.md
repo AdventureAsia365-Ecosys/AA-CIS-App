@@ -2566,7 +2566,9 @@ as `customer_success`, same scope rules (migration 378 CHECK; A10e-2, AA-1091 S2
 constrains `admin_users` only, `staff_app_grant` has no E2E rule) —, `display_name`, `cognito_iss` + `cognito_sub`, `last_login_at`
 ("last seen"), `is_owner`; `password_hash` nullable, NULL fails closed). A staff member's role in another app
 lives in `shared.staff_app_grant (admin_user_id, app, role)` (`app` = `booking`, roles `admin` / `sales` /
-`contracting` / `content_creator` / `finance` (CIS 363, group `booking-finance`)). AA-Partner (CRM) staff roles are a set per person in
+`contracting` / `finance` (CIS 363, group `booking-finance`); `contracting` is shown as "Product & operations";
+`content_creator` is retired (AA-1150): never granted again, the CHECK still accepts it until no grant holds it, and
+Sync deletes such a grant (audited, `details.retired_booking_role`) and removes `booking-content_creator`). AA-Partner (CRM) staff roles are a set per person in
 `shared.staff_crm_grant (admin_user_id, role)` (AA-1031, migration 330: `platform_admin` / `ops` / `support` =
 WORKFORCE groups `crm-platform-admin` / `crm-ops` / `crm-support`, root ADR 0006b decision 6), written by the same
 directory writer with its own audit field and synced (added and removed) like the CIS / Booking groups; the E2E
@@ -2576,7 +2578,12 @@ preset (AA-1091, `preset="pricing_team"`) gives CIS `customer_success` (Referenc
 (group `booking-contracting`: Booking `pricing.write`, `supply.write`, `trip_plan.write`). It only adds: it fills an empty
 slot (CIS `viewer`, no Booking grant), keeps a role that already has those rights, and refuses (409
 `preset_would_replace`) rather than replace any other role (one role per app: a CIS finance or Booking finance member
-would lose those rights); CRM roles are untouched; one audit row with `details.preset`. Root ADR 0006 +
+would lose those rights); CRM roles are untouched; one audit row with `details.preset`. **Lean people-role presets
+(AA-1150, S286)**: the Staff page leads with three presets, "Administrator" (the `platform_owner` preset above),
+"Business owner" (`preset="business_owner"`: CIS admin + Booking admin, CRM unchanged) and "Content + Product &
+operations" (`preset="content_ops"`: CIS `content_lead`, no Booking role and no CRM role until custom roles exist,
+tech lead decision Q1); every other role (the three fields and the Pricing team preset) is behind "Show all roles".
+Add staff offers the same presets (the create fills the role fields from them). Root ADR 0006 +
 amendments 0006a / 0006b are the design; tenants are separate (`cis_tenant_token`, role `tenant`).
 
 **R2 roles and tenant scope (AA-1035 slice 1, root ADR 0019 d3 / d4; CIS 362-364).** `shared.admin_role` also has

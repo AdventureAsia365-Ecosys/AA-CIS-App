@@ -86,8 +86,8 @@ CIS_ROLE_TEXT: dict[str, str] = {
 BOOKING_ROLE_TEXT: dict[str, str] = {
     "admin": "Booking administrator",
     "sales": "Sales",
-    "contracting": "Contracting (supplier rates, pricing rules, trip plans and departures)",   # AA-1091
-    "content_creator": "Content creator",
+    "contracting": "Product & operations (suppliers, rates, pricing rules, trip plans and departures)",   # AA-1150
+    "content_creator": "Content creator (retired)",   # AA-1150: no longer granted; Sync removes it
     "finance": "Finance (invoices and payments)",
 }
 NO_BOOKING_TEXT = "No access to Booking"
