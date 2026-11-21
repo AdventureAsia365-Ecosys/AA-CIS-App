@@ -55,7 +55,7 @@ def _bundle(at: datetime, **status) -> bytes:
                "summary": "6/6 protected", "detail": {"repos": 6}, "link": "https://github.com/ExampleOrg"},
               {"check_id": "codeql_enabled", "status": "pass", "summary": "6/6", "detail": {"repos": 6}},
               {"check_id": "ci_image_scan_sbom", "status": status.get("ci_image_scan_sbom", "fail"),
-               "summary": "2/3", "detail": {"ok": 2}},
+               "summary": "2/3", "detail": {"ok": 2, "last_date": "2026-11-20"}},
               {"check_id": "vuln_exceptions_valid", "status": "pass", "summary": "0/0", "detail": {}},
               {"check_id": "last_restore_drill", "status": "pass", "detail": {"last_date": "2026-11-02"}},
               {"check_id": "last_access_review", "status": "pass", "detail": {"last_date": "2026-05-01"}},

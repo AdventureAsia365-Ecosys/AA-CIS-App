@@ -154,6 +154,7 @@ def test_score_settings_read_the_compliance_keys():
     values = {"cis.compliance.validity_hours.root_daily": 72, "cis.compliance.collector_heartbeat_hours": 36,
               "cis.compliance.partial_weight": 0.5, "cis.compliance.drill_max_age_days": 90,
               "cis.compliance.access_review_max_age_days": 100, "cis.compliance.docs_overdue_max": 0,
+              "cis.compliance.ci_scan_max_age_days": 8,
               "cis.compliance.reference_scores": {"iso27001:2022": 45.8, "unknown": 1, "soc2:2017": "x"}}
 
     async def aget(key, tenant_id=None):
@@ -163,6 +164,7 @@ def test_score_settings_read_the_compliance_keys():
         refs = asyncio.run(compliance.reference_scores())
     assert s.validity_hours == {"root_daily": 72} and s.heartbeat_hours == 36 and s.partial_weight == 0.5
     assert s.fact_limits["last_access_review"] == ("last_date", 100.0, "age_days")
+    assert s.fact_limits["ci_image_scan_sbom"] == ("last_date", 8.0, "age_days")
     assert s.fact_limits["docs_review_overdue"] == ("overdue", 0.0, "max")
     assert refs == {"iso27001:2022": 45.8}
 

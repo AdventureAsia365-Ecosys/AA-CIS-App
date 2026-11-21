@@ -13,7 +13,8 @@ from api.services import compliance_score as cs
 NOW = datetime(2026, 11, 21, 12, 0, tzinfo=timezone.utc)
 S = cs.ScoreSettings(validity_hours={"root_daily": 72}, heartbeat_hours=36, partial_weight=0.5,
                      fact_limits={"last_restore_drill": ("last_date", 90.0, "age_days"),
-                                  "docs_review_overdue": ("overdue", 0.0, "max")})
+                                  "docs_review_overdue": ("overdue", 0.0, "max"),
+                                  "ci_image_scan_sbom": ("last_date", 8.0, "age_days")})
 
 
 def ev(status="pass", hours_ago=2, source="root_daily", **over):
@@ -119,6 +120,17 @@ def test_evaluate_end_to_end_and_stale_lowers_the_score():
                              fact_limits=S.fact_limits)
     iso = cs.evaluate(reqs, ctls, maps, latest, seen(1), short, NOW)["frameworks"]["iso27001:2022"]
     assert (iso["n_met"], iso["n_stale"], iso["strict_pct"]) == (0, 1, 0.0)
+
+
+def test_an_old_image_scan_fails_on_its_date_even_when_the_collector_said_pass():
+    # the collector reads the newest CI run that scanned; if CI stopped scanning, that run is old but still "pass"
+    fresh = ev(detail={"last_date": "2026-11-20", "run_dates": {"AppA": "2026-11-20"}})
+    assert cs.check_state("ci_image_scan_sbom", fresh, seen(), S, NOW).state == "pass"
+    old = ev(detail={"last_date": "2026-11-06"})
+    st = cs.check_state("ci_image_scan_sbom", old, seen(), S, NOW)
+    assert st.state == "fail" and "15 days old" in st.reason
+    assert cs.check_state("ci_image_scan_sbom", ev(detail={"ok": 3}), seen(), S, NOW).state == "error"
+    assert cs.check_state("ci_image_scan_sbom", ev("fail", detail={}), seen(), S, NOW).state == "fail"
 
 
 def test_settings_changed_on():

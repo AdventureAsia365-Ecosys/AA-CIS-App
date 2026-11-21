@@ -10,7 +10,8 @@ settings-lint reader check, tests/unit/test_s279_settings_lint.py).
 - ``HEARTBEAT_HOURS``: a collector silent longer turns every check it feeds to error.
 - ``PARTIAL_WEIGHT``: the weight of partial coverage in the weighted score (S286: 0.5).
 - ``AGE_LIMITS``: per check whose result is a date, the oldest date that still passes (days), or the most items a
-  count check tolerates.
+  count check tolerates. ``CI_SCAN_MAX_AGE_DAYS`` grades the date of the oldest newest image scan, so a CI scan that
+  stopped running fails instead of passing on an old run.
 - ``REFERENCE_SCORES``: the S286 hand-assessed score per framework, the reference line (display only).
 """
 from __future__ import annotations
@@ -22,6 +23,7 @@ PARTIAL_WEIGHT = "cis.compliance.partial_weight"
 DRILL_MAX_AGE_DAYS = "cis.compliance.drill_max_age_days"
 ACCESS_REVIEW_MAX_AGE_DAYS = "cis.compliance.access_review_max_age_days"
 DOCS_OVERDUE_MAX = "cis.compliance.docs_overdue_max"
+CI_SCAN_MAX_AGE_DAYS = "cis.compliance.ci_scan_max_age_days"
 REFERENCE_SCORES = "cis.compliance.reference_scores"
 
 # check_id -> (fact the collector publishes, key, kind): "age_days" = the fact is an ISO date that must be at most the
@@ -30,7 +32,8 @@ FACT_LIMITS = {
     "last_restore_drill": ("last_date", DRILL_MAX_AGE_DAYS, "age_days"),
     "last_access_review": ("last_date", ACCESS_REVIEW_MAX_AGE_DAYS, "age_days"),
     "docs_review_overdue": ("overdue", DOCS_OVERDUE_MAX, "max"),
+    "ci_image_scan_sbom": ("last_date", CI_SCAN_MAX_AGE_DAYS, "age_days"),
 }
 
 ALL = (*VALIDITY_HOURS.values(), HEARTBEAT_HOURS, PARTIAL_WEIGHT, DRILL_MAX_AGE_DAYS, ACCESS_REVIEW_MAX_AGE_DAYS,
-       DOCS_OVERDUE_MAX, REFERENCE_SCORES)
+       DOCS_OVERDUE_MAX, CI_SCAN_MAX_AGE_DAYS, REFERENCE_SCORES)
