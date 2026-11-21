@@ -82,6 +82,7 @@ router = APIRouter(prefix="/v1/pipeline", tags=["pipeline"],
 from services.content_generation.normalize import (  # noqa: E402
     clean_itinerary, normalize_generated as _normalize_generated,
 )
+from services.ai_safety import prompt_fence  # noqa: E402  AA-1167: the writer prompts' untrusted-data fence
 
 
 def initial_state_for(
@@ -141,6 +142,7 @@ def initial_state_for(
         "brand_signature_words":  _br.get("signature_words", []),
         "subtitle_focus":       subtitle_focus,
         "seo_mode":             seo_mode,
+        "prompt_fence":         prompt_fence.enabled(),  # AA-1167: setting cis.llm.prompt_data_fence, once per run
         # brand audit defaults
         "brand_audit_status": "",
         "brand_audit_codes":  [],
@@ -263,8 +265,7 @@ async def _rewrite_tour(
         # return. Sync node functions are auto-dispatched to a thread-pool executor internally by
         # LangGraph's Runnable wrapping (langgraph._internal._runnable: iscoroutinefunction check
         # -> run_in_executor) when driven via astream, so this does not block the event loop —
-        # the manual run_in_executor(None, run_graph) wrapping the old sync invoke() is no longer
-        # needed.
+        # the manual run_in_executor(None, run_graph) wrapping the old sync invoke() is no longer needed.
         result = dict(initial_state)
         # S271 W0 (AA-900 l13): an A1 tour is one output: its collector of instrument marks and its model trace (the
         # same-family judge mark), read by the graph's final node (route_guard.with_a1_entries). A T2 version binds

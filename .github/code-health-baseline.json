@@ -109,7 +109,6 @@
   "services/acp_content_writing/brief_grounding.py::ground_brief": 11,
   "services/acp_content_writing/claim_rules.py::_decide": 29,
   "services/acp_content_writing/claim_rules.py::number_source_lines": 13,
-  "services/acp_content_writing/generate.py::write_faq": 11,
   "services/acp_content_writing/hygiene.py::_source_ages": 18,
   "services/acp_content_writing/hygiene.py::autofix": 25,
   "services/acp_content_writing/hygiene.py::build_scope_lexicon": 23,

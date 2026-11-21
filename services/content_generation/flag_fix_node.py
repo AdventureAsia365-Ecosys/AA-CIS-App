@@ -7,8 +7,7 @@ import json
 import structlog
 from services.content_generation.stages import stage_for
 from json_repair import repair_json
-
-
+from services.ai_safety import prompt_fence as _pf  # AA-1167: untrusted text in the repair prompts as fenced data
 from shared.llm_client.client import LLMClient
 from shared.llm_client.models import LLMRequest
 from shared.llm_client import token_floor
@@ -43,7 +42,6 @@ STAGE2_FIX_MAPPING = {
     "ITINERARY_MEAL_TIME_INVENTED": "itineraries",
     "ITINERARY_DAY_TITLE_GENERIC":  "itineraries",
     "ITINERARY_STILL_COMPRESSED":   "itineraries",  # AA-329c: dedicated per-day repair, see below
-
     "SEO_TITLE_WEAK":               "seo_title",
     "SEO_TITLE_WRONG_ACTIVITY":     "seo_title",
     "META_INCOMPLETE_SENTENCE":     "seo_meta",
@@ -255,7 +253,7 @@ def _fix_lost(state: dict, reason: str, fields, resp=None) -> dict:
 
 
 def _rerepair_meta(post: str, tour: dict, content: dict, model_tier: str, intent_clue: str = "", forbidden=None,
-                   stage: str = "s1_flag_fix", system_prompt: str = FIX_SYSTEM) -> str:
+                   stage: str = "s1_flag_fix", system_prompt: str = FIX_SYSTEM, fence: bool | None = None) -> str:
     """AA-205 / AA-608: bounded RETRY loop that rewrites seo_meta until it lands in
     [SEO_META_MIN, SEO_META_MAX] as a complete sentence, or the attempt budget is spent.
 
@@ -266,6 +264,7 @@ def _rerepair_meta(post: str, tour: dict, content: dict, model_tier: str, intent
     thrown away. Returns the first in-band result; if none lands, returns the best salvaged
     candidate seen (never worse than the incoming `post`). Never raises — LLM/parse errors
     fall through to the best candidate so far (graceful, same contract as before)."""
+    on = _pf.enabled(fence)  # AA-1167 (None = the setting): the tour line and intent clue fenced, the meta is not
     from .seo_meta_utils import meta_in_band as _in_band, best_meta_candidate as _best, \
         SEO_META_MIN as _MIN, SEO_META_MAX as _MAX
     best = (post or "").strip()
@@ -278,7 +277,8 @@ def _rerepair_meta(post: str, tour: dict, content: dict, model_tier: str, intent
                 "Rewrite this SEO meta description to be " + str(_MIN) + "-" + str(_MAX)
                 + " characters and a COMPLETE sentence ending in a period.\n\n"
                 + "Current (" + str(len(cur)) + " chars, " + too + "): " + json.dumps(cur) + "\n"
-                + "Tour: " + str(content.get("name")) + " - " + str(tour.get("country", "")) + "\n\n"
+                + "Tour: " + _pf.fence("tour_context", str(content.get("name")) + " - " + str(tour.get("country", "")),
+                                       on=on) + "\n\n"
                 + "Rules:\n- MUST be " + str(_MIN) + "-" + str(_MAX) + " characters "
                 + "(current is " + too + " — "
                 + ("add one concrete, source-true detail" if len(cur) < _MIN else "trim, do not truncate mid-word")
@@ -289,17 +289,17 @@ def _rerepair_meta(post: str, tour: dict, content: dict, model_tier: str, intent
                 + (("- Avoid these words entirely: " + ", ".join(sorted(forbidden)) + ".\n")
                    if forbidden else "")
                 + (("- Weave in this real search-intent clue naturally (do not quote verbatim): "
-                   + json.dumps(intent_clue) + "\n") if intent_clue else "")
+                   + _pf.fence("search_question", json.dumps(intent_clue), on=on) + "\n") if intent_clue else "")
                 + "- Return JSON: {\"seo_meta\": \"...\"}"
             )
             with bind_task(TASK_META_REREPAIR):     # AA-1078: the gateway's own rows of this call carry it too
                 resp = LLMClient().generate(LLMRequest(
-                    system_prompt=system_prompt, user_prompt=prompt, model_tier=model_tier, stage=stage,
-                ))
+                    system_prompt=system_prompt + _pf.system_rule(on), user_prompt=prompt, model_tier=model_tier,
+                    stage=stage))
             raw = resp.content.strip()
-            fence = chr(96) * 3
-            if raw[:3] == fence:
-                raw = raw.split(fence)[1]
+            ticks = chr(96) * 3
+            if raw[:3] == ticks:
+                raw = raw.split(ticks)[1]
                 if raw[:4] == "json":
                     raw = raw[4:]
                 raw = raw.strip()
@@ -418,7 +418,7 @@ def _repair_still_compressed_days(state: dict, itinerary_text: str, nudge_budget
         new_title, new_body, resp = nudge_itinerary_day(
             client, source_text, days[day_num]["title"], days[day_num]["body"], target_words,
             stage=stage_for(state, "s1_itinerary_nudge"),  # AA-763
-            voice_hint=nudge_voice_hint(state),  # AA-792: T2 keeps the tenant voice; None for A1
+            voice_hint=nudge_voice_hint(state), fence=state.get("prompt_fence"),  # AA-792; AA-1167 run's fence
         )
         extra_cost += resp.cost_usd
         nudges_used += 1
@@ -599,7 +599,7 @@ def flag_fix_node(state: dict) -> dict:
         # AA-641: the words validate_node fires FORBIDDEN_WORD on (AA list + tenant list). A repair
         # that adds one of them turns a soft/length problem into a hard code and a full rewrite.
         # AA-800: for a T2 tenant rewrite, the tenant's layered list (state_forbidden); A1 unchanged.
-        forbidden = state_forbidden(state, current_content)
+        forbidden, fence = state_forbidden(state, current_content), _pf.enabled(state.get("prompt_fence"))
 
         # AA-201/AA-204: seo_meta repair-to-band rules (port of v5 repair_seo_fields)
         meta_rules = ""
@@ -626,9 +626,9 @@ AUDIT ISSUES FOUND:
 {issues_text}
 
 TOUR CONTEXT:
-Name: {current_content.get("name")}
+{_pf.fence("tour_context", f"""Name: {current_content.get("name")}
 Trip type: {current_content.get("trip_type") or tour.get("trip_type")}
-Duration: {tour.get("duration")}{meta_rules}
+Duration: {tour.get("duration")}""", on=fence)}{meta_rules}
 
 NEVER USE these words or phrases anywhere in your output: {", ".join(forbidden)}.
 
@@ -637,7 +637,7 @@ Keep all other fields unchanged."""
 
         llm_client = LLMClient()
         request = LLMRequest(
-            system_prompt=fix_system_prompt(state),   # AA-792: tenant brand framing on T2
+            system_prompt=fix_system_prompt(state) + _pf.system_rule(fence),   # AA-792 T2 brand; AA-1167 fence
             user_prompt=user_prompt,
             # AA-518: was state.get("model_tier","haiku") — the "haiku" literal masked the
             # "s1_flag_fix" stage config the same way graph.py's generate_node did (see that
@@ -745,7 +745,7 @@ Keep all other fields unchanged."""
                     _post_meta, tour, new_generated, state.get("model_tier"),
                     intent_clue=_clue, forbidden=_meta_forbidden,
                     stage=stage_for(state, "s1_flag_fix"),  # AA-763
-                    system_prompt=fix_system_prompt(state),  # AA-792: tenant brand on T2
+                    system_prompt=fix_system_prompt(state), fence=fence,  # AA-792: tenant brand on T2
                 )
             # AA-608 (H3 finding): if STILL out of band after the bounded re-repair loop,
             # keep the best candidate but DO NOT escalate to manual_check. A meta length

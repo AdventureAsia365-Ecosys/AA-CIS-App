@@ -11,6 +11,10 @@ Channels: blog (WordPress, AA-456/458) and facebook (AA-462 — of the 6 non-blo
 approved pieces first). tiktok / instagram / linkedin / email / ads are not built; the router answers 404
 "not yet supported" for them before anything here runs.
 
+AA-1167 (OWASP LLM05): nothing AI-written leaves here unsanitized: the WordPress body is the sanitized fragment of
+export.render_content_text_to_fragment, the WordPress title and meta description and the Facebook message have their
+markup removed (html_sanitizer.sanitize_plain_text). tests/unit/test_aa1167_publish_guard.py keeps it so.
+
 Every adapter validates its own response (the AA-460 lesson: never trust a bare 2xx) and raises on failure, so
 a function here either returns a real post or raises.
 """
@@ -26,6 +30,7 @@ from services.acp_publish.facebook import FacebookAdapter
 from services.acp_publish.idempotency import blog_slug
 from services.acp_s4_blog.cms.base import BlogContent
 from services.acp_s4_blog.cms.wordpress import WordPressAdapter
+from services.ai_safety.html_sanitizer import sanitize_plain_text
 
 SUPPORTED_CHANNELS = ("blog", "facebook")
 # AA-815 — shared.tenant_integrations.integration_type per channel (v1_integrations.py writes
@@ -67,7 +72,8 @@ def facebook_message(piece) -> str:
     """AA-1168 — the Facebook post text: the piece text, then the AI disclosure line and the tag in force (setting
     cis.content.ai_disclosure; the Page feed has no AI field for a text post, so the disclosure travels in the
     text)."""
-    return ai_marking.social_message(piece["content_text"], piece_ai_mark(piece), piece_lang(piece))
+    return ai_marking.social_message(sanitize_plain_text(piece["content_text"]), piece_ai_mark(piece),
+                                     piece_lang(piece))
 
 
 def post_text(channel: str, piece) -> Optional[str]:
@@ -102,7 +108,8 @@ async def publish_to_channel(channel: str, creds: dict, piece, key: str, message
     if channel == "blog":
         # AA-768 (S233) — the T9 blog's own SEO title/meta (fitted to the 45-60 / 140-155 band)
         # instead of the internal angle name and an empty meta.
-        title = piece.get("seo_title") or piece["angle_name"] or "Untitled"
+        # AA-1167 — WordPress renders the title as HTML for an account allowed raw HTML: markup removed first.
+        title = sanitize_plain_text(piece.get("seo_title") or piece["angle_name"] or "Untitled").strip()
         # AA-613 — content_text is markdown (T9's blog prompt writes `## ` H2s, `**bold**`, FAQ
         # pairs). Publishing it raw into content_html made WordPress show literal `##`/`**`.
         # Render the markdown to a bare <article> fragment first (the CMS supplies the page
@@ -115,7 +122,8 @@ async def publish_to_channel(channel: str, creds: dict, piece, key: str, message
         content = BlogContent(
             title=title, content_html=render_content_text_to_fragment(piece["content_text"], ai=mark,
                                                                      lang=piece_lang(piece)),
-            slug=_slug(piece, key), seo_title=title, seo_meta=piece.get("meta_description") or "",
+            slug=_slug(piece, key), seo_title=title,
+            seo_meta=sanitize_plain_text(piece.get("meta_description") or "").strip(),
             status="publish", meta=ai_marking.wordpress_post_meta(mark),
         )
         result = await _wordpress(creds).create_post(content)

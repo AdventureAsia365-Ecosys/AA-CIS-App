@@ -3,6 +3,7 @@ import re
 
 import structlog
 
+from services.ai_safety import prompt_fence as _pf  # AA-1167: untrusted text as fenced data
 from services.quality import writing_policy as _wp  # AA-1047: the meta / title bands and the background line
 
 logger = structlog.get_logger()
@@ -369,7 +370,7 @@ _SOURCE_FACT_FIELD_LABELS = (
 )
 
 
-def _render_source_facts_block(structured_facts: dict | None) -> str:
+def _render_source_facts_block(structured_facts: dict | None, fence: bool = False) -> str:
     """AA-748: render the SOURCE FACTS BY DAY block (compact, one line per non-empty field per day)
     plus the honesty rule. Returns "" when there are no facts, so the prompt is byte-identical to
     today with the flag off. The returned string begins and ends with a newline so it slots between
@@ -392,7 +393,7 @@ def _render_source_facts_block(structured_facts: dict | None) -> str:
     return (
         "\nSOURCE FACTS BY DAY (extracted from the source; the ONLY place numbers, distances,"
         " durations, altitudes, clock-times and meals may come from):\n"
-        f"{body}\n\n"
+        f"{_pf.fence('source_facts', body, on=fence)}\n\n"
         "SOURCE FACTS RULE: numbers, distances, durations, altitudes, clock-times and meals may"
         " appear in a day's output ONLY if they are listed in SOURCE FACTS for that day — do not add"
         " a figure, time or meal the facts do not list. This rule constrains figures only: write each"
@@ -445,7 +446,7 @@ _USER_VOICE = {
 }
 
 
-def _render_t2_facts_block(facts: str) -> str:
+def _render_t2_facts_block(facts: str, fence: bool = False) -> str:
     """AA-814 follow-up: the T2 FACTS block (the agency's own facts and the platform's, for this trip's country;
     services/content_generation/t2_facts.py). "" when there are none, so the prompt is unchanged. Placed with the
     tour data (before PER-DAY SOURCE LENGTH), ending in a newline like _render_source_facts_block."""
@@ -455,7 +456,7 @@ def _render_t2_facts_block(facts: str) -> str:
     return (
         "\nFACTS (checked facts for this trip's country: the brand's own and the platform's; where both cover the"
         " same subject only the brand's is listed):\n"
-        f"{facts}\n"
+        f"{_pf.fence('facts_entries', facts, on=fence)}\n"
         "Use a fact only where a traveller planning this trip needs it (a price, a season, an entry rule, booking"
         " terms), usually in the summary, or in the day it concerns. Copy every number, price and date exactly as"
         " written here. A fact never changes what TOUR DATA says the trip does. Never add a fact that is in neither"
@@ -472,11 +473,14 @@ _TITLE_MAX = _wp.band("title")[1]
 
 def build_rewrite_prompt(tour: dict, seo: dict, few_shots: list[dict] = None,
                          subtitle_focus: str = "standard", per_day_targets: bool = False,
-                         structured_facts: dict = None, voice: str = "neutral", facts: str = "") -> str:
+                         structured_facts: dict = None, voice: str = "neutral", facts: str = "",
+                         fence: bool = False) -> str:
     """The S1/T2 writer USER prompt. ``voice`` (AA-792): "neutral" for the A1 master catalogue
     (byte-identical to before), "tenant" for a T2 tenant rewrite in the client brand's voice.
     ``facts`` (AA-814 follow-up, T2_FACTS): the T2 source's Facts Entry lines (t2_facts.facts_lines); a FACTS block
-    on a T2 rewrite only. "" (the default, and always for A1) leaves the prompt byte-identical."""
+    on a T2 rewrite only. "" (the default, and always for A1) leaves the prompt byte-identical.
+    ``fence`` (AA-1167, setting cis.llm.prompt_data_fence): the TOUR DATA values, the source and Facts blocks and the
+    SEO context (search data) go between <untrusted_data> tags; False is the prompt byte for byte as before."""
     v = _USER_VOICE["tenant" if voice == "tenant" else "neutral"]
     few_shot_text = ""
     if few_shots:
@@ -534,21 +538,25 @@ def build_rewrite_prompt(tour: dict, seo: dict, few_shots: list[dict] = None,
     # SOURCE LENGTH. structured_facts is None/empty by default -> _source_facts_block is "" and the
     # prompt is byte-identical to today (the raw itinerary stays in the prompt either way; the
     # facts only constrain, they do not replace it).
-    _source_facts_block = _render_source_facts_block(structured_facts)
-    _facts_block = _render_t2_facts_block(facts) if voice == "tenant" else ""
+    _source_facts_block = _render_source_facts_block(structured_facts, fence)
+    _facts_block = _render_t2_facts_block(facts, fence) if voice == "tenant" else ""
+    _tour_data = "\n".join([
+        f"- Name: {tour.get('name')}",
+        f"- Country: {tour.get('country')}",
+        f"- Duration: {tour.get('duration')}",
+        f"- Summary: {tour.get('summary')}",
+        f"- Description: {tour.get('description')}",
+        f"- Highlights: {highlights_text}",
+        f"- Itineraries: {itineraries_for_prompt}",
+        f"- Inclusions: {tour.get('inclusions')}",
+        f"- Exclusions: {tour.get('exclusions')}",
+    ])
+    _seo_context = f"- Target keywords: {', '.join(seo_keywords[:5])}\n- People also ask: {'; '.join(paa[:3])}"
 
     prompt = f"""{v["opening"]}
 {few_shot_text}
 TOUR DATA:
-- Name: {tour.get('name')}
-- Country: {tour.get('country')}
-- Duration: {tour.get('duration')}
-- Summary: {tour.get('summary')}
-- Description: {tour.get('description')}
-- Highlights: {highlights_text}
-- Itineraries: {itineraries_for_prompt}
-- Inclusions: {tour.get('inclusions')}
-- Exclusions: {tour.get('exclusions')}
+{_pf.fence("tour_data", _tour_data, on=fence)}
 {_source_facts_block}{_facts_block}
 PER-DAY SOURCE LENGTH (word count of the source above, one per day — use as the basis for each
 day's target length per rule 5; aim roughly 0.7x-1.3x of that day's number, not a fixed length
@@ -556,8 +564,7 @@ applied to every day):
 {per_day_length_text}
 
 SEO CONTEXT:
-- Target keywords: {', '.join(seo_keywords[:5])}
-- People also ask: {'; '.join(paa[:3])}
+{_pf.fence("search_context", _seo_context, on=fence)}
 
 CRITICAL LENGTH REQUIREMENT — seo_meta: aim {_T2_AIM} characters, hard band {_BAND}, a complete
 sentence ending with a period. Under {_META_MIN} is rejected. Count characters before finalizing.

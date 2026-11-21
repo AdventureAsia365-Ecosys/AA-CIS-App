@@ -113,6 +113,8 @@ def _mirror_initial_state(tour: dict, *, brand_rules: Optional[dict] = None, seo
         "brand_name": _br.get("brand_name", ""), "brand_type": _br.get("brand_type", ""),
         "brand_default_cta": _br.get("default_cta", ""), "brand_signature_words": _br.get("signature_words", []),
         "subtitle_focus": subtitle_focus, "seo_mode": seo_mode,
+        # AA-1167: the untrusted-data fence key initial_state_for adds; off is what the pre image's prompts were.
+        "prompt_fence": False,
         "brand_audit_status": "", "brand_audit_codes": [], "brand_audit_issues": [], "brand_audit_fields": [],
         "lessons_extracted": [], "fix_pass_applied": False, "fix_pass_fields": [], "quality_shadow": [],
         "degraded": [],

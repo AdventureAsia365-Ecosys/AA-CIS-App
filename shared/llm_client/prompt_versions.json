@@ -767,6 +767,38 @@
         "_WALK_FOCUS_RULE"
       ],
       "prompt_sha256": "e16183822e12d7ea7c232167da6c3520c5fd16b15eba4c0f8087af527a8966e7"
+    },
+    {
+      "stage": "s1_generate",
+      "version": "v4",
+      "source_path": "services/content_generation/s1_writer_v2.py",
+      "symbols": [
+        "w_system_prompt",
+        "w_user_prompt",
+        "VERSION"
+      ],
+      "prompt_sha256": "29093d733db81a16413937cc770338b8e97e6bb16649e887bbf8235c9b3a4e69"
+    },
+    {
+      "stage": "t9_write",
+      "version": "v9",
+      "source_path": "services/acp_content_writing/prompts.py",
+      "symbols": [
+        "SYSTEM_PROMPT",
+        "build_user_prompt",
+        "_BLOG_WORDS_TOP",
+        "_blog_words",
+        "_BLOG_WORDS_MAX",
+        "_BLOG_SECTIONS_MAX",
+        "_BLOG_FAQ_PLAN",
+        "_BLOG_RICHEST_SHARE",
+        "_blog_length_plan",
+        "_blog_length_instructions",
+        "_WALK_FOCUS_MARK",
+        "_WALK_FOCUS_RULE",
+        "_seed_with_facts"
+      ],
+      "prompt_sha256": "adeba69b62318b048af0a22ecf3add676393a1c5e4b9f52dab561950cde8f348"
     }
   ]
 }

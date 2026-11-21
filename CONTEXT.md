@@ -5483,6 +5483,21 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   converted to an HTML fragment before it is sent to WordPress (AA-613 fixed raw `##`/`**`
   appearing on the site). Export has two modes: a full HTML document and a bare HTML fragment
   for pasting into a CMS. Every export and publish writes an audit row.
+  **AA-1167 (OWASP LLM05):** nothing AI-written leaves unsanitized. `services/ai_safety/html_sanitizer.py` rebuilds the
+  Markdown render from an allow-list (`export.render_markdown_body`: the WordPress body, both HTML exports and the
+  subject gate's link check; script, iframe, style, svg, form and `on*` handlers go, links only http(s) / mailto / tel /
+  relative, no `img`) and strips markup from plain text (`sanitize_plain_text`: the Facebook message, the plain-text
+  export, the WordPress title and meta description). The allow-lists are security invariants, not settings;
+  `tests/unit/test_aa1167_publish_guard.py` fails on a Markdown render or a post builder that bypasses them.
+  **AA-1167 (OWASP LLM01):** the writer calls of the S1 v2, T2 and T9 flows (the first-draft writers and their repair
+  writers: T9 sentence repair, extend, SEO fit and FAQ; the S1 / T2 / T3 grounding repair, flag fix, meta re-repair
+  and itinerary nudge) can fence every quoted untrusted value (supplier source, Facts Entries, web search data) in
+  `<untrusted_data>` tags with one system line saying it is data, never instructions
+  (`services/ai_safety/prompt_fence.py`), behind the setting `cis.llm.prompt_data_fence` (CIS 467, off = the prompts as
+  before; prompt versions s1_generate v4 / t9_write v9, same CIS 467). The text a repair call is asked to rewrite (the
+  draft sentence, section or meta) stays outside the fence. Judges, filters and extractors (brand audit, F9 / brand
+  fit, FAQ filter and answer fit, seed adjudication, source facts, place cards) are not fenced yet. The trap set
+  (`services/ai_safety/trap_set.py`, paid run `scripts/aa1167/trap_run.py`) measures the writers before it is turned on.
 
 ## Ownership / frequency / cross-tenant table (AA-540)
 
