@@ -240,6 +240,17 @@ def _probe_app(src: AppSource) -> dict:
     }
 
 
+def alarm_owner(name: str, tag_app: Optional[str], apps: list[str],
+                prefixes: list[tuple[str, str]]) -> Optional[str]:
+    """AA-1171: the bucket of one alarm: its App tag (an app, or shared for identity / shared / ecosystem), else the
+    name prefix, else None (not ours). Pure."""
+    if tag_app in apps:
+        return tag_app
+    if tag_app in SHARED_APP_TAGS:
+        return "shared"
+    return next((app for p, app in prefixes if name.startswith(p)), None)
+
+
 def fetch_alarms(client: Any, env: str, tags: Optional[dict[str, dict]] = None) -> tuple[dict, int]:
     """DescribeAlarms (all pages, metric + composite) → ({app or 'shared': {total, firing[], no_data, by_type,
     by_severity}}, calls). ``tags`` ({alarm ARN: tags}, AA-1171) puts each alarm under its App tag; without it (or
@@ -264,13 +275,7 @@ def fetch_alarms(client: Any, env: str, tags: Optional[dict[str, dict]] = None) 
             if name.startswith("TargetTracking-"):
                 continue
             t = tags.get(a.get("AlarmArn", ""), {})
-            tag_app = t.get("App")
-            if tag_app in apps:
-                owner: Optional[str] = tag_app
-            elif tag_app in SHARED_APP_TAGS:
-                owner = "shared"
-            else:
-                owner = next((app for p, app in prefixes if name.startswith(p)), None)
+            owner = alarm_owner(name, t.get("App"), apps, prefixes)
             if owner is None:
                 continue
             bucket = out[owner]

@@ -233,8 +233,8 @@ async def read_one(pool: Any, recipient_id: str) -> Optional[dict]:
 
 # ── Add ──────────────────────────────────────────────────────────────────────────────────────────
 
-async def add(pool: Any, client: Any, *, actor: str, email: Any, note: Any, redis: Any = None,
-              topic: Any = ar.TOPIC_ALERTS) -> dict:
+def _checked_add(topic: Any, email: Any, note: Any) -> tuple[ar.TopicConfig, str, Optional[str]]:
+    """The configuration, address and note of an add, or the refusal (503 / 422 / 409) before any AWS call."""
     cfg = ar.topic_config()
     if cfg is None:
         raise NOT_CONFIGURED
@@ -251,6 +251,12 @@ async def add(pool: Any, client: Any, *, actor: str, email: Any, note: Any, redi
     if cfg.bootstrap_email and address == cfg.bootstrap_email:
         raise AlertRecipientError(409, "This is the bootstrap recipient set in Terraform; it always receives every "
                                        "alert and is not managed here", "bootstrap")
+    return cfg, address, clean_note
+
+
+async def add(pool: Any, client: Any, *, actor: str, email: Any, note: Any, redis: Any = None,
+              topic: Any = ar.TOPIC_ALERTS) -> dict:
+    cfg, address, clean_note = _checked_add(topic, email, note)
     topic_arn = cfg.arn_for(topic)
     try:
         subs = await ar.list_email_subscriptions(client, topic_arn)

@@ -169,16 +169,18 @@ def test_external_budgets_take_account_ids_at_run_time_only():
     rows = cat.external_budget_rows(NOW.isoformat(), {"acc1": "123456789012", "acc3": None, "mgmt": None}.get)
     assert {r["account_id"] for r in rows} == {"123456789012", None}
     assert all(r["editable_via"] == "terraform" and r["state"] == "not_live" for r in rows)
-    src = open(cat.__file__, encoding="utf-8").read()
     import re
-    assert not re.search(r"(?<!\d)\d{12}(?!\d)", src), "no account ID in the public repo"
+    from api.services import alerts_catalogue_budgets as budgets
+    for mod in (cat, budgets):
+        src = open(mod.__file__, encoding="utf-8").read()
+        assert not re.search(r"(?<!\d)\d{12}(?!\d)", src), f"no account ID in the public repo ({mod.__name__})"
 
 
 def test_main_budget_rows_from_the_infra_output():
     infra = {"groups": [{"group": "budgets", "items": [
         {"key": "total_monthly_usd", "value": "300"}, {"key": "total_alerts", "value": "ACTUAL > 80 %"},
         {"key": "per_app_monthly_usd.cis", "value": "120"}, {"key": "cost_anomaly_alert_usd", "value": "5"}]}]}
-    rows = cat.main_budget_rows(infra, NOW.isoformat(), "210987654321")
+    rows = cat.main_budget_rows(infra, NOW.isoformat(), "123456789012")
     assert [r["name"] for r in rows] == ["monthly-total", "monthly-app-cis", "cost-anomaly-immediate"]
     assert rows[1]["app"] == "cis" and rows[0]["threshold"] == "ACTUAL > 80 % of 300 USD"
 

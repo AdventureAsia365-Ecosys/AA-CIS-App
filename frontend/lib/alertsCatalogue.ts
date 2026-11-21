@@ -85,21 +85,35 @@ export function isFiring(r: Pick<CatalogueRow, "state">): boolean {
   return r.state === "ALARM";
 }
 
+function severityOk(r: CatalogueRow, want: string): boolean {
+  if (!want) return true;
+  return want === "untagged" ? r.severity === null : r.severity === want;
+}
+
+function stateOk(r: CatalogueRow, want: string): boolean {
+  if (want === "firing") return isFiring(r);
+  if (want === "quiet") return !isFiring(r);
+  return true;
+}
+
+function textOk(r: CatalogueRow, q: string): boolean {
+  if (!q) return true;
+  const hay = [r.name, r.condition, r.description, r.component, r.threshold_source].filter(Boolean).join(" ");
+  return hay.toLowerCase().includes(q.trim().toLowerCase());
+}
+
 /** Does a row pass the page's filters (all strings from the URL; empty = no filter)? */
 export function matchesRow(r: CatalogueRow, f: CatalogueFilter): boolean {
-  if (f.app && (r.app ?? "") !== f.app) return false;
-  if (f.type && r.type !== f.type) return false;
-  if (f.severity === "untagged" ? r.severity !== null : f.severity && r.severity !== f.severity) return false;
-  if (f.state === "firing" && !isFiring(r)) return false;
-  if (f.state === "quiet" && isFiring(r)) return false;
-  if (f.edit && r.editable_via !== f.edit) return false;
-  if (f.gaps === "1" && !r.coverage_gap) return false;
-  if (f.q) {
-    const hay = `${r.name} ${r.condition ?? ""} ${r.description ?? ""} ${r.component ?? ""} ${r.threshold_source ?? ""}`
-      .toLowerCase();
-    if (!hay.includes(f.q.trim().toLowerCase())) return false;
-  }
-  return true;
+  const checks = [
+    !f.app || (r.app ?? "") === f.app,
+    !f.type || r.type === f.type,
+    severityOk(r, f.severity),
+    stateOk(r, f.state),
+    !f.edit || r.editable_via === f.edit,
+    f.gaps !== "1" || Boolean(r.coverage_gap),
+    textOk(r, f.q),
+  ];
+  return checks.every(Boolean);
 }
 
 /** The app filter's options, in the order the catalogue lists them. */

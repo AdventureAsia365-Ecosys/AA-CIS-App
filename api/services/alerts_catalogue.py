@@ -49,31 +49,16 @@ from api.services.ops_overview import cloudwatch as cw
 
 logger = structlog.get_logger()
 
-INFRA_REPO = "AdventureAsia365-Ecosys/AA-CIS-Infra"
-SETTINGS_PAGE = "/admin/platform/settings"
-OWNER_ROLE = "tech lead"
+from api.services.alerts_catalogue_rows import (  # noqa: E402  the row shape and its vocabulary
+    APP_LABELS, EDIT_NONE, EDIT_SETTINGS, EDIT_TERRAFORM, INFRA_REPO, KNOWN_APPS, OWNER_ROLE, SETTINGS_PAGE,
+    TYPE_ANOMALY, TYPE_BUDGET, TYPE_COMPOSITE, TYPE_EVENTBRIDGE, TYPE_IN_APP, TYPE_METRIC, TYPE_METRIC_MATH, TYPES,
+    row as _row,
+)
 PEER_TIMEOUT_S = 4.0
 MAX_PAGES = 10  # technical-constant: page bound of an AWS list call (a few dozen alarms and rules)
 RUNBOOK_MARK = " Runbook: "
 CACHE_PREFIX = "admin:platform:alerts"
 CACHE_TTL_S = 300  # technical-constant: cache refresh of a read (the AWS describe calls), like /admin/overview/ops
-
-TYPE_METRIC = "metric"
-TYPE_METRIC_MATH = "metric_math"
-TYPE_COMPOSITE = "composite"
-TYPE_EVENTBRIDGE = "eventbridge"
-TYPE_BUDGET = "budget"
-TYPE_ANOMALY = "cost_anomaly"
-TYPE_IN_APP = "in_app_check"
-TYPES = (TYPE_METRIC, TYPE_METRIC_MATH, TYPE_COMPOSITE, TYPE_EVENTBRIDGE, TYPE_BUDGET, TYPE_ANOMALY, TYPE_IN_APP)
-
-EDIT_SETTINGS = "settings"
-EDIT_TERRAFORM = "terraform"
-EDIT_NONE = "none"
-
-APP_LABELS = {"cis": "CIS", "booking": "Booking", "tripplanner": "TripPlanner", "crm": "Partner CRM",
-              "identity": "Identity", "shared": "Shared platform", "ecosystem": "Ecosystem"}
-KNOWN_APPS = tuple(APP_LABELS)
 
 _OPERATORS = {
     "GreaterThanThreshold": ">", "GreaterThanOrEqualToThreshold": ">=", "LessThanThreshold": "<",
@@ -195,6 +180,21 @@ def alarm_condition(a: dict) -> tuple[str, str, Optional[str]]:
     return TYPE_METRIC, text, threshold
 
 
+def _event_names(node: Any) -> list[str]:
+    """The event names / ids / categories a pattern's detail matches (nested $or included)."""
+    if isinstance(node, list):
+        return [n for x in node for n in _event_names(x)]
+    if not isinstance(node, dict):
+        return []
+    out: list[str] = []
+    for k, v in node.items():
+        if k in ("eventName", "EventID", "EventCategories") and isinstance(v, list):
+            out.extend(str(x) for x in v if isinstance(x, str))
+        else:
+            out.extend(_event_names(v))
+    return out
+
+
 def event_summary(pattern_text: Optional[str], schedule: Optional[str]) -> str:
     if schedule:
         return f"schedule {schedule}"
@@ -202,20 +202,7 @@ def event_summary(pattern_text: Optional[str], schedule: Optional[str]) -> str:
         pattern = json.loads(pattern_text or "{}")
     except ValueError:
         return "event pattern"
-    names: list[str] = []
-
-    def walk(node: Any) -> None:
-        if isinstance(node, dict):
-            for k, v in node.items():
-                if k in ("eventName", "EventID", "EventCategories") and isinstance(v, list):
-                    names.extend(str(x) for x in v if isinstance(x, str))
-                else:
-                    walk(v)
-        elif isinstance(node, list):
-            for x in node:
-                walk(x)
-
-    walk(pattern.get("detail"))
+    names = _event_names(pattern.get("detail"))
     text = ", ".join(pattern.get("source") or []) or "events"
     dtypes = ", ".join(pattern.get("detail-type") or [])
     if dtypes:
@@ -224,17 +211,6 @@ def event_summary(pattern_text: Optional[str], schedule: Optional[str]) -> str:
         shown = sorted(dict.fromkeys(names))
         text += ": " + ", ".join(shown[:8]) + (f" (+{len(shown) - 8})" if len(shown) > 8 else "")
     return text
-
-
-def _row(**kw: Any) -> dict:
-    base = {"id": None, "name": None, "app": None, "app_label": None, "component": None, "type": None,
-            "source": None, "severity": None, "mutable": None, "condition": None, "threshold": None,
-            "threshold_source": None, "editable_via": EDIT_NONE, "edit_href": None, "channel": [],
-            "runbook": None, "owner_role": OWNER_ROLE, "state": None, "state_since": None, "last_alert_at": None,
-            "account_id": None, "freshness": None, "coverage_gap": None, "description": None}
-    base.update(kw)
-    base["app_label"] = APP_LABELS.get(base["app"] or "", base["app"] or "Unknown")
-    return base
 
 
 # ── AWS: alarms and rules ────────────────────────────────────────────────────────────────────────
@@ -366,116 +342,11 @@ def aws_rows(raw: dict, env: str, as_of: str, *, alerts_arn: Optional[str], page
     return rows
 
 
-# ── Budgets ──────────────────────────────────────────────────────────────────────────────────────
+# ── Budgets: api/services/alerts_catalogue_budgets.py (re-exported for the tests and the status card) ───────────────
 
-# D7: the budgets and anomaly subscriptions of the other accounts, read from their Terraform roots (accounts/
-# acc1-bedrock/cost_guard.tf, accounts/acc3-bedrock/cost_guard.tf + cost_anomaly_immediate.tf, accounts/management/
-# budgets.tf + cost_anomaly_app_tag.tf). Account keys resolve to IDs at run time (no ID in this public repo).
-# A change of one of these values in Terraform needs the matching change here (tests/unit/test_aa1171_alerts_catalogue
-# checks the names against the generated alarm page when it is published; the root PR keeps them in step).
-EXTERNAL_BUDGETS: tuple[dict, ...] = (
-    {"account": "acc1", "name": "aa1-llm-monthly-total", "type": TYPE_BUDGET,
-     "condition": "monthly cost of the LLM serving account", "threshold": "ACTUAL > 50 %, 80 %, 100 %; "
-     "FORECASTED > 100 % of 100 USD", "file": "accounts/acc1-bedrock/cost_guard.tf", "channel": ["e-mail (direct)"]},
-    {"account": "acc1", "name": "aa1-cost-anomaly-daily", "type": TYPE_ANOMALY,
-     "condition": "cost anomaly of the LLM serving account (daily digest)", "threshold": "impact >= 10 USD",
-     "file": "accounts/acc1-bedrock/cost_guard.tf", "channel": ["e-mail (direct)"]},
-    {"account": "acc3", "name": "aa3-llm-monthly-total", "type": TYPE_BUDGET,
-     "condition": "monthly cost of the LLM fallback account", "threshold": "ACTUAL > 80 %, 100 %; FORECASTED > 100 % "
-     "of 100 USD", "file": "accounts/acc3-bedrock/cost_guard.tf", "channel": ["e-mail (direct)"]},
-    {"account": "acc3", "name": "aa3-cost-anomaly-daily", "type": TYPE_ANOMALY,
-     "condition": "cost anomaly of the LLM fallback account (daily digest)", "threshold": "impact >= 10 USD",
-     "file": "accounts/acc3-bedrock/cost_guard.tf", "channel": ["e-mail (direct)"]},
-    {"account": "acc3", "name": "aa3-cost-anomaly-immediate", "type": TYPE_ANOMALY,
-     "condition": "cost anomaly of the LLM fallback account (immediate)", "threshold": "impact >= 15 USD",
-     "file": "accounts/acc3-bedrock/cost_anomaly_immediate.tf", "channel": ["SNS topic aa3-cost-alerts (e-mail)"]},
-    {"account": "mgmt", "name": "aa-org-monthly", "type": TYPE_BUDGET,
-     "condition": "monthly cost of the whole company organization", "threshold": "ACTUAL > 50 %, 80 %, 100 %; "
-     "FORECASTED > 100 % of the organization budget", "file": "accounts/management/budgets.tf",
-     "channel": ["e-mail (direct)"]},
-    {"account": "mgmt", "name": "<account>-monthly", "type": TYPE_BUDGET,
-     "condition": "monthly cost of each member account and of the management account",
-     "threshold": "ACTUAL > 80 %, 100 %; FORECASTED > 100 % of each account's budget",
-     "file": "accounts/management/budgets.tf", "channel": ["e-mail (direct)"]},
-    {"account": "mgmt", "name": "<account>-anomaly-daily", "type": TYPE_ANOMALY,
-     "condition": "cost anomaly of each account of the organization (daily digest)", "threshold": "impact >= 15 USD",
-     "file": "accounts/management/budgets.tf", "channel": ["e-mail (direct)"]},
+from api.services.alerts_catalogue_budgets import (  # noqa: E402
+    EXTERNAL_BUDGETS, EXTERNAL_ROLE, external_account_id, external_budget_rows, main_budget_rows,
 )
-EXTERNAL_ROLE = {"acc1": "LLM serving account", "acc3": "LLM fallback account", "mgmt": "management account"}
-
-
-def external_account_id(key: str) -> Optional[str]:
-    """The 12-digit ID of an external account at run time, or None (never from this repo)."""
-    if key == "mgmt":
-        value = (os.environ.get("AWS_MGMT_ACCOUNT_ID") or "").strip()
-        return value if re.fullmatch(r"[0-9]{12}", value) else None
-    try:
-        from shared.aws_client import accounts
-
-        return accounts.account_id(key)
-    except Exception:  # noqa: BLE001 — a label never fails the page
-        return None
-
-
-def external_budget_rows(as_of: str, ids: Callable[[str], Optional[str]] = external_account_id) -> list[dict]:
-    rows = []
-    for b in EXTERNAL_BUDGETS:
-        acct = ids(b["account"])
-        rows.append(_row(
-            id=f"budget:{b['account']}:{b['name']}", name=b["name"], app="ecosystem", component="billing",
-            type=b["type"], source="budgets", severity="ticket", mutable=False, condition=b["condition"],
-            threshold=b["threshold"], threshold_source=f"Terraform {b['file']} (AA-CIS-Infra)",
-            editable_via=EDIT_TERRAFORM,
-            edit_href=f"https://github.com/{INFRA_REPO}/blob/main/{b['file']}", channel=list(b["channel"]),
-            state="not_live", account_id=acct, freshness=as_of,
-            coverage_gap=("Shown from Terraform: its live state is only in that account's console "
-                          f"({EXTERNAL_ROLE[b['account']]})."),
-            description=f"{EXTERNAL_ROLE[b['account']]}: {b['condition']}."))
-    return rows
-
-
-def main_budget_rows(infra: dict, as_of: str, account_id: Optional[str]) -> list[dict]:
-    """acc2 budgets from the Platform › Infra read (the Terraform docs output): the total budget with its alert lines,
-    one row per app budget, the immediate cost anomaly subscription. Pure."""
-    group = next((g for g in infra.get("groups") or [] if g.get("group") == "budgets"), None)
-    if not group:
-        return []
-    items = {re.sub(r"^acc\d+_", "", str(i.get("key", ""))): i for i in group.get("items") or []}
-    src = "Terraform accounts/aa365/observability.tf (AA-CIS-Infra)"
-    href = f"https://github.com/{INFRA_REPO}/blob/main/accounts/aa365/observability.tf"
-    rows = []
-    total = items.get("total_monthly_usd")
-    if total is not None:
-        alerts = items.get("total_alerts", {}).get("value") or "ACTUAL > 80 %, 100 %; FORECASTED > 100 %"
-        rows.append(_row(id="budget:acc2:monthly-total", name="monthly-total", app="shared", component="billing",
-                         type=TYPE_BUDGET, source="budgets", severity="ticket", mutable=False,
-                         condition="monthly cost of the main account (every app together)",
-                         threshold=f"{alerts} of {total.get('value')} USD", threshold_source=src,
-                         editable_via=EDIT_TERRAFORM, edit_href=href, channel=["alerts topic"], state="not_live",
-                         account_id=account_id, freshness=as_of))
-    for key, item in sorted(items.items()):
-        if not key.startswith("per_app_monthly_usd."):
-            continue
-        app = key.split(".", 1)[1]
-        rows.append(_row(id=f"budget:acc2:monthly-app-{app}", name=f"monthly-app-{app}", app=app, component="billing",
-                         type=TYPE_BUDGET, source="budgets", severity="ticket", mutable=False,
-                         condition=f"monthly cost of the resources tagged App = {app}",
-                         threshold=f"ACTUAL > 80 %; FORECASTED > 100 % of {item.get('value')} USD",
-                         threshold_source=src, editable_via=EDIT_TERRAFORM, edit_href=href,
-                         channel=["alerts topic"], state="not_live", account_id=account_id, freshness=as_of))
-    anomaly = items.get("cost_anomaly_alert_usd")
-    if anomaly is not None:
-        rows.append(_row(id="budget:acc2:cost-anomaly", name="cost-anomaly-immediate", app="shared",
-                         component="billing", type=TYPE_ANOMALY, source="budgets", severity="ticket", mutable=False,
-                         condition="cost anomaly of the main account (immediate)",
-                         threshold=f"impact >= {anomaly.get('value')} USD",
-                         threshold_source="Terraform accounts/aa365/cost_anomaly.tf (AA-CIS-Infra)",
-                         editable_via=EDIT_TERRAFORM,
-                         edit_href=f"https://github.com/{INFRA_REPO}/blob/main/accounts/aa365/cost_anomaly.tf",
-                         channel=["alerts topic"], state="not_live", account_id=account_id, freshness=as_of))
-    for r in rows:
-        r["coverage_gap"] = "Live spend against the budget is on Spend › AWS bill, not here."
-    return rows
 
 
 # ── CIS in-app checks ────────────────────────────────────────────────────────────────────────────

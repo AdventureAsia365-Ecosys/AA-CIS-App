@@ -62,15 +62,24 @@ function ChangeCell({ r, t }: { r: CatalogueRow; t: CT }) {
 
 function Kpis({ data, t }: { data: CatalogueResp | undefined; t: CT }) {
   const s = data?.summary;
+  if (!s) {
+    return (
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12 }}>
+        {(["kpiTotal", "kpiFiring", "kpiPage", "kpiGaps"] as const).map((k) => (
+          <KpiTile key={k} label={t(k)} value={undefined} />
+        ))}
+      </div>
+    );
+  }
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12 }}>
-      <KpiTile label={t("kpiTotal")} value={s?.total} testId="alerts-kpi-total" />
-      <KpiTile label={t("kpiFiring")} value={s?.firing} valueTone={s && s.firing > 0 ? "danger" : "success"}
-        hint={s ? t("kpiPageFiring", s.page_firing) : undefined} testId="alerts-kpi-firing" />
-      <KpiTile label={t("kpiPage")} value={s?.by_severity.page}
-        hint={s ? `${t("sev_ticket")} ${s.by_severity.ticket} · ${t("sev_untagged")} ${s.by_severity.untagged}`
-          : undefined} testId="alerts-kpi-page" />
-      <KpiTile label={t("kpiGaps")} value={s?.gaps} valueTone={s && s.gaps > 0 ? "warning" : "success"}
+      <KpiTile label={t("kpiTotal")} value={s.total} testId="alerts-kpi-total" />
+      <KpiTile label={t("kpiFiring")} value={s.firing} valueTone={s.firing > 0 ? "danger" : "success"}
+        hint={t("kpiPageFiring", s.page_firing)} testId="alerts-kpi-firing" />
+      <KpiTile label={t("kpiPage")} value={s.by_severity.page}
+        hint={`${t("sev_ticket")} ${s.by_severity.ticket} · ${t("sev_untagged")} ${s.by_severity.untagged}`}
+        testId="alerts-kpi-page" />
+      <KpiTile label={t("kpiGaps")} value={s.gaps} valueTone={s.gaps > 0 ? "warning" : "success"}
         testId="alerts-kpi-gaps" />
     </div>
   );
