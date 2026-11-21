@@ -714,11 +714,10 @@ POLICY: dict[tuple[str, str], Any] = {
     ("PUT", "/admin/platform/crm/agencies/{tenant_id}/insights-opt-out"): TENANT_WRITE,
     ("POST", "/admin/platform/crm/agencies/{tenant_id}/jobs/{job_id}/retry"): TENANT_WRITE,
 
-    # ── admin_alert_recipients (AA-913) — Platform › Alert recipients. Reads ops.read (admin); changes alerts.write
-    # (admin) and, in the router, a Cognito session for add / remove / resend / test (not for the status refresh).
-    ("GET", "/admin/platform/alert-recipients"): OPS_READ,
-    ("GET", "/admin/platform/alerts/catalogue"): OPS_READ,   # AA-1171 D1: Platform › Alerts › Catalogue
-    ("GET", "/admin/platform/alerts/summary"): OPS_READ,     # AA-1171: the Ecosystem status card's summary
+    # ── admin_alert_recipients (AA-913) + admin_alerts_catalogue (AA-1171) — Platform › Alerts. Reads ops.read (admin);
+    # changes alerts.write (admin) + a Cognito session (router) for add / remove / resend / test, not the refresh.
+    ("GET", "/admin/platform/alert-recipients"): OPS_READ, ("GET", "/admin/platform/alerts/catalogue"): OPS_READ,
+    ("GET", "/admin/platform/alerts/summary"): OPS_READ,
     ("POST", "/admin/platform/alert-recipients"): ALERTS_WRITE,
     ("POST", "/admin/platform/alert-recipients/refresh"): ALERTS_WRITE,
     ("POST", "/admin/platform/alert-recipients/test-email"): ALERTS_WRITE,

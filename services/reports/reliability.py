@@ -35,6 +35,7 @@ from services.reports.generate import GENERATED_BY, Rendered, fmt
 from services.reports.money import (KPI_HEADERS, NOT_WIRED, _d, _kpi_line, _kpi_rows, _output, failed, pct,
                                     ratio, table, usd)
 from services.reports.registry import Registry, Report
+from shared.jobs.backlog import overdue_factor
 
 UTC = timezone.utc
 DEV_NOTE = "> Dev environment: load comes from development and test runs; trends only."
@@ -186,10 +187,7 @@ def job_health(facts: dict, expected: dict[str, int], now: datetime) -> dict:
     finished = sum(r["finished"] for r in rows)
     failed_n = sum(r["failed"] for r in rows)
     active = facts.get("job_active")
-    overdue, queued = [], {}
-    from shared.jobs.backlog import overdue_factor   # AA-1171: the setting cis.ops.jobs_overdue_factor (default 2)
-
-    factor = overdue_factor()
+    overdue, queued, factor = [], {}, overdue_factor()   # AA-1171: the setting cis.ops.jobs_overdue_factor
     if active is not None and not failed(active):
         for a in active:
             if a["status"] == "running":

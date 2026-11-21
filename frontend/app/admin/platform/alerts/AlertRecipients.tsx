@@ -144,6 +144,38 @@ function LockedRow({ email, label, state }: { email: string; label: string; stat
   );
 }
 
+/** AA-1171: "All alerts" or "Page alerts only", shown only when the page topic is set up. */
+function TopicChoice({ topics, value, onChange }: {
+  topics: RecipientTopic[]; value: RecipientTopic; onChange: (t: RecipientTopic) => void;
+}) {
+  const t = useT(ALERTS);
+  if (!topics.includes("page")) return null;
+  return (
+    <label style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 12.5, fontWeight: 600, color: K.ink3 }}>
+      {t("topic")}
+      <Select
+        value={value}
+        onChange={(e) => onChange(e.target.value as RecipientTopic)}
+        options={[{ value: "alerts", label: t("topicAlerts") }, { value: "page", label: t("topicPage") }]}
+        data-testid="alert-recipient-topic"
+      />
+      <span style={{ fontWeight: 400, color: K.muted }}>{t("topicHelp")}</span>
+    </label>
+  );
+}
+
+/** AA-1171: the topic a recipient row is on. */
+function TopicBadge({ topic }: { topic: RecipientTopic | undefined }) {
+  const t = useT(ALERTS);
+  const page = topic === "page";
+  return <Badge tone={page ? "warning" : "neutral"} dot={false}>{page ? t("topicPage") : t("topicAlerts")}</Badge>;
+}
+
+/** The topics a recipient may choose (an API older than the page topic lists none: alerts only). */
+function topicsOf(data: AlertRecipientsPage | undefined): RecipientTopic[] {
+  return data?.topics ?? ["alerts"];
+}
+
 function AddModal({ open, onClose, onAdded, limits, active, topics }: {
   open: boolean;
   onClose: () => void;
@@ -267,18 +299,7 @@ function AddModal({ open, onClose, onAdded, limits, active, topics }: {
             {note.trim().length} / {maxNote}
           </span>
         </label>
-        {topics.includes("page") && (
-          <label style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 12.5, fontWeight: 600, color: K.ink3 }}>
-            {t("topic")}
-            <Select
-              value={topic}
-              onChange={(e) => setTopic(e.target.value as RecipientTopic)}
-              options={[{ value: "alerts", label: t("topicAlerts") }, { value: "page", label: t("topicPage") }]}
-              data-testid="alert-recipient-topic"
-            />
-            <span style={{ fontWeight: 400, color: K.muted }}>{t("topicHelp")}</span>
-          </label>
-        )}
+        <TopicChoice topics={topics} value={topic} onChange={setTopic} />
         {error && <Notice tone="danger">{error}</Notice>}
       </div>
     </Modal>
@@ -423,13 +444,9 @@ export default function AlertRecipients() {
     },
     {
       id: "topic",
-      accessorFn: (r) => r.topic ?? "alerts",
+      accessorFn: (r) => String(r.topic),
       header: t("colTopic"),
-      cell: (c) => (
-        <Badge tone={c.row.original.topic === "page" ? "warning" : "neutral"} dot={false}>
-          {c.row.original.topic === "page" ? t("topicPage") : t("topicAlerts")}
-        </Badge>
-      ),
+      cell: (c) => <TopicBadge topic={c.row.original.topic} />,
     },
     {
       accessorKey: "confirmed_at",
@@ -596,7 +613,7 @@ export default function AlertRecipients() {
         onClose={() => setAdding(false)}
         limits={data?.limits}
         active={data?.limits.active ?? 0}
-        topics={data?.topics ?? ["alerts"]}
+        topics={topicsOf(data)}
         onAdded={(email, state) => {
           setAdding(false);
           toast.success(state === "confirmed"
