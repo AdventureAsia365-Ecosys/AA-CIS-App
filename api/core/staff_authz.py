@@ -153,6 +153,11 @@ SETTINGS_WRITE = "settings.write"
 SETTINGS_APPROVE = "settings.approve"
 DOCS_READ = "docs.read"  # AA-1133 B7 (tech lead S283 "all staff after fix"): /admin/docs, every role (ROLE_PERMS)
 LEARN_PREVIEW = "learn.preview"  # AA-1105: AA Academy draft modules (/learn/v1 reads it; admin and content_lead)
+# AA-1170 (S287 Q10): Platform › Compliance (/admin/platform/compliance): read the readiness scores, controls and
+# evidence (compliance.read); re-read the published evidence now (compliance.write). Admin only at first; a custom role
+# may be given them on Roles & permissions.
+COMPLIANCE_READ = "compliance.read"
+COMPLIANCE_WRITE = "compliance.write"
 
 _CONTENT_WORK = frozenset({CONTENT_READ, CONTENT_WRITE, REVIEW_ACT})
 
@@ -169,7 +174,7 @@ ROLE_PERMS: dict[str, frozenset[str]] = {
         TENANT_CONTENT_READ, CATALOG_READ, TENANT_BOOK_READ, TENANT_BOOK_ACCOUNT_READ, TENANT_MEMBER_WRITE,
         TENANT_ASSIGN, BILLING_READ, BILLING_WRITE, WAVE_RUN, LAB_READ, TENANT_MEMBER_RESEND, TENANT_BOOK_WRITE,
         TENANT_VIEW_AS, NOTIFICATIONS_READ, REFERENCE_PRICE_READ, REFERENCE_PRICE_WRITE, SETTINGS_WRITE,
-        SETTINGS_APPROVE, LEARN_PREVIEW,
+        SETTINGS_APPROVE, LEARN_PREVIEW, COMPLIANCE_READ, COMPLIANCE_WRITE,
     },
     # AA Catalogue W, Tenant QA W, Writing Lab R (wave, review queue, master content, atoms / photos, SEO).
     "content_lead": _CONTENT_WORK | {
@@ -602,6 +607,11 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/settings/registry/{key}/proposals"): SETTINGS_WRITE,
     **{("POST", "/admin/settings/registry/proposals/{value_id}/" + a): SETTINGS_APPROVE for a in ("approve", "reject")},
     ("GET", "/admin/platform/catalogue"): OPS_READ, ("GET", "/admin/platform/delivery"): OPS_READ,  # AA-1106, AA-1108
+    # AA-1170 — Platform › Compliance (readiness per framework, controls, evidence; Refresh re-reads the published file)
+    ("GET", "/admin/platform/compliance"): COMPLIANCE_READ,
+    ("GET", "/admin/platform/compliance/controls"): COMPLIANCE_READ,
+    ("GET", "/admin/platform/compliance/controls/{control_id}"): COMPLIANCE_READ,
+    ("POST", "/admin/platform/compliance/refresh"): COMPLIANCE_WRITE,
     # ── admin_photos — Drive sync + assignment (Photos page, admin-only)
     ("POST", "/admin/photos/sync"): PHOTOS_WRITE,
     ("POST", "/admin/photos/sync/schedule"): PHOTOS_WRITE,   # AA-844, daily (MACHINE_ROUTES)

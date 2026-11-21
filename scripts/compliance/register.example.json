@@ -1,0 +1,24 @@
+{
+  "format": 1,
+  "_doc": "AA-1170: an INVENTED example of the private register file that scripts/compliance/load_register.py loads (tests use it). The real register is private and never committed; its control ids use another prefix.",
+  "controls": [
+    {"control_id": "EX-CHG-01", "title": "Protected default branches", "intent": "Every repo merges through reviewed pull requests with required checks.", "domain": "change", "owner_role": "tech lead", "frequency": "daily", "test_type": "auto", "checks": [{"check_id": "repo_branch_protection", "required": true}], "scope": "dev", "active": true},
+    {"control_id": "EX-VUL-01", "title": "Code and image scanning", "intent": "Code is analysed and every image is scanned with an SBOM before it ships.", "domain": "vulnerability", "owner_role": "tech lead", "frequency": "daily", "test_type": "auto", "checks": [{"check_id": "codeql_enabled", "required": true}, {"check_id": "ci_image_scan_sbom", "required": true}, {"check_id": "vuln_exceptions_valid", "required": true}], "scope": "dev", "active": true},
+    {"control_id": "EX-OPS-01", "title": "Restore drills on time", "intent": "A restore drill passed recently enough.", "domain": "resilience", "owner_role": "tech lead", "frequency": "quarterly", "test_type": "hybrid", "checks": [{"check_id": "last_restore_drill", "required": true}], "scope": "dev", "active": true},
+    {"control_id": "EX-IAM-01", "title": "Periodic access review", "intent": "Access is reviewed every quarter and findings are tracked.", "domain": "identity", "owner_role": "tech lead", "frequency": "quarterly", "test_type": "manual", "checks": [{"check_id": "last_access_review", "required": true}], "scope": "dev", "active": true},
+    {"control_id": "EX-GOV-01", "title": "Documented policies kept current", "intent": "Policy pages are reviewed before their review date.", "domain": "governance", "owner_role": "business owner", "frequency": "monthly", "test_type": "auto", "checks": [{"check_id": "docs_review_overdue", "required": true}], "scope": "dev", "active": true},
+    {"control_id": "EX-GOV-02", "title": "Management review", "intent": "A periodic review of the security programme is recorded.", "domain": "governance", "owner_role": "business owner", "frequency": "quarterly", "test_type": "manual", "checks": [], "scope": "dev", "active": true}
+  ],
+  "mappings": [
+    {"control_id": "EX-CHG-01", "framework": "iso27001:2022", "ref": "A.8.32", "coverage": "full", "note": "Example mapping."},
+    {"control_id": "EX-CHG-01", "framework": "soc2:2017", "ref": "CC8.1", "coverage": "partial", "note": null},
+    {"control_id": "EX-VUL-01", "framework": "iso27001:2022", "ref": "A.8.8", "coverage": "full", "note": null},
+    {"control_id": "EX-VUL-01", "framework": "owasp-top10:2021", "ref": "A06", "coverage": "partial", "note": null},
+    {"control_id": "EX-OPS-01", "framework": "iso27001:2022", "ref": "A.8.13", "coverage": "partial", "note": null},
+    {"control_id": "EX-IAM-01", "framework": "iso27001:2022", "ref": "A.5.18", "coverage": "full", "note": null},
+    {"control_id": "EX-IAM-01", "framework": "soc2:2017", "ref": "CC6.2", "coverage": "partial", "note": null},
+    {"control_id": "EX-GOV-01", "framework": "iso27001:2022", "ref": "A.5.1", "coverage": "full", "note": null},
+    {"control_id": "EX-GOV-02", "framework": "iso27001:2022", "ref": "9.3.1", "coverage": "full", "note": null},
+    {"control_id": "EX-GOV-02", "framework": "iso42001:2023", "ref": "9.3.1", "coverage": "full", "note": null}
+  ]
+}
