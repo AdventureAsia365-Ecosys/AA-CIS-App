@@ -294,7 +294,7 @@ def evidence_rule_check() -> dict:
     d = settings.definition(settings_keys.MODES["t10_f12_scope"])
     out = {}
     for name, ref in (("replay_evidence", "replay run of stored pieces"),
-                      ("pilot_reference", f"{quality_settings.F12_PILOT_EVIDENCE_PREFIX}p0check:000000000000")):
+                      ("pilot_reference", f"{quality_settings.F12_PILOT_EVIDENCE_PREFIX}p0check:0123456789ab")):
         try:
             reg._check_evidence(d, "block", ref)
             out[name] = "accepted"
