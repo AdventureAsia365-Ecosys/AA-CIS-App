@@ -14,7 +14,7 @@ def test_every_trap_reaches_its_writer(fence):
     assert {c.writer for c in cases} == set(trap_set.WRITERS)
     for c in cases:
         assert any(m.lower() in c.user.lower() for m in c.trap.markers), c.trap.id
-        assert c.stage in ("s1_generate", "t9_write", "t2_generate") and c.max_tokens > 0
+        assert c.stage in ("s1_generate", "t9_write", "t9_repair", "t2_generate") and c.max_tokens > 0
 
 
 def test_with_the_fence_on_every_payload_is_fenced_data():

@@ -3,16 +3,16 @@
 mode; nothing else. Written for the tech lead's session; CI never runs it (the offline half is
 tests/unit/test_aa1167_trap_set.py).
 
-The trap set (services/ai_safety/trap_set.py: 8 invented traps over S1 v2, T9 blog and T2) is built with the live
-prompt builders for each fence mode asked (--fence on, off or both). Each call goes through the Model Gateway
-(``LLMClient.generate``) on stage ``adhoc_aa1167`` with the model the writer's own stage routes to today (its
+The trap set (services/ai_safety/trap_set.py: 9 invented traps over S1 v2, T9 blog, the T9 FAQ writer and T2) is built
+with the live prompt builders for each fence mode asked (--fence on, off or both). Each call goes through the Model
+Gateway (``LLMClient.generate``) on stage ``adhoc_aa1167`` with the model the writer's own stage routes to today (its
 ``shared.llm_role_config`` row), and writes one ``shared.llm_call_log`` row (role writer, ``**billed_fields(resp)``,
 ``quality_signal.aa1167`` = trap, writer, fence mode). Each reply is scored offline (trap_set.evaluate: no trap marker
 in the reply, no live markup after the output sanitizer, no fence tag).
 
   python3 scripts/aa1167/trap_run.py                         # dry run: the calls it would make, no client, no cost
-  python3 scripts/aa1167/trap_run.py --apply --stop-usd 1.0  # paid: fence on (8 calls)
-  python3 scripts/aa1167/trap_run.py --apply --stop-usd 1.0 --fence both   # on and off (16 calls)
+  python3 scripts/aa1167/trap_run.py --apply --stop-usd 1.0  # paid: fence on (9 calls)
+  python3 scripts/aa1167/trap_run.py --apply --stop-usd 1.0 --fence both   # on and off (18 calls)
 
 ``--stop-usd`` has no default: the operator states the budget of the run (the issue allows about 1 USD). The run stops
 before the next call once the logged spend reached it, and at the first gateway refusal. Output: one JSON line per

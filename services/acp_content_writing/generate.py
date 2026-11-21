@@ -334,7 +334,7 @@ def repair_sentences(
     *, sentences: list[dict], content_seed: str, facts_text: str | None = None,
     channel: str, tenant_id: str | None = None, angle_gate_request_id: str | None = None,
     stage: str = "t9_write", mode: str = "sentence_repair", attempt: int | None = 2,
-    content_piece_id: str | None = None, max_tokens: int = _MAX_TOKENS,
+    content_piece_id: str | None = None, max_tokens: int = _MAX_TOKENS, fence: bool | None = None,
 ) -> tuple[list[str], float]:
     """AA-768 — attempt-2 sentence-level repair (see sentence_repair.py). `sentences` items carry
     "sentence" and "problem", and optionally "context" (the neighbouring sentences, S234). Returns
@@ -348,7 +348,7 @@ def repair_sentences(
     reps, cost, _model = repair_sentences_detailed(
         sentences=sentences, content_seed=content_seed, facts_text=facts_text, channel=channel,
         tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id, stage=stage, mode=mode,
-        attempt=attempt, content_piece_id=content_piece_id, max_tokens=max_tokens,
+        attempt=attempt, content_piece_id=content_piece_id, max_tokens=max_tokens, fence=fence,
     )
     return reps, cost
 
@@ -357,18 +357,23 @@ def repair_sentences_detailed(
     *, sentences: list[dict], content_seed: str, facts_text: str | None = None,
     channel: str, tenant_id: str | None = None, angle_gate_request_id: str | None = None,
     stage: str = "t9_write", mode: str = "sentence_repair", attempt: int | None = 2,
-    content_piece_id: str | None = None, max_tokens: int = _MAX_TOKENS,
+    content_piece_id: str | None = None, max_tokens: int = _MAX_TOKENS, fence: bool | None = None,
 ) -> tuple[list[str], float, str | None]:
     """repair_sentences() plus the model that answered (the admin suggestion shows and audits it).
     A `sentences` item may carry "context" (its neighbouring sentences) — the same optional field
-    the AA-768 PR adds, so the two generalisations of this call are one superset signature."""
-    source = content_seed + (f"\n\nFACTS:\n{facts_text}" if facts_text else "")
+    the AA-768 PR adds, so the two generalisations of this call are one superset signature.
+
+    AA-1167: `fence` (None = the setting cis.llm.prompt_data_fence) puts the SOURCE seed and its Facts Entries between
+    <untrusted_data> tags; the sentences under repair and the checker's PROBLEM lines are the task and stay outside."""
+    on = prompt_fence.enabled(fence)
+    source = (prompt_fence.fence("content_seed", content_seed, on=on)
+              + (f"\n\nFACTS:\n{prompt_fence.fence('facts_entries', facts_text, on=on)}" if facts_text else ""))
     numbered = "\n".join(
         f"{i}. SENTENCE: {it['sentence']}\n   PROBLEM: {it['problem']}"
         + (f"\n   CONTEXT: {' | '.join(it['context'])}" if it.get("context") else "")
         for i, it in enumerate(sentences, 1)
     )
-    request = LLMRequest(system_prompt=_REPAIR_SYSTEM,
+    request = LLMRequest(system_prompt=_REPAIR_SYSTEM + prompt_fence.system_rule(on),
                          user_prompt=f"SOURCE:\n{source}\n\nSENTENCES TO FIX:\n{numbered}",
                          stage=stage, max_tokens=max_tokens)
     # AA-668 — the reply is a JSON patch, never tenant-facing text: it must not stream into the
@@ -474,7 +479,7 @@ def extend_sections(
     *, sections: list[dict], facts: list[str], voice: str | None = None, channel: str = "blog",
     tenant_id: str | None = None, angle_gate_request_id: str | None = None, content_piece_id: str | None = None,
     stage: str = "t9_write", attempt: int | None = 2, max_tokens: int = _MAX_TOKENS, step: str | None = None,
-    background: list[str] | None = None,
+    background: list[str] | None = None, fence: bool | None = None,
 ) -> tuple[list[str], float, str | None]:
     """AA-1077 — one call: a paragraph to add per section. `sections` items carry "heading", "text" and "words" (the
     words to add); `facts` are the seed's untold fact sentences (quality_gates.unused_source_facts). Returns
@@ -482,21 +487,27 @@ def extend_sections(
     one string per section. Logged on `stage` (the writer, as the sentence repair) with mode `length_extend`; `step`
     (S280: "post_normalizer", the pass after the normalizer) is added to the quality signal when given.
     `background` (S281, material with_background: the NAMED list, possibly empty) switches to the background prompt
-    and adds the list; None = the source-facts prompt, byte for byte as before."""
+    and adds the list; None = the source-facts prompt, byte for byte as before.
+    AA-1167: `fence` (None = the setting) puts the SOURCE FACTS and the NAMED list between <untrusted_data> tags; the
+    sections being lengthened (our draft) and the brand VOICE stay outside."""
+    on = prompt_fence.enabled(fence)
     numbered_facts = "\n".join(f"{i}. {f}" for i, f in enumerate(facts, 1))
+    named = "\n".join("- " + n for n in background or ())
+    facts_in = prompt_fence.fence("source_facts", numbered_facts, on=on and bool(facts))   # empty: nothing to fence
+    named_in = prompt_fence.fence("named_places", named, on=on and bool(named))
     numbered_sections = "\n\n".join(
         f"SECTION {i} (add about {s['words']} words"
         + ("; a repair cut text here" if s.get("hole_chars") else "")
         + f")\nHEADING: {s.get('heading') or '(opening)'}\nTEXT:\n{s['text']}"
         for i, s in enumerate(sections, 1))
     if background is None:
-        user = (f"SOURCE FACTS:\n{numbered_facts}\n\n" + (f"VOICE: {voice}\n\n" if voice else "")
+        user = (f"SOURCE FACTS:\n{facts_in}\n\n" + (f"VOICE: {voice}\n\n" if voice else "")
                 + f"SECTIONS:\n{numbered_sections}")
     else:
-        user = (f"SOURCE FACTS:\n{numbered_facts or '(none left)'}\n\n"
-                + f"NAMED:\n{chr(10).join('- ' + n for n in background) or '(only what the sections name)'}\n\n"
+        user = (f"SOURCE FACTS:\n{facts_in or '(none left)'}\n\n"
+                + f"NAMED:\n{named_in or '(only what the sections name)'}\n\n"
                 + (f"VOICE: {voice}\n\n" if voice else "") + f"SECTIONS:\n{numbered_sections}")
-    system = _EXTEND_SYSTEM if background is None else _EXTEND_BACKGROUND_SYSTEM
+    system = (_EXTEND_SYSTEM if background is None else _EXTEND_BACKGROUND_SYSTEM) + prompt_fence.system_rule(on)
     request = LLMRequest(system_prompt=system, user_prompt=user, stage=stage, max_tokens=max_tokens)
     signal = {"channel": channel, "attempt": attempt, "mode": "length_extend", "sections": len(sections),
               "facts": len(facts), "words_asked": sum(int(s.get("words") or 0) for s in sections),
@@ -563,7 +574,7 @@ def fit_seo_fields(
     *, body: str, seo_title: str | None, meta_description: str | None, keyword: str | None,
     brand_name: str | None = None, tenant_id: str | None = None,
     angle_gate_request_id: str | None = None, forbidden_words: list[str] | None = None,
-    taken_titles: list[str] | None = None, meta_band: tuple[int, int] | None = None,
+    taken_titles: list[str] | None = None, meta_band: tuple[int, int] | None = None, fence: bool | None = None,
 ) -> tuple[dict, float]:
     """AA-768 (S233) — regenerate an out-of-band blog SEO title/meta with one short call instead
     of cutting the string (PR #670 cut "Bhutan's Craft Bazaar: Thimphu's Weekend Market…" at the
@@ -575,7 +586,13 @@ def fit_seo_fields(
     ('Gobi' on a Khövsgöl route) — the caller rejects a fitted value that still has one.
 
     `meta_band` (S273, T9_SEO_BUILDER=on only): the (min, max) meta band, sent for a meta under the floor; the request
-    then states it (_META_BAND_LINE). None (the default path) leaves the request exactly as before."""
+    then states it (_META_BAND_LINE). None (the default path) leaves the request exactly as before.
+
+    AA-1167: `fence` (None = the setting cis.llm.prompt_data_fence) puts the POST (written from untrusted source text)
+    between <untrusted_data> tags, as the S1 meta call fences its page draft. The keyword (our research cache, matched
+    by keyword_fit, as in the writer prompt), the brand's own titles, the current title and meta under repair and the
+    code-built lines stay outside."""
+    on = prompt_fence.enabled(fence)
     parts = [f"TARGET SEO KEYWORD: {keyword}" if keyword else "No target keyword — write naturally."]
     if forbidden_words:
         parts.append(f"NEVER USE (outside this post's scope): {', '.join(forbidden_words)}")
@@ -595,8 +612,8 @@ def fit_seo_fields(
     if meta_band:
         b_lo, b_hi = meta_band
         parts.append(_META_BAND_LINE.format(lo=b_lo, hi=b_hi, wlo=round(b_lo / 6), whi=round(b_hi / 6)))
-    parts.append(f"POST:\n{strip_citation_tags(body)[:6000]}")
-    request = LLMRequest(system_prompt=_SEO_FIT_SYSTEM, user_prompt="\n\n".join(parts),
+    parts.append(f"POST:\n{prompt_fence.fence('post_draft', strip_citation_tags(body)[:6000], on=on)}")
+    request = LLMRequest(system_prompt=_SEO_FIT_SYSTEM + prompt_fence.system_rule(on), user_prompt="\n\n".join(parts),
                          stage=SEO_FIT_STAGE, max_tokens=_MAX_TOKENS)
 
     def _log(r, extra: dict) -> None:
@@ -651,10 +668,41 @@ Rules:
 Return ONLY JSON: {"faq": [{"q": "...", "a": "..."}]}""")
 
 
+def faq_request(
+    *, source: str, body: str, brand_name: str | None = None, unused_facts: list[str] | None = None,
+    paa_questions: list[str] | None = None, required_questions: list[str] | None = None, fence: bool | None = None,
+) -> LLMRequest:
+    """The FAQ writer's request (write_faq's arguments, below). AA-1167: `fence` (None = the setting
+    cis.llm.prompt_data_fence) puts the SOURCE, the UNUSED FACTS, the REAL and SEARCH QUESTIONS (web search data) and
+    the POST between <untrusted_data> tags; the BRAND line and our instructions stay outside. The trap set
+    (services/ai_safety/trap_set.py) plants its FAQ trap through this builder."""
+    on = prompt_fence.enabled(fence)
+    parts = []
+    if brand_name:
+        parts.append(f"BRAND (never name another brand): {brand_name}")
+    parts.append(f"SOURCE:\n{prompt_fence.fence('source', source[:12000], on=on)}")
+    if unused_facts:
+        parts.append("UNUSED FACTS (from the SOURCE; the POST does not tell these yet):\n"
+                     + prompt_fence.fence("unused_facts", "\n".join(f"- {f}" for f in unused_facts), on=on))
+    if required_questions:
+        parts.append("REAL QUESTIONS (what readers really search for; write these pairs FIRST, in this order, "
+                     "one pair per question a SOURCE fact answers: keep the question's own words — you may only "
+                     "fix its grammar or add the place's name — and skip one no SOURCE fact answers; then fill "
+                     "the rest as usual. Never write that readers search for or ask it):\n"
+                     + prompt_fence.fence("search_questions", "\n".join(f"- {q}" for q in required_questions), on=on))
+    if paa_questions:
+        parts.append("SEARCH QUESTIONS (what readers search for; use one only when a SOURCE fact answers it):\n"
+                     + prompt_fence.fence("search_questions", "\n".join(f"- {q}" for q in paa_questions), on=on))
+    post = prompt_fence.fence("post_draft", strip_citation_tags(body)[:6000], on=on)
+    parts.append(f"POST (do not repeat what it says):\n{post}")
+    return LLMRequest(system_prompt=_FAQ_SYSTEM + prompt_fence.system_rule(on), user_prompt="\n\n".join(parts),
+                      stage=SEO_FIT_STAGE, max_tokens=_MAX_TOKENS)
+
+
 def write_faq(
     *, source: str, body: str, brand_name: str | None = None, tenant_id: str | None = None,
     angle_gate_request_id: str | None = None, unused_facts: list[str] | None = None,
-    paa_questions: list[str] | None = None, required_questions: list[str] | None = None,
+    paa_questions: list[str] | None = None, required_questions: list[str] | None = None, fence: bool | None = None,
 ) -> tuple[list[tuple[str, str]], float]:
     """AA-768 (S234 round 2) — the blog FAQ contract's one regeneration: 4 Q/A pairs answered from
     `source` (the moment's own seed lines + Facts — never the AUDIENCE / BRAND lines or another
@@ -671,26 +719,11 @@ def write_faq(
 
     `required_questions` (AA-779, S245 r7): the real search questions the post's FAQ does not ask
     yet — answered first, in order, keeping their words, each one a SOURCE fact answers (the
-    writer used 3 of 30 given questions in r7). Without them the prompt is unchanged."""
-    parts = []
-    if brand_name:
-        parts.append(f"BRAND (never name another brand): {brand_name}")
-    parts.append(f"SOURCE:\n{source[:12000]}")
-    if unused_facts:
-        parts.append("UNUSED FACTS (from the SOURCE; the POST does not tell these yet):\n"
-                     + "\n".join(f"- {f}" for f in unused_facts))
-    if required_questions:
-        parts.append("REAL QUESTIONS (what readers really search for; write these pairs FIRST, in this order, "
-                     "one pair per question a SOURCE fact answers: keep the question's own words — you may only "
-                     "fix its grammar or add the place's name — and skip one no SOURCE fact answers; then fill "
-                     "the rest as usual. Never write that readers search for or ask it):\n"
-                     + "\n".join(f"- {q}" for q in required_questions))
-    if paa_questions:
-        parts.append("SEARCH QUESTIONS (what readers search for; use one only when a SOURCE fact answers it):\n"
-                     + "\n".join(f"- {q}" for q in paa_questions))
-    parts.append(f"POST (do not repeat what it says):\n{strip_citation_tags(body)[:6000]}")
-    request = LLMRequest(system_prompt=_FAQ_SYSTEM, user_prompt="\n\n".join(parts),
-                         stage=SEO_FIT_STAGE, max_tokens=_MAX_TOKENS)
+    writer used 3 of 30 given questions in r7). Without them the prompt is unchanged.
+
+    AA-1167: the request is faq_request() (the fence mode `fence`, None = the setting)."""
+    request = faq_request(source=source, body=body, brand_name=brand_name, unused_facts=unused_facts,
+                          paa_questions=paa_questions, required_questions=required_questions, fence=fence)
     signal = {"channel": "blog", "mode": "faq_regen", "source_chars": len(source),
               "unused_facts": len(unused_facts or []), "paa_questions": len(paa_questions or []),
               **({"required_questions": len(required_questions)} if required_questions else {})}

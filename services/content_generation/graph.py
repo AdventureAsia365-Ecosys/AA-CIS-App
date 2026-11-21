@@ -20,7 +20,7 @@ from .batch_prompt import (
 )
 from .brand_audit_node import brand_audit_node
 from .flag_fix_node import flag_fix_node
-from .grounding import grounding_node, regrounding, repair_and_recheck
+from .grounding import REPAIR_RUN_KEYS, grounding_node, regrounding, repair_and_recheck
 from .grounding import degraded_entries as grounding_degraded_entries, source_text as grounding_source_text
 from .judge_node import judge_node
 from . import t2_interim
@@ -62,7 +62,7 @@ min_quality = threshold_reader("a1.min_quality")  # services/quality/thresholds.
 
 def _process_itineraries(generated: dict, tour: dict, client: LLMClient,
                          nudge_budget: int = MAX_NUDGES_PER_TOUR, *, stage: str = "s1_itinerary_nudge",
-                         voice_hint: str | None = None) -> dict:
+                         voice_hint: str | None = None, fence: bool | None = None) -> dict:
     """AA-353: validate the model's structured ``itineraries`` array against its own PER-DAY
     SOURCE LENGTH target, auto-nudge (once, non-repeating) any day outside the hard clamp, then
     serialize the array back to the pre-existing canonical "Day N — Title\\nBody" string format —
@@ -157,7 +157,7 @@ def _process_itineraries(generated: dict, tour: dict, client: LLMClient,
         new_title, new_body, resp = nudge_itinerary_day(
             client, m["source_text"] or itineraries_raw,
             str(day_item.get("title") or ""), str(day_item.get("body") or ""), source_words,
-            stage=stage, voice_hint=voice_hint,  # AA-792: T2 keeps the tenant voice; None for A1
+            stage=stage, voice_hint=voice_hint, fence=fence,  # AA-792 tenant voice; AA-1167 the run's fence mode
         )
         try:
             extra_cost += resp.cost_usd
@@ -688,7 +688,7 @@ def generate_node(state: ContentState) -> ContentState:
         # length target, then serialize back to the plain string every downstream node expects.
         _itin_result = _process_itineraries(generated, state.get("tour", {}), client,
                                             stage=stage_for(state, "s1_itinerary_nudge"),  # AA-763
-                                            voice_hint=nudge_voice_hint(state))  # AA-792
+                                            voice_hint=nudge_voice_hint(state), fence=state.get("prompt_fence"))
         # AA-738: strip forbidden words deterministically before validate scores them — after the
         # itinerary nudge, so its output is covered too.
         _apply_forbidden_strip(generated, state)
@@ -922,7 +922,7 @@ def seed_generated_node(state: ContentState) -> ContentState:
     # by _process_itineraries for the optional per-day nudge (on-demand, small) — batch doesn't cover it.
     _itin_result = _process_itineraries(generated, state.get("tour", {}), LLMClient(),
                                         stage=stage_for(state, "s1_itinerary_nudge"),  # AA-763
-                                        voice_hint=nudge_voice_hint(state))  # AA-792
+                                        voice_hint=nudge_voice_hint(state), fence=state.get("prompt_fence"))
     _apply_forbidden_strip(generated, state)  # AA-738: same deterministic strip as the live path
     logger.info("s1_batch_seeded", tour_id=state.get("tour_id"),
                 model=state.get("model_used", "batch-haiku"))
@@ -1366,8 +1366,7 @@ def _grounding_recheck(state: ContentState) -> ContentState:
             # had removed — one more sentence repair before escalating to HITL (S204 smoke, Bhutan).
             # AA-1049 W3 (S1 train): the local fix makes no model edit and there is no second repair round.
             rr = repair_and_recheck(state.get("generated", {}), violations, state.get("tour", {}),
-                                    model_tier=state.get("model_tier"),
-                                    brand_forbidden_words=state.get("brand_forbidden_words"))
+                                    **{k: state.get(k) for k in REPAIR_RUN_KEYS})  # AA-1167: + the run's fence mode
             violations = rr["violations"]
             lst = state.get("degraded")
             if rr.get("check") is not None:
