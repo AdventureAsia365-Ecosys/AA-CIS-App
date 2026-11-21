@@ -75,6 +75,7 @@ from api.routers.admin_llm_route import quality_router as admin_llm_route_qualit
 from api.routers.admin_usage_explorer import router as admin_usage_explorer_router  # AA-1045
 from api.routers.admin_decisions import router as admin_decisions_router  # AA-660
 from api.routers.admin_platform import router as admin_platform_router  # AA-883
+from api.routers.admin_platform_roles import router as admin_platform_roles_router  # AA-1155 T13 / T14
 from api.routers.admin_photos import router as admin_photos_router, public_router as photos_public_router  # AA-708
 from api.routers.admin_places import router as admin_places_router  # AA-712
 from api.routers.admin_supply_content import router as admin_supply_content_router  # AA-835
@@ -401,6 +402,7 @@ app.include_router(admin_llm_route_quality_router)  # AA-1042 — /admin/content
 app.include_router(admin_usage_explorer_router)  # AA-1045 — /admin/usage-explorer/* (AI & spend › Usage explorer)
 app.include_router(admin_decisions_router)  # AA-660 — /admin/decisions (Jev per stage, cost)
 app.include_router(admin_platform_router)  # AA-883 — /admin/platform/staff (read-only staff directory)
+app.include_router(admin_platform_roles_router)  # AA-1155 — the CIS role editor and the people-role presets
 app.include_router(admin_platform_ops_router)  # AA-884 — /admin/platform/{apps,audit,cost}
 app.include_router(admin_crm_console_router)  # AA-941 — /admin/platform/crm/* (CRM L1 console relay, no include prefix)
 app.include_router(admin_alert_recipients_router)  # AA-913 — /admin/platform/alert-recipients (no include prefix)

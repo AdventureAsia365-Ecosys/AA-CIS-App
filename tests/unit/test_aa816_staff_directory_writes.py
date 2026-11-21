@@ -1191,8 +1191,8 @@ def test_roles_route_applies_the_platform_owner_preset(api, db):
 def test_roles_route_refuses_bad_crm_input(api, db):
     client, _, token = api
     uid = db.add(email=NEW_EMAIL, role="content")
-    for body, status in (({"crm_roles": ["boss"]}, 422), ({"crm_roles": "ops"}, 422), ({"preset": "boss"}, 422),
-                         ({"preset": "platform_owner", "role": "admin"}, 400),
+    for body, status in (({"crm_roles": ["boss"]}, 422), ({"crm_roles": "ops"}, 422), ({"preset": "Boss!"}, 422),
+                         ({"preset": "boss"}, 400), ({"preset": "platform_owner", "role": "admin"}, 400),  # AA-1155 T14
                          ({"preset": "pricing_team", "booking_role": "sales"}, 400),
                          ({"preset": "pricing_team"}, 409)):          # AA-1091: would replace CIS content
         resp = client.patch(f"/admin/platform/staff/{uid}/roles", headers=_h(token), json=body)

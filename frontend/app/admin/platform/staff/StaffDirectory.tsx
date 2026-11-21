@@ -51,6 +51,8 @@ import {
   type StaffAccount,
 } from "./StaffManage";
 import DirectoryHealth from "./DirectoryHealth";
+import { PresetEditor } from "./PresetEditor";
+import { RoleEditor } from "./RoleEditor";
 import { STAFF } from "./messages";
 
 export type { StaffAccount } from "./StaffManage";
@@ -280,6 +282,12 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
           tableMinWidth={1080}
         />
       )}
+
+      {/* AA-1155 T14 / T13: the people-role presets and the CIS custom roles, as data an owner edits (others read). */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 20, marginTop: 24 }}>
+        <PresetEditor />
+        <RoleEditor />
+      </div>
 
       <StaffDrawer id={openId} fallback={staff.find((s) => s.id === openId) ?? null} onClose={close}
         canWrite={canWrite} selfId={viewer?.admin_id ?? null} crmAvailable={crmAvailable} />

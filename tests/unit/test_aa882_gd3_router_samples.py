@@ -80,6 +80,7 @@ SAMPLES = [
     ("admin_seo", "GET", "/admin/seo-intelligence", None),
     ("admin_platform", "GET", "/admin/platform/staff", None),
     ("admin_platform", "GET", "/admin/platform/staff/{staff_id}", None),
+    ("admin_platform_roles", "GET", "/admin/platform/presets", None),                    # AA-1155 T14
     ("admin_platform_ops", "GET", "/admin/platform/apps", None),      # AA-884
     ("admin_platform_ops", "GET", "/admin/platform/audit", None),
     ("admin_platform_ops", "GET", "/admin/platform/cost", None),
