@@ -104,7 +104,11 @@ class FakeS3:
 def _env(monkeypatch):
     monkeypatch.delenv("DOCS_READER_S3_PREFIX", raising=False)
     docs_reader.reset_cache()
-    with patch.object(docs_reader, "_bucket", lambda: "bucket"), patch.object(admin, "ADMIN_SECRET", SECRET):
+    from tests.unit.aa1155_cognito_session import cognito_session_assumed
+
+    # AA-1155 T11: the AI gateway routes need a verified Cognito session (assumed here; the roles are what is tested).
+    with patch.object(docs_reader, "_bucket", lambda: "bucket"), patch.object(admin, "ADMIN_SECRET", SECRET), \
+            cognito_session_assumed(main.app):
         yield
     docs_reader.reset_cache()
 

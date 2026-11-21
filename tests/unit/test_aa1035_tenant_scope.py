@@ -241,7 +241,10 @@ def client(monkeypatch):
     for name in ("fetch", "fetchrow", "fetchval", "execute"):
         setattr(pool, name, AsyncMock(side_effect=AssertionError("endpoint reached")))
     monkeypatch.setattr(app.state, "pool", pool, raising=False)
-    return TestClient(app, raise_server_exceptions=False), conn
+    from tests.unit.aa1155_cognito_session import cognito_session_assumed
+
+    with cognito_session_assumed(app):   # AA-1155 T11: the AI gateway routes need a verified Cognito session
+        yield TestClient(app, raise_server_exceptions=False), conn
 
 
 def _headers(role, user=STAFF):

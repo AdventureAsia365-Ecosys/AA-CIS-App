@@ -94,7 +94,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from api.core.staff_authz import StaffPrincipal, denial_reason, staff_policy
+from api.core.staff_authz import StaffPrincipal, denial_reason, staff_policy, require_cognito_session
 from api.core.tenant_scope import TENANT_SCOPED
 from api.routers.admin import verify_admin_secret
 from api.routers.admin_docs import asset_response
@@ -106,7 +106,8 @@ from shared import provider_credit
 from shared.llm_client import app_profile, capacity
 
 router = APIRouter(prefix="/admin/ai-gateway", tags=["admin-ai-gateway"],
-                   dependencies=[Depends(verify_admin_secret), Depends(staff_policy)])
+                   dependencies=[Depends(verify_admin_secret), Depends(staff_policy),
+                                 Depends(require_cognito_session)])   # AA-1155 T11: Cognito only
 
 
 @router.get("/providers", summary="Every paid AI and data provider: health, spend, budget, balance (read-only, $0)")

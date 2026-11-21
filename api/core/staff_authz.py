@@ -1061,6 +1061,22 @@ STAFF_WRITE_NEEDS_OWNER = "Only a platform owner can change staff accounts"
 READ_ONLY_DENIED = "Role '{role}' is read-only"
 
 
+# AA-1155 (T11, R5.5): the AI budget and AI gateway routers (/admin/budgets, /admin/ai-gateway) take a verified
+# Cognito session only. A request with the admin secret and a forged x-admin-role, a legacy password session, the
+# Preview credential or the machine gets 403 before the route runs, whatever role it names.
+AI_CONTROLS_NEED_COGNITO = "AI budgets and the AI gateway need a company sign-in (Cognito); other sessions cannot"
+
+
+def require_cognito_session(request: Request) -> Any:
+    """Router dependency (AA-1155 T11): the verified Cognito StaffIdentity of this request, or 403."""
+    identity = request_staff_identity(request)
+    if identity is None or getattr(identity, "auth", None) != "cognito" or not getattr(identity, "admin_id", None):
+        logger.warning("staff_cognito_required", path=request.url.path, method=request.method,
+                       role_header=request.headers.get("x-admin-role"))
+        raise HTTPException(status_code=403, detail=AI_CONTROLS_NEED_COGNITO)
+    return identity
+
+
 def request_staff_identity(request: Request) -> Any:
     """The Cognito StaffIdentity the staff bearer middleware put on this request (scope state, or the contextvar
     it also sets), or None."""

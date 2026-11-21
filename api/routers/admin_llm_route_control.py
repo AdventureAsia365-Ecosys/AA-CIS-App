@@ -32,13 +32,14 @@ import asyncpg
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from api.core.staff_authz import staff_policy
+from api.core.staff_authz import staff_policy, require_cognito_session
 from api.routers.admin import verify_admin_secret
 from api.services import llm_route_control as rc
 from shared.llm_client import route_evidence, route_versions
 
 router = APIRouter(prefix="/admin/ai-gateway/route-control", tags=["admin-ai-gateway"],
-                   dependencies=[Depends(verify_admin_secret), Depends(staff_policy)])
+                   dependencies=[Depends(verify_admin_secret), Depends(staff_policy),
+                                 Depends(require_cognito_session)])   # AA-1155 T11: Cognito only
 
 class Proposal(BaseModel):
     """The changes to preview or save; an omitted part keeps the config in force."""

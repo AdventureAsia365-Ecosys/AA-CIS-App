@@ -42,7 +42,7 @@ import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from api.core.staff_authz import staff_policy
+from api.core.staff_authz import staff_policy, require_cognito_session
 from api.routers.admin import verify_admin_secret
 from api.services import llm_route_trace as svc
 from services.acp_shared.audit_log import write_audit_log
@@ -52,7 +52,8 @@ from shared.llm_client import route_evidence
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/admin/ai-gateway", tags=["admin-ai-gateway"],
-                   dependencies=[Depends(verify_admin_secret), Depends(staff_policy)])
+                   dependencies=[Depends(verify_admin_secret), Depends(staff_policy),
+                                 Depends(require_cognito_session)])   # AA-1155 T11: Cognito only
 # The tenant content list: every tenant's T2 versions / T9 pieces and their admin-only QA mark, gated like the other
 # Tenant QA reads (/admin/content-quality/*: tenant_content.read). The AI & spend roles never reach it.
 quality_router = APIRouter(prefix="/admin/content-quality", tags=["admin-content-quality"],

@@ -12,6 +12,11 @@ AA-1025 A7 (CIS migration 340): provider 'llm' is a central LLM cap, checked by 
 per_month_usd (the UTC month) and, for job:<kind> only, per_run_usd (the running job's spend); AA-1126: not for
 job:s1_rewrite, whose per-run cap is the setting cis.spend.run_cap_s1_rewrite_usd (422 names it). A provider row keeps
 global | job:<kind> and no month cap. Before 340 the database refuses an 'llm' row (409 with the reason).
+
+AA-1155 (spec task T11, R5.5): every route needs a verified Cognito session (staff_authz.require_cognito_session: a
+forged x-admin-role with only the admin secret gets 403), and every change writes one acp_shared.audit_log row
+(``spend_budget.updated`` / ``spend_budget.deleted``, resource ``<provider>/<scope>``) with the row before and after,
+in the same transaction as the write.
 """
 from __future__ import annotations
 
@@ -23,9 +28,10 @@ import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from api.core.staff_authz import staff_policy
+from api.core.staff_authz import staff_policy, require_cognito_session
 from api.routers.admin import verify_admin_secret
 from api.services import settings_registry
+from services.acp_shared.audit_log import write_audit_log
 from shared.cost_guard import CENTRAL_PROVIDER, PROVIDERS, day_spend
 from shared.llm_client import caps_settings, central_budget
 
@@ -36,7 +42,8 @@ logger = structlog.get_logger()
 # the write routes are kept as-is (same check, run twice).
 # AA-882 (GĐ1): staff_policy narrows the writes listed in api/core/staff_authz.py POLICY by role.
 router = APIRouter(prefix="/admin/budgets", tags=["admin-budgets"],
-                   dependencies=[Depends(verify_admin_secret), Depends(staff_policy)])
+                   dependencies=[Depends(verify_admin_secret), Depends(staff_policy),
+                                 Depends(require_cognito_session)])   # AA-1155 T11: Cognito only
 
 
 class BudgetUpdate(BaseModel):
@@ -80,6 +87,28 @@ def budget_row(raw: dict) -> dict:
     return row
 
 
+BEFORE_SQL = "SELECT to_jsonb(b) FROM shared.spend_budget b WHERE provider = $1 AND scope = $2"
+AUDIT_UPDATED = "spend_budget.updated"
+AUDIT_DELETED = "spend_budget.deleted"
+AUDIT_RESOURCE = "spend_budget"
+
+
+def _row_of(raw) -> Optional[dict]:
+    """The spend_budget row of a ``to_jsonb`` value (text or dict), or None."""
+    if not raw:
+        return None
+    row = budget_row(json.loads(raw) if isinstance(raw, str) else dict(raw))
+    row["updated_at"] = str(row["updated_at"]) if row.get("updated_at") is not None else None
+    return row
+
+
+async def _audit(conn, action: str, provider: str, scope: str, actor: Optional[str], before, after) -> None:
+    """AA-1155 T11: one audit row with the budget before and after (``after`` None for a delete)."""
+    await write_audit_log(conn, tenant_id=None, actor=f"admin:{actor}" if actor else "admin", action=action,
+                          resource_type=AUDIT_RESOURCE, resource_id=f"{provider}/{scope}",
+                          details={"provider": provider, "scope": scope, "before": before, "after": after})
+
+
 UPSERT_SQL = """
     INSERT INTO shared.spend_budget
         (provider, scope, per_run_usd, per_day_usd, hard_stop, alert_pct, updated_at, updated_by)
@@ -120,11 +149,11 @@ async def upsert_budget(provider: str, scope: str, body: BudgetUpdate, request: 
     central = provider == CENTRAL_PROVIDER
     hard_stop = body.hard_stop if body.hard_stop is not None else not central
     try:
-        async with pool.acquire() as conn:
+        async with pool.acquire() as conn, conn.transaction():
+            raw = await conn.fetchval(BEFORE_SQL, provider, scope)
+            audit_before = _row_of(raw)
             if settings_registry.tighten_only(x_admin_role):
                 # S279 thresholds L1 (tech lead Q1): ai_ops may lower a cap or harden it, never raise or remove one
-                raw = await conn.fetchval("SELECT to_jsonb(b) FROM shared.spend_budget b "
-                                          "WHERE provider = $1 AND scope = $2", provider, scope)
                 before = budget_row(json.loads(raw) if isinstance(raw, str) else dict(raw)) if raw else None
                 if before and central and caps_settings.run_class_of_scope(scope):
                     before["per_run_usd"] = None     # AA-1126: not enforced (a setting), so clearing it loosens nothing
@@ -139,6 +168,10 @@ async def upsert_budget(provider: str, scope: str, body: BudgetUpdate, request: 
             else:
                 await conn.execute(UPSERT_SQL, provider, scope, body.per_run_usd, body.per_day_usd, hard_stop,
                                    body.alert_pct, x_admin_user_id or "admin")
+            after = {"provider": provider, "scope": scope, **body.model_dump(), "hard_stop": hard_stop}
+            if not central:
+                after.pop("per_month_usd", None)
+            await _audit(conn, AUDIT_UPDATED, provider, scope, x_admin_user_id, audit_before, after)
     except (asyncpg.CheckViolationError, asyncpg.UndefinedColumnError) as e:
         if not central:
             raise
@@ -165,11 +198,13 @@ async def delete_central_budget(scope: str, request: Request, x_admin_user_id: s
     if settings_registry.tighten_only(x_admin_role):
         raise HTTPException(status_code=403, detail=f"{settings_registry.TIGHTEN_ONLY}: removing the cap")
     pool = request.app.state.pool
-    async with pool.acquire() as conn:
+    async with pool.acquire() as conn, conn.transaction():
+        before = _row_of(await conn.fetchval(BEFORE_SQL, CENTRAL_PROVIDER, scope))
         status = await conn.execute("DELETE FROM shared.spend_budget WHERE provider = $1 AND scope = $2",
                                     CENTRAL_PROVIDER, scope)
-    if status.endswith(" 0"):
-        raise HTTPException(status_code=404, detail=f"no central LLM cap for {scope}")
+        if status.endswith(" 0"):
+            raise HTTPException(status_code=404, detail=f"no central LLM cap for {scope}")
+        await _audit(conn, AUDIT_DELETED, CENTRAL_PROVIDER, scope, x_admin_user_id, before, None)
     central_budget.invalidate()
     logger.info("spend_budget_deleted", provider=CENTRAL_PROVIDER, scope=scope, admin_user=x_admin_user_id)
     return {"provider": CENTRAL_PROVIDER, "scope": scope, "deleted": True}
