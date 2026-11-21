@@ -72,11 +72,12 @@ async function handler(
       { status: 403 });
   }
   // AA-577 follow-up — a few paths (the OpenAPI schema) are admin-only even for reads.
-  if (!canReadAdminPath(auth.role, pathStr)) {
+  const session = { role: auth.role, capabilities: auth.capabilities };   // AA-1155: decided by capabilities
+  if (!canReadAdminPath(session, pathStr)) {
     return NextResponse.json({ detail: "Only an admin can do this" }, { status: 403 });
   }
   // AA-769 — every staff role may read /admin/*, but edits to tenant content are admin-only.
-  if (!canWriteAdminPath(auth.role, req.method, pathStr)) {
+  if (!canWriteAdminPath(session, req.method, pathStr)) {
     return NextResponse.json({ detail: "Only an admin can do this" }, { status: 403 });
   }
   const search = req.nextUrl.search;

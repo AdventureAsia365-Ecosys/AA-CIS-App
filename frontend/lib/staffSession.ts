@@ -16,6 +16,10 @@ export const STAFF_REFRESH_COOKIE_PATH = "/api/auth";
 /** Display hints for the UI (never an access decision): set by the server after a verified sign-in. */
 export const ROLE_COOKIE = "cis_role";
 export const USER_COOKIE = "cis_user";
+/** AA-1155: the session's capability list (comma separated) and, for a custom role, its name: display hints the admin
+ *  shell reads to show and hide controls (lib/rbac.ts registerSessionCapabilities). Every decision stays server side. */
+export const CAPS_COOKIE = "cis_caps";
+export const ROLE_NAME_COOKIE = "cis_role_name";
 
 /** Where the browser lands after sign-in; proxy.ts redirects it to the role's landing page. */
 export const POST_LOGIN_PATH = "/admin/dashboard";

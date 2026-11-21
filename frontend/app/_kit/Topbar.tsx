@@ -274,7 +274,7 @@ function AccountMenu() {
   const t = useT(SHELL_MESSAGES);
   const roleLabel = useT(RBAC_MESSAGES);
   const router = useRouter();
-  const { userName, role } = useAdminIdentity();
+  const { userName, role, roleName } = useAdminIdentity();   // AA-1155: roleName = a custom role's name
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -331,7 +331,7 @@ function AccountMenu() {
         }}>
           <div style={{ padding: "10px 14px", borderBottom: `1px solid ${K.line}` }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: K.ink, fontFamily: serif }}>{userName}</div>
-            <div style={{ fontSize: 11, color: K.muted }}>{isStaffRole(role) ? roleLabel(role) : ""}</div>
+            <div style={{ fontSize: 11, color: K.muted }}>{isStaffRole(role) ? roleLabel(role) : roleName}</div>
           </div>
           <MenuRow icon={<Settings size={15} />} label={t("settings")} onClick={() => { setOpen(false); router.push("/admin/settings"); }} />
           <MenuRow icon={<LogOut size={15} />} label={t("signOut")} onClick={logout} />

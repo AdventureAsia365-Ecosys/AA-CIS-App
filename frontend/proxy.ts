@@ -56,9 +56,10 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { adminVerifyCache } from "./lib/auth-server";
-import { isStaffRole, landingPage, pageRule } from "./lib/rbac";
+import { canSeePage, isStaffSubject, landingPage, pageRule, type StaffSession } from "./lib/rbac";
 import { NONCE_HEADER, contentSecurityPolicy, newNonce, sentryOrigin } from "./lib/securityHeaders";
 import {
+  CAPS_COOKIE,
   REFRESH_PATH,
   STAFF_REFRESH_COOKIE,
   STAFF_REFRESH_COOKIE_PATH,
@@ -121,7 +122,8 @@ async function staffGate(request: NextRequest, pass: () => NextResponse): Promis
   if (pathname === "/admin/dashboard" || pathname.startsWith("/admin/dashboard/")) {
     // Destination only; the landing page's own rule enforces auth on the follow-up request.
     const dashRole = request.cookies.get("cis_role")?.value;
-    return NextResponse.redirect(new URL(landingPage(dashRole), request.url));
+    const dashCaps = (request.cookies.get(CAPS_COOKIE)?.value ?? "").split(",").filter(Boolean);   // AA-1155
+    return NextResponse.redirect(new URL(landingPage({ role: dashRole, capabilities: dashCaps }), request.url));
   }
 
   const route = pageRule(pathname);
@@ -131,11 +133,9 @@ async function staffGate(request: NextRequest, pass: () => NextResponse): Promis
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  const allowed = route.roles as string[];
-
   // AA-656: identity comes from whichever session token is present, verified server-side.
   const staffToken = request.cookies.get(STAFF_TOKEN_COOKIE)?.value;
-  if (staffToken) return sessionGate(request, staffToken, allowed, pass);
+  if (staffToken) return sessionGate(request, staffToken, pass);
 
   // No token (a bare or forged cis_role cookie proves nothing) → log in.
   const response = NextResponse.redirect(new URL("/login", request.url));
@@ -143,11 +143,11 @@ async function staffGate(request: NextRequest, pass: () => NextResponse): Promis
   return response;
 }
 
-/** A request that carries a staff token: refresh, verify, then the page's role check (AA-656 / AA-816). */
+/** A request that carries a staff token: refresh, verify, then the page's capability check (AA-656 / AA-816;
+ *  AA-1155: lib/rbac.ts canSeePage by the verified capability list). */
 async function sessionGate(
   request: NextRequest,
   staffToken: string,
-  allowed: string[],
   pass: () => NextResponse,
 ): Promise<NextResponse> {
   if (isCognitoToken(staffToken) && tokenExpiresSoon(staffToken)) {
@@ -159,13 +159,13 @@ async function sessionGate(
   }
   const verified = await verifyAdminToken(request);
   if (verified instanceof NextResponse) return verified; // invalid/expired token
-  if (!isStaffRole(verified.role)) {
+  if (!isStaffSubject(verified)) {
     return toStaffLogin(request);
   }
-  if (!allowed.includes(verified.role)) {
-    // Real staff session, page not allowed for its role → its own landing page, not /login.
-    // Every role's landing page is allowed for that role, so this cannot loop.
-    return NextResponse.redirect(new URL(landingPage(verified.role), request.url));
+  if (!canSeePage(verified, request.nextUrl.pathname)) {
+    // Real staff session, page not allowed for its capabilities → its own landing page, not /login.
+    // Every role's landing page is allowed for that role (lib/rbacCaps.test.mjs 4), so this cannot loop.
+    return NextResponse.redirect(new URL(landingPage(verified), request.url));
   }
   return pass();
 }
@@ -176,7 +176,7 @@ async function sessionGate(
 // #1). Only the /auth/verify-admin network-failure case below keeps the
 // fail-open-in-dev / fail-closed-in-prod policy (as the tenant gate had; now portal/proxy.ts) — and only for a legacy
 // HS256 token: a Cognito token (AA-816) always fails closed.
-async function verifyAdminToken(request: NextRequest): Promise<NextResponse | { role: string }> {
+async function verifyAdminToken(request: NextRequest): Promise<NextResponse | StaffSession> {
   const token = request.cookies.get(STAFF_TOKEN_COOKIE)?.value;
   if (!token) {
     // AA-252: no JWT present → fail closed. The legacy ADMIN_SECRET fallback
@@ -192,7 +192,7 @@ async function verifyAdminToken(request: NextRequest): Promise<NextResponse | { 
   // milliseconds earlier — under any transient backend latency this could
   // lose the race and bounce the fresh login straight back to /login.
   const cached = adminVerifyCache.get(token);
-  if (cached) return { role: cached.role };
+  if (cached) return { role: cached.role, capabilities: cached.capabilities };
 
   try {
     const res = await fetch(`${API_URL}/auth/verify-admin`, {
@@ -212,12 +212,16 @@ async function verifyAdminToken(request: NextRequest): Promise<NextResponse | { 
       return toStaffLogin(request);
     }
     const data = await res.json();
+    const capabilities: string[] = Array.isArray(data.capabilities)
+      ? data.capabilities.filter((c: unknown) => typeof c === "string") : [];
     adminVerifyCache.set(token, {
       adminId: data.admin_id,
       role: data.role,
       name: data.display_name || data.email || data.username || "",
+      capabilities,
+      customLabel: typeof data.custom_role_label === "string" ? data.custom_role_label : null,
     });
-    return { role: data.role };
+    return { role: data.role, capabilities };
   } catch {
     const isDev = process.env.NODE_ENV === "development";
     if (!isDev || isCognitoToken(token)) {
@@ -232,6 +236,7 @@ async function verifyAdminToken(request: NextRequest): Promise<NextResponse | { 
 function toStaffLogin(request: NextRequest): NextResponse {
   const response = NextResponse.redirect(new URL("/login", request.url));
   response.cookies.delete("cis_role");
+  response.cookies.delete(CAPS_COOKIE);
   response.cookies.delete(STAFF_TOKEN_COOKIE);
   response.cookies.set(STAFF_REFRESH_COOKIE, "", { path: STAFF_REFRESH_COOKIE_PATH, maxAge: 0 });
   return response;

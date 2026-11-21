@@ -22,6 +22,8 @@ import "server-only";
 import type { NextRequest, NextResponse } from "next/server";
 import {
   ROLE_COOKIE,
+  CAPS_COOKIE,
+  ROLE_NAME_COOKIE,
   STAFF_REFRESH_COOKIE,
   STAFF_REFRESH_COOKIE_PATH,
   STAFF_TOKEN_COOKIE,
@@ -411,6 +413,9 @@ export function sessionClientKind(request: NextRequest): StaffClientKind | null 
 export interface StaffDisplay {
   role: string;
   name: string;
+  /** AA-1155: the verified capability list and the custom role's name (display hints; absent = left unchanged). */
+  capabilities?: readonly string[];
+  roleName?: string | null;
 }
 
 /**
@@ -453,10 +458,12 @@ export function setDisplayCookies(response: NextResponse, display: StaffDisplay,
   response.cookies.set(ROLE_COOKIE, display.role, opts);
   // NextResponse.cookies.set() URI-encodes the value itself (see tenant-login/route.ts).
   response.cookies.set(USER_COOKIE, display.name, opts);
+  if (display.capabilities) response.cookies.set(CAPS_COOKIE, display.capabilities.join(","), opts);   // AA-1155
+  if (display.roleName !== undefined) response.cookies.set(ROLE_NAME_COOKIE, display.roleName ?? "", opts);
 }
 
 export function clearStaffSessionCookies(response: NextResponse): void {
-  for (const name of [STAFF_TOKEN_COOKIE, ROLE_COOKIE, USER_COOKIE, "cis_api_token"]) {
+  for (const name of [STAFF_TOKEN_COOKIE, ROLE_COOKIE, USER_COOKIE, CAPS_COOKIE, ROLE_NAME_COOKIE, "cis_api_token"]) {
     response.cookies.set(name, "", { path: "/", maxAge: 0 });
   }
   response.cookies.set(STAFF_REFRESH_COOKIE, "", { path: STAFF_REFRESH_COOKIE_PATH, maxAge: 0 });

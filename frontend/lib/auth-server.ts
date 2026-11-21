@@ -32,7 +32,7 @@
 // mechanism (redundant round trips) rather than only widening the timeout,
 // which would lower the odds without removing the cause.
 import { NextRequest, NextResponse } from "next/server";
-import { STAFF_ROLES, isReadMethod, isReadOnlyRole, type StaffRole } from "./rbac";
+import { STAFF_ROLES, isReadMethod, isReadOnlyRole, passesApiRule, type ApiRule, type StaffRole } from "./rbac";
 import { STAFF_TOKEN_COOKIE, isCognitoToken } from "./staffSession";
 
 //
@@ -129,6 +129,10 @@ export interface VerifiedStaff {
   role: string;
   /** Display name for the UI: display_name, else email, else username (AA-816). */
   name: string;
+  /** AA-1155 (R5.2): the capabilities verify-admin returned for this session (a custom role's own list). */
+  capabilities: string[];
+  /** AA-1155: the custom role's name (a cis-custom holder), else null. */
+  customLabel: string | null;
 }
 export const adminVerifyCache = new VerifyCache<VerifiedStaff>(ADMIN_VERIFY_CACHE_TTL_MS);
 
@@ -146,20 +150,22 @@ export type RequireAdminResult =
   // AA-816 (C5): `bearer` is the staff access token when the cookie holds a Cognito token (it has an
   // `iss`), else null. Proxies forward it as Authorization: Bearer (staffCredentialHeaders) so the API's
   // staff_bearer middleware takes the role and actor from the verified token instead of the headers.
-  | { ok: true; adminId: string; role: string; bearer: string | null }
+  | { ok: true; adminId: string; role: string; capabilities: string[]; bearer: string | null }
   | { ok: false; response: NextResponse };
 
-// AA-656 — `roles` is the route's entry in lib/rbac.ts API_RULES. The role checked is the one inside
-// the verified JWT; the `cis_role` cookie is never consulted. A valid staff token with a role not in
-// `roles` gets 403 (not 401) so the UI can tell "log in again" from "not allowed".
+// AA-656 — `rule` is the route's entry in lib/rbac.ts API_RULES. The role checked is the one inside
+// the verified JWT; the `cis_role` cookie is never consulted. A valid staff token the rule does not admit
+// gets 403 (not 401) so the UI can tell "log in again" from "not allowed". AA-1155: an API_RULES entry decides by the
+// verified capability list (a custom role passes by its own capabilities); a plain role list (the view-as routes)
+// decides by role, so it never admits a custom role.
 // AA-878: a read-only role (the viewer) gets 403 on every method but GET/HEAD/OPTIONS here, in the one place
 // every secret-attaching proxy goes through, so no BFF route can forward a write for it by default.
 export async function requireAdmin(
   request: NextRequest,
-  roles: readonly StaffRole[] = STAFF_ROLES,
+  rule: ApiRule | readonly StaffRole[] = STAFF_ROLES,
 ): Promise<RequireAdminResult> {
   const result = await verifyStaff(request);
-  if (result.ok && !(roles as readonly string[]).includes(result.role)) {
+  if (result.ok && !passesApiRule({ role: result.role, capabilities: result.capabilities }, rule)) {
     return { ok: false, response: forbidden() };
   }
   if (result.ok && isReadOnlyRole(result.role) && !isReadMethod(request.method)) {
@@ -233,6 +239,8 @@ export async function verifyStaffToken(token: string): Promise<VerifyStaffTokenR
       adminId: data.admin_id,
       role: data.role,
       name: data.display_name || data.email || data.username || "",
+      capabilities: Array.isArray(data.capabilities) ? data.capabilities.filter((c: unknown) => typeof c === "string") : [],
+      customLabel: typeof data.custom_role_label === "string" ? data.custom_role_label : null,
     };
     adminVerifyCache.set(token, result);
     return { ok: true, ...result };
@@ -265,6 +273,7 @@ async function verifyStaff(request: NextRequest): Promise<RequireAdminResult> {
     ok: true,
     adminId: verified.adminId,
     role: verified.role,
+    capabilities: verified.capabilities,
     bearer: isCognitoToken(token) ? token : null,
   };
 }
