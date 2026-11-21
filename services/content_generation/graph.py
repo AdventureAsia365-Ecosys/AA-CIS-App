@@ -251,7 +251,6 @@ HARD_CODE_REPAIR = {
 # structure deduction it was. Readers use ``hard_block_codes(state)``, never this set alone.
 V2_HARD_BLOCK_CODES = frozenset({"ITINERARY_DAY_COUNT_MISMATCH"})
 
-
 DAY_COUNT_CODE = "ITINERARY_DAY_COUNT_MISMATCH"
 
 
@@ -486,9 +485,7 @@ class ContentState(TypedDict):
     # AA-1078: flag_fix's model fix was lost ({reason: reply_cut | error, stage, fields}); set only then. Declared so
     # LangGraph keeps it (AA-209 gotcha); _rewrite_tour passes it on and the T2 job does not report QA passed over it.
     fix_not_applied:        Optional[dict]
-    # AA-1167: the writer prompts' untrusted-data fence of this run (setting cis.llm.prompt_data_fence, read once by
-    # api/routers/v1_pipeline.initial_state_for). Declared so LangGraph keeps it (AA-209 gotcha); unset = off.
-    prompt_fence:           Optional[bool]
+    prompt_fence:           Optional[bool]  # AA-1167 fence mode of the run (v1_pipeline.initial_state_for); unset = off
 
 # code → (dimension, deduction)
 _FAILURE_MAP: dict[str, tuple[str, float]] = {

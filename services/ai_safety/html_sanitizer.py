@@ -85,6 +85,23 @@ def safe_url(value: Optional[str]) -> Optional[str]:
     return value.strip()
 
 
+def _kept_attrs(tag: str, attrs) -> list[str]:
+    """The allowed attributes of one allowed tag, rendered ` name="escaped value"`; links only with a safe URL."""
+    kept = []
+    for name, value in attrs:
+        name = name.lower()
+        if name not in ALLOWED_ATTRS.get(tag, ()):
+            continue
+        if name == "href":
+            value = safe_url(value)
+            if value is None:
+                continue
+        elif name in _ATTR_VALUE and not _ATTR_VALUE[name].fullmatch(value or ""):
+            continue
+        kept.append(f' {name}="{html.escape(value or "", quote=True)}"')
+    return kept
+
+
 class _Sanitizer(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=False)
@@ -112,18 +129,7 @@ class _Sanitizer(HTMLParser):
             return
         if tag not in ALLOWED_TAGS:
             return
-        kept = []
-        for name, value in attrs:
-            name = name.lower()
-            if name not in ALLOWED_ATTRS.get(tag, ()):
-                continue
-            if name == "href":
-                value = safe_url(value)
-                if value is None:
-                    continue
-            elif name in _ATTR_VALUE and not _ATTR_VALUE[name].fullmatch(value or ""):
-                continue
-            kept.append(f' {name}="{html.escape(value or "", quote=True)}"')
+        kept = _kept_attrs(tag, attrs)
         if tag in _VOID:
             self.out.append(f"<{tag}{''.join(kept)} />")
             return
