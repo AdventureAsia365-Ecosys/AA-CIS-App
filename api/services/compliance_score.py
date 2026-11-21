@@ -1,4 +1,4 @@
-"""AA-1170 (S287, compliance readiness page, phase 1) — the Evidenced % of each framework, pure functions (no DB, no I/O).
+"""AA-1170 (S287, compliance readiness page, phase 1) — the Evidenced % of each framework; pure (no DB, no I/O).
 
 Tech lead S287 Q3: the headline number is **Evidenced %**: only fresh, passing evidence counts. Two numbers per
 framework, never mixed: strict (met only) and weighted (met + partial x the partial weight, S286: 0.5); the S286 hand

@@ -345,7 +345,7 @@ app.include_router(admin_docs_router)
 app.include_router(admin_product_catalogue_router)
 # AA-1108 — GET /admin/platform/delivery (admin page Platform › Delivery), the root Delivery metrics summary.
 app.include_router(admin_platform_delivery_router)
-# AA-1170 — /admin/platform/compliance (admin page Platform › Compliance): readiness per framework from schema compliance.
+# AA-1170 — /admin/platform/compliance (admin page Platform › Compliance): readiness per framework.
 app.include_router(admin_platform_compliance_router)
 
 

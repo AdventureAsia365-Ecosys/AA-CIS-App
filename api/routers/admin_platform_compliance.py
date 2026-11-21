@@ -1,4 +1,4 @@
-"""AA-1170 (S287, phase 1) — Platform › Compliance: readiness per framework for the admin page /admin/platform/compliance.
+"""AA-1170 (S287, phase 1) — Platform › Compliance: readiness per framework (admin page /admin/platform/compliance).
 
   GET  /admin/platform/compliance                       Overview: Evidenced % per framework (strict, weighted, the
                                                         S286 reference), trend, stale / failing evidence, collector
