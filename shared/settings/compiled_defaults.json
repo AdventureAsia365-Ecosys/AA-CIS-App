@@ -882,7 +882,7 @@
    "app": "cis",
    "area": "compliance",
    "label": "Compliance: weight of a partial match in the weighted score",
-   "description": "Platform > Compliance (AA-1170): the weighted Evidenced % counts a requirement that is only partly covered (a met control mapped as partial, or a partly met control mapped as full) as this fraction of a met requirement; a partly met control mapped as partial counts this fraction squared. The strict % ignores partial coverage. The S286 assessment used 0.5.",
+   "description": "Platform > Compliance (AA-1170): the weighted Evidenced % counts a requirement that is only partly covered (a met control mapped as partial, or a partly met control however it is mapped) as this fraction of a met requirement. The strict % ignores partial coverage. The November 2026 hand assessment used 0.5.",
    "value_type": "numeric",
    "unit": "ratio",
    "min_value": 0,
@@ -901,14 +901,14 @@
      "what": "How much a requirement that is only partly covered adds to the weighted score.",
      "raise": "Partial coverage counts more; the weighted score rises and moves away from the strict score.",
      "lower": "Partial coverage counts less; at 0 the weighted score equals the strict score.",
-     "when": "Keep 0.5 to compare with the S286 assessment; change it only with a written reason.",
+     "when": "Keep 0.5 to compare with the November 2026 hand assessment; change it only with a written reason.",
      "example": "With the default 0.5, ten requirements of which four are met and two partly covered score 50% weighted and 40% strict."
     },
     "vi": {
      "what": "Một yêu cầu chỉ được đáp ứng một phần đóng góp bao nhiêu vào điểm có trọng số.",
      "raise": "Đáp ứng một phần được tính nhiều hơn; điểm có trọng số tăng và xa dần điểm chặt.",
      "lower": "Đáp ứng một phần được tính ít hơn; ở mức 0 điểm có trọng số bằng điểm chặt.",
-     "when": "Giữ 0,5 để so được với bản chấm S286; chỉ đổi khi có lý do ghi rõ.",
+     "when": "Giữ 0,5 để so được với bản chấm tay tháng 11/2026; chỉ đổi khi có lý do ghi rõ.",
      "example": "Với mặc định 0,5, mười yêu cầu trong đó bốn đạt và hai đạt một phần cho 50% có trọng số và 40% chặt."
     }
    }
@@ -918,7 +918,7 @@
    "app": "cis",
    "area": "compliance",
    "label": "Compliance: assessed reference score per framework",
-   "description": "Platform > Compliance (AA-1170): the one-off assessed score per framework (percent, the S286 hand assessment of 20/11/2026) drawn as a reference line beside the Evidenced %. Display only: it never changes a computed score. Keys are framework ids of the compliance register (iso27001:2022, soc2:2017, iso42001:2023, owasp-top10:2021, owasp-llm:2025); a framework without a key has no reference line.",
+   "description": "Platform > Compliance (AA-1170): the one-off assessed score per framework (percent, the hand assessment of 20/11/2026) drawn as a reference line beside the Evidenced %. Display only: it never changes a computed score. Keys are framework ids of the compliance register (iso27001:2022, soc2:2017, iso42001:2023, owasp-top10:2021, owasp-llm:2025); a framework without a key has no reference line.",
    "value_type": "json",
    "unit": null,
    "min_value": null,
