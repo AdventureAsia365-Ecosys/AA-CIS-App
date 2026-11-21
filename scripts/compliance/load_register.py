@@ -24,9 +24,10 @@ File format 1 (an invented example: scripts/compliance/register.example.json):
 
 What --apply does (one transaction): upsert every control of the file (title, intent, ... and updated_at); a control in
 the table but not in the file is set inactive (never deleted: its evidence history stays readable); the whole mapping
-table is replaced by the file's (the file is the complete register, so a dropped control keeps no mapping). A mapping to a requirement the catalogue does not have, a control id
-or a text field the table would refuse, an owner that looks like a person's e-mail, or text that carries an account
-ID, an ARN or an S3 URI stops the run before anything is written. Exit 0 = done (or DRY RUN clean), 1 = refused.
+table is replaced by the file's (the file is the complete register, so a dropped control keeps no mapping). A mapping
+to a requirement the catalogue does not have, a control id or a text field the table would refuse, an owner that looks
+like a person's e-mail, or text that carries an account ID, an ARN or an S3 URI stops the run before anything is
+written. Exit 0 = done (or DRY RUN clean), 1 = refused.
 """
 from __future__ import annotations
 
@@ -68,14 +69,32 @@ def _text_problems(where: str, field: str, value: Any) -> list[str]:
     return out
 
 
-def validate(register: Any, catalogue: set[tuple[str, str]]) -> list[str]:
-    """Every problem of the file (empty = loadable). ``catalogue`` = the (framework, ref) pairs of
-    compliance.requirement."""
-    if not isinstance(register, dict) or register.get("format") != 1:
-        return ["the register file is not format 1"]
-    controls, mappings = register.get("controls"), register.get("mappings")
-    if not isinstance(controls, list) or not isinstance(mappings, list):
-        return ["controls and mappings must be lists"]
+ENUMS = (("frequency", FREQUENCIES, None), ("test_type", TEST_TYPES, None), ("scope", SCOPES, "dev"))
+
+
+def _check_ok(ck: Any) -> bool:
+    return (isinstance(ck, dict) and isinstance(ck.get("check_id"), str)
+            and CHECK_ID.fullmatch(ck["check_id"]) is not None and isinstance(ck.get("required", True), bool))
+
+
+def _control_problems(where: str, c: dict) -> list[str]:
+    """The problems of one control whose id is valid."""
+    out: list[str] = []
+    for field in ("title", "intent", "owner_role"):
+        out += _text_problems(where, field, c.get(field))
+    if not isinstance(c.get("domain"), str) or not DOMAIN.fullmatch(c["domain"]):
+        out.append(f"{where}: domain must match {DOMAIN.pattern}")
+    out += [f"{where}: {field} must be one of {', '.join(allowed)}" for field, allowed, default in ENUMS
+            if c.get(field, default) not in allowed]
+    checks = c.get("checks", [])
+    if not isinstance(checks, list) or len(checks) > 20:
+        return out + [f"{where}: checks must be a list of at most 20"]
+    if not all(_check_ok(ck) for ck in checks):
+        out.append(f"{where}: a check needs check_id matching {CHECK_ID.pattern} and a boolean required")
+    return out
+
+
+def _controls_problems(controls: list) -> tuple[list[str], set[str]]:
     problems: list[str] = []
     ids: set[str] = set()
     for i, c in enumerate(controls):
@@ -87,43 +106,40 @@ def validate(register: Any, catalogue: set[tuple[str, str]]) -> list[str]:
         if cid in ids:
             problems.append(f"{where}: listed twice")
         ids.add(cid)
-        for field in ("title", "intent", "owner_role"):
-            problems += _text_problems(where, field, c.get(field))
-        if not isinstance(c.get("domain"), str) or not DOMAIN.fullmatch(c["domain"]):
-            problems.append(f"{where}: domain must match {DOMAIN.pattern}")
-        if c.get("frequency") not in FREQUENCIES:
-            problems.append(f"{where}: frequency must be one of {', '.join(FREQUENCIES)}")
-        if c.get("test_type") not in TEST_TYPES:
-            problems.append(f"{where}: test_type must be one of {', '.join(TEST_TYPES)}")
-        if c.get("scope", "dev") not in SCOPES:
-            problems.append(f"{where}: scope must be one of {', '.join(SCOPES)}")
-        checks = c.get("checks", [])
-        if not isinstance(checks, list) or len(checks) > 20:
-            problems.append(f"{where}: checks must be a list of at most 20")
-            continue
-        for ck in checks:
-            if not (isinstance(ck, dict) and isinstance(ck.get("check_id"), str) and CHECK_ID.fullmatch(ck["check_id"])
-                    and isinstance(ck.get("required", True), bool)):
-                problems.append(f"{where}: a check needs check_id matching {CHECK_ID.pattern} and a boolean required")
-    seen: set[tuple[str, str, str]] = set()
+        problems += _control_problems(where, c)
+    return problems, ids
+
+
+def _mapping_problems(m: dict, ids: set[str], catalogue: set[tuple[str, str]]) -> list[str]:
+    key = (m.get("control_id"), m.get("framework"), m.get("ref"))
+    where = f"mapping {key}"
+    out = [] if key[0] in ids else [f"{where}: control not in the file"]
+    if key[1] not in FRAMEWORKS:
+        out.append(f"{where}: unknown framework")
+    elif (key[1], key[2]) not in catalogue:
+        out.append(f"{where}: the requirement catalogue (CIS 466) has no such ref")
+    if m.get("coverage") not in COVERAGE:
+        out.append(f"{where}: coverage must be full or partial")
+    return out + _text_problems(where, "note", m.get("note"))
+
+
+def validate(register: Any, catalogue: set[tuple[str, str]]) -> list[str]:
+    """Every problem of the file (empty = loadable). ``catalogue`` = the (framework, ref) pairs of
+    compliance.requirement."""
+    if not isinstance(register, dict) or register.get("format") != 1:
+        return ["the register file is not format 1"]
+    controls, mappings = register.get("controls"), register.get("mappings")
+    if not isinstance(controls, list) or not isinstance(mappings, list):
+        return ["controls and mappings must be lists"]
+    problems, ids = _controls_problems(controls)
+    seen: set[tuple] = set()
     for m in mappings:
         if not isinstance(m, dict):
             problems.append("a mapping is not an object")
             continue
         key = (m.get("control_id"), m.get("framework"), m.get("ref"))
-        where = f"mapping {key}"
-        if key[0] not in ids:
-            problems.append(f"{where}: control not in the file")
-        if key[1] not in FRAMEWORKS:
-            problems.append(f"{where}: unknown framework")
-        elif (key[1], key[2]) not in catalogue:
-            problems.append(f"{where}: the requirement catalogue (CIS 466) has no such ref")
-        if m.get("coverage") not in COVERAGE:
-            problems.append(f"{where}: coverage must be full or partial")
-        problems += _text_problems(where, "note", m.get("note"))
-        if key in seen:
-            problems.append(f"{where}: listed twice")
-        seen.add(key)   # type: ignore[arg-type]
+        problems += _mapping_problems(m, ids, catalogue) + ([f"mapping {key}: listed twice"] if key in seen else [])
+        seen.add(key)
     return problems
 
 
