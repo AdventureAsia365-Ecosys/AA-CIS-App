@@ -93,7 +93,9 @@ const ADMIN_PAGES: PageSpec[] = [
   { id: 'lab-releases', label: 'Writing Lab · Releases', path: '/admin/lab/t2-rewrite?tab=releases', readySelector: '[data-testid="lab-releases-ready"]', viewerRefused: true },
   { id: 'lab-metrics', label: 'Writing Lab · Metrics', path: '/admin/lab/a1-s1?tab=metrics', readySelector: '[data-testid="lab-metrics-ready"]', viewerRefused: true },
   // AA-913 — Platform › People & access › Alert recipients (admin only; changes need a Cognito sign-in).
-  { id: 'platform-alerts', label: 'Alert recipients', path: '/admin/platform/alerts', readySelector: '[data-testid="alert-recipients-ready"]', viewerRefused: true },
+  { id: 'platform-alerts', label: 'Alert recipients', path: '/admin/platform/alerts?tab=recipients', readySelector: '[data-testid="alert-recipients-ready"]', viewerRefused: true },
+  // AA-1171 — Platform › Alerts › Catalogue (admin only, read only; the default tab of the page).
+  { id: 'platform-alerts-catalogue', label: 'Alerts catalogue', path: '/admin/platform/alerts', readySelector: '[data-testid="alerts-catalogue-ready"]', viewerRefused: true },
   // AA-1096 — Platform › Infra limits: the limits that stay in Terraform, read-only (admin only).
   { id: 'platform-infra', label: 'Infra limits', path: '/admin/platform/infra', viewerRefused: true },
   // AA-941 — Tenants › CRM agencies (AA-1039: was /admin/platform/agencies): the partner CRM's L1 console (admin only;

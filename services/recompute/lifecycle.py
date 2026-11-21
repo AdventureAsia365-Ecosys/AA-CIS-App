@@ -10,7 +10,8 @@ recompute that finished after the event, however late.
 Two parts, one definition ("the first succeeded ``recompute`` job, any scope, that STARTED after the event"):
 
 - :func:`lag_summary` — over the last :data:`LAG_WINDOW_DAYS`: events, followed, still waiting, waiting longer than
-  :data:`LAG_LIMIT_S` (the ops check ``recompute_lifecycle_lag`` alerts on it, shared/ops_checks.py), followed late,
+  ``cis.ops.recompute_lag_limit_s`` (the ops check ``recompute_lifecycle_lag`` alerts on it, shared/ops_checks.py),
+  followed late,
   and the lag p50 / p95 / max. The api ops sampler reads it every tick; the Data coverage page reads the same SQL
   (source ``recompute_lag``, api/services/data_coverage).
 - :func:`sweep` — every :data:`SWEEP_EVERY_S` (the api ops sampler loop): every event of the last
@@ -31,7 +32,6 @@ import structlog
 logger = structlog.get_logger()
 
 LIFECYCLE_EVENTS = ("retired", "paused", "restored")
-LAG_LIMIT_S = 1800              # the alert: 20-min debounce cap (MAX_WAIT_S) + a slow run
 LAG_WINDOW_DAYS = 30
 SWEEP_EVERY_S = 7200
 SWEEP_WINDOW_S = 7 * 86400
@@ -91,7 +91,11 @@ SELECT e.tour_id::text AS tour_id, e.event, e.occurred_at
 
 def lag_args() -> tuple:
     """The bind values of :data:`LAG_SQL` (the ops sampler and the Data coverage source use the same)."""
-    return list(LIFECYCLE_EVENTS), LAG_WINDOW_DAYS, float(LAG_LIMIT_S)
+    # AA-1171 (D3, CIS 469): the alert window is the setting cis.ops.recompute_lag_limit_s (default 1800 s = the 20-min
+    # debounce cap MAX_WAIT_S plus a slow run).
+    from shared import ops_thresholds
+
+    return list(LIFECYCLE_EVENTS), LAG_WINDOW_DAYS, ops_thresholds.recompute_lag_limit_s()
 
 
 def _num(v: Any) -> Any:

@@ -563,6 +563,15 @@
               }
             ],
             "title": "Note"
+          },
+          "topic": {
+            "default": "alerts",
+            "enum": [
+              "alerts",
+              "page"
+            ],
+            "title": "Topic",
+            "type": "string"
           }
         },
         "required": [
@@ -36506,6 +36515,132 @@
         "summary": "Send the AWS confirmation again",
         "tags": [
           "admin-alert-recipients"
+        ]
+      }
+    },
+    "/admin/platform/alerts/catalogue": {
+      "get": {
+        "operationId": "alerts_catalogue_admin_platform_alerts_catalogue_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Every alert condition (alarms, rules, budgets, in-app checks)",
+        "tags": [
+          "admin-alerts-catalogue"
+        ]
+      }
+    },
+    "/admin/platform/alerts/summary": {
+      "get": {
+        "operationId": "alerts_summary_admin_platform_alerts_summary_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Alert counts and firing alerts (the Ecosystem status card)",
+        "tags": [
+          "admin-alerts-catalogue"
         ]
       }
     },

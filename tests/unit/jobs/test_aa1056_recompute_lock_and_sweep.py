@@ -407,7 +407,7 @@ def test_sweep_sql_leaves_events_a_queued_platform_or_a_later_run_already_covers
     sql = " ".join(lifecycle.SWEEP_SQL.split())
     assert "j.status = 'queued' AND j.payload->>'scope' = 'platform'" in sql
     assert "j.status IN ('running', 'succeeded') AND j.started_at > e.occurred_at" in sql
-    assert lifecycle.SWEEP_EVERY_S == 7200 and lifecycle.LAG_LIMIT_S == 1800
+    assert lifecycle.SWEEP_EVERY_S == 7200 and lifecycle.lag_args()[2] == 1800.0  # AA-1171: the setting default
 
 
 # ── the ops check ──────────────────────────────────────────────────────────────────────────────────────────────────

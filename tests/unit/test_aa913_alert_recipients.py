@@ -347,7 +347,7 @@ async def test_reconcile_reports_leaving_in_the_summary():
     db.insert("p@x.com", "removed", reason="admin")
     sns = StubSns(subs={BOOTSTRAP: sub_arn("boot"), "p@x.com": "PendingConfirmation"})
     result = await ar.reconcile_throttled(db, sns, ar.topic_config())
-    assert result.leaving == [{"email": "p@x.com", "state": "pending"}] and result.unmanaged == []
+    assert result.leaving == [{"email": "p@x.com", "state": "pending", "topic": "alerts"}] and result.unmanaged == []
     cached = await ar.reconcile_throttled(db, sns, ar.topic_config())
     assert cached.cached and cached.leaving == result.leaving
 

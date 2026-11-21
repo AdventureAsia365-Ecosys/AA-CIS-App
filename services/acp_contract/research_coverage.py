@@ -29,10 +29,17 @@ import json
 from contextlib import asynccontextmanager
 from typing import Any, Iterable, Optional
 
-STALE_SHARE_LIMIT = 0.20      # above this share of the scope stale in a market, the guard alerts and the row is a gap
 CHECK_EVERY_S = 86400.0       # the api ops sampler measures once a day (its own monotonic schedule)
 CHECK_TIMEOUT_S = 30.0        # the sampler part's budget for the whole read
 CHECK_STATEMENT_TIMEOUT = "10s"
+
+
+def stale_share_limit() -> float:
+    """AA-1171 (D3, CIS 469): above this share of the scope stale in a market, the guard alerts and the row is a gap
+    (setting cis.ops.research_stale_share_pct, default 20 %), as a fraction."""
+    from shared import ops_thresholds
+
+    return ops_thresholds.research_stale_share()
 
 # Active tenants (the data coverage `ten` rule: is_active, not cancelled, not the AA master) and their SEO markets.
 # LEFT JOIN: a tenant with no SEO config row targets the default market, like the Slate (TenantConfigService).
@@ -115,11 +122,14 @@ def is_stale(got: set[tuple[str, str]], market: str) -> bool:
 
 
 def summarize(places: Iterable[str], fresh: dict[str, set[tuple[str, str]]], markets: list[str],
-              reatomized: Optional[set[str]] = None, limit: float = STALE_SHARE_LIMIT) -> dict:
+              reatomized: Optional[set[str]] = None, limit: Optional[float] = None) -> dict:
     """The stale share per market and the places waiting after an atomize. Pure.
 
     `places`: the places in scope; `fresh`: place -> fresh (market, tier) rows (segment_research._fresh_tiers);
-    `reatomized`: the places atomized since their last research (segment_research.reatomized_places)."""
+    `reatomized`: the places atomized since their last research (segment_research.reatomized_places); `limit`: None =
+    the setting in force (:func:`stale_share_limit`)."""
+    if limit is None:
+        limit = stale_share_limit()
     names = sorted(set(places))
     n = len(names)
     by_market: dict[str, dict] = {}
@@ -167,7 +177,7 @@ def coverage_values(summary: dict) -> dict:
     from services.seo_intelligence.seed_builder import DFS_LOCATION_MAP
 
     n = int(summary.get("places_in_scope") or 0)
-    limit = float(summary.get("limit", STALE_SHARE_LIMIT))
+    limit = float(summary["limit"]) if summary.get("limit") is not None else stale_share_limit()
     out: dict[str, Any] = {"in_scope": n, "allowed": int(limit * n + 1e-9),
                            "waiting_after_reatomize": int(summary.get("waiting_after_reatomize") or 0)}
     by_market = summary.get("by_market") or {}

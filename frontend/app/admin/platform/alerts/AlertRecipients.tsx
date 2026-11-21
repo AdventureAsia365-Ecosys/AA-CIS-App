@@ -9,7 +9,7 @@
 //
 // API (backend api/routers/admin_alert_recipients.py; BFF /api/admin/platform/*, admin only — lib/rbac.ts):
 //   GET    /api/admin/platform/alert-recipients[?refresh=true]   list (the backend reconciles with SNS first)
-//   POST   /api/admin/platform/alert-recipients                  {email, note?}
+//   POST   /api/admin/platform/alert-recipients                  {email, note?, topic?}  (AA-1171: alerts | page)
 //   POST   /api/admin/platform/alert-recipients/refresh          check SNS now
 //   POST   /api/admin/platform/alert-recipients/test-email       queue a test ops e-mail
 //   DELETE /api/admin/platform/alert-recipients/{id}
@@ -38,8 +38,8 @@ import {
   useLang,
   useT,
   useToast,
-  type ColumnDef, PageFrame,
-  Checkbox, Input,
+  type ColumnDef,
+  Checkbox, Input, Select,
 } from "../../../_kit";
 import { staffErrorMessage } from "@/lib/rbac";
 import { RBAC_MESSAGES } from "@/lib/rbac.messages";
@@ -55,6 +55,7 @@ import {
   statusTone,
   type AlertRecipient,
   type AlertRecipientsPage,
+  type RecipientTopic,
   type SnsState,
 } from "@/lib/alertRecipients";
 import { ALERT_WORDS_MESSAGES } from "@/lib/alertRecipients.messages";
@@ -143,16 +144,19 @@ function LockedRow({ email, label, state }: { email: string; label: string; stat
   );
 }
 
-function AddModal({ open, onClose, onAdded, limits, active }: {
+function AddModal({ open, onClose, onAdded, limits, active, topics }: {
   open: boolean;
   onClose: () => void;
   onAdded: (email: string, state: string) => void;
   limits: AlertRecipientsPage["limits"] | undefined;
   active: number;
+  /** AA-1171: the topics this environment manages (["alerts"] until the page topic is set up). */
+  topics: RecipientTopic[];
 }) {
   const t = useT(ALERTS);
   const sw = useSendWords();
   const [email, setEmail] = useState("");
+  const [topic, setTopic] = useState<RecipientTopic>("alerts");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -178,7 +182,7 @@ function AddModal({ open, onClose, onAdded, limits, active }: {
     if (!valid || noteTooLong || busy || blockedByTypo) return;
     setBusy(true);
     setError(null);
-    const out = await send("POST", API, sw, { email: trimmed, note: note.trim() || undefined });
+    const out = await send("POST", API, sw, { email: trimmed, note: note.trim() || undefined, topic });
     setBusy(false);
     if (!out.ok) {
       setError(out.message);
@@ -263,6 +267,18 @@ function AddModal({ open, onClose, onAdded, limits, active }: {
             {note.trim().length} / {maxNote}
           </span>
         </label>
+        {topics.includes("page") && (
+          <label style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 12.5, fontWeight: 600, color: K.ink3 }}>
+            {t("topic")}
+            <Select
+              value={topic}
+              onChange={(e) => setTopic(e.target.value as RecipientTopic)}
+              options={[{ value: "alerts", label: t("topicAlerts") }, { value: "page", label: t("topicPage") }]}
+              data-testid="alert-recipient-topic"
+            />
+            <span style={{ fontWeight: 400, color: K.muted }}>{t("topicHelp")}</span>
+          </label>
+        )}
         {error && <Notice tone="danger">{error}</Notice>}
       </div>
     </Modal>
@@ -406,6 +422,16 @@ export default function AlertRecipients() {
       ),
     },
     {
+      id: "topic",
+      accessorFn: (r) => r.topic ?? "alerts",
+      header: t("colTopic"),
+      cell: (c) => (
+        <Badge tone={c.row.original.topic === "page" ? "warning" : "neutral"} dot={false}>
+          {c.row.original.topic === "page" ? t("topicPage") : t("topicAlerts")}
+        </Badge>
+      ),
+    },
+    {
       accessorKey: "confirmed_at",
       header: t("colConfirmed"),
       cell: (c) => (c.row.original.confirmed_at ? formatDateTime(c.row.original.confirmed_at) : <span style={{ color: K.muted }}>—</span>),
@@ -452,7 +478,8 @@ export default function AlertRecipients() {
   );
 
   return (
-    <PageFrame>
+    // AA-1171: the page (page.tsx) renders the one PageFrame and the tab strip above this tab's header.
+    <>
       <PageHeader
         title={<span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><BellRing size={18} /> {t("title")}</span>}
         description={description}
@@ -569,6 +596,7 @@ export default function AlertRecipients() {
         onClose={() => setAdding(false)}
         limits={data?.limits}
         active={data?.limits.active ?? 0}
+        topics={data?.topics ?? ["alerts"]}
         onAdded={(email, state) => {
           setAdding(false);
           toast.success(state === "confirmed"
@@ -591,7 +619,7 @@ export default function AlertRecipients() {
           </p>
         }
       />
-    </PageFrame>
+    </>
   );
 }
 

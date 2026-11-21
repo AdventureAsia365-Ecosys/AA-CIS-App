@@ -154,6 +154,8 @@
     "GET /admin/plans/commercial-terms",
     "GET /admin/plans/features",
     "GET /admin/platform/alert-recipients",
+    "GET /admin/platform/alerts/catalogue",
+    "GET /admin/platform/alerts/summary",
     "GET /admin/platform/apps",
     "GET /admin/platform/apps/crm/jobs",
     "GET /admin/platform/apps/{app_id}",

@@ -717,6 +717,8 @@ POLICY: dict[tuple[str, str], Any] = {
     # ── admin_alert_recipients (AA-913) — Platform › Alert recipients. Reads ops.read (admin); changes alerts.write
     # (admin) and, in the router, a Cognito session for add / remove / resend / test (not for the status refresh).
     ("GET", "/admin/platform/alert-recipients"): OPS_READ,
+    ("GET", "/admin/platform/alerts/catalogue"): OPS_READ,   # AA-1171 D1: Platform › Alerts › Catalogue
+    ("GET", "/admin/platform/alerts/summary"): OPS_READ,     # AA-1171: the Ecosystem status card's summary
     ("POST", "/admin/platform/alert-recipients"): ALERTS_WRITE,
     ("POST", "/admin/platform/alert-recipients/refresh"): ALERTS_WRITE,
     ("POST", "/admin/platform/alert-recipients/test-email"): ALERTS_WRITE,

@@ -152,10 +152,59 @@ def test_fetch_alarms_maps_prefixes_skips_target_tracking_and_paginates():
     assert calls == 2
     assert out["cis"]["total"] == 2 and [f["name"] for f in out["cis"]["firing"]] == ["aa-cis-dev-api-5xx"]
     assert out["cis"]["firing"][0]["since"] == NOW.isoformat()
-    assert out["booking"] == {"total": 1, "no_data": 1, "firing": []}
+    assert out["booking"] == {"total": 1, "no_data": 1, "firing": [], "by_type": {"other": 1},
+                              "by_severity": {"untagged": 1}}
     assert out["tripplanner"]["total"] == 1 and not out["tripplanner"]["firing"]
     assert out["shared"]["total"] == 1 and out["shared"]["firing"][0]["name"].startswith("aa-identity-dev-")
     assert out["crm"]["total"] == 1 and out["crm"]["firing"][0]["name"] == "aa-crm-dev-api-5xx-rate"
+
+
+def test_fetch_alarms_groups_by_the_app_tag_and_counts_types():
+    """AA-1171 (S287): the App tag decides the bucket (the shared RDS alarm with a CIS name prefix is shared, a CRM WAF
+    alarm with an ecosystem prefix is CRM); an alarm without a tag falls back to its prefix; types and severities are
+    counted, and the totals line sums them."""
+    def tagged(name, state, arn, ns, **extra):
+        return {**_alarm(name, state), "AlarmArn": arn, **({"Namespace": ns} if ns else {}), **extra}
+
+    client = _cw_client()
+    with Stubber(client) as stub:
+        stub.add_response("describe_alarms", {"MetricAlarms": [
+            tagged("aa-cis-dev-api-no-healthy-task", "OK", "arn:a:1", "AWS/ApplicationELB"),
+            tagged("aa-cis-dev-rds-cpu-high", "ALARM", "arn:a:2", "AWS/RDS"),
+            tagged("aa-ecosys-dev-edge-blocked", "OK", "arn:a:3", "AWS/WAFV2"),
+            tagged("aa-booking-dev-api-5xx-rate", "OK", "arn:a:4", "",
+                   Metrics=[{"Id": "rate", "Expression": "1", "ReturnData": True}]),
+            tagged("aa-cis-dev-worker-no-running-task", "OK", "arn:a:5", "AWS/ECS"),
+        ], "CompositeAlarms": []})
+        tags = {"arn:a:1": {"App": "cis", "Severity": "ticket"}, "arn:a:2": {"App": "shared", "Severity": "ticket"},
+                "arn:a:3": {"App": "crm", "Severity": "ticket"}, "arn:a:4": {"App": "booking", "Severity": "ticket"}}
+        out, _ = cloudwatch.fetch_alarms(client, ENV, tags)
+    assert out["cis"]["total"] == 2 and out["cis"]["by_type"] == {"load_balancer": 1, "service": 1}
+    assert out["shared"]["total"] == 1 and out["shared"]["firing"][0]["severity"] == "ticket"
+    assert out["crm"]["total"] == 1 and out["crm"]["by_type"] == {"waf": 1}
+    assert out["booking"]["by_type"] == {"metric_math": 1}
+    assert out["cis"]["by_severity"] == {"ticket": 1, "untagged": 1}
+    totals = cloudwatch.alarm_totals(out)
+    assert totals["total"] == 5 and totals["firing"] == 1
+    assert totals["by_app"]["cis"] == 2 and totals["by_type"]["waf"] == 1 and totals["by_severity"]["ticket"] == 4
+
+
+def test_read_alarm_tags_pages():
+    class Tagging:
+        def __init__(self):
+            self.calls = []
+
+        def get_resources(self, **kw):
+            self.calls.append(kw)
+            if "PaginationToken" not in kw:
+                return {"ResourceTagMappingList": [{"ResourceARN": "arn:a:1", "Tags": [{"Key": "App",
+                                                                                         "Value": "cis"}]}],
+                        "PaginationToken": "p2"}
+            return {"ResourceTagMappingList": [{"ResourceARN": "arn:a:2", "Tags": []}], "PaginationToken": ""}
+
+    tg = Tagging()
+    assert cloudwatch.read_alarm_tags(tg) == {"arn:a:1": {"App": "cis"}, "arn:a:2": {}}
+    assert tg.calls[0]["ResourceTypeFilters"] == ["cloudwatch:alarm"] and len(tg.calls) == 2
 
 
 def test_crm_is_a_probe_source_with_no_metric_query():

@@ -615,6 +615,14 @@
     "capability": "ops.read",
     "module": "api.routers.admin_alert_recipients"
   },
+  "GET /admin/platform/alerts/catalogue": {
+    "capability": "ops.read",
+    "module": "api.routers.admin_alerts_catalogue"
+  },
+  "GET /admin/platform/alerts/summary": {
+    "capability": "ops.read",
+    "module": "api.routers.admin_alerts_catalogue"
+  },
   "GET /admin/platform/apps": {
     "capability": "ops.read",
     "module": "api.routers.admin_platform_ops"

@@ -23,6 +23,10 @@ The router (api/routers/admin_alert_recipients.py) checks who may call; this mod
   checked by putting an alarm in ALARM (``aws cloudwatch set-alarm-state``), since the task role has no
   ``sns:Publish`` on purpose.
 
+AA-1171 (D5): each row names its topic (``alerts`` = every alert, ``page`` = page-severity alerts only, the page topic
+of PAGE_TOPIC_ARN). Add takes the topic (default alerts); remove and resend act on the row's own topic; the duplicate
+check is per (address, topic); the bootstrap address is refused on both topics (it already gets every alert).
+
 Errors are :class:`AlertRecipientError` (HTTP status, detail, code, headers); nothing here returns or logs the
 topic or subscription ARN.
 """
@@ -68,16 +72,18 @@ def _sns_failed(exc: ar.SnsError, doing: str) -> AlertRecipientError:
 
 SQL_LOCK = "SELECT pg_advisory_xact_lock(hashtext('shared.alert_recipient'))"
 SQL_COUNT_ACTIVE = "SELECT count(*) FROM shared.alert_recipient WHERE status <> 'removed'"
-SQL_ACTIVE_BY_EMAIL = "SELECT id::text FROM shared.alert_recipient WHERE status <> 'removed' AND email = $1"
-# $1 email, $2 note, $3 status (pending / confirmed), $4 subscription ARN, $5 created_by
+SQL_ACTIVE_BY_EMAIL = ("SELECT id::text FROM shared.alert_recipient WHERE status <> 'removed' AND email = $1 "
+                       "AND topic = $2")
+# $1 email, $2 note, $3 status (pending / confirmed), $4 subscription ARN, $5 created_by, $6 topic (alerts / page)
 SQL_INSERT = (
     "INSERT INTO shared.alert_recipient (email, note, status, subscription_arn, created_by, confirmed_at, "
-    "last_confirmation_sent_at) VALUES ($1, $2, $3::text, $4, $5, "
-    "CASE WHEN $3::text = 'confirmed' THEN now() END, CASE WHEN $3::text = 'pending' THEN now() END) "
+    "last_confirmation_sent_at, topic) VALUES ($1, $2, $3::text, $4, $5, "
+    "CASE WHEN $3::text = 'confirmed' THEN now() END, CASE WHEN $3::text = 'pending' THEN now() END, $6) "
     "RETURNING id::text"
 )
 SQL_ROW_FOR_UPDATE = (
-    "SELECT id::text AS id, email, status, subscription_arn FROM shared.alert_recipient WHERE id = $1::uuid FOR UPDATE"
+    "SELECT id::text AS id, email, status, subscription_arn, topic FROM shared.alert_recipient WHERE id = $1::uuid "
+    "FOR UPDATE"
 )
 SQL_MARK_REMOVED = (
     "UPDATE shared.alert_recipient SET status = 'removed', removed_reason = 'admin', removed_at = now(), "
@@ -166,6 +172,7 @@ def page_row(row: Any) -> dict:
     d = dict(row)
     out = {
         "id": d["id"], "email": d["email"], "note": d.get("note"), "status": d["status"],
+        "topic": d.get("topic") or ar.TOPIC_ALERTS,
         "removed_reason": d.get("removed_reason"), "has_subscription": bool(d.get("has_subscription")),
         "created_by": _who(d.get("created_by"), d.get("created_by_name")),
         "removed_by": _who(d.get("removed_by"), d.get("removed_by_name")),
@@ -198,6 +205,9 @@ async def page(pool: Any, client: Any, *, redis: Any = None, refresh: bool = Fal
     return {
         "configured": cfg is not None,
         "topic_name": cfg.topic_name if cfg is not None else None,
+        # AA-1171: the page-severity topic, when PAGE_TOPIC_ARN is set (its name only, never the ARN).
+        "page_topic_name": cfg.page_topic_name if cfg is not None else None,
+        "topics": list(cfg.topics()) if cfg is not None else [],
         "bootstrap": {"email": bootstrap, "locked": True, "state": locked_state} if bootstrap else None,
         "ops_fallback_email": fallback if fallback and fallback != bootstrap else None,
         "ops_mail_configured": sender_config() is not None,
@@ -223,10 +233,16 @@ async def read_one(pool: Any, recipient_id: str) -> Optional[dict]:
 
 # ── Add ──────────────────────────────────────────────────────────────────────────────────────────
 
-async def add(pool: Any, client: Any, *, actor: str, email: Any, note: Any, redis: Any = None) -> dict:
+async def add(pool: Any, client: Any, *, actor: str, email: Any, note: Any, redis: Any = None,
+              topic: Any = ar.TOPIC_ALERTS) -> dict:
     cfg = ar.topic_config()
     if cfg is None:
         raise NOT_CONFIGURED
+    if topic not in ar.TOPICS:
+        raise AlertRecipientError(422, "Choose what the recipient gets: all alerts or page alerts only", "invalid")
+    if topic not in cfg.topics():
+        raise AlertRecipientError(409, "The page alerts topic is not set up on this environment (PAGE_TOPIC_ARN is "
+                                       "not set)", "page_not_configured")
     try:
         address = ar.normalize_email(email)
         clean_note = ar.normalize_note(note)
@@ -235,8 +251,9 @@ async def add(pool: Any, client: Any, *, actor: str, email: Any, note: Any, redi
     if cfg.bootstrap_email and address == cfg.bootstrap_email:
         raise AlertRecipientError(409, "This is the bootstrap recipient set in Terraform; it always receives every "
                                        "alert and is not managed here", "bootstrap")
+    topic_arn = cfg.arn_for(topic)
     try:
-        subs = await ar.list_email_subscriptions(client, cfg.topic_arn)
+        subs = await ar.list_email_subscriptions(client, topic_arn)
     except ar.SnsError as exc:
         raise _sns_failed(exc, "list the topic's subscriptions") from None
     already_confirmed = any(s.endpoint == address and s.state == ar.SEEN_CONFIRMED for s in subs)
@@ -244,7 +261,7 @@ async def add(pool: Any, client: Any, *, actor: str, email: Any, note: Any, redi
     async with pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute(SQL_LOCK)
-            if await conn.fetchval(SQL_ACTIVE_BY_EMAIL, address) is not None:
+            if await conn.fetchval(SQL_ACTIVE_BY_EMAIL, address, topic) is not None:
                 raise AlertRecipientError(409, f"{address} is already on the list", "duplicate")
             if int(await conn.fetchval(SQL_COUNT_ACTIVE) or 0) >= ar.MAX_ACTIVE:
                 raise AlertRecipientError(409, f"The list is full ({ar.MAX_ACTIVE} recipients). Remove one first.",
@@ -255,21 +272,21 @@ async def add(pool: Any, client: Any, *, actor: str, email: Any, note: Any, redi
             if limited is not None:
                 raise _too_many(limited, "rate_limited")
             try:
-                arn = await ar.subscribe(client, cfg.topic_arn, address)
+                arn = await ar.subscribe(client, topic_arn, address)
             except ar.SnsError as exc:
                 raise _sns_failed(exc, "add the subscription") from None
             status = ar.STATUS_CONFIRMED if already_confirmed else ar.STATUS_PENDING
-            rid = await conn.fetchval(SQL_INSERT, address, clean_note, status, arn or None, actor)
+            rid = await conn.fetchval(SQL_INSERT, address, clean_note, status, arn or None, actor, topic)
             sns_state = "confirmed" if already_confirmed else "pending"
             await write_audit_log(conn, tenant_id=None, actor=actor, action=ar.AlertAudit.ADDED,
                                   resource_type=ar.RESOURCE_TYPE, resource_id=rid,
                                   details={"email": address, "note": clean_note, "sns_state": sns_state,
-                                           "topic": cfg.topic_name})
+                                           "topic": cfg.name_for(topic)})
             if status == ar.STATUS_PENDING:
                 await write_audit_log(conn, tenant_id=None, actor=actor, action=ar.AlertAudit.CONFIRMATION_SENT,
                                       resource_type=ar.RESOURCE_TYPE, resource_id=rid,
                                       details={"email": address, "reason": "added"})
-    logger.info("alert_recipient_added", topic=cfg.topic_name, recipient_id=rid, sns_state=sns_state)
+    logger.info("alert_recipient_added", topic=cfg.name_for(topic), recipient_id=rid, sns_state=sns_state)
     await ar.invalidate_cache(redis)
     row = await read_one(pool, rid)
     return {"recipient": row, "sns_state": sns_state}
@@ -287,8 +304,9 @@ async def remove(pool: Any, client: Any, *, actor: str, recipient_id: str, redis
             if row is None or row["status"] == ar.STATUS_REMOVED:
                 raise AlertRecipientError(404, "Recipient not found (or already removed)", "not_found")
             arn = row["subscription_arn"]
+            topic = row.get("topic") or ar.TOPIC_ALERTS
             sns = "no_subscription"
-            if arn and str(row["email"]).lower() == cfg.bootstrap_email:
+            if arn and topic == ar.TOPIC_ALERTS and str(row["email"]).lower() == cfg.bootstrap_email:
                 sns = "bootstrap_kept"
             elif arn:
                 try:
@@ -296,7 +314,7 @@ async def remove(pool: Any, client: Any, *, actor: str, recipient_id: str, redis
                     pending = info.pending if info is not None else None
                     if info is None:
                         sns = "not_found"
-                    elif await _is_bootstrap_subscription(client, cfg, arn, info):
+                    elif topic == ar.TOPIC_ALERTS and await _is_bootstrap_subscription(client, cfg, arn, info):
                         sns = "bootstrap_kept"
                     else:
                         try:
@@ -315,7 +333,7 @@ async def remove(pool: Any, client: Any, *, actor: str, recipient_id: str, redis
             await write_audit_log(conn, tenant_id=None, actor=actor, action=ar.AlertAudit.REMOVED,
                                   resource_type=ar.RESOURCE_TYPE, resource_id=recipient_id,
                                   details={"email": row["email"], "was": row["status"], "sns": sns,
-                                           "topic": cfg.topic_name})
+                                           "topic": cfg.name_for(topic) if topic in cfg.topics() else topic})
     log = logger.warning if sns == "bootstrap_kept" else logger.info
     log("alert_recipient_removed", topic=cfg.topic_name, recipient_id=recipient_id, sns=sns)
     await ar.invalidate_cache(redis)
@@ -351,8 +369,12 @@ async def resend(pool: Any, client: Any, *, actor: str, recipient_id: str) -> di
                                  max_per_day=ar.RESEND_MAX_PER_DAY, what="Sending the confirmation e-mail")
             if limited is not None:
                 raise _too_many(limited, "rate_limited")
+            topic = row.get("topic") or ar.TOPIC_ALERTS
+            if topic not in cfg.topics():
+                raise AlertRecipientError(409, "The page alerts topic is not set up on this environment",
+                                          "page_not_configured")
             try:
-                arn = await ar.subscribe(client, cfg.topic_arn, row["email"])
+                arn = await ar.subscribe(client, cfg.arn_for(topic), row["email"])
             except ar.SnsError as exc:
                 raise _sns_failed(exc, "send the confirmation again") from None
             await conn.execute(SQL_MARK_RESENT, recipient_id, arn or None)

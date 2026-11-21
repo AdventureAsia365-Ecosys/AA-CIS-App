@@ -21,7 +21,8 @@ Two kinds of checks:
   in :data:`APP_SPEND_APPS` whose app profile (``shared.llm_app_profile``, CIS 345) sets ``default_daily_budget_usd``,
   today's (UTC) ``shared.llm_call_log`` spend of that app against it. TripPlanner takes its daily cap from the same row
   (AA-TripPlanner-Web ``backend/shared/app_profile.py``) and prints ``llm_spend_alert`` at 80 % and 100 %; this check
-  is that signal on the CIS bell + e-mail: ``llm_spend_alert.<app>.near`` (80 %, ``SPEND_NEAR_RATIO``) and
+  is that signal on the CIS bell + e-mail: ``llm_spend_alert.<app>.near`` (80 %, setting
+  ``cis.ops.app_spend_near_pct``) and
   ``llm_spend_alert.<app>.cap`` (100 %), each its own check so a cap reached after a near alert still bells. Not CIS
   (its central cap ``llm/app:cis`` alerts from the gateway, A7) and not the CRM (its ledger is ``crm.llm_call``, ADR
   0008a: CIS cannot read it without a staff token; the CRM's own job sampler e-mails the same alerts topic at 80 % /
@@ -43,7 +44,8 @@ Two kinds of checks:
   :data:`CHECKS`). Bell at most once per 24 h per stage (``Check.bell_every``), e-mail once per stage and UTC day.
 
 Dedupe (one advisory-locked transaction, so two api tasks never double up): a check writes a bell only when it has
-none in the last :data:`BELL_EVERY` (6 h), and mails only for the first bell of the UTC day: at most one e-mail per
+none in the last ``cis.ops.bell_every_hours`` (6 h by default), and mails only for the first bell of the UTC day: at
+most one e-mail per
 check per UTC day. A failed publish deletes the bell it just wrote, so the next tick tries both again. E-mail is
 skipped (bell only, one log line) when ALERTS_TOPIC_ARN is unset.
 
@@ -62,18 +64,18 @@ from typing import Any, Callable, Optional
 
 import structlog
 
+from shared import ops_thresholds
+
 logger = structlog.get_logger()
 
 EVENT_TYPE_PREFIX = "platform.ops_check."
 PLATFORM_TENANT_ID = "00000000-0000-0000-0000-000000000001"   # the platform sentinel tenant of the other ops bells
 BELL_ROLES = ["admin"]
-BELL_EVERY = timedelta(hours=6)
 _LOCK_KEY = 1_025_263_001
 
-# Thresholds (unchanged from the CloudWatch alarms they replace)
-JOBS_STARVED_AFTER_S = 900
-ROLE_CONNECTIONS_PCT = 80.0
-XID_AGE_LIMIT = 1_000_000_000
+# AA-1171 (D3, CIS 469): the thresholds of the state checks, the near-cap share and the default bell window are settings
+# on Platform › Settings (area "ops", maker-checker), read on every evaluation through shared/ops_thresholds.py; the
+# seeded defaults are the values of the CloudWatch alarms these checks replaced (900 s, 80 %, 1e9, 6 h, 80 %).
 
 JOB_RUNNER_PAGE = "/admin/job-runner"
 PLATFORM_PAGE = "/admin/platform/apps"
@@ -86,28 +88,33 @@ class Check:
     title: str
     action: str
     page: str = PLATFORM_PAGE
-    bell_every: Optional[timedelta] = None      # None = BELL_EVERY (AA-1026: the stage coverage checks bell daily)
+    bell_every: Optional[timedelta] = None      # None = cis.ops.bell_every_hours (AA-1026: stage coverage bells daily)
 
 
 CHECKS: dict[str, Check] = {
-    "jobs_starved": Check("Job queue starved", "A due shared.job row has waited more than 15 minutes (no live worker, "
-                          "an unregistered kind, or a free slot that does not claim it). Check the Jobs page and the "
-                          "worker logs.", JOB_RUNNER_PAGE),
-    "jobs_overdue": Check("Job running too long", "A running job is past twice its kind's expected time and may hold a "
-                          "worker slot. Check the running rows on the Jobs page.", JOB_RUNNER_PAGE),
-    "rds_role_connections": Check("Database role near its connection limit", "A login role is above 80 % of its "
-                                  "CONNECTION LIMIT; new connections fail at the limit. Check that app's pool sizes "
-                                  "(data standard C2.2) before raising the limit."),
-    "rds_xid_age": Check("Database transaction ID age high", "max(age(datfrozenxid)) is above 1,000,000,000: "
-                         "autovacuum is not freezing some table (wraparound guard). Find it with age(relfrozenxid)."),
+    "jobs_starved": Check("Job queue starved", "A due shared.job row has waited longer than the alert window (no live "
+                          "worker, an unregistered kind, or a free slot that does not claim it). Check the Jobs page "
+                          "and the worker logs. Window: Platform › Settings, cis.ops.jobs_starved_after_s.",
+                          JOB_RUNNER_PAGE),
+    "jobs_overdue": Check("Job running too long", "A running job is past its kind's expected time times the overdue "
+                          "factor (cis.ops.jobs_overdue_factor) and may hold a worker slot. Check the running rows on "
+                          "the Jobs page.", JOB_RUNNER_PAGE),
+    "rds_role_connections": Check("Database role near its connection limit", "A login role is above the alert share "
+                                  "of its CONNECTION LIMIT (cis.ops.role_connections_pct); new connections fail at the "
+                                  "limit. Check that app's pool sizes (data standard C2.2) before raising the limit."),
+    "rds_xid_age": Check("Database transaction ID age high", "max(age(datfrozenxid)) is above the alert limit "
+                         "(cis.ops.xid_age_limit): autovacuum is not freezing some table (wraparound guard). Find it "
+                         "with age(relfrozenxid)."),
     # AA-1056: services/recompute/lifecycle.lag_summary, read by the api ops sampler every tick.
     "recompute_lifecycle_lag": Check("Tour on/off change not in Score and Route yet", "A tour was retired, paused or "
-                                     "restored more than 30 minutes ago and no recompute has finished since, so the "
+                                     "restored longer ago than the alert window (cis.ops.recompute_lag_limit_s) and "
+                                     "no recompute has finished since, so the "
                                      "Slate and tenant Subjects can still show its old state. The 2-hourly sweep "
                                      "queues a recompute; check the recompute rows on the Jobs page.",
                                      JOB_RUNNER_PAGE),
     # AA-1055: services/acp_contract/research_coverage.measure, read by the api ops sampler once a day.
-    "research_stale_share": Check("Search demand research stale in a market", "More than 20 % of the places research "
+    "research_stale_share": Check("Search demand research stale in a market", "More than the alert share "
+                                  "(cis.ops.research_stale_share_pct) of the places research "
                                   "covers have no search demand research in a market a tenant targets, or research "
                                   "older than 365 days, so their Score, Questions and Blog bar read no demand. Preview "
                                   "a research run for that market (POST /admin/segment-research/preview, the cost is "
@@ -168,12 +175,12 @@ CHECKS: dict[str, Check] = {
 # AA-1025 H1b: the apps whose daily AI spend this process checks against their app profile budget (see the docstring).
 APP_SPEND_APPS = ("tripplanner",)
 APP_SPEND_NAMES = {"tripplanner": "TripPlanner"}
-SPEND_NEAR_RATIO = 0.8        # TripPlanner's SPEND_NEAR_CAP_RATIO (backend/config.py), the same 80 %
 for _app in APP_SPEND_APPS:
     _name = APP_SPEND_NAMES[_app]
     CHECKS[f"llm_spend_alert.{_app}.near"] = Check(
-        f"{_name} AI spend near its daily cap", f"{_name}'s AI spend today passed 80 % of its daily budget (app "
-        "profile). At 100 % the app stops calling models and degrades. Check AI providers › Calls, then raise the "
+        f"{_name} AI spend near its daily cap", f"{_name}'s AI spend today passed the warning share "
+        "(cis.ops.app_spend_near_pct) of its daily budget (app profile). At 100 % the app stops calling models and "
+        "degrades. Check AI providers › Calls, then raise the "
         "budget on App profiles if the traffic is real.", COST_PAGE)
     CHECKS[f"llm_spend_alert.{_app}.cap"] = Check(
         f"{_name} AI spend reached its daily cap", f"{_name} reached its daily AI budget (app profile): it calls no "
@@ -401,29 +408,36 @@ def state_findings(tick: dict) -> list[Finding]:
     """The state checks of one sampler tick, from the fields the tick logged (``ops_metrics_sampled``). Pure."""
     out: list[Finding] = []
     age = tick.get("oldest_queued_age_seconds")
-    if age is not None and float(age) > JOBS_STARVED_AFTER_S:
-        out.append(Finding("jobs_starved", f"oldest starved queued job waited {int(float(age))} s",
+    starved_after = ops_thresholds.jobs_starved_after_s()
+    if age is not None and float(age) > starved_after:
+        out.append(Finding("jobs_starved", f"oldest starved queued job waited {int(float(age))} s (alert after "
+                                           f"{int(starved_after)} s)",
                            {"oldest_queued_age_seconds": int(float(age)), "starved": tick.get("starved") or {},
-                            "live_workers": tick.get("live_workers"), "queued_due": tick.get("queued_due")}))
+                            "live_workers": tick.get("live_workers"), "queued_due": tick.get("queued_due"),
+                            "threshold_s": int(starved_after)}))
     overdue = tick.get("overdue_running_jobs")
     if overdue:
         out.append(Finding("jobs_overdue", f"{int(overdue)} running job(s) past twice their expected time",
                            {"overdue_running_jobs": int(overdue), "overdue": (tick.get("overdue") or [])[:10]}))
     roles = tick.get("roles") or {}
-    hot = {r: v for r, v in roles.items() if float(v.get("pct") or 0) > ROLE_CONNECTIONS_PCT}
+    role_pct = ops_thresholds.role_connections_pct()
+    hot = {r: v for r, v in roles.items() if float(v.get("pct") or 0) > role_pct}
     if hot:
         out.append(Finding("rds_role_connections",
                            ", ".join(f"{r} {v['connections']}/{v['limit']}" for r, v in sorted(hot.items())),
-                           {"roles": hot}))
+                           {"roles": hot, "threshold_pct": role_pct}))
     xid = tick.get("xid_age")
-    if xid is not None and int(xid) > XID_AGE_LIMIT:
-        out.append(Finding("rds_xid_age", f"max(age(datfrozenxid)) = {int(xid)}", {"xid_age": int(xid)}))
+    xid_limit = ops_thresholds.xid_age_limit()
+    if xid is not None and int(xid) > xid_limit:
+        out.append(Finding("rds_xid_age", f"max(age(datfrozenxid)) = {int(xid)}",
+                           {"xid_age": int(xid), "threshold": xid_limit}))
     lag = tick.get("recompute_lifecycle") or {}
     waiting = int(lag.get("waiting_over_limit") or 0)
     if waiting:
         oldest = lag.get("oldest_waiting_s")
         out.append(Finding("recompute_lifecycle_lag",
-                           f"{waiting} tour on/off event(s) waited more than 30 minutes for a finished recompute"
+                           f"{waiting} tour on/off event(s) waited longer than the alert window for a finished "
+                           "recompute"
                            + (f" (oldest {int(float(oldest))} s)" if oldest is not None else ""),
                            {"waiting_over_limit": waiting, "oldest_waiting_s": oldest,
                             "events": lag.get("events"), "swept": tick.get("recompute_sweep")}))
@@ -466,13 +480,14 @@ def spend_findings(rows: list, day: str) -> list[Finding]:
     """The app spend findings of ``APP_SPEND_SQL`` rows (dicts or records with app, cap_usd, spent_usd). A cap of 0 is
     reached at once (the app makes no AI call). Pure."""
     out: list[Finding] = []
+    near_ratio = ops_thresholds.app_spend_near_ratio()
     for r in rows:
         app, cap, spent = r["app"], float(r["cap_usd"]), float(r["spent_usd"] or 0)
         if app not in APP_SPEND_APPS:
             continue
         if spent >= cap:
             threshold = "cap"
-        elif spent >= cap * SPEND_NEAR_RATIO:
+        elif spent >= cap * near_ratio:
             threshold = "near"
         else:
             continue
@@ -588,7 +603,8 @@ def render(finding: Finding, environment: Optional[str] = None) -> tuple[str, st
 
 async def raise_alert(pool, finding: Finding, client: Any = None, *,
                       client_factory: Callable[[], Any] = sns_client, now: Optional[datetime] = None) -> dict:
-    """Bell (at most one per check per BELL_EVERY, or the check's own ``bell_every``) and, for the first bell of the
+    """Bell (at most one per check per ``cis.ops.bell_every_hours``, or the check's own ``bell_every``) and, for the
+    first bell of the
     UTC day, one SNS e-mail.
     Returns what was done. Raises only on a database error (the caller logs it). ``now`` is for tests."""
     now = now or datetime.now(timezone.utc)
@@ -601,7 +617,7 @@ async def raise_alert(pool, finding: Finding, client: Any = None, *,
             await conn.execute("SELECT pg_advisory_xact_lock($1)", _LOCK_KEY)
             row = await conn.fetchrow(LAST_BELL_SQL, event_type, now)
             last = row["last"] if row else None
-            if last is not None and last >= now - (chk.bell_every or BELL_EVERY):
+            if last is not None and last >= now - (chk.bell_every or ops_thresholds.bell_every()):
                 return {"bell": False}
             bell_id = await conn.fetchval(BELL_SQL, PLATFORM_TENANT_ID, event_type, finding.check, payload,
                                           BELL_ROLES)

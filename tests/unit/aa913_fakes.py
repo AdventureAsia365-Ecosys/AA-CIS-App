@@ -38,11 +38,12 @@ class AlertDB(Directory):
 
     # ── helpers for tests ──
     def insert(self, email: str, status: str = "pending", *, arn: Optional[str] = None, reason: Optional[str] = None,
-               created_by: str = "admin:seed", sent: Optional[datetime] = None, note: Optional[str] = None) -> str:
+               created_by: str = "admin:seed", sent: Optional[datetime] = None, note: Optional[str] = None,
+               topic: str = "alerts") -> str:
         rid = str(uuid.uuid4())
         now = _now()
         self.recipients.append({
-            "id": rid, "email": email, "note": note, "status": status,
+            "id": rid, "email": email, "note": note, "status": status, "topic": topic,
             "removed_reason": reason if status == "removed" else None, "subscription_arn": arn,
             "created_at": now - timedelta(hours=1) + timedelta(microseconds=len(self.recipients)),
             "created_by": created_by,
@@ -77,7 +78,7 @@ class AlertDB(Directory):
     # ── views ──
     def _page(self, r: dict[str, Any]) -> dict[str, Any]:
         names = {f"admin:{a['id']}": a.get("display_name") or a.get("email") or a.get("username") for a in self.rows}
-        out = {k: r[k] for k in ("id", "email", "note", "status", "removed_reason", "created_at", "created_by",
+        out = {k: r[k] for k in ("id", "email", "note", "status", "topic", "removed_reason", "created_at", "created_by",
                                  "confirmed_at", "removed_at", "removed_by", "last_confirmation_sent_at",
                                  "last_seen_state", "last_reconciled_at")}
         out["has_subscription"] = r["subscription_arn"] is not None
@@ -89,8 +90,10 @@ class AlertDB(Directory):
         return {k: r[k] for k in ("id", "email", "status", "removed_reason", "subscription_arn", "confirmed_at",
                                   "last_confirmation_sent_at", "created_at")}
 
-    def _active(self) -> list[dict[str, Any]]:
-        return sorted((r for r in self.recipients if r["status"] != "removed"), key=lambda r: r["created_at"])
+    def _active(self, topic: Optional[str] = None) -> list[dict[str, Any]]:
+        return sorted((r for r in self.recipients
+                       if r["status"] != "removed" and (topic is None or r["topic"] == topic)),
+                      key=lambda r: r["created_at"])
 
     def _find(self, rid: Any) -> Optional[dict[str, Any]]:
         return next((r for r in self.recipients if r["id"] == str(rid)), None)
@@ -112,16 +115,18 @@ class AlertDB(Directory):
                    ar.SQL_LIST_HISTORY):
             self.sql.append(sql)
         if sql == ar.SQL_ACTIVE_FOR_UPDATE:
-            return [self._row5(r) for r in self._active()]
+            return [self._row5(r) for r in self._active(args[0])]
         if sql == ar.SQL_LATEST_REMOVED:
             latest: dict[str, dict] = {}
             for r in self.recipients:
+                if r["topic"] != args[0]:
+                    continue
                 if r["status"] == "removed" and (r["email"] not in latest
                                                   or r["removed_at"] > latest[r["email"]]["removed_at"]):
                     latest[r["email"]] = r
             return [self._row5(r) for r in latest.values()]
         if sql == ar.SQL_CONFIRMED_EMAILS:
-            return [{"email": r["email"]} for r in self._active() if r["status"] == "confirmed"]
+            return [{"email": r["email"]} for r in self._active("alerts") if r["status"] == "confirmed"]
         if sql == ar.SQL_LIST_ACTIVE:
             return [self._page(r) for r in self._active()]
         if sql == ar.SQL_LIST_HISTORY:
@@ -138,7 +143,7 @@ class AlertDB(Directory):
         if sql == svc.SQL_ROW_FOR_UPDATE:
             self.sql.append(sql)
             r = self._find(args[0])
-            return {k: r[k] for k in ("id", "email", "status", "subscription_arn")} if r else None
+            return {k: r[k] for k in ("id", "email", "status", "subscription_arn", "topic")} if r else None
         if sql == svc.SQL_RECENT_ACTION:
             return self._recent(args[0], args[1], args[2])
         if sql == svc.SQL_RECENT_ACTION_FOR:
@@ -156,15 +161,15 @@ class AlertDB(Directory):
     async def fetchval(self, sql: str, *args: Any) -> Any:
         self.sql.append(sql)
         if sql == svc.SQL_ACTIVE_BY_EMAIL:
-            return next((r["id"] for r in self._active() if r["email"] == args[0]), None)
+            return next((r["id"] for r in self._active(args[1]) if r["email"] == args[0]), None)
         if sql == svc.SQL_COUNT_ACTIVE:
             return len(self._active())
         if sql == svc.SQL_INSERT:
-            email, note, status, arn, created_by = args
-            if any(r["email"] == email for r in self._active()):
-                raise AssertionError("unique violation: one active row per address")
+            email, note, status, arn, created_by, topic = args
+            if any(r["email"] == email for r in self._active(topic)):
+                raise AssertionError("unique violation: one active row per address and topic")
             rid = self.insert(email, status, arn=arn, created_by=created_by, note=note,
-                              sent=_now() if status == "pending" else None)
+                              sent=_now() if status == "pending" else None, topic=topic)
             row = self._find(rid)
             row["created_at"] = _now()
             if status != "pending":
@@ -226,7 +231,9 @@ class StubSns:
 
     def __init__(self, subs: Optional[dict[str, str]] = None, *, list_error: Optional[str] = None,
                  subscribe_error: Optional[str] = None, unsubscribe_error: Optional[str] = None,
-                 attributes_error: Optional[str] = None, attributes_endpoint: bool = True) -> None:
+                 attributes_error: Optional[str] = None, attributes_endpoint: bool = True,
+                 topic_arn: str = TOPIC_ARN) -> None:
+        self.topic_arn = topic_arn   # AA-1171: one stub per topic (MultiSns routes between them)
         self.subs: dict[str, str] = dict(subs or {})
         self.pending_arns: dict[str, str] = {}   # ARN returned for a pending subscription -> endpoint
         self.list_error, self.subscribe_error = list_error, subscribe_error
@@ -237,7 +244,7 @@ class StubSns:
         self.unsubscribed: list[str] = []
 
     def list_subscriptions_by_topic(self, TopicArn: str, NextToken: Optional[str] = None) -> dict:
-        assert TopicArn == TOPIC_ARN
+        assert TopicArn == self.topic_arn
         self.list_calls += 1
         if self.list_error:
             raise SnsClientError(self.list_error)
@@ -245,14 +252,14 @@ class StubSns:
                                    "TopicArn": TopicArn} for email, arn in self.subs.items()]}
 
     def subscribe(self, TopicArn: str, Protocol: str, Endpoint: str, ReturnSubscriptionArn: bool) -> dict:
-        assert TopicArn == TOPIC_ARN and Protocol == "email" and ReturnSubscriptionArn is True
+        assert TopicArn == self.topic_arn and Protocol == "email" and ReturnSubscriptionArn is True
         if self.subscribe_error:
             raise SnsClientError(self.subscribe_error)
         self.subscribed.append(Endpoint)
         existing = self.subs.get(Endpoint)
         if existing and existing.startswith("arn:"):
             return {"SubscriptionArn": existing}
-        arn = sub_arn(f"pending:{Endpoint}")
+        arn = f"{self.topic_arn}:{uuid.uuid5(uuid.NAMESPACE_URL, f'pending:{Endpoint}')}"
         self.subs[Endpoint] = "PendingConfirmation"
         self.pending_arns[arn] = Endpoint
         return {"SubscriptionArn": arn}
@@ -290,3 +297,28 @@ class StubSns:
         del self.subs[email]
         self.unsubscribed.append(SubscriptionArn)
         return {}
+
+
+PAGE_TOPIC_ARN = "arn:aws:sns:us-west-1:111122223333:aa-ecosys-dev-page-alerts"
+
+
+class MultiSns:
+    """AA-1171: the alerts and the page topic, each a StubSns; calls go to the topic named by the ARN."""
+
+    def __init__(self, alerts: StubSns, page: StubSns) -> None:
+        self.by_topic = {alerts.topic_arn: alerts, page.topic_arn: page}
+
+    def _for_sub(self, arn: str) -> StubSns:
+        return next(s for t, s in self.by_topic.items() if arn.startswith(t + ":"))
+
+    def list_subscriptions_by_topic(self, TopicArn: str, NextToken: Optional[str] = None) -> dict:
+        return self.by_topic[TopicArn].list_subscriptions_by_topic(TopicArn, NextToken)
+
+    def subscribe(self, TopicArn: str, Protocol: str, Endpoint: str, ReturnSubscriptionArn: bool) -> dict:
+        return self.by_topic[TopicArn].subscribe(TopicArn, Protocol, Endpoint, ReturnSubscriptionArn)
+
+    def get_subscription_attributes(self, SubscriptionArn: str) -> dict:
+        return self._for_sub(SubscriptionArn).get_subscription_attributes(SubscriptionArn)
+
+    def unsubscribe(self, SubscriptionArn: str) -> dict:
+        return self._for_sub(SubscriptionArn).unsubscribe(SubscriptionArn)
