@@ -115,10 +115,6 @@ export function PresetConfirm({ staff, role, preset, busy, onClose, onConfirm }:
   onConfirm: (p: StaffPreset, done: string) => void;
 }) {
   const m = useT(MANAGE);
-  const { roleLabel, bookingRoleLabel, crmRolesLabel } = useStaffWords();
-  const held = { ...staff, role };
-  const changes = preset ? planChanges(presetPlan(preset, held), held) : {};
-  const replaces = !!preset && !preset.additive_only && Object.keys(changes).length > 0;
   return (
     <ConfirmModal
       open={preset !== null}
@@ -128,12 +124,24 @@ export function PresetConfirm({ staff, role, preset, busy, onClose, onConfirm }:
       confirmLabel={m("presetApply")}
       body={preset && <>
         <strong>{staff.display_name || staff.username}</strong> {m("presetBody")}
-        {changes.role && m("cisChange", roleLabel(changes.role.from), roleLabel(changes.role.to))}
-        {changes.booking && m("bookingChange", bookingRoleLabel(changes.booking.from), bookingRoleLabel(changes.booking.to))}
-        {changes.crm && m("crmChange", crmRolesLabel(changes.crm.from), crmRolesLabel(changes.crm.to))}
-        {replaces && m("presetReplaces")}
+        <PresetChanges preset={preset} held={{ ...staff, role }} />
       </>}
       onConfirm={() => preset && onConfirm(preset, m("presetDone", preset.label))}
     />
   );
+}
+
+/** The roles a preset changes on the account, in words; a plain preset that changes something also says it
+ *  replaces the roles held. */
+function PresetChanges({ preset, held }: { preset: StaffPreset; held: StaffAccount }) {
+  const m = useT(MANAGE);
+  const { roleLabel, bookingRoleLabel, crmRolesLabel } = useStaffWords();
+  const c = planChanges(presetPlan(preset, held), held);
+  const lines = [
+    c.role ? m("cisChange", roleLabel(c.role.from), roleLabel(c.role.to)) : "",
+    c.booking ? m("bookingChange", bookingRoleLabel(c.booking.from), bookingRoleLabel(c.booking.to)) : "",
+    c.crm ? m("crmChange", crmRolesLabel(c.crm.from), crmRolesLabel(c.crm.to)) : "",
+  ].filter(Boolean);
+  const replaces = !preset.additive_only && lines.length > 0;
+  return <>{lines.join("")}{replaces ? m("presetReplaces") : ""}</>;
 }

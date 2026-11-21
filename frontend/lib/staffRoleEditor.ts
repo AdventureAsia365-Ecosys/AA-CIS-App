@@ -130,15 +130,20 @@ export function presetCreateBody(form: PresetForm): Record<string, unknown> {
   return body;
 }
 
+export type PresetProblem = "code" | "label" | "bookingRole" | "crmRoles" | "additive" | "empty";
+
+/** The rules a preset form must meet, in the order they are reported (the same as the backend's checks). */
+const PRESET_RULES: [PresetProblem, (n: PresetForm, isNew: boolean) => boolean][] = [
+  ["code", (n, isNew) => !isNew || PRESET_CODE_RE.test(n.code)],
+  ["label", (n) => n.label.length >= 1 && n.label.length <= 80],
+  ["bookingRole", (n) => n.booking_mode !== "set" || !!n.booking_role],
+  ["crmRoles", (n) => n.crm_mode !== "add" || n.crm_roles.length > 0],
+  ["additive", (n) => !n.additive_only || (n.booking_mode !== "clear" && n.crm_mode !== "replace")],
+  ["empty", (n) => n.cis_role !== null || n.booking_mode !== "keep" || n.crm_mode !== "keep"],
+];
+
 /** Why a preset form cannot be sent yet, or null (the same rules as the backend, so the owner sees them first). */
-export function presetFormProblem(f: PresetForm, isNew: boolean): "code" | "label" | "bookingRole" | "crmRoles" |
-  "additive" | "empty" | null {
+export function presetFormProblem(f: PresetForm, isNew: boolean): PresetProblem | null {
   const n = normalizePreset(f);
-  if (isNew && !PRESET_CODE_RE.test(n.code)) return "code";
-  if (n.label.length < 1 || n.label.length > 80) return "label";
-  if (n.booking_mode === "set" && !n.booking_role) return "bookingRole";
-  if (n.crm_mode === "add" && n.crm_roles.length === 0) return "crmRoles";
-  if (n.additive_only && (n.booking_mode === "clear" || n.crm_mode === "replace")) return "additive";
-  if (n.cis_role === null && n.booking_mode === "keep" && n.crm_mode === "keep") return "empty";
-  return null;
+  return PRESET_RULES.find(([, ok]) => !ok(n, isNew))?.[0] ?? null;
 }

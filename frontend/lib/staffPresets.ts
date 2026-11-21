@@ -86,28 +86,42 @@ export interface PresetPlan {
  *  `crm_roles`. Pure, the same rules as the backend. */
 export function presetPlan(p: StaffPreset, s: Roles): PresetPlan {
   const out: PresetPlan = { lost: [] };
-  const oldRole = s.role || null;
-  const oldBooking = s.booking_role ?? null;
   if (p.cis_role !== null) {
-    if (!p.additive_only) out.role = p.cis_role;
-    else if (oldRole !== null && (p.cis_keep_roles.includes(oldRole) || oldRole === p.cis_role)) { /* kept */ }
-    else if (oldRole === null || CIS_EMPTY_ROLES.includes(oldRole)) out.role = p.cis_role;
-    else out.lost.push({ app: "cis", role: oldRole });
+    const role = planSlot(p, p.cis_role, s.role || null, p.cis_keep_roles, CIS_EMPTY_ROLES);
+    if (role.lost) out.lost.push({ app: "cis", role: role.lost });
+    if (role.set !== undefined) out.role = role.set;
   }
-  if (p.booking_mode === "clear") out.booking = null;
-  else if (p.booking_mode === "set" && p.booking_role !== null) {
-    if (!p.additive_only) out.booking = p.booking_role;
-    else if (oldBooking !== null && (p.booking_keep_roles.includes(oldBooking) || oldBooking === p.booking_role)) { /* kept */ }
-    else if (oldBooking === null || RETIRED_BOOKING_ROLES.includes(oldBooking)) out.booking = p.booking_role;
-    else out.lost.push({ app: "booking", role: oldBooking });
-  }
-  const crm = p.crm_roles.filter((r): r is CrmRole => (CRM_ROLES as readonly string[]).includes(r));
-  if (p.crm_mode === "replace") out.crm = CRM_ROLES.filter((r) => crm.includes(r));
-  else if (p.crm_mode === "add") {
-    const held = new Set<string>([...crmRolesOf(s), ...crm]);
-    out.crm = CRM_ROLES.filter((r) => held.has(r));
-  }
+  const booking = planBooking(p, s);
+  if (booking.lost) out.lost.push({ app: "booking", role: booking.lost });
+  if ("set" in booking) out.booking = booking.set;
+  const crm = planCrm(p, s);
+  if (crm !== undefined) out.crm = crm;
   return out;
+}
+
+/** One app's planned role (backend staff_presets._slot): `next` for a plain preset; for an additive-only one kept
+ *  when the held role is listed (or is `next`), `next` in an empty slot (none, or one of `empty`), else kept and
+ *  reported as `lost`. */
+function planSlot(p: StaffPreset, next: string, old: string | null, keep: readonly string[], empty: readonly string[]):
+  { set?: string; lost?: string } {
+  if (!p.additive_only) return { set: next };
+  if (old !== null && (keep.includes(old) || old === next)) return {};
+  if (old === null || empty.includes(old)) return { set: next };
+  return { lost: old };
+}
+
+/** The Booking grant a preset sets: cleared (set null), a role (planSlot; a retired grant is an empty slot), or kept. */
+function planBooking(p: StaffPreset, s: Roles): { set?: string | null; lost?: string } {
+  if (p.booking_mode === "clear") return { set: null };
+  if (p.booking_mode !== "set" || p.booking_role === null) return {};
+  return planSlot(p, p.booking_role, s.booking_role ?? null, p.booking_keep_roles, RETIRED_BOOKING_ROLES);
+}
+
+/** The CRM roles a preset sets: undefined = kept; replace = its set; add = its set added to the roles held. */
+function planCrm(p: StaffPreset, s: Roles): CrmRole[] | undefined {
+  if (p.crm_mode === "keep") return undefined;
+  const held = new Set<string>([...(p.crm_mode === "add" ? crmRolesOf(s) : []), ...p.crm_roles]);
+  return CRM_ROLES.filter((r) => held.has(r));
 }
 
 /** The roles that actually change (a planned value equal to the held one is not a change). */
