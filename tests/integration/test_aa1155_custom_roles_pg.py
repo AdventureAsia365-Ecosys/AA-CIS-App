@@ -28,6 +28,7 @@ from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 from api.core import staff_identity, staff_roles  # noqa: E402
 from api.core.identity_verifier import Principal  # noqa: E402
 from api.routers import admin_budgets, admin_platform  # noqa: E402
+from api.services import staff_custom_roles as scr  # noqa: E402
 from api.services import staff_directory as sd  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
