@@ -31,8 +31,8 @@ Operations
 - roles: the CIS role (``admin_users.role``), the Booking grant (set or removed) and/or the CRM roles (AA-1031: a
   set, ``shared.staff_crm_grant``, migration 330). Cognito: add the new groups, then remove the old ones (a failure
   in between leaves the person with MORE access for a moment, never locked out of both; the retry finishes it).
-  The "Platform owner" preset (``preset="platform_owner"``) sets CIS admin + Booking admin and adds CRM
-  ``platform_admin`` in the same transaction and audit row; it never sets the owner flag.
+  A preset (AA-1155 T14: a row of ``shared.staff_role_preset``, CIS 465, :mod:`api.services.staff_presets`) sets the
+  roles it names in the same transaction and audit row (``details.preset``); it never sets the owner flag.
 - disable: ``is_active = false``, then ``AdminDisableUser``, then ``AdminUserGlobalSignOut`` (ADR 0006 §7: a disabled
   user cannot re-authenticate even with the managed-login cookie; the worst case is one live 15-minute access
   token). ``AdminDisableUser`` already revokes the user's tokens, so a ``NotAuthorizedException`` from the sign-out
@@ -92,13 +92,10 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from api.core import e2e_staff, identity_config, staff_identity, staff_roles, view_as
 from api.services import staff_custom_roles as scr, staff_invite   # AA-1155: custom roles, business-owner marker
-# The Staff page's presets and the retired Booking roles (AA-1031, AA-1091, AA-1150), re-exported for the callers.
-from api.services.staff_presets import (  # noqa: F401
-    CONTENT_OPS_CIS_ROLE, PRESET_BOOKING_ROLE, PRESET_BUSINESS_OWNER, PRESET_CIS_ROLE, PRESET_CONTENT_OPS,
-    PRESET_CRM_ROLE, PRESET_PLATFORM_OWNER, PRESET_PRICING_TEAM, PRESETS, PRICING_BOOKING_ROLE, PRICING_CIS_ROLE,
-    PRICING_FILL_CIS_ROLES, PRICING_KEEP_BOOKING_ROLES, PRICING_KEEP_CIS_ROLES, RETIRED_BOOKING_ROLES, preset_fields,
-    pricing_team,
-)
+# The Staff page's presets are data since AA-1155 T14 (CIS 465, api/services/staff_presets.py); the retired Booking
+# roles (AA-1150) stay a code rule, re-exported for the callers.
+from api.services import staff_presets
+from api.services.staff_presets import RETIRED_BOOKING_ROLES  # noqa: F401
 from services.acp_shared.audit_log import write_audit_log
 
 logger = structlog.get_logger()
@@ -791,18 +788,17 @@ async def _free_username(conn: Any, base: str) -> str:
 _UNSET: Any = object()
 
 
-def pricing_team_plan(old_role: Optional[str], old_booking: Optional[str], booking_role: Any) -> tuple:
-    """AA-1091: ``(new_role, new_booking, booking_role)`` of the "Pricing team" preset for these current roles
-    (``new_role`` None = CIS role kept, ``booking_role`` passed through = Booking grant kept). Additive only: raises
-    StaffDirectoryError(409, preset_would_replace) naming each role it would have to replace."""
-    new_role, new_booking, lost = pricing_team(old_role, old_booking)
-    if new_booking is not None:
-        booking_role = new_booking
-    if lost:
-        raise StaffDirectoryError(
-            409, "The Pricing team preset only adds roles and would replace " + " and ".join(lost)
-            + " (one role per app): set the roles by hand", "preset_would_replace")
-    return new_role, new_booking, booking_role
+def _apply_preset(p: Any, old_role: Optional[str], old_booking: Optional[str],
+                  old_crm: tuple[str, ...]) -> tuple[Optional[str], Any, tuple[str, ...]]:
+    """AA-1155 T14: ``(new CIS role or None = kept, Booking role or _UNSET = kept, CRM roles)`` of preset ``p`` for
+    these current roles, checked like any role field; an additive preset that would replace a held role -> 409."""
+    planned = staff_presets.plan(p, old_role, old_booking, old_crm)
+    if planned.lost:
+        raise staff_presets.would_replace(p, planned.lost)
+    new_role = None if planned.role is staff_presets.KEEP else require_cis_role(planned.role)
+    booking = _UNSET if planned.booking is staff_presets.KEEP else require_booking_role(planned.booking)
+    crm = old_crm if planned.crm is staff_presets.KEEP else require_crm_roles(list(planned.crm))
+    return new_role, booking, crm
 
 
 async def change_roles(pool: Any, cognito: CognitoDirectory, *, actor_id: str, staff_id: str,
@@ -811,21 +807,19 @@ async def change_roles(pool: Any, cognito: CognitoDirectory, *, actor_id: str, s
     """Set the CIS role, the Booking grant (``booking_role=None`` removes it) and/or the CRM roles (AA-1031: the
     whole set; ``[]`` removes every one). Cognito: add the new groups, then remove the old ones.
 
-    A ``preset`` (:mod:`api.services.staff_presets`: platform_owner = "Administrator", business_owner, content_ops,
-    pricing_team) is applied in the same transaction with one audit row (``details.preset``); it cannot be combined
-    with the other fields, and the owner flag is never set here."""
+    A ``preset`` (AA-1155 T14: the code of an active ``shared.staff_role_preset`` row, CIS 465) is read and planned in
+    the same transaction from the roles held (:func:`api.services.staff_presets.plan`) and applied with one audit row
+    (``details.preset``); it cannot be combined with the other fields. The guards stay here: the owner flag is never
+    set, the self-demote and last-owner checks run on what it changes, and an additive-only preset that would replace
+    a held role is refused (409 ``preset_would_replace``) before any write."""
     if preset is not None:
-        if preset not in PRESETS:
-            raise StaffDirectoryError(400, f"Unknown preset; the presets are {', '.join(PRESETS)}", "preset")
         if role is not _UNSET or booking_role is not _UNSET or crm_roles is not _UNSET:
             raise StaffDirectoryError(400, "A preset sets every role itself; send it alone", "preset_conflict")
-        fields = preset_fields(preset)   # AA-1150: a field the preset leaves out is kept
-        role, booking_role, crm_roles = (fields.get(k, _UNSET) for k in ("role", "booking_role", "crm_roles"))
     elif role is _UNSET and booking_role is _UNSET and crm_roles is _UNSET:
         raise StaffDirectoryError(400, "Nothing to change: give a CIS role, a Booking role and/or CRM roles", "empty")
     new_role = require_cis_role(role) if role is not _UNSET else None
     new_booking = require_booking_role(booking_role) if booking_role is not _UNSET else None
-    crm_given = preset == PRESET_PLATFORM_OWNER or crm_roles is not _UNSET
+    crm_given = crm_roles is not _UNSET
     asked_crm = require_crm_roles(crm_roles) if crm_roles is not _UNSET else ()
 
     async with pool.acquire() as conn:
@@ -836,15 +830,19 @@ async def change_roles(pool: Any, cognito: CognitoDirectory, *, actor_id: str, s
             old_role = scr.cis_code(target)   # AA-1155: the custom role code of a custom holder
             old_booking = await conn.fetchval(SQL_GRANT, staff_id, APP_BOOKING)
             crm_ok = await crm_grants_available(conn)
-            if crm_given and not crm_ok:
+            if preset is not None:   # AA-1155 T14: the preset row, planned from the roles read in this transaction
+                p = await staff_presets.load_preset(conn, preset)
+                crm_given = p.crm_mode != "keep"
+                if crm_given and not crm_ok:
+                    raise _crm_unavailable()
+                old_crm = await _crm_roles(conn, staff_id) if crm_ok else ()
+                new_role, booking_role, asked_crm = _apply_preset(p, old_role, old_booking, old_crm)
+                new_booking = booking_role if booking_role is not _UNSET else None
+            elif crm_given and not crm_ok:
                 raise _crm_unavailable()
-            old_crm = await _crm_roles(conn, staff_id) if crm_ok else ()
-            if preset == PRESET_PRICING_TEAM:   # AA-1091: additive only, from the roles read in this transaction
-                new_role, new_booking, booking_role = pricing_team_plan(old_role, old_booking, booking_role)
-            if preset == PRESET_PLATFORM_OWNER:
-                new_crm = require_crm_roles(set(old_crm) | {PRESET_CRM_ROLE})
             else:
-                new_crm = asked_crm if crm_given else old_crm
+                old_crm = await _crm_roles(conn, staff_id) if crm_ok else ()
+            new_crm = asked_crm if crm_given else old_crm
             new_db_role, new_custom, based_on = await scr.check_new_roles(   # AA-1155: custom codes exist + active
                 conn, new_role, old_role, new_booking, old_booking if booking_role is not _UNSET else new_booking)
             require_e2e_test_scope(target["email"], new_role if new_role is not None else old_role,
