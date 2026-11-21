@@ -2595,7 +2595,20 @@ would lose those rights); CRM roles are untouched; one audit row with `details.p
 "Business owner" (`preset="business_owner"`: CIS admin + Booking admin, CRM unchanged) and "Content + Product &
 operations" (`preset="content_ops"`: CIS `content_lead`, no Booking role and no CRM role until custom roles exist,
 tech lead decision Q1); every other role (the three fields and the Pricing team preset) is behind "Show all roles".
-Add staff offers the same presets (the create fills the role fields from them). Root ADR 0006 +
+Add staff offers the same presets (the create fills the role fields from them). **Presets as data (AA-1155 T14,
+CIS 465)**: the presets above are rows of `shared.staff_role_preset` (code, label, description, the CIS role or a CIS
+custom role, the Booking mode keep / set / clear + role, the CRM mode keep / replace / add + roles, `additive_only`
+with its keep lists, sort order, `archived`), seeded with those four and edited by an `is_owner` user in the Staff
+page's "People-role presets" section (`GET/POST /admin/platform/presets`, `PATCH /admin/platform/presets/{code}`,
+audited `staff.preset_created` / `staff.preset_updated` with before and after); `PATCH …/roles {"preset": code}`
+reads the active row in the write's transaction (`api/services/staff_presets.py`). The code keeps only the guards: no
+preset field can set the owner flag, the self-demote and last-owner checks run on what it changes, and an
+additive-only preset refuses (409 `preset_would_replace`) to replace a held role. **CIS role editor (AA-1155 T13)**:
+the same page's "CIS custom roles" section lets an `is_owner` user clone a built-in CIS role (never admin, viewer or
+reviewer) into a `custom_<name>` role, tick its capabilities, relabel, archive or restore it (`GET/POST
+/admin/platform/roles/cis`, `PATCH /admin/platform/roles/cis/{code}`, `api/services/staff_role_editor.py`, the same
+rules as the Booking editor: approve-class or unknown capability 400, audited `staff.role_created` /
+`staff.role_updated`); a role an active account holds is not archived (409 `role_in_use`). Root ADR 0006 +
 amendments 0006a / 0006b are the design; tenants are separate (`cis_tenant_token`, role `tenant`).
 
 **R2 roles and tenant scope (AA-1035 slice 1, root ADR 0019 d3 / d4; CIS 362-364).** `shared.admin_role` also has
