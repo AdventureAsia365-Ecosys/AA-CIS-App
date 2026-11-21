@@ -29,7 +29,7 @@ export type NavIcon =
   | "aiGateway" | "spend" | "usage"
   | "lab" | "writingMemory" | "decisions"
   | "staff" | "roles" | "audit" | "jobs" | "alerts" | "infra" | "apiDocs" | "dataModel" | "docs" | "uiKit" | "productMap"
-  | "delivery"
+  | "delivery" | "readiness"
   | "bookingAdmin" | "agencyBilling" | "agencyTiers" | "b2bDesk";
 
 export interface IaItem {
@@ -150,6 +150,9 @@ export const ADMIN_IA: IaGroup[] = [
     { href: "/admin/platform/infra", label: "Infra limits", icon: "infra" },
     // AA-1108: CI/CD and DORA per app (deploys, lead time, failures, recovery, CI health), from the root collector.
     { href: "/admin/platform/delivery", label: "Delivery", icon: "delivery" },
+    // AA-1170: readiness per security / AI framework (Evidenced %), the controls and their evidence (Dev, not a
+    // certification).
+    { href: "/admin/platform/compliance", label: "Compliance readiness", icon: "readiness" },
     { href: "/admin/api-docs", label: "API Docs", icon: "apiDocs" },
     { href: "/admin/data-model", label: "Data model", icon: "dataModel" },
     { href: "/admin/docs", label: "Docs", icon: "docs" },
