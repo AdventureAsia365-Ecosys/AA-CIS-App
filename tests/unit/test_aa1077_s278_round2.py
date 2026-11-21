@@ -87,7 +87,7 @@ def test_the_manifest_v7_hashes_the_plan_symbols():
     assert {"_BLOG_FAQ_PLAN", "_BLOG_RICHEST_SHARE", "_blog_length_plan", "_PLAN",
             "_BLOG_LENGTH_INSTRUCTIONS", "build_user_prompt"} <= set(v7["symbols"])
     entry = newest(load_manifest(), "t9_write")
-    assert entry["version"] == "v8"       # S279 L2: the length values render at call time
+    assert entry["version"] == "v9"       # S279 L2 (v8): length values at call time; AA-1167 (v9): the data fence
     assert {"_BLOG_FAQ_PLAN", "_BLOG_RICHEST_SHARE", "_blog_length_plan", "_blog_length_instructions",
             "build_user_prompt"} <= set(entry["symbols"])
     assert prompt_hash_of(entry["source_path"], entry["symbols"]) == entry["prompt_sha256"]

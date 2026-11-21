@@ -84,6 +84,11 @@ from services.content_generation.normalize import (  # noqa: E402
 )
 
 
+def _prompt_fence_enabled() -> bool:
+    from services.ai_safety import prompt_fence
+    return prompt_fence.enabled()
+
+
 def initial_state_for(
     tour: dict, *,
     brand_rules: Optional[dict] = None,
@@ -141,6 +146,8 @@ def initial_state_for(
         "brand_signature_words":  _br.get("signature_words", []),
         "subtitle_focus":       subtitle_focus,
         "seo_mode":             seo_mode,
+        # AA-1167: the writer prompts' untrusted-data fence (setting cis.llm.prompt_data_fence), read once per run.
+        "prompt_fence":         _prompt_fence_enabled(),
         # brand audit defaults
         "brand_audit_status": "",
         "brand_audit_codes":  [],

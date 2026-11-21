@@ -28,6 +28,7 @@ from services.acp_angle_gate.channel_style import ChannelStyle
 from services.acp_angle_gate.goals import Goal
 from services.acp_content_writing.prompts import PLAIN_TEXT_CHANNELS, SYSTEM_PROMPT, build_user_prompt
 from services.acp_content_writing.quality_gates import strip_citation_tags
+from services.ai_safety import prompt_fence  # AA-1167: untrusted text in the writer prompt as fenced data
 from services.quality import writing_policy as _wp  # AA-1047: bands, FAQ pairs, prompt fragments
 from shared.llm_client import stream_sink
 from shared.llm_client.client import LLMClient
@@ -208,18 +209,22 @@ def write_content(
     `facts_text` (AA-529, defaults to `None`): a pre-formatted `[Fact id=<id>]`-labeled block
     (`services/acp_content_writing/facts.py::format_facts_block()`) — passed straight through to
     `build_user_prompt()`, which appends it to the CONTENT SEED regardless of channel/route
-    branch. `None`/empty (no Facts Entry exists yet for this tenant+platform) is a no-op."""
+    branch. `None`/empty (no Facts Entry exists yet for this tenant+platform) is a no-op.
+
+    AA-1167: the setting cis.llm.prompt_data_fence picks the fenced prompt (prompt_fence.enabled, off = main)."""
+    fence = prompt_fence.enabled()
     user_prompt = build_user_prompt(
         content_seed=content_seed, goal=goal, channel_style=channel_style,
         brand_audience=brand_audience, angle=angle, cta=cta,
         destination=destination, trip_name=trip_name, atom_id=atom_id,
         route_segments=route_segments, keyword=keyword, facts_text=facts_text, scope=scope,
         sibling_openers=sibling_openers, search_questions=search_questions, lead_focus=lead_focus,
-        memory_lines=t9_tenant_lines(memory, channel_style["channel"]), walk_focus=walk_focus,
+        memory_lines=t9_tenant_lines(memory, channel_style["channel"]), walk_focus=walk_focus, fence=fence,
     )
     channel = channel_style["channel"]
-    request = LLMRequest(system_prompt=SYSTEM_PROMPT + t9_platform_block(memory, channel), user_prompt=user_prompt,
-                          stage="t9_write", max_tokens=max_tokens_for(channel))
+    system = SYSTEM_PROMPT + t9_platform_block(memory, channel) + prompt_fence.system_rule(fence)
+    request = LLMRequest(system_prompt=system, user_prompt=user_prompt, stage="t9_write",
+                         max_tokens=max_tokens_for(channel))
     resp, cost = _generate_full(request, channel, attempt=1,
                                 tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id)
     if channel == "blog":
@@ -275,18 +280,21 @@ def rewrite_with_feedback(
     write_content()'s own docstring for the shape.
 
     `facts_text` (AA-529, defaults to `None`): same as `write_content()`'s own — passed straight
-    through, so a rewrite attempt sees the exact same Facts as the first attempt did."""
+    through, so a rewrite attempt sees the exact same Facts as the first attempt did. AA-1167: the fence mode as in
+    write_content()."""
+    fence = prompt_fence.enabled()
     user_prompt = build_user_prompt(
         content_seed=content_seed, goal=goal, channel_style=channel_style,
         brand_audience=brand_audience, angle=angle, cta=cta,
         destination=destination, trip_name=trip_name, revision_feedback=revision_feedback,
         atom_id=atom_id, route_segments=route_segments, keyword=keyword, facts_text=facts_text, scope=scope,
         sibling_openers=sibling_openers, search_questions=search_questions, lead_focus=lead_focus,
-        memory_lines=t9_tenant_lines(memory, channel_style["channel"]), walk_focus=walk_focus,
+        memory_lines=t9_tenant_lines(memory, channel_style["channel"]), walk_focus=walk_focus, fence=fence,
     )
     channel = channel_style["channel"]
-    request = LLMRequest(system_prompt=SYSTEM_PROMPT + t9_platform_block(memory, channel), user_prompt=user_prompt,
-                          stage="t9_write", max_tokens=max_tokens_for(channel))
+    system = SYSTEM_PROMPT + t9_platform_block(memory, channel) + prompt_fence.system_rule(fence)
+    request = LLMRequest(system_prompt=system, user_prompt=user_prompt, stage="t9_write",
+                         max_tokens=max_tokens_for(channel))
     resp, cost = _generate_full(request, channel, attempt=2,
                                 tenant_id=tenant_id, angle_gate_request_id=angle_gate_request_id)
     if channel == "blog":

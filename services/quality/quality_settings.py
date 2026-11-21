@@ -213,8 +213,13 @@ def settings_fp() -> str:
 
 
 def prompt_fp() -> str:
-    """'' while every value a writer prompt renders is its default, else 8 hex of those values (PROMPT_KEYS)."""
-    return _fp(K.PROMPT_KEYS)
+    """'' while every value a writer prompt renders is its default, else 8 hex of those values (PROMPT_KEYS).
+
+    AA-1167: the writer prompts' untrusted-data fence switch (cis.llm.prompt_data_fence) is one of them: with it on,
+    the S1 v2 / T2 / T9 prompts differ from the registered version's default render, so the ledger's prompt_version
+    carries the '.s<fp>' suffix (shared/llm_client/prompt_registry.settings_suffix)."""
+    from services.ai_safety import prompt_fence
+    return _fp(K.PROMPT_KEYS + (prompt_fence.KEY,))
 
 
 __all__ = ["START_TIME_REASON", "cross_problem", "governs", "prompt_fp", "settings_fp", "ui_values"]

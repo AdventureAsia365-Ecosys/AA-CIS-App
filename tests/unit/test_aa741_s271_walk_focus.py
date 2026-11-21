@@ -233,8 +233,8 @@ def test_manifest_v3_hashes_the_focus_symbols():
     from shared.llm_client.prompt_registry import load_manifest, newest, prompt_hash_of
     entry = newest(load_manifest(), "t9_write")
     # S279 L2: v8 length values at call time (CIS 413); AA-1077: v7 plan + no-source rule (CIS 405), v6 target (CIS
-    # 399); v3 walk focus
-    assert entry["version"] == "v8"
+    # 399); v3 walk focus; AA-1167: v9 the untrusted-data fence (CIS 466)
+    assert entry["version"] == "v9"
     assert {"_WALK_FOCUS_MARK", "_WALK_FOCUS_RULE", "_blog_length_instructions"} <= set(entry["symbols"])
     assert prompt_hash_of(entry["source_path"], entry["symbols"]) == entry["prompt_sha256"]
     t8 = newest(load_manifest(), "t8_angle_gen")

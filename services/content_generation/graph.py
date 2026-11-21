@@ -486,6 +486,9 @@ class ContentState(TypedDict):
     # AA-1078: flag_fix's model fix was lost ({reason: reply_cut | error, stage, fields}); set only then. Declared so
     # LangGraph keeps it (AA-209 gotcha); _rewrite_tour passes it on and the T2 job does not report QA passed over it.
     fix_not_applied:        Optional[dict]
+    # AA-1167: the writer prompts' untrusted-data fence of this run (setting cis.llm.prompt_data_fence, read once by
+    # api/routers/v1_pipeline.initial_state_for). Declared so LangGraph keeps it (AA-209 gotcha); unset = off.
+    prompt_fence:           Optional[bool]
 
 # code → (dimension, deduction)
 _FAILURE_MAP: dict[str, tuple[str, float]] = {

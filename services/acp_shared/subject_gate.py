@@ -234,8 +234,11 @@ class _Page(HTMLParser):
 
 def rendered_html(text: str) -> str:
     """The HTML the publisher sends: the same markdown render as services/acp_content_writing/export.py
-    (``extra`` + ``nl2br``) for WordPress; Facebook gets the raw text, which :func:`extract_links` also reads."""
-    return markdown.markdown(text or "", extensions=["extra", "nl2br"])
+    (``extra`` + ``nl2br``) for WordPress; Facebook gets the raw text, which :func:`extract_links` also reads.
+    AA-1167: sanitized like the published body (html_sanitizer.sanitize_html), so a link the publisher drops (a
+    ``javascript:`` URL) is not checked as if it were published."""
+    from services.ai_safety.html_sanitizer import sanitize_html
+    return sanitize_html(markdown.markdown(text or "", extensions=["extra", "nl2br"]))
 
 
 def _context(text: str, start: int) -> str:
