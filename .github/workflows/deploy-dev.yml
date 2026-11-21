@@ -117,7 +117,7 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
           mask-aws-account-id: true
       - name: Login to ECR
-        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+        uses: aws-actions/amazon-ecr-login@7290e214a610b32bc0eef81748948b6d466a8783 # v2.2.0
       # S273: the verified spaCy model wheel into the build context's .url-wheels/ seed (no github.com download in the
       # image build). Runs on main, so its cache entry is readable by every PR and merge-queue run.
       - name: URL-pinned wheels (cached, hash-checked)
