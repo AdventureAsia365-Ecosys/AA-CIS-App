@@ -359,9 +359,9 @@ async def read_cut_stats(db, since: datetime) -> dict[str, dict]:
 
 
 def cut_findings(cut_stats: dict[str, dict], rows: dict[str, dict]) -> list[Finding]:
-    """S271: ``route_cut.<stage>`` when more than ``cis.ops.reply_cut_alert_pct`` % of a stage's replies over ``COST_WINDOW``
-    (billed ones and refused cuts) were cut at their token ceiling, with at least the policy's ``min_requests``
-    replies. Pure."""
+    """S271: ``route_cut.<stage>`` when more than ``cis.ops.reply_cut_alert_pct`` % of a stage's replies over
+    ``COST_WINDOW`` (billed ones and refused cuts) were cut at their token ceiling, with at least the policy's
+    ``min_requests`` replies. Pure."""
     out: list[Finding] = []
     limit = ops_thresholds.reply_cut_alert_pct()
     for stage in sorted(cut_stats):

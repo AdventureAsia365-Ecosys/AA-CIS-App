@@ -46,14 +46,14 @@ stage from :func:`watch_policy`, documented in CONTEXT.md "Quality funnel"):
 - ``qf_fb.<stage>`` — at least the stage's ``shared.llm_route_policy`` ``fallback_alert_pct`` % (route_watch's rule:
   own row, ``*`` row, default 20) of the answered requests came from a fallback rung;
 - ``qf_drift.<stage>`` — served-model drift: at least ``cis.ops.qf_drift_alert_pct`` % of the answered requests came
-  from a model that served under ``cis.ops.qf_drift_new_model_pct`` % of the stage's answers in the ``WATCH_DAYS`` before (a route,
-  catalog or provider change that moved the served model).
+  from a model that served under ``cis.ops.qf_drift_new_model_pct`` % of the stage's answers in the ``WATCH_DAYS``
+  before (a route, catalog or provider change that moved the served model).
 
-Each needs at least ``max(cis.ops.qf_min_requests, policy min_requests)`` rows in the window (and drift as many in the prior
-window). Alerts fire on the TRANSITION only (:func:`mark_repeats`): a finding the previous scheduled CIS-08 run already
-had is stored with ``repeat: true`` and not raised again, and the night's new findings go out as one ``qf_digest``
-alert (:func:`digest_finding`). The 24-hour route alerts of ``llm_route_watch`` stay as they are; these are the
-weekly-scale quality view of the same ledger.
+Each needs at least ``max(cis.ops.qf_min_requests, policy min_requests)`` rows in the window (and drift as many in the
+prior window). Alerts fire on the TRANSITION only (:func:`mark_repeats`): a finding the previous scheduled CIS-08 run
+already had is stored with ``repeat: true`` and not raised again, and the night's new findings go out as one
+``qf_digest`` alert (:func:`digest_finding`). The 24-hour route alerts of ``llm_route_watch`` stay as they are; these
+are the weekly-scale quality view of the same ledger.
 
 AA-1171 (S287): the four thresholds are settings on Platform › Settings (area "ops", CIS 469, maker-checker), read on
 every run through ``shared/ops_thresholds.py`` (:func:`thresholds` is what the snapshot stores), never module constants.
@@ -542,10 +542,11 @@ def totals(t9: list[dict], s1: list[dict], t2: list[dict], *, last_week: str,
 def watch_policy(rows: dict[str, dict], stage: str) -> dict:
     """The thresholds of ``stage`` (pure): the route policy's ``fallback_alert_pct`` (``route_watch.effective``: the
     stage's own ``shared.llm_route_policy`` row, then the ``*`` row, then its defaults, field by field) and the minimum
-    rows ``max(cis.ops.qf_min_requests, min_requests)``: the policy can raise the weekly floor of a noisy stage, never lower it
-    (its default of 5 is sized for route_watch's 60-minute window)."""
+    rows ``max(cis.ops.qf_min_requests, min_requests)``: the policy can raise the weekly floor of a noisy stage, never
+    lower it (its default of 5 is sized for route_watch's 60-minute window)."""
     pol = route_watch.effective(rows or {}, stage)
-    return {"fallback_alert_pct": float(pol.fallback_alert_pct), "min_requests": max(ops_thresholds.qf_min_requests(), pol.min_requests),
+    return {"fallback_alert_pct": float(pol.fallback_alert_pct),
+            "min_requests": max(ops_thresholds.qf_min_requests(), pol.min_requests),
             "policy_min_requests": pol.min_requests}
 
 

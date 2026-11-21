@@ -114,12 +114,14 @@ async def test_bell_window_follows_the_setting(setting):
 
 def test_each_check_family_bells_on_its_own_window_setting(setting):
     """Every bell window is a setting (route, daily, nightly, default); only route_back keeps a technical window."""
-    families = {"route_fb.st": ops_thresholds.BELL_EVERY_ROUTE_HOURS, "route_last.st": ops_thresholds.BELL_EVERY_ROUTE_HOURS,
+    families = {"route_fb.st": ops_thresholds.BELL_EVERY_ROUTE_HOURS,
+                "route_last.st": ops_thresholds.BELL_EVERY_ROUTE_HOURS,
                 "route_cost.st": ops_thresholds.BELL_EVERY_DAILY_HOURS,
                 "route_cut.st": ops_thresholds.BELL_EVERY_DAILY_HOURS,
                 "llm_stage_coverage.st": ops_thresholds.BELL_EVERY_DAILY_HOURS,
                 "route_digest": ops_thresholds.BELL_EVERY_NIGHTLY_HOURS,
-                "qf_cut.st": ops_thresholds.BELL_EVERY_NIGHTLY_HOURS, "qf_digest": ops_thresholds.BELL_EVERY_NIGHTLY_HOURS,
+                "qf_cut.st": ops_thresholds.BELL_EVERY_NIGHTLY_HOURS,
+                "qf_digest": ops_thresholds.BELL_EVERY_NIGHTLY_HOURS,
                 "research_stale_share": ops_thresholds.BELL_EVERY_NIGHTLY_HOURS,
                 "research_auto_failed": ops_thresholds.BELL_EVERY_NIGHTLY_HOURS,
                 "jobs_starved": ops_thresholds.BELL_EVERY_HOURS}

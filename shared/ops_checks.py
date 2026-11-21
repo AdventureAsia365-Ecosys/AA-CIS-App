@@ -46,8 +46,8 @@ Two kinds of checks:
 
 Dedupe (one advisory-locked transaction, so two api tasks never double up): a check writes a bell only when it has
 none in the last ``Check.bell_every`` (the setting the check names in ``bell_key``: ``cis.ops.bell_every_hours``,
-6 h by default, unless the check family has its own route / daily / nightly window), and mails only for the first bell of the UTC day: at
-most one e-mail per
+6 h by default, unless the check family has its own route / daily / nightly window), and mails only for the first
+bell of the UTC day: at most one e-mail per
 check per UTC day. A failed publish deletes the bell it just wrote, so the next tick tries both again. E-mail is
 skipped (bell only, one log line) when ALERTS_TOPIC_ARN is unset.
 
@@ -244,7 +244,8 @@ PREFIX_CHECKS: dict[str, Check] = {
         bell_key=BELL_DAILY),
     ROUTE_CUT_PREFIX: Check(
         "LLM stage replies cut at their token ceiling", "More than the alert share (cis.ops.reply_cut_alert_pct, 5 % "
-        "by default) of the stage's billed replies in the last 24 hours stopped on their output-token ceiling (max_tokens / length). The gateway retries a cut reply once with "
+        "by default) of the stage's billed replies in the last 24 hours stopped on their output-token ceiling "
+        "(max_tokens / length). The gateway retries a cut reply once with "
         "double the ceiling, so each cut costs a second call. Raise the stage's ceiling (the call site's constant, "
         "or a stage x model row) or set the model's min_output_tokens capability; AI gateway > Trace shows the "
         "attempts.", TRACE_PAGE, bell_key=BELL_DAILY),
