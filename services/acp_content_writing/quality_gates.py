@@ -2091,19 +2091,11 @@ def gate_faq_contract(content_text: str) -> GateResultLite:
 
 # ---------------------------------------------------------------- F12 / F13 (AA-768, S234)
 
-# F12_scope warned for one checkpoint round (S234 plan C4). It is repairable in every mode: a body violation quotes
-# its sentence, so sentence_repair can fix it once it blocks. AA-788 (S287) — no code switch any more: the mode is
-# only the setting cis.quality_modes.t10_f12_scope (warn | block, maker-checker, Platform › Settings), read at gate
-# time; `block` needs a passing pilot measurement record as its evidence (quality_settings.evidence_problem, root ADR
-# 0020: only a measured gate may hold). The F12_SCOPE_BLOCKING constant is gone.
-# A finding that names a place in the SEO title or the meta description starts with one of these; any other finding is
-# in the body (headings included).
+# F12_scope warned for one checkpoint round (S234 plan C4); repairable in every mode (a body violation quotes its
+# sentence). AA-788 S287: no code switch; the mode is only the setting t10_f12_scope, read at gate time, and `block`
+# needs a passing pilot measurement record as evidence (quality_settings.evidence_problem, root ADR 0020).
+# A finding naming a place in the SEO title or meta starts with one of these; every other one is in the body.
 SEO_FINDING_PREFIXES = ("title ", "meta ")
-
-
-def is_body_finding(violation: str) -> bool:
-    """True for an F12_scope / F17 / F18 finding in the body (not a title- or meta-only finding)."""
-    return not str(violation or "").startswith(SEO_FINDING_PREFIXES)
 
 
 # ---------------------------------------------------------------- AA-788: per-check modes of the promoted checks
@@ -2163,7 +2155,7 @@ def gate_scope(content_text: str, hygiene_ctx: Optional[HygieneContext], seo_tit
     vs = found["scope"]
     if mode != BLOCK_MODE:
         return _result(qr.F12_SCOPE, vs, repairable=True, blocking=False)
-    body = [v for v in vs if is_body_finding(v)]
+    body = [v for v in vs if not v.startswith(SEO_FINDING_PREFIXES)]
     result = _result(qr.F12_SCOPE, vs, repairable=True, blocking=bool(body) or not vs)
     if vs:
         _log_promotion(qr.F12_SCOPE, mode, result, "body finding" if body else "title / meta finding only")
@@ -2226,7 +2218,7 @@ def gate_trip_facts(content_text: str, trip_ctx: Optional[TripFactContext], seo_
     def body_blocking(vs: list[str], flag: bool) -> bool:
         # a title / meta finding alone never holds a piece: service._fit_seo_meta already refused that
         # meta and asked for a new one; what is left is a warning for the admin
-        return flag and any(is_body_finding(v) for v in vs)
+        return flag and any(not v.startswith(SEO_FINDING_PREFIXES) for v in vs)
     return [_result(F17_GATE, found["trip_fact"], repairable=True,
                     blocking=body_blocking(found["trip_fact"], F17_BLOCKING) if found["trip_fact"] else F17_BLOCKING),
             _result(F18_GATE, found["rarity"], repairable=True,
@@ -3018,7 +3010,7 @@ __all__ = [
     "unused_source_facts",
     "faq_pairs", "merge_faq_pairs", "FAQ_MAX_PAIRS",
     "faq_subject_tokens", "faq_answer_problem", "drop_subjectless_faq", "paa_for_scope", "PAA_MAX_QUESTIONS",
-    "gate_scope", "gate_hygiene", "SEO_FINDING_PREFIXES", "is_body_finding",
+    "gate_scope", "gate_hygiene", "SEO_FINDING_PREFIXES",
     "WARN_MODE", "BLOCK_MODE", "REPAIR_MODE",
     "PROMOTION_LOG_EVENT", "f12_scope_mode", "f9_brand_style_mode", "f14_floor_mode", "brand_style_sentences",
     "promote_brand_style", "F9_STYLE_PROBLEM",

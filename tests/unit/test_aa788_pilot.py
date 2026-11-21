@@ -80,7 +80,7 @@ def test_f12_has_no_code_switch_and_reads_the_setting_at_gate_time():
     ("meta names 'Varra'", False),
 ])
 def test_is_body_finding(violation, body):
-    assert qg.is_body_finding(violation) is body
+    assert pilot.is_body_finding(violation) is body
 
 
 # ---------------------------------------------------------------- evidence of a holding flip
@@ -257,7 +257,7 @@ def test_a_small_or_imprecise_or_panel_only_measurement_does_not_pass():
 
 def test_records_of_another_detector_or_twice_do_not_pool():
     with pytest.raises(ValueError, match="detectors"):
-        pilot.measure([_record("p1", 3), _record("p2", 3, sha="999999999999")], [])
+        pilot.measure([_record("p1", 3), _record("p2", 3, sha="fedcbafedcba")], [])
     with pytest.raises(ValueError, match="twice"):
         pilot.measure([_record("p1", 3), _record("p1", 3)], [])
     assert len(pilot.detector_sha()) == 12
