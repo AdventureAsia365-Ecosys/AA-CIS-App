@@ -341,7 +341,8 @@ def test_rbac_read_only_and_assignable_roles():
 def test_rbac_viewer_pages():
     """Viewer reads Master Content, Review and Settings; Upload and S1 (write-only pages) are not its own."""
     src = _rbac()
-    rules = dict(re.findall(r'\{ prefix: "(/admin/[a-z0-9\-/]+)", roles: (\w+|\[[^\]]*\]) \}', src))
+    # AA-1155: each rule names its capabilities first; the role list documents them (lib/rbacCaps.test.mjs)
+    rules = dict(re.findall(r'\{ prefix: "(/admin/[a-z0-9\-/]+)", caps: \[[^\]]*\], roles: (\w+|\[[^\]]*\]) \}', src))
     assert rules["/admin/master-content"] == rules["/admin/review"] == rules["/admin/settings"] == "ALL_STAFF"
     assert rules["/admin/upload"] == rules["/admin/s1-rewrite"] == "CONTENT_WORKERS"
     assert re.search(r'const ALL_STAFF: StaffRole\[\] = \[[^\]]*"viewer"', src)
@@ -356,7 +357,7 @@ def test_bff_refuses_read_only_writes_centrally():
     body = re.search(r"export async function requireAdmin\((.*?)\n\}", src, re.S).group(1)
     assert "isReadOnlyRole(result.role) && !isReadMethod(request.method)" in body
     assert "forbidden()" in body
-    assert re.search(r"if \(isReadOnlyRole\(role\)\) return false;", _rbac())   # canWriteAdminPath
+    assert re.search(r"if \(isReadOnlyRole\(subjectRole\(subject\)\)\) return false;", _rbac())   # canWriteAdminPath
 
 
 def test_staff_page_never_offers_viewer():

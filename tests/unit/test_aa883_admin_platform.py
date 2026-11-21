@@ -158,6 +158,8 @@ def test_admin_lists_staff_with_counts(client):
         # S242 invitation e-mail fields (from the audit log; never invited -> None)
         "last_invited_at": None, "last_invite_requested_at": None, "last_invite_not_sent_at": None,
         "invite_status": None,
+        # AA-1155 (CIS 462): the custom role, its name and the business-owner marker
+        "custom_role": None, "custom_role_label": None, "is_business_owner": False,
     }
     assert body["crm_roles_available"] is True
     # A legacy (secret + x-admin-role) session may read but not write (AA-816 C6).
