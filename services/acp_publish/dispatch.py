@@ -26,10 +26,10 @@ from urllib.parse import urlparse
 from services.acp_content_writing import ai_marking
 from services.acp_content_writing.export import render_content_text_to_fragment
 from services.acp_publish.base import SocialPost
-from services.ai_safety.html_sanitizer import sanitize_plain_text
 from services.acp_publish.facebook import FacebookAdapter
 from services.acp_publish.idempotency import blog_slug
 from services.acp_s4_blog.cms.base import BlogContent
+from services.ai_safety.html_sanitizer import sanitize_plain_text
 from services.acp_s4_blog.cms.wordpress import WordPressAdapter
 
 SUPPORTED_CHANNELS = ("blog", "facebook")

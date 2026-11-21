@@ -5474,8 +5474,8 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   `tests/unit/test_aa1167_publish_guard.py` fails on a Markdown render or a post builder that bypasses them.
   **AA-1167 (OWASP LLM01):** the S1 v2, T2 and T9 writer prompts can fence every quoted untrusted value (supplier
   source, Facts Entries, web search data) in `<untrusted_data>` tags with one system line saying it is data, never
-  instructions (`services/ai_safety/prompt_fence.py`), behind the setting `cis.llm.prompt_data_fence` (CIS 465, off =
-  the prompts as before; prompt versions s1_generate v4 / t9_write v9, CIS 466). The trap set
+  instructions (`services/ai_safety/prompt_fence.py`), behind the setting `cis.llm.prompt_data_fence` (CIS 467, off =
+  the prompts as before; prompt versions s1_generate v4 / t9_write v9, same CIS 467). The trap set
   (`services/ai_safety/trap_set.py`, paid run `scripts/aa1167/trap_run.py`) measures the writers before it is turned on.
 
 ## Ownership / frequency / cross-tenant table (AA-540)

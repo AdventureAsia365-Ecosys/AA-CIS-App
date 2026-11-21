@@ -1,5 +1,5 @@
 """AA-1167 (OWASP LLM01) — services/ai_safety/prompt_fence.py: the fence helper and its setting
-cis.llm.prompt_data_fence (CIS 465). Invented text only."""
+cis.llm.prompt_data_fence (CIS 467). Invented text only."""
 import re
 from unittest.mock import patch
 

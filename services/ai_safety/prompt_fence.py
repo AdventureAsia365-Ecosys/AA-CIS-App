@@ -12,7 +12,7 @@ script to copy). The fence marks such text as data:
 - only the quoted values go inside a fence, never our own headings and rules around them (a fact sheet's
   "NOT IN THE SOURCE (never state these)" stays an instruction).
 
-The switch is the setting ``cis.llm.prompt_data_fence`` (CIS 465, Platform › Settings, bool, default off = the prompts
+The switch is the setting ``cis.llm.prompt_data_fence`` (CIS 467, Platform › Settings, bool, default off = the prompts
 of main byte for byte, S272 rule for writer behaviour changes). The live trap run (scripts/aa1167/trap_run.py, paid, run
 by the tech lead's session) compares the writers with the fence off and on before an administrator turns it on.
 :func:`enabled` reads it and never raises: any read problem is the default (off). A caller that must pin the mode (the
@@ -31,7 +31,7 @@ import structlog
 logger = structlog.get_logger()
 
 KEY = "cis.llm.prompt_data_fence"
-DEFAULT = False          # the CIS 465 seed default; served whenever the setting cannot be read
+DEFAULT = False          # the CIS 467 seed default; served whenever the setting cannot be read
 TAG = "untrusted_data"
 _LABEL_RE = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 # Any spelling of the fence marker inside a value (case, spaces, attributes, an HTML-escaped bracket).
