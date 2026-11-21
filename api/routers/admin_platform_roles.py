@@ -41,8 +41,7 @@ CisRole = Union[Literal["admin", "content_lead", "content", "tenant_qa", "custom
                         "ai_ops"], CustomRoleCode]
 BookingRole = Union[Literal["admin", "sales", "contracting", "finance"], CustomRoleCode]
 CrmRole = Literal["platform_admin", "ops", "support"]
-# technical-constant: the list sizes below bound a request body (the capability catalogue, the keep-list CHECK of 465)
-_CAPS_MAX = 200
+_CAPS_MAX = 200   # technical-constant: bounds a request body list (the capability catalogue is far smaller)
 
 
 def _viewer_is_owner(request: Request) -> bool:
