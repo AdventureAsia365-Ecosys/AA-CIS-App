@@ -47,6 +47,12 @@ Migration CIS 465 ships first in its own migration-only PR (MIG-4); this code PR
   0-999, request list sizes), marked `technical-constant`; no policy value was added.
 
 ## Should know
+- The six editor routes live in `staff_roles.EDITOR_POLICY`, spread into `staff_authz.POLICY` (the file-size
+  ratchet of `staff_authz.py` may not grow); the route policy snapshot lists them as usual.
+- Frontend parts: `EditorParts.tsx` (one write + banner + status line + row), `RoleEditor.tsx`, `PresetEditor.tsx`,
+  pure helpers `lib/staffRoleEditor.ts`; split small for the TypeScript complexity ratchet (limit 10).
+- The unit fake of `shared.staff_role_preset` lives in `tests/unit/aa854_cognito_staff.py` `Directory` (seeded from
+  `tests/unit/aa1155_presets_seed.py`), so every directory test reads the same four rows.
 - Routes: `GET/POST /admin/platform/roles/cis`, `PATCH /admin/platform/roles/cis/{code}`, `GET/POST
   /admin/platform/presets`, `PATCH /admin/platform/presets/{code}` (router `api/routers/admin_platform_roles.py`,
   POLICY `staff.read` / `staff.write`; snapshots `aa882_staff_route_policy.json`, `aa1035_role_route_matrix.json`).
