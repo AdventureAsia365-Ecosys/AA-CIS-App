@@ -29,8 +29,8 @@ from services.acp_publish.base import SocialPost
 from services.acp_publish.facebook import FacebookAdapter
 from services.acp_publish.idempotency import blog_slug
 from services.acp_s4_blog.cms.base import BlogContent
-from services.ai_safety.html_sanitizer import sanitize_plain_text
 from services.acp_s4_blog.cms.wordpress import WordPressAdapter
+from services.ai_safety.html_sanitizer import sanitize_plain_text
 
 SUPPORTED_CHANNELS = ("blog", "facebook")
 # AA-815 — shared.tenant_integrations.integration_type per channel (v1_integrations.py writes
