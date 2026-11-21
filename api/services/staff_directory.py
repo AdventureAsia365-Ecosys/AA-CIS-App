@@ -85,8 +85,8 @@ Custom roles (AA-1155 spec task T9, root ADR 0006a A14; api/core/staff_roles.py)
   unreadable 503 ``booking_roles_unavailable``.
 - Sync and create-over-an-existing-user put a custom holder in ``cis-custom`` / ``booking-custom`` and remove both
   groups from everyone else (they are in :data:`CIS_GROUPS` / :data:`BOOKING_GROUPS`).
-- The business-owner marker (``admin_users.is_business_owner``, CIS 462, at most one person): :func:`set_business_owner`,
-  owners only (the same re-read as every write), audited before and after (``staff.business_owner_changed``); never
+- The business-owner marker (``admin_users.is_business_owner``, CIS 462, at most one person):
+  :func:`set_business_owner`, owners only (the same re-read as every write), audited before and after (``staff.business_owner_changed``); never
   an E2E address, never an inactive account; a second holder is 409 ``business_owner_taken`` (clear the first).
 """
 from __future__ import annotations
