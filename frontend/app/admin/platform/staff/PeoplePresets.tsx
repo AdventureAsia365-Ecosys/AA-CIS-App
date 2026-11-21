@@ -1,96 +1,103 @@
 "use client";
-// app/admin/platform/staff/PeoplePresets.tsx — AA-1150 (lean staff roles step 1): the three people-role presets of the
-// account panel ("Administrator" = the platform_owner preset, "Business owner", "Content + Product & operations"), one
-// row each with what it gives and "Current" or Apply, and their confirm dialog. StaffManage.tsx sends the preset
-// (PATCH …/roles {"preset": …}); the backend (api/services/staff_presets.py) is the authority.
+// app/admin/platform/staff/PeoplePresets.tsx — the people-role presets of the account panel (AA-1150), one row each
+// with what it gives and "Current" or Apply, and their confirm dialog. StaffManage.tsx sends the preset
+// (PATCH …/roles {"preset": code}); the backend (api/services/staff_presets.py) is the authority.
+//
+// AA-1155 (spec task T14, root spec R5.7): the presets are data. The rows, their names and descriptions come from
+// GET /api/admin/platform/presets (shared.staff_role_preset, edited by an owner in the "People-role presets" section
+// of this page); lib/staffPresets.ts plans them on the account like the backend does. No preset is named in code.
 
+import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
-import { Button, ConfirmModal, K, RADIUS, useT } from "../../../_kit";
-import { PEOPLE_PRESETS, PEOPLE_PRESET_ROLES, peoplePresetOf, type PeoplePreset } from "@/lib/staffPresets";
+import { Button, ConfirmModal, K, RADIUS, apiGet, useT } from "../../../_kit";
+import {
+  PRESETS_PATH, activePresets, currentPreset, planChanges, presetBlockedWhy, presetPlan, type PresetList,
+  type StaffPreset,
+} from "@/lib/staffPresets";
 import { MANAGE } from "./messages";
-import type { StaffAccount } from "./StaffManage";
+import { useStaffWords, type StaffAccount } from "./StaffManage";
 
-const PRESET_WORDS = {
-  platform_owner: { title: "adminTitle", note: "adminNote" },
-  business_owner: { title: "ownerTitle", note: "ownerNote" },
-  content_ops: { title: "contentOpsTitle", note: "contentOpsNote" },
-} as const;
+export const PRESETS_KEY = ["platform-presets"] as const;
 
-/** A people-role preset's name and what it gives, in the UI language. */
-export function usePresetWords() {
-  const m = useT(MANAGE);
+/** AA-1155 T14: the presets from the API (every row, archived included; `available` false before CIS 465). */
+export function usePresets() {
+  return useQuery({ queryKey: PRESETS_KEY, queryFn: () => apiGet<PresetList>(PRESETS_PATH), staleTime: 60_000 });
+}
+
+/** AA-1155 T14: the active presets the Staff page offers, by sort order. */
+export function useActivePresets(): { presets: StaffPreset[]; available: boolean; loading: boolean } {
+  const q = usePresets();
   return useMemo(() => ({
-    presetTitle: (p: PeoplePreset) => m(PRESET_WORDS[p].title),
-    presetNote: (p: PeoplePreset) => m(PRESET_WORDS[p].note),
-  }), [m]);
+    presets: activePresets(q.data?.presets),
+    available: q.data?.available ?? false,
+    loading: q.isLoading,
+  }), [q.data, q.isLoading]);
 }
 
-/** AA-1150: a preset that writes CRM roles (Administrator adds Agency admin, Content + Product & operations removes
- *  them) needs the CRM table; Business owner leaves the CRM roles alone. */
-function presetNeedsCrm(p: PeoplePreset): boolean {
-  return PEOPLE_PRESET_ROLES[p].crm !== null;
-}
-
-/** AA-1150: the three people-role presets, one row each: what it gives, then "Current" or Apply. Content + Product &
- *  operations demotes, so it is not offered on one's own row (the backend refuses a self-demotion too). */
-export function PeoplePresets({ staff, isSelf, busy, crmAvailable, onApply }: {
+/** The people-role presets, one row each: what it gives, then "Current" or Apply (disabled with the reason when the
+ *  preset would demote oneself, replace a held role, or needs the CRM table). */
+export function PeoplePresets({ staff, role, isSelf, busy, crmAvailable, onApply }: {
   staff: StaffAccount;
+  /** The account's CIS role code (its custom role for a custom holder). */
+  role: string;
   isSelf: boolean;
   busy: boolean;
   crmAvailable: boolean;
-  onApply: (p: PeoplePreset) => void;
+  onApply: (p: StaffPreset) => void;
 }) {
   const m = useT(MANAGE);
-  const current = peoplePresetOf(staff);
+  const { presets, available, loading } = useActivePresets();
+  const held = { ...staff, role };
+  const current = currentPreset(presets, held);
   return (
     <div role="group" aria-label={m("rolesTitle")} data-testid="staff-presets"
       style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
         <span style={{ fontSize: 12.5, fontWeight: 600, color: K.ink3 }}>{m("rolesTitle")}</span>
-        <span style={{ fontSize: 12, color: K.muted, lineHeight: 1.45 }}>{m("rolesNote")}</span>
+        <span style={{ fontSize: 12, color: K.muted, lineHeight: 1.45 }}>
+          {loading ? m("presetsLoading") : available ? m("rolesNote") : m("presetsUnavailable")}
+        </span>
       </span>
-      {PEOPLE_PRESETS.map((p) => (
-        <PresetRow key={p} preset={p} current={current === p} busy={busy} onApply={onApply}
-          why={presetBlockedWhy(p, isSelf, crmAvailable)} />
+      {presets.map((p) => (
+        <PresetRow key={p.code} preset={p} current={current?.code === p.code} busy={busy} onApply={onApply}
+          why={presetBlockedWhy(p, held, isSelf, crmAvailable)} held={held} />
       ))}
     </div>
   );
 }
 
-/** Why a preset cannot be applied to this row, or null: Content + Product & operations would demote oneself; a preset
- *  that writes CRM roles needs the CRM table. */
-function presetBlockedWhy(p: PeoplePreset, isSelf: boolean, crmAvailable: boolean): "ownRole" | "crmUnavailable" | null {
-  if (isSelf && p === "content_ops") return "ownRole";
-  if (presetNeedsCrm(p) && !crmAvailable) return "crmUnavailable";
-  return null;
-}
-
-/** One people-role preset: what it gives, then "Current" or Apply. */
-function PresetRow({ preset, current, busy, why, onApply }: {
-  preset: PeoplePreset;
+/** One people-role preset: its name and description, then "Current" or Apply. */
+function PresetRow({ preset, current, busy, why, held, onApply }: {
+  preset: StaffPreset;
   current: boolean;
   busy: boolean;
-  why: "ownRole" | "crmUnavailable" | null;
-  onApply: (p: PeoplePreset) => void;
+  why: "ownRole" | "wouldReplace" | "crmUnavailable" | null;
+  held: StaffAccount;
+  onApply: (p: StaffPreset) => void;
 }) {
   const m = useT(MANAGE);
-  const { presetTitle, presetNote } = usePresetWords();
+  const { roleLabel, bookingRoleLabel } = useStaffWords();
+  const blocked = why === "wouldReplace"
+    ? m("presetBlocked", presetPlan(preset, held).lost
+      .map((l) => (l.app === "cis" ? m("presetCisRole", roleLabel(l.role)) : m("presetBookingRole", bookingRoleLabel(l.role))))
+      .join(", "))
+    : null;
   return (
-    <div data-testid={`staff-preset-${preset}`} style={{
+    <div data-testid={`staff-preset-${preset.code}`} style={{
       display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", padding: "10px 12px",
       background: current ? K.successSoft : K.line2, borderRadius: RADIUS.sm,
     }}>
       <span style={{ flex: "1 1 220px", minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
-        <span style={{ fontSize: 13, fontWeight: 600, color: K.ink3 }}>{presetTitle(preset)}</span>
-        <span style={{ fontSize: 12, color: K.muted, lineHeight: 1.45 }}>{presetNote(preset)}</span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: K.ink3 }}>{preset.label}</span>
+        <span style={{ fontSize: 12, color: K.muted, lineHeight: 1.45 }}>{blocked ?? preset.description}</span>
       </span>
       {current ? (
-        <span data-testid={`staff-preset-${preset}-current`} style={{ fontSize: 12.5, fontWeight: 600, color: K.success }}>
+        <span data-testid={`staff-preset-${preset.code}-current`} style={{ fontSize: 12.5, fontWeight: 600, color: K.success }}>
           {m("presetCurrent")}
         </span>
       ) : (
-        <Button size="sm" variant="secondary" testId={`staff-preset-${preset}-apply`} onClick={() => onApply(preset)}
-          disabled={busy || why !== null} title={why ? m(why) : undefined}>
+        <Button size="sm" variant="secondary" testId={`staff-preset-${preset.code}-apply`} onClick={() => onApply(preset)}
+          disabled={busy || why !== null} title={why === "ownRole" || why === "crmUnavailable" ? m(why) : undefined}>
           {m("presetApply")}
         </Button>
       )}
@@ -98,29 +105,35 @@ function PresetRow({ preset, current, busy, why, onApply }: {
   );
 }
 
-/** AA-1150: confirm one people-role preset (what it gives; Content + Product & operations replaces roles). */
-export function PresetConfirm({ staff, preset, busy, onClose, onConfirm }: {
+/** Confirm one people-role preset: each role it changes on this account (from → to). */
+export function PresetConfirm({ staff, role, preset, busy, onClose, onConfirm }: {
   staff: StaffAccount;
-  preset: PeoplePreset | null;
+  role: string;
+  preset: StaffPreset | null;
   busy: boolean;
   onClose: () => void;
-  onConfirm: (p: PeoplePreset, done: string) => void;
+  onConfirm: (p: StaffPreset, done: string) => void;
 }) {
   const m = useT(MANAGE);
-  const { presetTitle, presetNote } = usePresetWords();
-  const name = preset ? presetTitle(preset) : "";
+  const { roleLabel, bookingRoleLabel, crmRolesLabel } = useStaffWords();
+  const held = { ...staff, role };
+  const changes = preset ? planChanges(presetPlan(preset, held), held) : {};
+  const replaces = !!preset && !preset.additive_only && Object.keys(changes).length > 0;
   return (
     <ConfirmModal
       open={preset !== null}
       onClose={onClose}
       busy={busy}
-      title={m("presetQ", name)}
+      title={m("presetQ", preset?.label ?? "")}
       confirmLabel={m("presetApply")}
       body={preset && <>
-        <strong>{staff.display_name || staff.username}</strong> {m("presetBody")} {presetNote(preset)}
-        {preset === "content_ops" && m("presetReplaces")}
+        <strong>{staff.display_name || staff.username}</strong> {m("presetBody")}
+        {changes.role && m("cisChange", roleLabel(changes.role.from), roleLabel(changes.role.to))}
+        {changes.booking && m("bookingChange", bookingRoleLabel(changes.booking.from), bookingRoleLabel(changes.booking.to))}
+        {changes.crm && m("crmChange", crmRolesLabel(changes.crm.from), crmRolesLabel(changes.crm.to))}
+        {replaces && m("presetReplaces")}
       </>}
-      onConfirm={() => preset && onConfirm(preset, m("presetDone", name))}
+      onConfirm={() => preset && onConfirm(preset, m("presetDone", preset.label))}
     />
   );
 }

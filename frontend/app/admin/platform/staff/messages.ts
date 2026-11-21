@@ -217,17 +217,10 @@ export const MANAGE = defineMessages(
     crmHint: "Pick any; none means no CRM staff access.",
     crmUnavailable: "CRM roles can be set once the database update for them is applied on this server.",
     crmChange: (from: string, to: string) => ` CRM role: ${from} → ${to}.`,
-    // AA-1150: the three people-role presets (lean staff roles); every other role is behind "Show all roles".
+    // AA-1150 / AA-1155 T14: the people-role presets (data, shared.staff_role_preset); every other role is behind "Show all roles".
     rolesTitle: "Role",
     rolesNote:
       "Pick the person's role in the company. A preset sets their CIS, Booking and CRM roles in one change; it never makes them a directory owner.",
-    adminTitle: "Administrator",
-    adminNote: "CIS Administrator, Booking admin and CRM Agency admin. Other CRM roles are kept.",
-    ownerTitle: "Business owner",
-    ownerNote: "CIS Administrator and Booking admin. CRM roles are not changed.",
-    contentOpsTitle: "Content + Product & operations",
-    contentOpsNote:
-      "CIS Content Lead. No Booking role and no CRM role for now: the combined Booking role comes with custom roles.",
     presetCurrent: "Current",
     presetApply: "Apply",
     presetQ: (name: string) => `Apply the ${name} preset?`,
@@ -237,19 +230,13 @@ export const MANAGE = defineMessages(
     showAllRoles: "Show all roles",
     hideAllRoles: "Hide all roles",
     customRoles: "Custom (show all roles)",
-    // AA-1091: the "Pricing team" preset (the customer-service team enters prices in CIS and Booking)
-    pricingTitle: "Pricing team preset",
-    pricingNote:
-      "One save gives what the customer-service team needs to enter prices: CIS Customer Success (Reference prices) and Booking Product & operations (supplier rates, pricing rules, trip plans, departures). It only adds: a role that already has these rights is kept, and it never replaces another role. CRM roles are not changed.",
-    pricingBlocked: (roles: string) =>
-      `This account holds ${roles}. Each app gives one role per person, so the preset would replace it and remove its rights. Change the roles by hand above if that is what you want.`,
-    pricingCisRole: (r: string) => `CIS ${r}`,
-    pricingBookingRole: (r: string) => `Booking ${r}`,
-    pricingHas: "This account can already enter prices in CIS and Booking.",
-    pricingApply: "Apply pricing preset",
-    pricingQ: "Give the pricing roles?",
-    pricingBody: "gets the roles to enter prices; no other role is replaced. They sign in again to use the new access.",
-    pricingDone: "Pricing team preset saved in CIS and the company sign-in. The person signs in again to use it.",
+    // AA-1155 T14: the presets are data (label and description from the API, as an owner wrote them)
+    presetBlocked: (roles: string) =>
+      `This account holds ${roles}. This preset only adds roles and each app gives one role per person, so it would replace that role. Change the roles by hand if that is what you want.`,
+    presetCisRole: (r: string) => `CIS ${r}`,
+    presetBookingRole: (r: string) => `Booking ${r}`,
+    presetsUnavailable: "Presets can be used once the database update that stores them is applied on this server.",
+    presetsLoading: "Loading presets…",
     disableQ: "Disable this account?",
     disableBody:
       "can no longer sign in, and every session is ended. An access token already issued stays valid for up to 15 minutes. You can enable the account again later.",
@@ -350,13 +337,6 @@ export const MANAGE = defineMessages(
     rolesTitle: "Vai trò",
     rolesNote:
       "Chọn vai trò của người này trong công ty. Một mẫu đặt vai trò CIS, Booking và CRM trong một lần thay đổi; mẫu không bao giờ biến họ thành chủ sở hữu danh bạ.",
-    adminTitle: "Quản trị viên",
-    adminNote: "Quản trị viên CIS, Quản trị Booking và Quản trị đại lý CRM. Các vai trò CRM khác được giữ nguyên.",
-    ownerTitle: "Chủ doanh nghiệp",
-    ownerNote: "Quản trị viên CIS và Quản trị Booking. Vai trò CRM không đổi.",
-    contentOpsTitle: "Nội dung + Sản phẩm & điều hành",
-    contentOpsNote:
-      "Trưởng nhóm nội dung trong CIS. Tạm thời không có vai trò Booking và CRM: vai trò Booking gộp sẽ có cùng vai trò tuỳ chỉnh.",
     presetCurrent: "Đang dùng",
     presetApply: "Áp dụng",
     presetQ: (name: string) => `Áp dụng mẫu ${name}?`,
@@ -366,18 +346,12 @@ export const MANAGE = defineMessages(
     showAllRoles: "Hiện mọi vai trò",
     hideAllRoles: "Ẩn bớt vai trò",
     customRoles: "Tuỳ chỉnh (hiện mọi vai trò)",
-    pricingTitle: "Mẫu nhóm nhập giá",
-    pricingNote:
-      "Một lần lưu cấp đủ quyền để nhóm chăm sóc khách hàng nhập giá: Customer Success trong CIS (Giá tham khảo) và Sản phẩm & điều hành trong Booking (giá nhà cung cấp, quy tắc giá, kế hoạch tour, ngày khởi hành). Mẫu này chỉ thêm quyền: vai trò đã có các quyền này được giữ nguyên, và không bao giờ thay một vai trò khác. Vai trò CRM không đổi.",
-    pricingBlocked: (roles: string) =>
-      `Tài khoản này đang giữ ${roles}. Mỗi ứng dụng chỉ cho một vai trò mỗi người, nên mẫu này sẽ thay vai trò đó và làm mất quyền của nó. Nếu đúng ý bạn, hãy đổi vai trò bằng tay ở phía trên.`,
-    pricingCisRole: (r: string) => `CIS ${r}`,
-    pricingBookingRole: (r: string) => `Booking ${r}`,
-    pricingHas: "Tài khoản này đã nhập được giá trong CIS và Booking.",
-    pricingApply: "Áp dụng mẫu nhập giá",
-    pricingQ: "Cấp vai trò nhập giá?",
-    pricingBody: "nhận các vai trò để nhập giá; không vai trò nào khác bị thay. Họ đăng nhập lại để dùng quyền mới.",
-    pricingDone: "Đã lưu mẫu nhóm nhập giá trong CIS và hệ thống đăng nhập công ty. Người đó đăng nhập lại để dùng.",
+    presetBlocked: (roles: string) =>
+      `Tài khoản này đang giữ ${roles}. Mẫu này chỉ thêm vai trò và mỗi ứng dụng chỉ cho một vai trò mỗi người, nên mẫu sẽ thay vai trò đó. Nếu đúng ý bạn, hãy đổi vai trò bằng tay.`,
+    presetCisRole: (r: string) => `CIS ${r}`,
+    presetBookingRole: (r: string) => `Booking ${r}`,
+    presetsUnavailable: "Các mẫu dùng được khi bản cập nhật cơ sở dữ liệu lưu chúng đã được áp dụng trên máy chủ này.",
+    presetsLoading: "Đang tải các mẫu…",
     disableQ: "Vô hiệu hoá tài khoản này?",
     disableBody:
       "sẽ không đăng nhập được nữa, và mọi phiên đều bị kết thúc. Access token đã cấp vẫn còn hiệu lực tối đa 15 phút. Bạn có thể bật lại tài khoản sau.",
