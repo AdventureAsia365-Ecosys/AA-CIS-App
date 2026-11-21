@@ -171,6 +171,7 @@
     "GET /admin/platform/crm/console",
     "GET /admin/platform/delivery",
     "GET /admin/platform/infra",
+    "GET /admin/platform/roles",
     "GET /admin/platform/staff",
     "GET /admin/platform/staff-directory/health",
     "GET /admin/platform/staff/{staff_id}",

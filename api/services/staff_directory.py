@@ -74,6 +74,20 @@ reported as pending (``error_code = "DeadlineExceeded"``) and the retry finishes
 
 Rows without an email (legacy, unlinked) have no Cognito user: role / active changes touch the DB only and report
 ``cognito = "not_applicable"``; sync refuses them.
+
+Custom roles (AA-1155 spec task T9, root ADR 0006a A14; api/core/staff_roles.py)
+-------------------------------------------------------------------------------
+- The CIS role may be a CIS custom role code (``custom_<name>``, an active ``shared.staff_role`` row): the row then
+  holds ``custom_role`` = the code and ``role`` = the role's ``based_on`` (never admin); its group is ``cis-custom``.
+  A built-in role clears ``custom_role``. An unknown or archived code is 400 ``custom_role``.
+- The Booking role may be a Booking custom role code (an active row of ``booking.v_staff_role_capability``, bk-062):
+  ``staff_app_grant.role`` = the code, group ``booking-custom``. Unknown / archived 400 ``booking_role``; the view
+  unreadable 503 ``booking_roles_unavailable``.
+- Sync and create-over-an-existing-user put a custom holder in ``cis-custom`` / ``booking-custom`` and remove both
+  groups from everyone else (they are in :data:`CIS_GROUPS` / :data:`BOOKING_GROUPS`).
+- The business-owner marker (``admin_users.is_business_owner``, CIS 462, at most one person): :func:`set_business_owner`,
+  owners only (the same re-read as every write), audited before and after (``staff.business_owner_changed``); never
+  an E2E address, never an inactive account; a second holder is 409 ``business_owner_taken`` (clear the first).
 """
 from __future__ import annotations
 
@@ -90,7 +104,7 @@ import structlog
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import BotoCoreError, ClientError
 
-from api.core import e2e_staff, identity_config, staff_identity, view_as
+from api.core import e2e_staff, identity_config, staff_identity, staff_roles, view_as
 from api.services import staff_invite
 # The Staff page's presets and the retired Booking roles (AA-1031, AA-1091, AA-1150), re-exported for the callers.
 from api.services.staff_presets import (  # noqa: F401
@@ -154,18 +168,30 @@ E2E_CIS_ADMIN_TEST_STAFF_ROLE = e2e_staff.E2E_CIS_ADMIN_TEST_STAFF_ROLE
 E2E_CIS_CS_TEST_STAFF_EMAIL = e2e_staff.E2E_CIS_CS_TEST_STAFF_EMAIL
 E2E_CIS_CS_TEST_STAFF_ROLE = e2e_staff.E2E_CIS_CS_TEST_STAFF_ROLE
 # Every E2E address the directory accepts, with the one CIS role it may hold. Read-only.
+# TEMPORARY (AA-1155 A10f / A10g, S286; root ADR 0006a, CIS 462): the Dev-only content_lead account (exactly
+# content_lead, no custom role, no Booking or CRM role) and the custom-role maker (a CIS custom role based on
+# content_lead and, Dev only, a Booking custom role; no CRM role). Both read-only in CIS (api/core/e2e_staff.py).
+E2E_CIS_CONTENT_LEAD_TEST_STAFF_EMAIL = e2e_staff.E2E_CIS_CONTENT_LEAD_TEST_STAFF_EMAIL
+E2E_CUSTOM_MAKER_TEST_STAFF_EMAIL = e2e_staff.E2E_CUSTOM_MAKER_TEST_STAFF_EMAIL
+# The CIS role an E2E address may hold. A10g holds a custom role (any custom code whose based_on is content_lead):
+# :data:`E2E_ANY_CUSTOM_ROLE` stands for it.
+E2E_ANY_CUSTOM_ROLE = "custom_*"
 _E2E_TEST_STAFF_ROLES = MappingProxyType({
     E2E_TEST_STAFF_EMAIL: E2E_TEST_STAFF_ROLE,
     E2E_CIS_ADMIN_TEST_STAFF_EMAIL: E2E_CIS_ADMIN_TEST_STAFF_ROLE,
     E2E_CIS_CS_TEST_STAFF_EMAIL: E2E_CIS_CS_TEST_STAFF_ROLE,
+    E2E_CIS_CONTENT_LEAD_TEST_STAFF_EMAIL: e2e_staff.E2E_CIS_CONTENT_LEAD_TEST_STAFF_ROLE,
+    E2E_CUSTOM_MAKER_TEST_STAFF_EMAIL: E2E_ANY_CUSTOM_ROLE,
 })
 # The E2E addresses that may exist only on Dev (every entry of e2e_staff.DEV_ONLY_E2E_STAFF_ROLES).
-_DEV_ONLY_E2E_EMAILS = frozenset({E2E_CIS_ADMIN_TEST_STAFF_EMAIL, E2E_CIS_CS_TEST_STAFF_EMAIL})
+_DEV_ONLY_E2E_EMAILS = frozenset(e2e_staff.DEV_ONLY_E2E_STAFF_ROLES)
 # The name each E2E address goes by in the directory's refusals.
 _E2E_ACCOUNT_NAMES = MappingProxyType({
     E2E_TEST_STAFF_EMAIL: "E2E test account",
     E2E_CIS_ADMIN_TEST_STAFF_EMAIL: "E2E CIS admin account",
     E2E_CIS_CS_TEST_STAFF_EMAIL: "E2E customer success account",
+    E2E_CIS_CONTENT_LEAD_TEST_STAFF_EMAIL: "E2E content lead account",
+    E2E_CUSTOM_MAKER_TEST_STAFF_EMAIL: "E2E custom-role maker account",
 })
 
 # The break-glass account (ADR 0006 decision 11; S242 plan D1). Never written from the UI.
@@ -204,28 +230,34 @@ class StaffAudit:
     INVITE_REQUESTED = staff_invite.InviteAudit.REQUESTED
     INVITE_SENT = staff_invite.InviteAudit.SENT
     INVITE_NOT_SENT = staff_invite.InviteAudit.NOT_SENT
+    BUSINESS_OWNER_CHANGED = "staff.business_owner_changed"   # AA-1155 (R3.3)
 
 
 RESOURCE_TYPE = "admin_user"
 
 
 def cis_group(role: str) -> str:
-    return f"cis-{role}"
+    """The WORKFORCE group of a CIS role: ``cis-<role>``, or ``cis-custom`` for a custom role code (AA-1155)."""
+    return staff_roles.CIS_CUSTOM_GROUP if staff_roles.is_custom_code(role) else f"cis-{role}"
 
 
 def booking_group(role: str) -> str:
-    return f"booking-{role}"
+    """The WORKFORCE group of a Booking role: ``booking-<role>``, or ``booking-custom`` for a custom code (AA-1155)."""
+    return staff_roles.BOOKING_CUSTOM_GROUP if staff_roles.is_custom_code(role) else f"booking-{role}"
 
 
 def crm_group(role: str) -> str:
     return CRM_ROLE_GROUPS[role]
 
 
-CIS_GROUPS: tuple[str, ...] = tuple(cis_group(r) for r in CIS_ROLES) + RETIRED_CIS_GROUPS
+# AA-1155: cis-custom / booking-custom are staff groups too (Sync removes them from a row without a custom role).
+CIS_GROUPS: tuple[str, ...] = (tuple(cis_group(r) for r in CIS_ROLES) + (staff_roles.CIS_CUSTOM_GROUP,)
+                               + RETIRED_CIS_GROUPS)
 # AA-1150: the retired Booking groups (booking-content_creator) are in the list Sync and create-over-an-existing-user
 # remove, after the assignable ones.
 RETIRED_BOOKING_GROUPS: tuple[str, ...] = tuple(booking_group(r) for r in RETIRED_BOOKING_ROLES)
-BOOKING_GROUPS: tuple[str, ...] = tuple(booking_group(r) for r in BOOKING_ROLES) + RETIRED_BOOKING_GROUPS
+BOOKING_GROUPS: tuple[str, ...] = (tuple(booking_group(r) for r in BOOKING_ROLES) + (staff_roles.BOOKING_CUSTOM_GROUP,)
+                                   + RETIRED_BOOKING_GROUPS)
 CRM_GROUPS: tuple[str, ...] = tuple(crm_group(r) for r in CRM_ROLES)
 
 
@@ -301,18 +333,52 @@ def require_display_name(name: Any) -> str:
 
 
 def require_cis_role(role: Any) -> str:
-    """A role the directory may write: an assignable one (never ``viewer`` nor the removed ``reviewer``)."""
-    if role not in CIS_ROLES:
-        raise StaffDirectoryError(400, f"CIS role must be one of {', '.join(CIS_ROLES)}", "cis_role")
+    """A role the directory may write: an assignable one (never ``viewer`` nor the removed ``reviewer``), or a CIS
+    custom role code (AA-1155; :func:`resolve_cis_custom` checks it exists and is active, in the transaction)."""
+    if role not in CIS_ROLES and not staff_roles.is_custom_code(role):
+        raise StaffDirectoryError(400, f"CIS role must be one of {', '.join(CIS_ROLES)} or a custom role", "cis_role")
     return role
 
 
 def require_booking_role(role: Any) -> Optional[str]:
     if role is None:
         return None
-    if role not in BOOKING_ROLES:
-        raise StaffDirectoryError(400, f"Booking role must be one of {', '.join(BOOKING_ROLES)}", "booking_role")
+    if role not in BOOKING_ROLES and not staff_roles.is_custom_code(role):
+        raise StaffDirectoryError(400, f"Booking role must be one of {', '.join(BOOKING_ROLES)} or a custom role",
+                                  "booking_role")
     return role
+
+
+async def resolve_cis_custom(conn: Any, role: str) -> tuple[str, Optional[str]]:
+    """AA-1155: ``(admin_users.role, admin_users.custom_role)`` for a CIS role code: a built-in role is itself and no
+    custom role; a custom code must be an active role with capabilities (400 ``custom_role`` otherwise) and keeps its
+    ``based_on`` as the row's built-in role."""
+    if not staff_roles.is_custom_code(role):
+        return role, None
+    grant = await staff_roles.load_cis_grant(conn, role)
+    if not grant.ok or grant.role is None:
+        raise StaffDirectoryError(400, "This custom CIS role does not exist, is archived or has no permission",
+                                  "custom_role")
+    return grant.role.based_on, role
+
+
+async def check_booking_custom(conn: Any, role: Optional[str]) -> None:
+    """AA-1155: a Booking custom role code must be an active role of booking.v_staff_role_capability (400), and the
+    view must be readable (503 ``booking_roles_unavailable``). No-op for a built-in Booking role or none."""
+    if role is None or not staff_roles.is_custom_code(role):
+        return
+    grant = await staff_roles.load_booking_role(conn, role)
+    if grant.state == staff_roles.STATE_UNREADABLE:
+        raise StaffDirectoryError(503, "Booking custom roles cannot be read here (the Booking role view bk-062 is not "
+                                       "readable); nothing was changed", "booking_roles_unavailable")
+    if not grant.ok:
+        raise StaffDirectoryError(400, "This custom Booking role does not exist or is archived", "booking_role")
+
+
+def cis_code(row: Any) -> str:
+    """The CIS role a directory row shows and grants: its custom role when it has one (AA-1155), else ``role``."""
+    custom = row.get("custom_role") if hasattr(row, "get") else None
+    return custom or row["role"]
 
 
 def require_crm_roles(roles: Any) -> tuple[str, ...]:
@@ -328,7 +394,7 @@ def require_crm_roles(roles: Any) -> tuple[str, ...]:
 
 
 def require_e2e_test_scope(email: Any, role: Optional[str], booking_role: Optional[str],
-                           crm_roles: tuple[str, ...] = ()) -> None:
+                           crm_roles: tuple[str, ...] = (), based_on: Optional[str] = None) -> None:
     """An E2E test address may only hold its one CIS role (``content`` for :data:`E2E_TEST_STAFF_EMAIL`, ``admin``
     for :data:`E2E_CIS_ADMIN_TEST_STAFF_EMAIL`, ``customer_success`` for :data:`E2E_CIS_CS_TEST_STAFF_EMAIL`) with no
     Booking grant and no CRM role (400 ``e2e_test_scope``; root ADR 0006a A10 / A10b / A10d, the WORKFORCE trigger
@@ -338,7 +404,14 @@ def require_e2e_test_scope(email: Any, role: Optional[str], booking_role: Option
     allowed = _E2E_TEST_STAFF_ROLES.get(address)
     if allowed is None:
         return
-    if role != allowed or not e2e_staff.e2e_booking_role_allowed(address, booking_role) or crm_roles:
+    if allowed == E2E_ANY_CUSTOM_ROLE:
+        # A10g (AA-1155): a custom role based on content_lead (``based_on`` given when the role is set here)
+        role_ok = (staff_roles.is_custom_code(role)
+                   and (based_on is None or based_on == e2e_staff.E2E_CUSTOM_MAKER_TEST_STAFF_ROLE))
+        allowed = "a custom role based on content_lead"
+    else:
+        role_ok = role == allowed
+    if not role_ok or not e2e_staff.e2e_booking_role_allowed(address, booking_role) or crm_roles:
         name, booking = _E2E_ACCOUNT_NAMES[address], e2e_staff.e2e_booking_rule(address)
         raise StaffDirectoryError(
             400, f"The {name} may only have the CIS role {allowed}, {booking} and no CRM role", "e2e_test_scope")
@@ -529,12 +602,12 @@ SQL_ACTOR = (
     "SELECT id::text AS id, is_active, is_owner, role::text AS role FROM shared.admin_users WHERE id = $1::uuid"
 )
 SQL_TARGET = (
-    "SELECT id::text AS id, username, role::text AS role, email, display_name, is_active, is_owner "
-    "FROM shared.admin_users WHERE id = $1::uuid FOR UPDATE"
+    "SELECT id::text AS id, username, role::text AS role, email, display_name, is_active, is_owner, custom_role, "
+    "is_business_owner FROM shared.admin_users WHERE id = $1::uuid FOR UPDATE"
 )
 SQL_TARGET_BY_EMAIL = (
-    "SELECT id::text AS id, username, role::text AS role, email, display_name, is_active, is_owner "
-    "FROM shared.admin_users WHERE lower(email) = $1 FOR UPDATE"
+    "SELECT id::text AS id, username, role::text AS role, email, display_name, is_active, is_owner, custom_role, "
+    "is_business_owner FROM shared.admin_users WHERE lower(email) = $1 FOR UPDATE"
 )
 SQL_GRANT = (
     "SELECT role FROM shared.staff_app_grant WHERE admin_user_id = $1::uuid AND app = $2 FOR UPDATE"
@@ -546,11 +619,19 @@ SQL_OTHER_ACTIVE_OWNERS = (
 )
 SQL_USERNAME_TAKEN = "SELECT 1 FROM shared.admin_users WHERE username = $1"
 SQL_INSERT = (
-    "INSERT INTO shared.admin_users (username, password_hash, role, is_active, email, display_name, is_owner) "
-    "VALUES ($1, NULL, $2::shared.admin_role, true, $3, $4, false) RETURNING id::text AS id"
+    "INSERT INTO shared.admin_users (username, password_hash, role, is_active, email, display_name, is_owner, "
+    "custom_role) VALUES ($1, NULL, $2::shared.admin_role, true, $3, $4, false, $5) RETURNING id::text AS id"
 )
 SQL_SET_ROLE = (
-    "UPDATE shared.admin_users SET role = $2::shared.admin_role, updated_at = now() WHERE id = $1::uuid"
+    "UPDATE shared.admin_users SET role = $2::shared.admin_role, custom_role = $3, updated_at = now() "
+    "WHERE id = $1::uuid"
+)
+# AA-1155 (R3.3): the business-owner marker (CIS 462, partial unique index: one holder at most).
+SQL_BUSINESS_OWNER_HOLDER = (
+    "SELECT id::text AS id FROM shared.admin_users WHERE is_business_owner AND id <> $1::uuid"
+)
+SQL_SET_BUSINESS_OWNER = (
+    "UPDATE shared.admin_users SET is_business_owner = $2, updated_at = now() WHERE id = $1::uuid"
 )
 SQL_SET_ACTIVE = "UPDATE shared.admin_users SET is_active = $2, updated_at = now() WHERE id = $1::uuid"
 SQL_UPSERT_GRANT = (
@@ -688,6 +769,9 @@ async def create_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, e
             crm_ok = await crm_grants_available(conn)
             if crm_roles and not crm_ok:
                 raise _crm_unavailable()
+            db_role, custom_role = await resolve_cis_custom(conn, role)   # AA-1155: a custom code -> based_on + code
+            await check_booking_custom(conn, booking_role)
+            require_e2e_test_scope(email, role, booking_role, crm_roles, based_on=db_role if custom_role else None)
             existing = await conn.fetchrow(SQL_TARGET_BY_EMAIL, email)
             if existing is not None:
                 if is_breakglass(existing["username"], existing["email"]):
@@ -695,7 +779,7 @@ async def create_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, e
                                               "breakglass")
                 grant = await conn.fetchval(SQL_GRANT, existing["id"], APP_BOOKING)
                 existing_crm = await _crm_roles(conn, existing["id"]) if crm_ok else ()
-                if (not existing["is_active"] or existing["role"] != role or grant != booking_role
+                if (not existing["is_active"] or cis_code(existing) != role or grant != booking_role
                         or existing_crm != crm_roles):
                     raise StaffDirectoryError(
                         409, "A staff account with this address already exists; change it from its row",
@@ -706,7 +790,7 @@ async def create_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, e
             else:
                 username = await _free_username(conn, username_base(email))
                 try:
-                    staff_id = await conn.fetchval(SQL_INSERT, username, role, email, display_name)
+                    staff_id = await conn.fetchval(SQL_INSERT, username, db_role, email, display_name, custom_role)
                 except asyncpg.UniqueViolationError:
                     raise StaffDirectoryError(409, "That address or username was just taken; try again",
                                               "conflict") from None
@@ -827,7 +911,7 @@ async def change_roles(pool: Any, cognito: CognitoDirectory, *, actor_id: str, s
             await _require_owner(conn, actor_id)
             target = await _load_target(conn, staff_id)
             staff_id = target["id"]
-            old_role = target["role"]
+            old_role = cis_code(target)   # AA-1155: the custom role code of a custom holder
             old_booking = await conn.fetchval(SQL_GRANT, staff_id, APP_BOOKING)
             crm_ok = await crm_grants_available(conn)
             if crm_given and not crm_ok:
@@ -839,8 +923,15 @@ async def change_roles(pool: Any, cognito: CognitoDirectory, *, actor_id: str, s
                 new_crm = require_crm_roles(set(old_crm) | {PRESET_CRM_ROLE})
             else:
                 new_crm = asked_crm if crm_given else old_crm
+            new_db_role, new_custom, based_on = None, None, None
+            if new_role is not None and new_role != old_role:
+                new_db_role, new_custom = await resolve_cis_custom(conn, new_role)
+                based_on = new_db_role if new_custom else None
+            if booking_role is not _UNSET and new_booking != old_booking:
+                await check_booking_custom(conn, new_booking)
             require_e2e_test_scope(target["email"], new_role if new_role is not None else old_role,
-                                   new_booking if booking_role is not _UNSET else old_booking, new_crm)
+                                   new_booking if booking_role is not _UNSET else old_booking, new_crm,
+                                   based_on=based_on)
             require_dev_only_e2e_environment(target["email"])
             changes: dict[str, Any] = {}
             if new_role is not None and new_role != old_role:
@@ -848,7 +939,7 @@ async def change_roles(pool: Any, cognito: CognitoDirectory, *, actor_id: str, s
                     if staff_id == actor_id:
                         raise StaffDirectoryError(400, "You cannot demote yourself", "self_demote")
                     await _guard_last_owner(conn, target)
-                await conn.execute(SQL_SET_ROLE, staff_id, new_role)
+                await conn.execute(SQL_SET_ROLE, staff_id, new_db_role, new_custom)
                 changes["role"] = {"before": old_role, "after": new_role}
             if booking_role is not _UNSET and new_booking != old_booking:
                 if new_booking is None:
@@ -873,14 +964,17 @@ async def change_roles(pool: Any, cognito: CognitoDirectory, *, actor_id: str, s
     steps: list[Step] = []
     if new_role is not None:
         steps.append((f"add_group:{cis_group(new_role)}", lambda: cognito.add_to_group(email, cis_group(new_role))))
-        if old_role != new_role and old_role in CIS_ROLES:   # AA-878: 'viewer' has no group
+        # AA-878: 'viewer' has no group. AA-1155: two custom roles share cis-custom, which must stay.
+        if (old_role != new_role and (old_role in CIS_ROLES or staff_roles.is_custom_code(old_role))
+                and cis_group(old_role) != cis_group(new_role)):
             steps.append((f"remove_group:{cis_group(old_role)}",
                           lambda: cognito.remove_from_group(email, cis_group(old_role))))
     if booking_role is not _UNSET:
         if new_booking is not None:
             steps.append((f"add_group:{booking_group(new_booking)}",
                           lambda: cognito.add_to_group(email, booking_group(new_booking))))
-        if old_booking is not None and old_booking != new_booking:
+        if (old_booking is not None and old_booking != new_booking
+                and (new_booking is None or booking_group(old_booking) != booking_group(new_booking))):
             steps.append((f"remove_group:{booking_group(old_booking)}",
                           lambda: cognito.remove_from_group(email, booking_group(old_booking))))
     if crm_given:
@@ -1039,11 +1133,49 @@ async def sync_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, sta
         steps: list[Step] = _disable_steps(cognito, email)
     else:
         # never sync a drifted E2E row into more groups
-        require_e2e_test_scope(email, target["role"], booking, crm)
+        require_e2e_test_scope(email, cis_code(target), booking, crm)
         require_dev_only_e2e_environment(email)
-        wanted = _wanted_groups(target["role"], booking, crm)
+        wanted = _wanted_groups(cis_code(target), booking, crm)   # AA-1155: cis-custom / booking-custom
         steps = [("create_user", lambda: cognito.create_user(email)),
                  ("enable_user", lambda: cognito.enable(email))]
         steps += _add_group_steps(cognito, email, wanted)
         steps += _remove_other_groups_steps(cognito, email, wanted, include_crm=crm_ok)
     return await _finish(pool, actor_id, WriteResult(staff_id=staff_id, operation="sync"), steps)
+
+
+async def set_business_owner(pool: Any, *, actor_id: str, staff_id: str, value: bool) -> WriteResult:
+    """AA-1155 (R3.3, root ADR 0006a A14): set or clear the business-owner marker of one account. Owners only (the
+    same re-read as every directory write), audited before and after; no Cognito step (Booking reads the marker from
+    the contract view shared.v_staff_booking_grant, never from a group).
+
+    Refused: an E2E address (400 ``e2e_test_scope``: CIS 462 forbids it), setting it on an inactive account (409
+    ``inactive``), and a second holder (409 ``business_owner_taken``: clear the current holder first; the partial
+    unique index holds the same rule)."""
+    value = bool(value)
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await _require_owner(conn, actor_id)
+            target = await _load_target(conn, staff_id)
+            staff_id = target["id"]
+            before = bool(target["is_business_owner"])
+            if before == value:
+                return WriteResult(staff_id=staff_id, operation="business_owner", cognito=COGNITO_NOT_APPLICABLE)
+            if value:
+                if is_e2e_test_email(target["email"]):
+                    raise StaffDirectoryError(400, "An E2E test account can never be the business owner",
+                                              "e2e_test_scope")
+                if not target["is_active"]:
+                    raise StaffDirectoryError(409, "This account is disabled; enable it first", "inactive")
+                holder = await conn.fetchval(SQL_BUSINESS_OWNER_HOLDER, staff_id)
+                if holder is not None:
+                    raise StaffDirectoryError(409, "Another staff member is the business owner; clear that marker "
+                                                   "first", "business_owner_taken")
+            try:
+                await conn.execute(SQL_SET_BUSINESS_OWNER, staff_id, value)
+            except asyncpg.UniqueViolationError:
+                raise StaffDirectoryError(409, "Another staff member just became the business owner",
+                                          "business_owner_taken") from None
+            await _audit(conn, actor_id, StaffAudit.BUSINESS_OWNER_CHANGED, staff_id,
+                         {"is_business_owner": {"before": before, "after": value}})
+    staff_identity.clear_cache()
+    return WriteResult(staff_id=staff_id, operation="business_owner", cognito=COGNITO_NOT_APPLICABLE)

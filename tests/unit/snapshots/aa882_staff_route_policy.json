@@ -683,6 +683,10 @@
     "capability": "ops.read",
     "module": "api.routers.admin_platform_ops"
   },
+  "GET /admin/platform/roles": {
+    "capability": "staff.read",
+    "module": "api.routers.admin_platform"
+  },
   "GET /admin/platform/staff": {
     "capability": "staff.read",
     "module": "api.routers.admin_platform"
@@ -2062,6 +2066,10 @@
   "PUT /admin/platform/crm/agencies/{tenant_id}/insights-opt-out": {
     "capability": "tenant.write",
     "module": "api.routers.admin_crm_console"
+  },
+  "PUT /admin/platform/staff/{staff_id}/business-owner": {
+    "capability": "staff.write",
+    "module": "api.routers.admin_platform"
   },
   "PUT /admin/tenants/{tenant_id}/assignments/{admin_user_id}": {
     "capability": "tenant.assign",
