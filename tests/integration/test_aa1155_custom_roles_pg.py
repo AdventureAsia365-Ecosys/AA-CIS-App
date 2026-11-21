@@ -161,16 +161,16 @@ async def test_the_staff_page_writes_a_custom_role_and_the_marker(db):
 
     other = await db.add(role="finance", email=_email())
     await db.pool.execute("UPDATE shared.admin_users SET is_business_owner = false WHERE is_business_owner")
-    await sd.set_business_owner(db.pool, actor_id=owner, staff_id=uid, value=True)
+    await scr.set_business_owner(db.pool, actor_id=owner, staff_id=uid, value=True)
     with pytest.raises(sd.StaffDirectoryError) as e:
-        await sd.set_business_owner(db.pool, actor_id=owner, staff_id=other, value=True)
+        await scr.set_business_owner(db.pool, actor_id=owner, staff_id=other, value=True)
     assert e.value.code == "business_owner_taken"
     with pytest.raises(asyncpg.UniqueViolationError):   # the index holds the rule too
-        await db.pool.execute(sd.SQL_SET_BUSINESS_OWNER, other, True)
-    await sd.set_business_owner(db.pool, actor_id=owner, staff_id=uid, value=False)
+        await db.pool.execute(scr.SQL_SET_BUSINESS_OWNER, other, True)
+    await scr.set_business_owner(db.pool, actor_id=owner, staff_id=uid, value=False)
     audits = await db.pool.fetch(
         "SELECT details FROM acp_shared.audit_log WHERE action = $1 AND resource_id = $2 ORDER BY chain_seq",
-        sd.StaffAudit.BUSINESS_OWNER_CHANGED, uid)
+        scr.BUSINESS_OWNER_CHANGED, uid)
     details = [json.loads(a["details"]) if isinstance(a["details"], str) else a["details"] for a in audits]
     assert details == [{"is_business_owner": {"before": False, "after": True}},
                        {"is_business_owner": {"before": True, "after": False}}]

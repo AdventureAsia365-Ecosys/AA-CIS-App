@@ -1,6 +1,6 @@
 """AA-1155 spec task T11 (R5.5) — the AI budget and AI gateway routes need a verified Cognito session.
 
-Every route under /admin/budgets and /admin/ai-gateway runs api/core/staff_authz.require_cognito_session: with the
+Every route under /admin/budgets and /admin/ai-gateway runs api/core/cognito_session.require_cognito_session: with the
 admin secret and a forged x-admin-role (any role, admin included) and no verified session the answer is 403 before
 the endpoint or the database is reached. The before / after audit of budget changes is tested in
 tests/unit/test_aa1025_admin_central_budgets.py. No database, no network.
@@ -15,8 +15,8 @@ from fastapi import HTTPException
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
-from api.core import staff_authz
-from api.core.staff_authz import AI_CONTROLS_NEED_COGNITO, require_cognito_session
+from api.core import cognito_session
+from api.core.cognito_session import AI_CONTROLS_NEED_COGNITO, require_cognito_session
 from api.routers import admin
 from tests.unit.test_s241_admin_routes_require_auth import _dependency_calls, _inherited_calls, _served_routes, _walk
 
@@ -101,4 +101,4 @@ def test_the_dependency_refuses_anything_else(monkeypatch, ident):
             require_cognito_session(_request(ident))
     finally:
         staff_identity.current_staff.reset(token)
-    assert e.value.status_code == 403 and e.value.detail == staff_authz.AI_CONTROLS_NEED_COGNITO
+    assert e.value.status_code == 403 and e.value.detail == cognito_session.AI_CONTROLS_NEED_COGNITO

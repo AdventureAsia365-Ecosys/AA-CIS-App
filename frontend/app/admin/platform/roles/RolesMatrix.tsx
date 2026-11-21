@@ -104,41 +104,40 @@ function CisMatrix({ rows, t }: { rows: MatrixRow[]; t: RT }) {
   );
 }
 
+/** One app's section: the custom-roles notices, then its table (or "nothing matches"). */
+function AppSection({ app, rows, t, title, note, customAvailable = true, noCustom = false }: {
+  app: RoleApp; rows: MatrixRow[]; t: RT; title: string; note: string; customAvailable?: boolean; noCustom?: boolean;
+}) {
+  return (
+    <Section title={title} description={note} padded={false} testId={`roles-app-${app}`}>
+      {!customAvailable && <div style={{ ...small, color: K.amber, padding: "10px 20px" }} role="status">
+        {t("customUnavailable")}</div>}
+      {noCustom && <div style={{ ...small, padding: "10px 20px" }}>{t("noCustom")}</div>}
+      {rows.length ? <AppTable app={app} rows={rows} t={t} testId={`roles-${app}`} />
+        : <div style={{ ...small, padding: "14px 20px" }}>{t("noMatch")}</div>}
+    </Section>
+  );
+}
+
 function Loaded({ data }: { data: RolesCatalogue }) {
   const t = useRolesT();
   const [query, setQuery] = useState("");
   const all = useMemo(() => matrixRows(data), [data]);
   const shown = useMemo(() => all.filter((r) => r.kind === "none" || matchesFilter(r, query)), [all, query]);
-  const cis = rowsForApp(shown, "cis");
-  const booking = rowsForApp(shown, "booking");
-  const crm = rowsForApp(shown, "crm");
-  const tripplanner = rowsForApp(shown, "tripplanner");
+  const noBookingCustom = data.booking.custom_available && data.booking.custom.length === 0 && !query;
   return (
     <>
       <div style={{ maxWidth: 360 }}>
         <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("filter")} aria-label={t("filter")}
           data-testid="roles-filter" />
       </div>
-      <Section title={t("appCis")} description={t("appCisNote")} padded={false} testId="roles-app-cis">
-        {!data.cis.custom_available && <div style={{ ...small, color: K.amber, padding: "10px 20px" }} role="status">
-          {t("customUnavailable")}</div>}
-        {cis.length ? <AppTable app="cis" rows={cis} t={t} testId="roles-cis" />
-          : <div style={{ ...small, padding: "14px 20px" }}>{t("noMatch")}</div>}
-      </Section>
+      <AppSection app="cis" rows={rowsForApp(shown, "cis")} t={t} title={t("appCis")} note={t("appCisNote")}
+        customAvailable={data.cis.custom_available} />
       {!query && <CisMatrix rows={all} t={t} />}
-      <Section title={t("appBooking")} description={t("appBookingNote")} padded={false} testId="roles-app-booking">
-        {!data.booking.custom_available && <div style={{ ...small, color: K.amber, padding: "10px 20px" }}
-          role="status">{t("customUnavailable")}</div>}
-        {data.booking.custom_available && data.booking.custom.length === 0 && !query && (
-          <div style={{ ...small, padding: "10px 20px" }}>{t("noCustom")}</div>)}
-        {booking.length ? <AppTable app="booking" rows={booking} t={t} testId="roles-booking" />
-          : <div style={{ ...small, padding: "14px 20px" }}>{t("noMatch")}</div>}
-      </Section>
-      <Section title={t("appCrm")} description={t("appCrmNote")} padded={false} testId="roles-app-crm">
-        {crm.length ? <AppTable app="crm" rows={crm} t={t} testId="roles-crm" />
-          : <div style={{ ...small, padding: "14px 20px" }}>{t("noMatch")}</div>}
-      </Section>
-      {tripplanner.length > 0 && (
+      <AppSection app="booking" rows={rowsForApp(shown, "booking")} t={t} title={t("appBooking")}
+        note={t("appBookingNote")} customAvailable={data.booking.custom_available} noCustom={noBookingCustom} />
+      <AppSection app="crm" rows={rowsForApp(shown, "crm")} t={t} title={t("appCrm")} note={t("appCrmNote")} />
+      {rowsForApp(shown, "tripplanner").length > 0 && (
         <Section title={t("appTripPlanner")} testId="roles-app-tripplanner">
           <div style={small}>{t("noStaffRoles")}</div>
         </Section>

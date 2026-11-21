@@ -235,18 +235,24 @@ export async function verifyStaffToken(token: string): Promise<VerifyStaffTokenR
     });
     if (!res.ok) return { ok: false, status: res.status, detail: await refusalDetail(res) };
     const data = await res.json();
-    const result: VerifiedStaff = {
-      adminId: data.admin_id,
-      role: data.role,
-      name: data.display_name || data.email || data.username || "",
-      capabilities: Array.isArray(data.capabilities) ? data.capabilities.filter((c: unknown) => typeof c === "string") : [],
-      customLabel: typeof data.custom_role_label === "string" ? data.custom_role_label : null,
-    };
+    const result = verifiedStaffOf(data);
     adminVerifyCache.set(token, result);
     return { ok: true, ...result };
   } catch {
     return { ok: false, status: 0 };
   }
+}
+
+/** The cache entry of a /auth/verify-admin answer (AA-1155: with its capability list and custom role name). */
+export function verifiedStaffOf(data: Record<string, unknown>): VerifiedStaff {
+  const caps = Array.isArray(data.capabilities) ? data.capabilities : [];
+  return {
+    adminId: String(data.admin_id ?? ""),
+    role: String(data.role ?? ""),
+    name: String(data.display_name || data.email || data.username || ""),
+    capabilities: caps.filter((c): c is string => typeof c === "string"),
+    customLabel: typeof data.custom_role_label === "string" ? data.custom_role_label : null,
+  };
 }
 
 /** The `detail` string of a refused verify-admin answer, or undefined (never throws). */

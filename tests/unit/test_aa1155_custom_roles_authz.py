@@ -197,17 +197,16 @@ def test_a_forged_custom_role_header_holds_nothing(identity):
 
 
 def test_role_perms_reads_the_custom_role_of_this_request_only():
-    assert staff_authz.role_perms("custom_content") == frozenset()
+    assert staff_roles.role_perms("custom_content") == frozenset()
     token = staff_identity.current_staff.set(_Identity("custom_content", SEED))
     try:
-        assert staff_authz.role_perms("custom_content") == SEED
+        assert staff_roles.role_perms("custom_content") == SEED
         assert staff_authz.has_perm("custom_content", "tenant.read")
         assert not staff_authz.has_perm("custom_content", "content.settings.write")
-        assert staff_authz.role_perms("custom_other") == frozenset()
-        assert staff_authz.is_staff_role("custom_content") and not staff_authz.is_staff_role("custom_other")
+        assert staff_roles.role_perms("custom_other") == frozenset()
     finally:
         staff_identity.current_staff.reset(token)
-    assert staff_authz.role_perms("content_lead") == ROLE_PERMS["content_lead"]
+    assert staff_roles.role_perms("content_lead") == ROLE_PERMS["content_lead"]
 
 
 def _allowed(principal: StaffPrincipal, method: str, route: str) -> bool:

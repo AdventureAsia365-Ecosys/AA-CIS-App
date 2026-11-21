@@ -13,7 +13,7 @@ per_month_usd (the UTC month) and, for job:<kind> only, per_run_usd (the running
 job:s1_rewrite, whose per-run cap is the setting cis.spend.run_cap_s1_rewrite_usd (422 names it). A provider row keeps
 global | job:<kind> and no month cap. Before 340 the database refuses an 'llm' row (409 with the reason).
 
-AA-1155 (spec task T11, R5.5): every route needs a verified Cognito session (staff_authz.require_cognito_session: a
+AA-1155 (spec task T11, R5.5): every route needs a verified Cognito session (api/core/cognito_session.py: a
 forged x-admin-role with only the admin secret gets 403), and every change writes one acp_shared.audit_log row
 (``spend_budget.updated`` / ``spend_budget.deleted``, resource ``<provider>/<scope>``) with the row before and after,
 in the same transaction as the write.
@@ -28,7 +28,8 @@ import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from api.core.staff_authz import staff_policy, require_cognito_session
+from api.core.cognito_session import require_cognito_session as cognito_only   # AA-1155 T11
+from api.core.staff_authz import staff_policy
 from api.routers.admin import verify_admin_secret
 from api.services import settings_registry
 from services.acp_shared.audit_log import write_audit_log
@@ -42,8 +43,7 @@ logger = structlog.get_logger()
 # the write routes are kept as-is (same check, run twice).
 # AA-882 (GĐ1): staff_policy narrows the writes listed in api/core/staff_authz.py POLICY by role.
 router = APIRouter(prefix="/admin/budgets", tags=["admin-budgets"],
-                   dependencies=[Depends(verify_admin_secret), Depends(staff_policy),
-                                 Depends(require_cognito_session)])   # AA-1155 T11: Cognito only
+                   dependencies=[Depends(verify_admin_secret), Depends(staff_policy), Depends(cognito_only)])
 
 
 class BudgetUpdate(BaseModel):

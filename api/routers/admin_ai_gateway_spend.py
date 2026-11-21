@@ -18,14 +18,14 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Request
 
-from api.core.staff_authz import staff_policy, require_cognito_session
+from api.core.cognito_session import require_cognito_session as cognito_only   # AA-1155 T11
+from api.core.staff_authz import staff_policy
 from api.routers.admin import verify_admin_secret
 from api.services import ai_gateway_spend_controls, settings_registry
 from shared.llm_client import app_profile
 
 router = APIRouter(prefix="/admin/ai-gateway", tags=["admin-ai-gateway"],
-                   dependencies=[Depends(verify_admin_secret), Depends(staff_policy),
-                                 Depends(require_cognito_session)])   # AA-1155 T11: Cognito only
+                   dependencies=[Depends(verify_admin_secret), Depends(staff_policy), Depends(cognito_only)])
 
 _APP = Path(..., pattern=r"^[a-z][a-z0-9_]{0,30}$")
 

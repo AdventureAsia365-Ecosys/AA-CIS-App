@@ -57,7 +57,7 @@ from typing_extensions import Annotated
 from api.core import staff_roles
 from api.core.staff_authz import STAFF_ROLES, request_staff_identity, staff_policy
 from api.routers.admin import verify_admin_secret
-from api.services import staff_directory, staff_invite
+from api.services import staff_custom_roles, staff_directory, staff_invite
 from api.services.staff_directory import CognitoDirectory, StaffDirectoryError, WriteResult, get_cognito
 
 router = APIRouter(prefix="/admin/platform", tags=["admin-platform"],
@@ -342,7 +342,7 @@ class BusinessOwnerBody(BaseModel):
 async def set_business_owner(staff_id: str, body: BusinessOwnerBody, request: Request):
     sid = _uuid_or_404(staff_id)
     try:
-        result = await staff_directory.set_business_owner(request.app.state.pool, actor_id=_actor_id(request),
+        result = await staff_custom_roles.set_business_owner(request.app.state.pool, actor_id=_actor_id(request),
                                                           staff_id=str(sid), value=body.value)
     except StaffDirectoryError as exc:
         raise _refused(exc) from None

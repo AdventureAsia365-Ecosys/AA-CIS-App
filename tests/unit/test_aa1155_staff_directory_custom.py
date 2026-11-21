@@ -11,16 +11,72 @@ The in-memory directory and the Cognito Stubber of tests/unit/test_aa816_staff_d
 """
 from __future__ import annotations
 
+from typing import Any, Optional
+
+import asyncpg
 import pytest
 
-from api.core import e2e_staff, staff_roles
+from api.core import e2e_staff, staff_identity, staff_roles
+from api.services import staff_custom_roles as scr
 from api.services import staff_directory as sd
 from tests.unit.test_aa816_staff_directory_writes import (  # noqa: F401 - fixtures
-    NEW_EMAIL, _cis_but, _expect, _group, _user, db, stubbed,
+    NEW_EMAIL, StaffDB, _cis_but, _expect, _group, _user, stubbed,
 )
 
 MAKER = e2e_staff.E2E_CUSTOM_MAKER_TEST_STAFF_EMAIL
 LEAD = e2e_staff.E2E_CIS_CONTENT_LEAD_TEST_STAFF_EMAIL
+
+
+class CustomStaffDB(StaffDB):
+    """StaffDB plus the CIS 462 columns (custom_role, is_business_owner) and the Booking custom roles view
+    (``booking_custom``: code -> row; None plays an unreadable view)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.booking_custom: Optional[dict[str, dict[str, Any]]] = {}
+
+    def _target(self, r):
+        out = super()._target(r)
+        if out is not None:
+            out |= {"custom_role": r.get("custom_role"), "is_business_owner": r.get("is_business_owner", False)}
+        return out
+
+    async def fetch(self, sql, *args):
+        if sql == staff_roles.SQL_BOOKING_ROLE:
+            if self.booking_custom is None:
+                raise asyncpg.InsufficientPrivilegeError("permission denied for view v_staff_role_capability")
+            role = self.booking_custom.get(args[0])
+            return [] if role is None else [
+                {"role_code": args[0], "label": role["label"], "based_on": role.get("based_on", "contracting"),
+                 "archived": role.get("archived", False), "capability": c}
+                for c in role.get("capabilities", ["supply.read"])]
+        return await super().fetch(sql, *args)
+
+    async def fetchval(self, sql, *args):
+        if sql == scr.SQL_BUSINESS_OWNER_HOLDER:
+            return next((r["id"] for r in self.rows if r.get("is_business_owner") and r["id"] != str(args[0])), None)
+        out = await super().fetchval(sql, *args)
+        if sql == sd.SQL_INSERT:
+            self._find(out)["custom_role"] = args[4]
+        return out
+
+    async def execute(self, sql, *args):
+        if sql == scr.SQL_SET_BUSINESS_OWNER:
+            self._find(args[0])["is_business_owner"] = args[1]
+            return "UPDATE 1"
+        out = await super().execute(sql, *args)
+        if sql == sd.SQL_SET_ROLE:
+            self._find(args[0])["custom_role"] = args[2]
+        return out
+
+
+@pytest.fixture
+def db():
+    staff_identity.clear_cache()
+    d = CustomStaffDB()
+    d.owner = d.add(owner=True, email="owner@adventure.asia", username="owner", role="admin")
+    yield d
+    staff_identity.clear_cache()
 
 
 @pytest.fixture
@@ -162,15 +218,15 @@ async def test_create_with_custom_roles_writes_the_code_and_the_custom_groups(ro
 @pytest.mark.asyncio
 async def test_an_owner_sets_and_clears_the_marker_with_audit(roles):
     uid = roles.add(email=NEW_EMAIL, role="admin")
-    await sd.set_business_owner(roles, actor_id=roles.owner, staff_id=uid, value=True)
+    await scr.set_business_owner(roles, actor_id=roles.owner, staff_id=uid, value=True)
     assert roles.row(uid)["is_business_owner"] is True
-    assert roles.audit[-1]["action"] == sd.StaffAudit.BUSINESS_OWNER_CHANGED
+    assert roles.audit[-1]["action"] == scr.BUSINESS_OWNER_CHANGED
     assert roles.audit[-1]["details"] == {"is_business_owner": {"before": False, "after": True}}
-    await sd.set_business_owner(roles, actor_id=roles.owner, staff_id=uid, value=False)
+    await scr.set_business_owner(roles, actor_id=roles.owner, staff_id=uid, value=False)
     assert roles.row(uid)["is_business_owner"] is False
     assert roles.audit[-1]["details"] == {"is_business_owner": {"before": True, "after": False}}
     n = len(roles.audit)
-    await sd.set_business_owner(roles, actor_id=roles.owner, staff_id=uid, value=False)   # no change, no row
+    await scr.set_business_owner(roles, actor_id=roles.owner, staff_id=uid, value=False)   # no change, no row
     assert len(roles.audit) == n
 
 
@@ -178,9 +234,9 @@ async def test_an_owner_sets_and_clears_the_marker_with_audit(roles):
 async def test_a_second_business_owner_is_409(roles):
     first = roles.add(email="first.person@adventure.asia", role="admin")
     second = roles.add(email="second.person@adventure.asia", role="finance")
-    await sd.set_business_owner(roles, actor_id=roles.owner, staff_id=first, value=True)
+    await scr.set_business_owner(roles, actor_id=roles.owner, staff_id=first, value=True)
     with pytest.raises(sd.StaffDirectoryError) as e:
-        await sd.set_business_owner(roles, actor_id=roles.owner, staff_id=second, value=True)
+        await scr.set_business_owner(roles, actor_id=roles.owner, staff_id=second, value=True)
     assert (e.value.status, e.value.code) == (409, "business_owner_taken")
     assert not roles.row(second).get("is_business_owner")
 
@@ -190,7 +246,7 @@ async def test_only_an_owner_sets_the_marker(roles):
     other = roles.add(email="other.admin@adventure.asia", role="admin")
     uid = roles.add(email=NEW_EMAIL, role="admin")
     with pytest.raises(sd.StaffDirectoryError) as e:
-        await sd.set_business_owner(roles, actor_id=other, staff_id=uid, value=True)
+        await scr.set_business_owner(roles, actor_id=other, staff_id=uid, value=True)
     assert (e.value.status, e.value.code) == (403, "not_owner")
     assert roles.audit == []
 
@@ -200,11 +256,11 @@ async def test_never_an_e2e_address_nor_a_disabled_account(roles, monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "dev")
     e2e = roles.add(email=LEAD, role="content_lead")
     with pytest.raises(sd.StaffDirectoryError) as e:
-        await sd.set_business_owner(roles, actor_id=roles.owner, staff_id=e2e, value=True)
+        await scr.set_business_owner(roles, actor_id=roles.owner, staff_id=e2e, value=True)
     assert e.value.code == "e2e_test_scope"
     off = roles.add(email=NEW_EMAIL, role="admin", active=False)
     with pytest.raises(sd.StaffDirectoryError) as e:
-        await sd.set_business_owner(roles, actor_id=roles.owner, staff_id=off, value=True)
+        await scr.set_business_owner(roles, actor_id=roles.owner, staff_id=off, value=True)
     assert e.value.code == "inactive"
 
 

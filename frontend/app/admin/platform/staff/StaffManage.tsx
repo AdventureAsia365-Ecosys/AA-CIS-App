@@ -49,6 +49,7 @@ import {
   type PeoplePreset,
 } from "@/lib/staffPresets";
 import { BOOKING_ROLE, CRM_ROLE, MANAGE } from "./messages";
+import { BusinessOwnerControl } from "./BusinessOwner";
 import { PeoplePresets, PresetConfirm, usePresetWords } from "./PeoplePresets";
 
 // AA-1150: the roles and presets live in lib/staffPresets.ts (unit-tested there); re-exported for the directory page.
@@ -537,7 +538,7 @@ function CreateRoleFields({ access, onAccess, role, onRole, booking, onBooking, 
 
 // ── Manage one account (drawer) ──────────────────────────────────────────────────────────────────
 
-type Confirm = null | "disable" | "sign-out" | "pricing" | "business-owner" | PeoplePreset;
+type Confirm = null | "disable" | "sign-out" | "pricing" | PeoplePreset;
 
 export function StaffManagePanel({ staff, selfId, onOutcome, crmAvailable = true }: {
   staff: StaffAccount;
@@ -659,9 +660,8 @@ export function StaffManagePanel({ staff, selfId, onOutcome, crmAvailable = true
           )}
         </div>
       )}
-      {(staff.is_active || staff.is_business_owner) && (
-        <BusinessOwnerRow staff={staff} busy={!!busy} onAsk={() => setConfirm("business-owner")} />
-      )}
+      <BusinessOwnerControl staff={staff} busy={busy} onRun={(ok, body) => run("business-owner", "PUT",
+        `${base}/business-owner`, ok, body)} />
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         {staff.is_active ? (
           <Button size="sm" variant="danger" onClick={() => setConfirm("disable")} disabled={isSelf || !!busy}
@@ -706,20 +706,6 @@ export function StaffManagePanel({ staff, selfId, onOutcome, crmAvailable = true
         </>}
         onConfirm={() => void run("disable", "POST", `${base}/disable`, m("disabledDone"))}
       />
-      <ConfirmModal
-        open={confirm === "business-owner"}
-        onClose={() => setConfirm(null)}
-        busy={busy === "business-owner"}
-        title={staff.is_business_owner ? m("businessOwnerClearQ") : m("businessOwnerSetQ")}
-        confirmLabel={staff.is_business_owner ? m("businessOwnerClear") : m("businessOwnerSet")}
-        body={<>
-          <strong>{staff.display_name || staff.username}</strong>{" "}
-          {staff.is_business_owner ? m("businessOwnerClearBody") : m("businessOwnerSetBody")}
-        </>}
-        onConfirm={() => void run("business-owner", "PUT", `${base}/business-owner`,
-          staff.is_business_owner ? m("businessOwnerCleared") : m("businessOwnerDone"),
-          { value: !staff.is_business_owner })}
-      />
       <PresetConfirm staff={staff} preset={isPeoplePreset(confirm) ? confirm : null} busy={busy === "preset"}
         onClose={() => setConfirm(null)}
         onConfirm={(p, done) => void run("preset", "PATCH", `${base}/roles`, done, { preset: p })} />
@@ -752,27 +738,6 @@ export function StaffManagePanel({ staff, selfId, onOutcome, crmAvailable = true
           : m("signedOutEnabled"))}
       />
     </section>
-  );
-}
-
-/** AA-1155 (R3.3): the business-owner marker of this account (at most one person; set by an owner, audited). */
-function BusinessOwnerRow({ staff, busy, onAsk }: { staff: StaffAccount; busy: boolean; onAsk: () => void }) {
-  const m = useT(MANAGE);
-  return (
-    <div data-testid="staff-business-owner" style={{
-      display: "flex", gap: 10, alignItems: "flex-start", flexWrap: "wrap", padding: "10px 12px", background: K.line2,
-      borderRadius: RADIUS.sm,
-    }}>
-      <span style={{ flex: "1 1 220px", minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
-        <span style={{ fontSize: 13, fontWeight: 600, color: K.ink3 }}>{m("businessOwnerTitle")}</span>
-        <span style={{ fontSize: 12, color: K.muted, lineHeight: 1.45 }}>
-          {staff.is_business_owner ? m("businessOwnerIs") : m("businessOwnerNote")}
-        </span>
-      </span>
-      <Button size="sm" variant="secondary" testId="staff-business-owner-toggle" onClick={onAsk} disabled={busy}>
-        {staff.is_business_owner ? m("businessOwnerClear") : m("businessOwnerSet")}
-      </Button>
-    </div>
   );
 }
 

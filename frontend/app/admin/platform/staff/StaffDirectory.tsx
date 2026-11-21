@@ -301,15 +301,25 @@ function CountChip({ label, value }: { label: string; value: number }) {
   );
 }
 
+/** The owner, business-owner (AA-1155) and break-glass marks of an account. */
+function AccountMarks({ s }: { s: StaffAccount }) {
+  const t = useT(STAFF);
+  return (
+    <>
+      {s.is_owner && <Badge tone="accent" dot={false}>{t("owner")}</Badge>}
+      {s.is_business_owner && <Badge tone="info" dot={false}>{t("businessOwner")}</Badge>}
+      {s.breakglass && <Badge tone="warning" dot={false}>{t("breakGlass")}</Badge>}
+    </>
+  );
+}
+
 function NameCell({ s }: { s: StaffAccount }) {
   const t = useT(STAFF);
   return (
     <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
       <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
         <span style={{ fontWeight: 600, color: K.ink }}>{s.display_name || s.username}</span>
-        {s.is_owner && <Badge tone="accent" dot={false}>{t("owner")}</Badge>}
-        {s.is_business_owner && <Badge tone="info" dot={false}>{t("businessOwner")}</Badge>}
-        {s.breakglass && <Badge tone="warning" dot={false}>{t("breakGlass")}</Badge>}
+        <AccountMarks s={s} />
       </span>
       <span style={{ fontSize: 12, color: K.muted }}>{s.email ?? t("noWorkEmail", s.username)}</span>
     </span>
@@ -354,9 +364,7 @@ function StaffDrawer({ id, fallback, onClose, canWrite, selfId, crmAvailable }: 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <RoleBadge role={cisRoleOf(s)} />
             <ActiveBadge active={s.is_active} />
-            {s.is_owner && <Badge tone="accent" dot={false}>{t("owner")}</Badge>}
-            {s.is_business_owner && <Badge tone="info" dot={false}>{t("businessOwner")}</Badge>}
-            {s.breakglass && <Badge tone="warning" dot={false}>{t("breakGlass")}</Badge>}
+            <AccountMarks s={s} />
           </div>
           <dl style={{ display: "grid", gridTemplateColumns: "max-content 1fr", gap: "10px 18px", margin: 0, fontSize: 13 }}>
             <Field label={t("fName")} value={s.display_name || "—"} />

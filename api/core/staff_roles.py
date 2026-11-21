@@ -125,6 +125,38 @@ def is_approve_class(capability: str) -> bool:
     return bool(_APPROVE_RE.search(capability)) or capability in RESERVED_CAPABILITIES
 
 
+def verified_custom_perms(role: Optional[str], identity: Any) -> frozenset[str]:
+    """The capabilities of a custom role ``role`` when ``identity`` is the verified Cognito session holding it (the
+    staff bearer middleware's StaffIdentity), else nothing (fail closed: the main secret cannot claim a custom role)."""
+    if (identity is None or getattr(identity, "auth", None) != "cognito" or not is_custom_code(role)
+            or getattr(identity, "role", None) != role):
+        return frozenset()
+    return frozenset(getattr(identity, "capabilities", None) or ())
+
+
+def request_custom_perms(role: Optional[str]) -> frozenset[str]:
+    """A custom role's capabilities in this request (the verified identity of the current_staff contextvar)."""
+    if not is_custom_code(role):
+        return frozenset()
+    from api.core.staff_identity import current_staff
+
+    return verified_custom_perms(role, current_staff.get())
+
+
+def role_perms(role: Optional[str]) -> frozenset[str]:
+    """The one role lookup (staff_authz.has_perm / has_any_perm, tenant scope): ROLE_PERMS of a built-in role, or the
+    verified custom role of this request; nothing otherwise."""
+    from api.core.staff_authz import ROLE_PERMS
+
+    return ROLE_PERMS.get(role or "") or request_custom_perms(role)
+
+
+def is_verified_custom(principal: Any) -> bool:
+    """A staff principal with a custom role code, a verified Cognito session and capabilities (staff_authz)."""
+    return (getattr(principal, "auth", None) == "cognito" and is_custom_code(getattr(principal, "role", None))
+            and bool(getattr(principal, "perms", None)))
+
+
 def custom_allowed() -> frozenset[str]:
     """Every capability a CIS custom role may hold: the code's capability set minus the owner-only and approve class."""
     from api.core.staff_authz import CAPABILITIES, OWNER_PERMS

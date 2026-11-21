@@ -50,16 +50,6 @@ Roles and tenant scope (AA-1035 R2 slice 1, root ADR 0019 d3 / d4)
 - A GET with no POLICY entry needs content.read (the content pages). Before R2 it was open to every staff role; the
   roles that held content.read then are the roles that hold it now, so only the new roles without it are refused.
 
-Custom roles (AA-1155 T8, root ADR 0006a A14; api/core/staff_roles.py)
---------------------------------------------------------------------
-- A ``cis-custom`` holder's role is a custom code (``custom_<name>``); its capabilities are the custom role's rows,
-  read by the staff identity resolver from a verified Cognito session (StaffIdentity.capabilities). Nothing else can
-  hold a custom role: a custom code in x-admin-role without that verified identity has no capability (refused as
-  an unknown role), so the main secret cannot claim one either.
-- :func:`role_perms` is the one lookup every role check uses (has_perm, has_any_perm, the principal): ROLE_PERMS for
-  a built-in role, the request's verified custom capabilities for a custom code. A custom role never holds the
-  approve class, staff.write or staff.admin.
-
 Coverage (GĐ3)
 --------------
 Every non-GET route under /admin, /v1/pipeline, /v1/rules and /v1/social has a POLICY entry, and every
@@ -78,7 +68,7 @@ from typing import Any, Optional
 import structlog
 from fastapi import Header, HTTPException, Request
 
-from api.core import e2e_staff
+from api.core import e2e_staff, staff_roles
 from api.core.secret_compare import secrets_equal
 
 logger = structlog.get_logger()
@@ -676,10 +666,8 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/platform/staff/{staff_id}/sync"): STAFF_WRITE,
     # S242 — resend the staff invitation e-mail (queues a staff_invite_email job; owners only, like every write)
     ("POST", "/admin/platform/staff/{staff_id}/invite"): STAFF_WRITE,
-    # AA-1155 (R3.3): the business-owner marker, owners only (staff.write), audited by the directory writer.
-    ("PUT", "/admin/platform/staff/{staff_id}/business-owner"): STAFF_WRITE,
-    # AA-1155 (R5.3, R5.4): every app's staff roles (Staff page pickers, Roles & permissions page).
-    ("GET", "/admin/platform/roles"): STAFF_READ,
+    ("PUT", "/admin/platform/staff/{staff_id}/business-owner"): STAFF_WRITE,   # AA-1155 R3.3 (audited)
+    ("GET", "/admin/platform/roles"): STAFF_READ,   # AA-1155 R5.3 / R5.4: every app's staff roles
 
     # ── /v1 routers the staff BFF calls with the admin secret (/api/pipeline, the /api/tenant staff
     # branch). Their own guard keeps tenant JWTs out; POLICY narrows the staff roles.
@@ -848,9 +836,8 @@ AWAITING_ROUTE: dict[tuple[str, str], str] = {}
 # frontend/lib/auth-server.ts mirrors this tuple).
 STAFF_PATH_PREFIXES: tuple[str, ...] = ("/admin", "/v1/pipeline", "/v1/rules", "/v1/social")
 
-# Machine callers send the secret and no x-admin-role. (method, route) -> who calls it. Of the GETs only
-# /admin/overview has a POLICY entry (ops.read); the job-runner ones are open to any secret holder and
-# are listed so the allowlist stays complete if they ever get one.
+# Machine callers send the secret and no x-admin-role. (method, route) -> who calls it. Of the GETs only /admin/overview
+# has a POLICY entry (ops.read); the job-runner ones are open to any secret holder, listed to keep the allowlist whole.
 MACHINE_ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/admin/job-runner/deploy-gate"): ("CI deploy-dev.yml: pre-deploy gate (open wave / running "
                                                "deploy-blocking kind, AA-993 G5) + post-deploy smoke"),
@@ -893,42 +880,6 @@ class StaffPrincipal:
 MACHINE = StaffPrincipal(kind="machine")
 
 
-_CUSTOM_PREFIX = "custom_"
-
-
-def _is_custom(role: Optional[str]) -> bool:
-    from api.core.staff_roles import is_custom_code
-
-    return is_custom_code(role)
-
-
-def _verified_custom_perms(role: Optional[str], identity: Any) -> frozenset[str]:
-    """AA-1155: the capabilities of a custom role ``role`` when ``identity`` is the verified Cognito session holding
-    it (the staff bearer middleware's StaffIdentity), else nothing (fail closed)."""
-    if (identity is None or getattr(identity, "auth", None) != "cognito" or not _is_custom(role)
-            or getattr(identity, "role", None) != role):
-        return frozenset()
-    return frozenset(getattr(identity, "capabilities", None) or ())
-
-
-def role_perms(role: Optional[str]) -> frozenset[str]:
-    """The capabilities of ``role``: ROLE_PERMS for a built-in role; for a custom code (AA-1155), the custom role's
-    capabilities of this request's verified Cognito identity (none outside such a request)."""
-    perms = ROLE_PERMS.get(role or "")
-    if perms is not None:
-        return perms
-    if not isinstance(role, str) or not role.startswith(_CUSTOM_PREFIX):
-        return frozenset()
-    from api.core.staff_identity import current_staff
-
-    return _verified_custom_perms(role, current_staff.get())
-
-
-def is_staff_role(role: Optional[str]) -> bool:
-    """A built-in staff role, or (AA-1155) the verified custom role of this request."""
-    return (role or "") in ROLE_PERMS or bool(role_perms(role))
-
-
 def principal_from_role(role_header: Optional[str], identity: Any = None) -> StaffPrincipal:
     """The principal behind a request that already passed the secret check.
 
@@ -941,11 +892,8 @@ def principal_from_role(role_header: Optional[str], identity: Any = None) -> Sta
         return MACHINE
     role = role_header.strip()
     cognito = identity is not None and getattr(identity, "auth", None) == "cognito"
-    perms = ROLE_PERMS.get(role)
-    if perms is None:
-        perms = _verified_custom_perms(role, identity)   # AA-1155: a custom code only with its verified session
-    return StaffPrincipal(
-        kind="staff", role=role, perms=perms,
+    return StaffPrincipal(   # AA-1155: a custom code holds capabilities only with its verified session
+        kind="staff", role=role, perms=ROLE_PERMS.get(role) or staff_roles.verified_custom_perms(role, identity),
         auth="cognito" if cognito else None,
         is_owner=bool(cognito and getattr(identity, "is_owner", False)),
         e2e_read_only=bool(identity is not None and getattr(identity, "e2e_read_only", False)),
@@ -955,13 +903,12 @@ def principal_from_role(role_header: Optional[str], identity: Any = None) -> Sta
 
 
 def has_perm(role: Optional[str], capability: str) -> bool:
-    return capability in role_perms(role)
+    return capability in staff_roles.role_perms(role)   # AA-1155: built-in or verified custom role
 
 
 def has_any_perm(role: Optional[str], *capabilities: str) -> bool:
     """AA-1035: the role holds at least one of ``capabilities``."""
-    perms = role_perms(role)
-    return any(c in perms for c in capabilities)
+    return any(c in staff_roles.role_perms(role) for c in capabilities)
 
 
 def sees_tenant_money(role: Optional[str]) -> bool:
@@ -1005,13 +952,6 @@ def can_read_owner_docs(principal: StaffPrincipal) -> bool:
     return docs_owner_read_via(principal) is not None
 
 
-def _known_role(principal: StaffPrincipal) -> bool:
-    """A built-in role, or (AA-1155) a custom role resolved from a verified Cognito session with capabilities."""
-    if principal.role in ROLE_PERMS:
-        return True
-    return principal.auth == "cognito" and _is_custom(principal.role) and bool(principal.perms)
-
-
 def denial_reason(principal: StaffPrincipal, method: str, route: str) -> Optional[str]:
     """None when the principal may call (method, route); otherwise the 403 detail."""
     if principal.role in READ_ONLY_ROLES and method.upper() not in READ_METHODS:
@@ -1027,7 +967,7 @@ def denial_reason(principal: StaffPrincipal, method: str, route: str) -> Optiona
         # the content pages (content.read); every other role is refused (deny by default).
         if principal.is_machine:
             return None
-        if not _known_role(principal):
+        if not (principal.role in ROLE_PERMS or staff_roles.is_verified_custom(principal)):
             return "Unknown staff role"
         if OPEN_READ not in principal.perms:
             return f"Role '{principal.role}' lacks the '{OPEN_READ}' permission"
@@ -1036,7 +976,7 @@ def denial_reason(principal: StaffPrincipal, method: str, route: str) -> Optiona
         if (method, route) in MACHINE_ROUTES:
             return None
         return "This route needs a staff role (x-admin-role); machine callers are not allowed"
-    if not _known_role(principal):
+    if not (principal.role in ROLE_PERMS or staff_roles.is_verified_custom(principal)):
         return "Unknown staff role"
     capabilities = policy_capabilities(entry)
     if len(capabilities) > 1:
@@ -1063,22 +1003,6 @@ STAFF_WRITE_NEEDS_COGNITO = "Changing staff accounts needs a company sign-in (Co
 STAFF_WRITE_NEEDS_OWNER = "Only a platform owner can change staff accounts"
 # Starts with "Role '" like the capability refusal, so the UI's staffErrorMessage() reads it the same way.
 READ_ONLY_DENIED = "Role '{role}' is read-only"
-
-
-# AA-1155 (T11, R5.5): the AI budget and AI gateway routers (/admin/budgets, /admin/ai-gateway) take a verified
-# Cognito session only. A request with the admin secret and a forged x-admin-role, a legacy password session, the
-# Preview credential or the machine gets 403 before the route runs, whatever role it names.
-AI_CONTROLS_NEED_COGNITO = "AI budgets and the AI gateway need a company sign-in (Cognito); other sessions cannot"
-
-
-def require_cognito_session(request: Request) -> Any:
-    """Router dependency (AA-1155 T11): the verified Cognito StaffIdentity of this request, or 403."""
-    identity = request_staff_identity(request)
-    if identity is None or getattr(identity, "auth", None) != "cognito" or not getattr(identity, "admin_id", None):
-        logger.warning("staff_cognito_required", path=request.url.path, method=request.method,
-                       role_header=request.headers.get("x-admin-role"))
-        raise HTTPException(status_code=403, detail=AI_CONTROLS_NEED_COGNITO)
-    return identity
 
 
 def request_staff_identity(request: Request) -> Any:

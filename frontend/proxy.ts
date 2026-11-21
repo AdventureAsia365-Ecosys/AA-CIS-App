@@ -55,7 +55,7 @@
 // with a 308 to the portal host before this file runs, and no tenant session is checked here.
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { adminVerifyCache } from "./lib/auth-server";
+import { adminVerifyCache, verifiedStaffOf } from "./lib/auth-server";
 import { canSeePage, isStaffSubject, landingPage, pageRule, type StaffSession } from "./lib/rbac";
 import { NONCE_HEADER, contentSecurityPolicy, newNonce, sentryOrigin } from "./lib/securityHeaders";
 import {
@@ -211,17 +211,9 @@ async function verifyAdminToken(request: NextRequest): Promise<NextResponse | St
     if (!res.ok) {
       return toStaffLogin(request);
     }
-    const data = await res.json();
-    const capabilities: string[] = Array.isArray(data.capabilities)
-      ? data.capabilities.filter((c: unknown) => typeof c === "string") : [];
-    adminVerifyCache.set(token, {
-      adminId: data.admin_id,
-      role: data.role,
-      name: data.display_name || data.email || data.username || "",
-      capabilities,
-      customLabel: typeof data.custom_role_label === "string" ? data.custom_role_label : null,
-    });
-    return { role: data.role, capabilities };
+    const verified = verifiedStaffOf(await res.json());   // AA-1155: with the capability list
+    adminVerifyCache.set(token, verified);
+    return { role: verified.role, capabilities: verified.capabilities };
   } catch {
     const isDev = process.env.NODE_ENV === "development";
     if (!isDev || isCognitoToken(token)) {

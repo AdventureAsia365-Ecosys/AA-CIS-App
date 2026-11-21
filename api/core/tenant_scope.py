@@ -48,8 +48,8 @@ from api.core.staff_authz import (
     has_staff_credential,
     principal_from_role,
     request_staff_identity,
-    role_perms,
 )
+from api.core.staff_roles import role_perms
 
 logger = structlog.get_logger()
 

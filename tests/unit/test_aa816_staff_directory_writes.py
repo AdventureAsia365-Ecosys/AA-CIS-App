@@ -23,9 +23,7 @@ import pytest
 from botocore.stub import Stubber
 from fastapi.testclient import TestClient
 
-import asyncpg
-
-from api.core import identity_config, staff_identity, staff_roles, view_as
+from api.core import identity_config, staff_identity, view_as
 from api.main import app
 from api.routers import admin, admin_platform, admin_settings
 from api.services import staff_directory as sd
@@ -55,8 +53,6 @@ class StaffDB(Directory):
         self.audit: list[dict[str, Any]] = []
         self.locked_owners = 0
         self.view_as: list[dict[str, Any]] = []     # open view-as sessions (AA-1035: closed by disable / sign-out)
-        # AA-1155: Booking custom roles as booking.v_staff_role_capability shows them (code -> row); None = unreadable
-        self.booking_custom: Optional[dict[str, dict[str, Any]]] = {}
 
     def add(self, *, owner: bool = False, booking: Optional[str] = None,  # type: ignore[override]
             crm: tuple[str, ...] = (), **kw: Any) -> str:
@@ -89,17 +85,14 @@ class StaffDB(Directory):
         if r is None:
             return None
         return {k: r.get(k) for k in ("id", "username", "role", "email", "display_name", "is_active")} | {
-            "is_owner": r.get("is_owner", False), "custom_role": r.get("custom_role"),
-            "is_business_owner": r.get("is_business_owner", False)}
+            "is_owner": r.get("is_owner", False)}
 
     def _listed(self, r: dict[str, Any]) -> dict[str, Any]:
         return {**{k: r.get(k) for k in ("id", "username", "role", "is_active", "email", "display_name",
                                          "last_login_at")},
                 "is_owner": r.get("is_owner", False), "created_at": None, "updated_at": None,
                 "linked": r.get("cognito_sub") is not None, "booking_role": self.grants.get((r["id"], "booking")),
-                "crm_roles": self.crm_roles(r["id"]), "custom_role": r.get("custom_role"),
-                "custom_role_label": (self.custom_roles.get(r.get("custom_role") or "") or {}).get("label"),
-                "is_business_owner": r.get("is_business_owner", False)}
+                "crm_roles": self.crm_roles(r["id"])}
 
     async def fetch(self, sql: str, *args: Any) -> list[dict[str, Any]]:
         self.sql.append(sql)
@@ -116,14 +109,6 @@ class StaffDB(Directory):
         if _is_staff_select(sql):
             assert self.crm_table or sql.startswith(admin_platform._SELECT)
             return [self._listed(r) for r in self.rows]
-        if sql == staff_roles.SQL_BOOKING_ROLE:
-            if self.booking_custom is None:
-                raise asyncpg.InsufficientPrivilegeError("permission denied for view v_staff_role_capability")
-            role = self.booking_custom.get(args[0])
-            return [] if role is None else [{"role_code": args[0], "label": role["label"],
-                                             "based_on": role.get("based_on", "contracting"),
-                                             "archived": role.get("archived", False), "capability": c}
-                                            for c in role.get("capabilities", ["supply.read"])]
         raise AssertionError(f"unexpected fetch SQL: {sql}")
 
     async def fetchrow(self, sql: str, *args: Any) -> Optional[dict[str, Any]]:
@@ -156,16 +141,12 @@ class StaffDB(Directory):
         if sql == sd.SQL_USERNAME_TAKEN:
             return 1 if any(r["username"] == args[0] for r in self.rows) else None
         if sql == sd.SQL_INSERT:
-            username, role, email, display_name, custom_role = args
+            username, role, email, display_name, *_ = args   # AA-1155: + custom_role (test_aa1155_*)
             uid = str(uuid.uuid4())
             self.rows.append({"id": uid, "username": username, "role": role, "email": email,
                               "display_name": display_name, "is_active": True, "cognito_iss": None,
-                              "cognito_sub": None, "last_login_at": None, "is_owner": False, "password_hash": None,
-                              "custom_role": custom_role, "is_business_owner": False})
+                              "cognito_sub": None, "last_login_at": None, "is_owner": False, "password_hash": None})
             return uid
-        if sql == sd.SQL_BUSINESS_OWNER_HOLDER:
-            return next((r["id"] for r in self.rows if r.get("is_business_owner") and r["id"] != str(args[0])),
-                        None)
         raise AssertionError(f"unexpected fetchval SQL: {sql}")
 
     async def execute(self, sql: str, *args: Any) -> str:
@@ -179,11 +160,6 @@ class StaffDB(Directory):
         if sql == sd.SQL_SET_ROLE:
             self.sql.append(sql)
             self._find(args[0])["role"] = args[1]
-            self._find(args[0])["custom_role"] = args[2]
-            return "UPDATE 1"
-        if sql == sd.SQL_SET_BUSINESS_OWNER:
-            self.sql.append(sql)
-            self._find(args[0])["is_business_owner"] = args[1]
             return "UPDATE 1"
         if sql == sd.SQL_SET_ACTIVE:
             self.sql.append(sql)
