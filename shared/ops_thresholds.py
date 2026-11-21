@@ -4,8 +4,9 @@ Platform › Settings (area "ops").
 The checks (shared/ops_checks.py, run by the api's ops metrics sampler; shared/jobs/backlog.py for the overdue factor;
 services/recompute/lifecycle.py and services/acp_contract/research_coverage.py for their limits;
 shared/llm_client/route_watch.py and services/quality/funnel.py for the reply cut share and the quality funnel rules)
-and the bell window of each check family (``Check.bell_key``) read the values in force through these accessors, never a module constant (tech lead S279: a threshold is a setting, maker-checker and
-audited, with today's value as the seeded default). The keys equal the CIS 469 seed
+and the bell window of each check family (``Check.bell_key``) read the values in force through these accessors,
+never a module constant (tech lead S279: a threshold is a setting, maker-checker and audited, with today's value as
+the seeded default). The keys equal the CIS 469 seed
 (tests/integration/test_aa1171_migration_469.py and the settings-lint reader check,
 tests/unit/test_s279_settings_lint.py).
 ``shared.settings.get`` serves the last snapshot (the api and the worker refresh it in the background) and the

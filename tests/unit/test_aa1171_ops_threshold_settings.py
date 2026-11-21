@@ -1,6 +1,6 @@
-"""AA-1171 (S287 alerts catalogue P0, tech lead decision D3) — CIS 469: the fifteen in-app check thresholds and bell windows are compiled
-with today's values as defaults, a plain label and a complete EN + VI guide, maker-checker, and the accessors of
-shared/ops_thresholds.py return them in the units the checks use. No DB."""
+"""AA-1171 (S287 alerts catalogue P0, tech lead decision D3) — CIS 469: the fifteen in-app check thresholds and bell
+windows are compiled with today's values as defaults, a plain label and a complete EN + VI guide, maker-checker, and
+the accessors of shared/ops_thresholds.py return them in the units the checks use. No DB."""
 from datetime import timedelta
 
 from shared import ops_thresholds as t
