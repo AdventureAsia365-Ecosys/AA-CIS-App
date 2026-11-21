@@ -363,6 +363,12 @@ async def propose(pool: Any, key: str, *, value: Any, reason: str, actor: str, b
     evidence_ref = (evidence_ref or "").strip() or None
     if d.evidence_required and not evidence_ref:
         raise SettingsError(422, f"{d.label} needs an evidence link (an eval or replay run)", "evidence_required")
+    # AA-788: a value that lets a measured check hold content needs its passing measurement record as the evidence
+    from services.quality import quality_settings
+
+    problem = quality_settings.evidence_problem(d.key, value, evidence_ref)
+    if problem:
+        raise SettingsError(422, f"{d.label}: {problem}", "evidence_mismatch")
     _check_tenant_scope(d, tenant_id)
     effective_from = effective_start(effective_from)
     if apply and not can_approve:

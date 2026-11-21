@@ -69,7 +69,7 @@ def modes(monkeypatch):
 # ---------------------------------------------------------------- defaults: today's behaviour
 
 def test_default_modes_are_todays_behaviour(modes):
-    assert qg.f12_scope_mode() == qg.WARN_MODE and qg.F12_SCOPE_BLOCKING is False
+    assert qg.f12_scope_mode() == qg.WARN_MODE and not hasattr(qg, "F12_SCOPE_BLOCKING")
     assert qg.f9_brand_style_mode() == qg.WARN_MODE
     assert qg.f14_floor_mode() == qg.REPAIR_MODE and qg.F14_FLOOR_BLOCKING is True
 

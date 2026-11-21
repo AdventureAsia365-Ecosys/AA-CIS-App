@@ -440,7 +440,7 @@ def test_faq_untouched_when_all_answerable():
 def test_f12_warns_and_f13_reports_residue():
     ctx = _ctx()
     f12 = qg.gate_scope("The Gobi is far from here.", ctx, "Gobi and Khovsgol Guide", None)
-    assert not f12["passed"] and f12["blocking"] is qg.F12_SCOPE_BLOCKING is False and f12["repairable"]
+    assert not f12["passed"] and f12["blocking"] is False and f12["repairable"]  # default warn (AA-788 setting)
     f13 = qg.gate_hygiene("Most families say the lake is the best part of the trip for them.", ctx)
     assert not f13["passed"] and not f13["blocking"]
     # S234 round 2 — a source-notes leak is F13_leak now: blocking, sentence-repairable
