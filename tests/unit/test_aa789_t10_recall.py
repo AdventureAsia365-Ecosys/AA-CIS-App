@@ -64,7 +64,7 @@ def _issues(text: str, seed: str = ROUTE_SEED) -> dict:
 def test_gate_severity_flags_are_unchanged():
     """The flags are unchanged. The F15 frames this issue adds block on attempt 1 only and never hold."""
     assert qg.F15_STOCK_BLOCKING is True and qg.F17_BLOCKING is True and qg.F18_BLOCKING is True
-    assert qg.F12_SCOPE_BLOCKING is False
+    assert qg.f12_scope_mode() == qg.WARN_MODE  # AA-788: a setting now, seeded warn
     text = ("The yearly return is institutional, not ceremonial sentiment. "
             "The site was a founding argument, not a scenic preference.")
     attempt1 = qg.gate_voice(text, spec=None, stock_blocking=True)

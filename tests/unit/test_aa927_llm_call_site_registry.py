@@ -157,6 +157,8 @@ EXCLUDED: dict[tuple[str, str], str] = {
         "`_judge` is a local variable (stored judge JSON)",
     ("api/routers/admin_pipeline/tour_detail.py", "get_tour_detail"):
         "`_judge` is a local variable (stored judge JSON)",
+    ("scripts/aa788/pilot.py", "isolated"): "the AA-788 pilot wraps LLMClient.generate to enforce the run cap "
+                                            "before each call; the wrapped T9 writer call site writes the row",
     ("scripts/aa729/evalpatch.py", "install"): "the AA-729 harness wraps LLMClient.generate to count calls; the "
                                                "wrapped call's own caller writes the row",
     ("scripts/aa645/brandfit_measure.py", "main"): "reads score_brand_fit's signature (inspect) to check the image / "

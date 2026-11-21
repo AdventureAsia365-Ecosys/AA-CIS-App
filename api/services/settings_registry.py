@@ -352,6 +352,21 @@ def _check_tenant_scope(d: Definition, tenant_id: Optional[str]) -> None:
                                  "environment; remove it from the environment first", "env_override_active")
 
 
+def _check_evidence(d: Definition, value: Any, evidence_ref: Optional[str]) -> Optional[str]:
+    """The proposal's evidence, trimmed (None when empty): required when the definition says so (422
+    ``evidence_required``); AA-788: a value that lets a measured check hold content must cite its passing measurement
+    record (quality_settings.evidence_problem, 422 ``evidence_mismatch``)."""
+    from services.quality import quality_settings
+
+    evidence_ref = (evidence_ref or "").strip() or None
+    if d.evidence_required and not evidence_ref:
+        raise SettingsError(422, f"{d.label} needs an evidence link (an eval or replay run)", "evidence_required")
+    problem = quality_settings.evidence_problem(d.key, value, evidence_ref)
+    if problem:
+        raise SettingsError(422, f"{d.label}: {problem}", "evidence_mismatch")
+    return evidence_ref
+
+
 async def propose(pool: Any, key: str, *, value: Any, reason: str, actor: str, base_version: Optional[int],
                   evidence_ref: Optional[str] = None, effective_from: Optional[datetime] = None,
                   tenant_id: Optional[str] = None, apply: bool = False, can_approve: bool = False) -> dict:
@@ -360,9 +375,7 @@ async def propose(pool: Any, key: str, *, value: Any, reason: str, actor: str, b
     reason = (reason or "").strip()
     if len(reason) < REASON_MIN:
         raise SettingsError(422, f"Give a reason of at least {REASON_MIN} characters", "reason_too_short")
-    evidence_ref = (evidence_ref or "").strip() or None
-    if d.evidence_required and not evidence_ref:
-        raise SettingsError(422, f"{d.label} needs an evidence link (an eval or replay run)", "evidence_required")
+    evidence_ref = _check_evidence(d, value, evidence_ref)
     _check_tenant_scope(d, tenant_id)
     effective_from = effective_start(effective_from)
     if apply and not can_approve:

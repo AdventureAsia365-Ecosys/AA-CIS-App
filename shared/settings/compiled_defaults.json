@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -7695,7 +7695,7 @@
    "app": "cis",
    "area": "quality_modes",
    "label": "Content checks: place outside the piece's scope",
-   "description": "warn: a place outside the piece's scope is reported only. block: a body finding blocks for one sentence repair and holds the piece when it is left (AA-788). Evidence required: an eval or golden-set run id, or a $0 replay of stored pieces that shows the new verdicts.",
+   "description": "warn: a place outside the piece's scope is reported only. block: a body finding blocks for one sentence repair and holds the piece when it is left. Evidence for block: only the reference of a passing F12 pilot measurement record, as scripts/aa788/pilot.py score prints it (aa788-pilot:<run id>:<12 hex>; root ADR 0020, the deterministic-detector bar); the server refuses any other evidence for block. Evidence for warn: any eval or golden-set run id, or a $0 replay of stored pieces.",
    "value_type": "enum",
    "unit": null,
    "min_value": null,
@@ -7715,16 +7715,16 @@
    "guide": {
     "en": {
      "what": "What the free scope check does when a blog or social post names a place outside the piece's scope (a place no day of the trip visits). warn: reported only. block: a finding in the body gets one sentence repair, and the piece is held if it is still there.",
-     "raise": "block (the stricter choice): pieces stop naming places the trip does not visit; more repairs (paid) and holds.",
+     "raise": "block (the stricter choice): pieces stop naming places the trip does not visit; more repairs (paid) and holds. Allowed only with a passing pilot measurement record of this check.",
      "lower": "warn (the looser choice): the piece goes on with a flag.",
-     "when": "Choose block when tenants receive pieces that send readers to places the tour never visits. The change form asks for evidence: an evaluation run on a fixed set of reviewed pieces, or a free replay of stored pieces that shows the new verdicts.",
+     "when": "Choose block only once the pilot measurement of this check has passed its accuracy bar. The change form then needs the record reference the pilot's scorer prints for a passing record (it starts with aa788-pilot:); any other evidence is refused for block. Going back to warn takes any evidence, such as an evaluation run or a free replay of stored pieces.",
      "example": "With the default warn: out-of-scope places are flagged, nothing is held."
     },
     "vi": {
      "what": "Bước kiểm phạm vi (miễn phí) xử lý ra sao khi bài blog hay mạng xã hội nêu một địa điểm ngoài phạm vi của bài (nơi không ngày nào của chuyến ghé). warn: chỉ báo. block: lỗi trong thân bài được sửa một câu, nếu vẫn còn thì bài bị giữ.",
-     "raise": "block (lựa chọn chặt hơn): bài không còn nhắc nơi chuyến đi không ghé; nhiều lần sửa (có phí) và giữ bài hơn.",
+     "raise": "block (lựa chọn chặt hơn): bài không còn nhắc nơi chuyến đi không ghé; nhiều lần sửa (có phí) và giữ bài hơn. Chỉ được chọn khi có bản ghi đo thử (pilot) đạt của bước kiểm này.",
      "lower": "warn (lựa chọn nới hơn): bài đi tiếp kèm cờ.",
-     "when": "Chọn block khi đại lý nhận bài dẫn người đọc tới nơi tour không hề ghé. Form đổi giá trị yêu cầu bằng chứng: một lần chạy đánh giá trên một bộ bài đã được duyệt cố định, hoặc một lần replay miễn phí các bài đã lưu cho thấy kết quả mới.",
+     "when": "Chỉ chọn block khi lần đo thử (pilot) của bước kiểm này đã đạt ngưỡng chính xác. Khi đó form đổi giá trị cần mã bản ghi mà công cụ chấm điểm của pilot in ra cho một bản ghi đạt (bắt đầu bằng aa788-pilot:); mọi bằng chứng khác bị từ chối cho block. Quay lại warn thì bằng chứng nào cũng được, ví dụ một lần chạy đánh giá hoặc một lần replay miễn phí các bài đã lưu.",
      "example": "Với mặc định warn: địa điểm ngoài phạm vi được gắn cờ, không giữ bài."
     }
    }

@@ -4162,7 +4162,10 @@ lexicon + out-of-scope gazetteer from the TRIP name and "other trips" lines, `LE
 `SOCIAL_PROOF_RE`, repeats, hashtag spelling). It fixes what is safe in place before the gates
 (logged as the `F13_autofix` flag) and two gates report the rest: **F12_scope** (a place outside
 the SCOPE in title/meta/headings/body; warn by default — AA-788: setting `cis.quality_modes.t10_f12_scope` = block makes a body finding
-block for one sentence repair and hold when it is left, a title/meta-only finding stays a warning) and
+block for one sentence repair and hold when it is left, a title/meta-only finding stays a warning; S287: no code
+switch — the setting is read at gate time, and its `block` value is refused unless the evidence is a passing pilot
+measurement record reference `aa788-pilot:<run id>:<12 hex>` printed by `scripts/aa788/pilot.py score`, root ADR 0020
+precision bar for a deterministic detector, `quality_settings.evidence_problem`) and
 **F13_hygiene** (warn). Blogs also drop FAQ pairs the seed cannot answer (age, fitness, price…),
 logged under `F7_faq_autofix`.
 S234 (AA-771): LinkedIn has a **channel spec** by brand register (`services/acp_shared/channel_spec.py`:
@@ -4170,7 +4173,9 @@ consumer_social / editorial / warm_practical / observational, from the voice adj
 word band 120–250 (editorial 300), ≤3 hashtags, first line ≤140 chars; hygiene.autofix applies the hashtag cap
 (each tag once — AA-780 S246) and first-line split. **F14_social_shape** (LinkedIn shape; warn, blocks above 1.3× the band → full
 rewrite; AA-780: under the band's floor blocks on attempt 1 only → one full rewrite to the target (AA-788: the rewrite
-is also given the source's fact sentences the post does not tell yet; kill switch: setting `cis.quality_modes.t10_f14_floor` = warn), and never
+is also given the source's fact sentences the post does not tell yet; kill switch: setting `cis.quality_modes.t10_f14_floor` = warn;
+S287: an F14 word-count violation reads as `length_short` / `length_long` like a blog's F4 one,
+`length_contract.ledger_length_codes`, with no floor of its own), and never
 holds a piece — `quality_gates.never_holds`; the AA-528 regression guard keeps a repairable rewrite of a floor-only attempt 1 for the attempt-3 repair, and on a revert waives the floor block), **F15_voice** (stock-phrase hard list; blocks on attempt 1 only, for one sentence repair, and
 never holds a piece — `hold_failure` skips it; AA-780 S246: a STOCK_PATTERNS sentence still in the final attempt's text is cut in code after the loop, `service._cut_stock_lines` — never the hook or the CTA, never below the word band; shown as the non-blocking `F15_stock_cut` flag) and **F15_voice_warn** (trade register, audience-number leak,
 generic or repeated opener, AA-780 broetry — ≥2 consecutive prose sentences of ≤5 words, bullets and emoji-only lines excluded; warn only, never repaired; stored as warn findings of F15_voice since AA-924, whose stock-list findings sit in F2_lexicon). All pass for every other channel. The F9 judge
