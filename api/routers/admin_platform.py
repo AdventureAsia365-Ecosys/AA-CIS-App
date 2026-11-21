@@ -4,8 +4,7 @@
   GET   /admin/platform/staff/{staff_id}            one account
   POST  /admin/platform/staff                       create (C6)
   PATCH /admin/platform/staff/{staff_id}/roles      CIS role, Booking grant and/or CRM roles (C6, AA-1031), or a
-                                                    preset: platform_owner ("Administrator", AA-1031), pricing_team
-                                                    (AA-1091), business_owner / content_ops (AA-1150)
+                                                    preset (AA-1155 T14: a shared.staff_role_preset code)
   POST  /admin/platform/staff/{staff_id}/disable    (C6)
   POST  /admin/platform/staff/{staff_id}/enable     (C6)
   POST  /admin/platform/staff/{staff_id}/sign-out   "reset": end every session, re-enable if disabled (C6)
@@ -16,6 +15,7 @@
   GET   /admin/platform/roles                       every app's staff roles: CIS built-in + custom, Booking built-in +
                                                     custom, the CRM staff groups, TripPlanner (AA-1155: the Staff
                                                     page pickers and the read-only Roles & permissions page)
+  The CIS role editor and the preset editor (AA-1155 T13 / T14): api/routers/admin_platform_roles.py.
 
 AA-1155 (spec tasks T9 / T10): the CIS role and the Booking role of a write may be a custom role code
 (``custom_<name>``); every row carries ``custom_role`` (+ its ``custom_role_label``) and ``is_business_owner``.
@@ -57,7 +57,7 @@ from typing_extensions import Annotated
 from api.core import staff_roles
 from api.core.staff_authz import STAFF_ROLES, request_staff_identity, staff_policy
 from api.routers.admin import verify_admin_secret
-from api.services import staff_custom_roles, staff_directory, staff_invite
+from api.services import staff_custom_roles, staff_directory, staff_invite, staff_presets
 from api.services.staff_directory import CognitoDirectory, StaffDirectoryError, WriteResult, get_cognito
 
 router = APIRouter(prefix="/admin/platform", tags=["admin-platform"],
@@ -100,10 +100,9 @@ CisRole = Union[Literal["admin", "content_lead", "content", "tenant_qa", "custom
 # AA-1150: content_creator is retired (staff_directory.RETIRED_BOOKING_ROLES): never granted again, Sync removes it.
 BookingRole = Union[Literal["admin", "sales", "contracting", "finance"], CustomRoleCode]
 CrmRole = Literal["platform_admin", "ops", "support"]
-# AA-1091: pricing_team = CIS customer_success + Booking contracting (staff_directory.PRESET_PRICING_TEAM).
-# AA-1150 lean people-role presets: platform_owner is "Administrator"; business_owner = CIS admin + Booking admin;
-# content_ops = CIS content_lead, no Booking role, no CRM role.
-Preset = Literal["platform_owner", "pricing_team", "business_owner", "content_ops"]
+# AA-1155 T14: a preset is the code of a shared.staff_role_preset row (CIS 465); the writer checks it exists, is active
+# and applies its rules (api/services/staff_presets.py).
+Preset = Annotated[str, StringConstraints(pattern=staff_presets.PRESET_CODE_RE.pattern)]
 
 
 async def _select_sql(conn: Any) -> tuple[str, bool]:
@@ -199,11 +198,10 @@ class CreateStaffBody(BaseModel):
 
 class ChangeRolesBody(BaseModel):
     """Only the fields sent are changed; ``"booking_role": null`` removes the Booking grant, ``"crm_roles": []``
-    (or null) removes every CRM role. ``"preset": "platform_owner"`` (AA-1031) is sent alone and sets CIS admin +
-    Booking admin + CRM Agency admin; ``"preset": "pricing_team"`` (AA-1091) gives CIS customer_success + Booking
-    contracting, keeping a role that already has those rights; it only adds (409 preset_would_replace rather than
-    replace another role). AA-1150: ``"business_owner"`` = CIS admin + Booking admin (CRM unchanged);
-    ``"content_ops"`` = CIS content_lead, no Booking role, no CRM role."""
+    (or null) removes every CRM role. ``"preset": <code>`` is sent alone and applies the roles of that preset
+    (AA-1155 T14: a row of shared.staff_role_preset, edited on the Staff page; GET /admin/platform/presets lists
+    them). An additive-only preset keeps a role that already has its rights and never replaces another one (409
+    preset_would_replace); an unknown or archived preset is 400 ``preset``."""
     model_config = ConfigDict(extra="forbid")
     role: Optional[CisRole] = None
     booking_role: Optional[BookingRole] = None

@@ -22,8 +22,8 @@ def test_the_constants():
     assert sd.BOOKING_ROLES == ("admin", "sales", "contracting", "finance")
     assert sd.RETIRED_BOOKING_ROLES == ("content_creator",)
     assert sd.BOOKING_GROUPS[-1] == "booking-content_creator"   # still removed by Sync, after the assignable ones
-    assert {sd.PRESET_PLATFORM_OWNER, sd.PRESET_PRICING_TEAM, sd.PRESET_BUSINESS_OWNER, sd.PRESET_CONTENT_OPS} == set(
-        sd.PRESETS)
+    # AA-1155 T14: the presets are data (CIS 465); the code keeps no preset literal.
+    assert not any(name.startswith(("PRESET_", "PRICING_")) for name in dir(sd))
 
 
 # ── Presets ───────────────────────────────────────────────────────────────────────────────────────

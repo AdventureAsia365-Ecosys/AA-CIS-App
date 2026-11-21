@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from api.core import e2e_staff, staff_identity
 from api.services import staff_directory as sd
 from services import staff_reconcile as sr
+from tests.unit.aa1155_presets_seed import SEED_PRESETS
 from tests.unit.test_aa1035_a10d_e2e_cs import (  # noqa: F401 — db, stubbed, issuer and directory are fixtures
     CS_E2E, CS_GROUP, _cs_row, _cs_token, _echo_app, db, directory, issuer, stubbed,
 )
@@ -29,7 +30,9 @@ PRICING_CHECKER = "e2e-booking-pricing-checker@e2e-mail.lumiguides.it.com"
 
 
 def test_the_constants():
-    assert e2e_staff.E2E_CIS_CS_PRICING_BOOKING_ROLE == "contracting" == sd.PRICING_BOOKING_ROLE
+    # AA-1155 T14: the Pricing team preset is data now (CIS 465 seed, tests/unit/aa1155_presets_seed.py).
+    pricing = next(p for p in SEED_PRESETS if p.code == "pricing_team")
+    assert e2e_staff.E2E_CIS_CS_PRICING_BOOKING_ROLE == "contracting" == pricing.booking_role
     assert e2e_staff.E2E_BOOKING_PRICING_CHECKER_TEST_STAFF_EMAIL == (
         "e2e-booking-pricing-checker@e2e-mail.lumiguides.it.com")
     # The checker is never a CIS directory address.

@@ -668,6 +668,13 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/platform/staff/{staff_id}/invite"): STAFF_WRITE,
     ("PUT", "/admin/platform/staff/{staff_id}/business-owner"): STAFF_WRITE,   # AA-1155 R3.3 (audited)
     ("GET", "/admin/platform/roles"): STAFF_READ,   # AA-1155 R5.3 / R5.4: every app's staff roles
+    # AA-1155 T13 (R5.6): the CIS role editor; T14 (R5.7): the people-role presets. Writes: owners only, audited.
+    ("GET", "/admin/platform/roles/cis"): STAFF_READ,
+    ("POST", "/admin/platform/roles/cis"): STAFF_WRITE,
+    ("PATCH", "/admin/platform/roles/cis/{code}"): STAFF_WRITE,
+    ("GET", "/admin/platform/presets"): STAFF_READ,
+    ("POST", "/admin/platform/presets"): STAFF_WRITE,
+    ("PATCH", "/admin/platform/presets/{code}"): STAFF_WRITE,
 
     # ── /v1 routers the staff BFF calls with the admin secret (/api/pipeline, the /api/tenant staff
     # branch). Their own guard keeps tenant JWTs out; POLICY narrows the staff roles.
