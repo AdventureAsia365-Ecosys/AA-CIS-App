@@ -129,10 +129,12 @@ def test_the_cis_middleware_still_refuses_its_writes(issuer, directory, monkeypa
 
 def test_the_known_e2e_list_is_exactly_the_reviewed_one():
     assert set(sr.KNOWN_E2E_STAFF) == {E2E_REV, E2E_BOOKING, E2E_CIS_ADMIN, E2E_CRM_STAFF, CS_E2E, E2E_BK_STAFF,
-                                       E2E_BK_MAKER, E2E_BK_CHECKER, PRICING_CHECKER}
+                                       E2E_BK_MAKER, E2E_BK_CHECKER, PRICING_CHECKER,
+                                       e2e_staff.E2E_CIS_CONTENT_LEAD_TEST_STAFF_EMAIL,   # AA-1155 A10f
+                                       e2e_staff.E2E_CUSTOM_MAKER_TEST_STAFF_EMAIL}       # AA-1155 A10g
     assert {e.clause for e in sr.KNOWN_E2E_STAFF.values()} == {
         "ADR 0006a A10", "ADR 0006a A10a", "ADR 0006a A10b", "ADR 0006a A10c", "ADR 0006a A10d", "ADR 0006a A10e",
-        "ADR 0006a A10e-2"}
+        "ADR 0006a A10e-2", "ADR 0006a A10f", "ADR 0006a A10g"}
     # The pricing checker: booking-contracting only, never in the CIS directory. The A10d account's one other group
     # set is the Pricing team preset's; no other identity has a second group set.
     assert sr.KNOWN_E2E_STAFF[PRICING_CHECKER].groups == {"booking-contracting"}

@@ -2891,7 +2891,8 @@ sign-out; staff have no password) and `/sync` (retry). DB first, then Cognito; a
 **Reconcile job.** `staff_directory_reconcile` on `shared.job` (`services/staff_reconcile.py`,
 `services/jobs/staff_reconcile_job.py`): report only, `ListUsers` / `ListUsersInGroup` only (no `AdminGetUser`,
 it counts as MAU). Reports drift (Cognito users missing from the directory, rows missing from Cognito,
-group/role/email drift, rows bound to another sub or issuer, non-`CONFIRMED` users, break-glass state) and
+group/role/email drift, rows bound to another sub or issuer, non-`CONFIRMED` users, break-glass state; AA-1155: a
+custom role row must be in `cis-custom` alone and a Booking custom grant in `booking-custom`) and
 **cutover readiness** (active rows without an email or `cognito_sub`). On demand: Staff page "Check now"
 (`POST /admin/platform/staff-directory/reconcile`, read `GET …/health`, `staff.read`); the daily run goes
 through the machine route `POST /admin/job-runner/staff-reconcile/schedule` once the ops-probe Lambda calls it

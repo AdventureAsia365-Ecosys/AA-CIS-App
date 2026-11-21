@@ -142,7 +142,7 @@ def test_role_comes_from_the_highest_group_and_drift_is_logged_not_denied(client
     assert res.json()["role"] == "content"   # AA-1035: the retired cis-reviewer group adds nothing
     drift = [e for e in logs if e["event"] == "staff_role_drift"]
     assert drift == [{"event": "staff_role_drift", "log_level": "warning", "admin_id": uid,
-                      "group_role": "content", "db_role": "admin", "sub": SUB}]
+                      "group_role": "content", "db_role": "admin", "custom_role": None, "sub": SUB}]
 
 
 @pytest.mark.parametrize("groups, role", [

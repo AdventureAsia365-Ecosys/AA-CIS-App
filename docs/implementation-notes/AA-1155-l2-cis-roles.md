@@ -26,6 +26,9 @@ S286 (`AA-1155-custom-roles-foundation.md`). No migration in this lane.
   `_budgets`, `_spend`, `admin_llm_route`, `admin_llm_route_control`): R5.5 says "AI gateway route". 403 (not 401):
   the request is authenticated by the secret but lacks the session kind.
 - **A10f / A10g read-only in CIS** (`e2e_read_only`, no write allow-list).
+- **Reconcile A10g group set:** exactly `cis-custom` + `booking-custom` (root ADR 0006a A10g: "one exact set, no
+  extra set"), not "cis-custom with an optional booking-custom" as the review suggested; the WORKFORCE trigger refuses
+  a token for any other set, so a known-E2E listing for it would explain an account that cannot sign in.
 
 ## Changed
 - A10f "holds its writes to synthetic test tours (publish, review)" (ADR 0006a A10f) is not built: CIS has no
@@ -33,8 +36,12 @@ S286 (`AA-1155-custom-roles-foundation.md`). No migration in this lane.
   follow-up (spec amendment or new task).
 - Booking built-in roles show names only on the matrix page: their capability lists live in the Booking code and no
   contract exposes them to CIS (follow-up: a Booking built-in rows contract).
-- The staff reconcile job (C7) does not know `cis-custom` / `booking-custom` / A10f / A10g yet: a custom holder will
-  show as group drift on the directory health card (follow-up).
+- Review fix: the staff reconcile job (C7, `services/staff_reconcile.py`) reads `cis-custom` / `booking-custom` and
+  `admin_users.custom_role`. A row with a custom role must be in `cis-custom` alone; a built-in `cis-*` group left
+  beside it (a failed remove step) is `cis_role` drift, because that group outranks `cis-custom` at sign-in. A
+  Booking custom grant must be in `booking-custom`. A10f (`cis-content_lead`) and A10g (exactly `cis-custom` +
+  `booking-custom`, the ADR's one set) are known Dev E2E identities. Sign-in logs `staff_role_drift` (with
+  `custom_role`) when a custom role row resolves to a built-in group.
 
 ## Tradeoffs
 - Contextvar lookup in `role_perms()` keeps ~20 `has_perm(role, ...)` call sites unchanged; outside a verified request

@@ -406,10 +406,11 @@ async def resolve_staff(db: Any, principal: Principal, *, touch_login: bool = Fa
     if custom:
         custom_role = _custom_grant(row, principal)
         role = custom_role.code
-    elif loaded_now and row.db_role != role:
-        # The group decides (ADR 0006); the reconcile job (C7) reports the difference.
+    elif loaded_now and (row.db_role != role or row.custom_role):
+        # The group decides (ADR 0006); the reconcile job (C7) reports the difference. AA-1155: a row with a custom
+        # role whose token resolved to a built-in group (a cis-* group left beside cis-custom outranks it) is drift too.
         logger.warning("staff_role_drift", admin_id=row.admin_id, group_role=role, db_role=row.db_role,
-                       sub=principal.sub)
+                       custom_role=row.custom_role, sub=principal.sub)
     e2e_read_only = e2e_staff.is_dev_only_e2e_staff(row.email) or e2e_staff.is_dev_only_e2e_staff(principal.email)
     # A10d: the A10b exceptions belong to the A10b address alone; a cs address on either side never gets them.
     e2e_allowlisted_writes = (
