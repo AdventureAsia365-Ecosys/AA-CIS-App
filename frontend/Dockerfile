@@ -3,7 +3,10 @@
 # ECS Dev service aa-cis-dev-admin (AA-CIS-Infra modules/environment/staff_web.tf: Fargate ARM64, port 3000, health
 # check /api/healthz). Built natively on an arm64 runner
 # (.github/workflows/deploy-admin-dev.yml). Same shape as AA-Partner web/Dockerfile.
-FROM node:22-alpine AS build
+# AA-1164: the Node base is pinned by tag AND digest (both stages), so a build is repeatable and an old base
+# cannot linger unseen; Dependabot (docker ecosystem, .github/dependabot.yml) moves both weekly, and the nightly
+# Image Scan (AA-CIS-Infra image-scan.yml) reads what actually runs.
+FROM node:22.23.5-alpine3.24@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a AS build
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 COPY package.json package-lock.json ./
@@ -21,7 +24,7 @@ ENV NEXT_PUBLIC_SENTRY_DSN=${NEXT_PUBLIC_SENTRY_DSN} \
     NEXT_OUTPUT=standalone
 RUN NODE_OPTIONS=--max-old-space-size=2048 npm run build
 
-FROM node:22-alpine AS runtime
+FROM node:22.23.5-alpine3.24@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a AS runtime
 ARG GIT_SHA=unknown
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
@@ -32,7 +35,10 @@ ENV NODE_ENV=production \
     # connection and answer 502 (lesson S231, AA-741). Read by the Next standalone server.
     KEEP_ALIVE_TIMEOUT=105000
 # The server needs node only: drop npm, npx and corepack from the runtime image (smaller attack surface).
-RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+# AA-1164: apk upgrade takes the Alpine security fixes released after the pinned base was built (zlib and
+# OpenSSL were fixable in the runtime images on 21/11/2026).
+RUN apk upgrade --no-cache \
+ && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
       /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 WORKDIR /app
 COPY --from=build --chown=10001:10001 /app/.next/standalone ./

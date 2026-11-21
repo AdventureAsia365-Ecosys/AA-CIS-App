@@ -8,6 +8,8 @@ from typing import Any, Optional
 
 from api.core import identity_config, staff_identity, staff_roles
 from api.core.identity_verifier import IssuerConfig, MultiIssuerVerifier
+from api.services import staff_presets
+from tests.unit.aa1155_presets_seed import seed_records
 from tests.unit.test_identity_verifier import _DROP, FakeFetcher, LocalIssuer
 
 ISS = identity_config.DEV_WORKFORCE_ISSUER
@@ -58,6 +60,8 @@ class Directory:
         # role read raises (a revoked grant, the table gone).
         self.custom_roles: dict[str, dict[str, Any]] = {}
         self.fail_roles = False
+        # AA-1155 T14: shared.staff_role_preset (CIS 465), seeded with today's four presets: code -> row.
+        self.presets: dict[str, dict[str, Any]] = seed_records()
 
     def add_custom_role(self, code: str = "custom_content", *, label: str = "Content", based_on: str = "content_lead",
                         archived: bool = False, capabilities: Any = ("content.read", "tenant.read")) -> str:
@@ -87,6 +91,8 @@ class Directory:
 
     async def fetchrow(self, sql: str, *args: Any) -> Optional[dict[str, Any]]:
         self.sql.append(sql)
+        if sql in (staff_presets.SQL_PRESET, staff_presets.SQL_PRESET_LOCK):
+            return self.presets.get(args[0])
         if sql == staff_identity.SQL_BY_IDENTITY:
             return next((dict(r) for r in self.rows
                          if r["cognito_iss"] == args[0] and r["cognito_sub"] == args[1]), None)

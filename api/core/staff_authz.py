@@ -667,7 +667,7 @@ POLICY: dict[tuple[str, str], Any] = {
     # S242 — resend the staff invitation e-mail (queues a staff_invite_email job; owners only, like every write)
     ("POST", "/admin/platform/staff/{staff_id}/invite"): STAFF_WRITE,
     ("PUT", "/admin/platform/staff/{staff_id}/business-owner"): STAFF_WRITE,   # AA-1155 R3.3 (audited)
-    ("GET", "/admin/platform/roles"): STAFF_READ,   # AA-1155 R5.3 / R5.4: every app's staff roles
+    ("GET", "/admin/platform/roles"): STAFF_READ, **staff_roles.EDITOR_POLICY,   # AA-1155 R5.3 / R5.4; R5.6 / R5.7
 
     # ── /v1 routers the staff BFF calls with the admin secret (/api/pipeline, the /api/tenant staff
     # branch). Their own guard keeps tenant JWTs out; POLICY narrows the staff roles.

@@ -241,8 +241,12 @@ def _cognito_identity(is_owner):
     return SimpleNamespace(auth="cognito", is_owner=is_owner, admin_id="11111111-1111-1111-1111-111111111111")
 
 
+# AA-1155 T13 / T14: the CIS role editor and the people-role presets are staff-directory writes too (owners only).
+_OWNER_PREFIXES = ("/admin/platform/staff", "/admin/platform/roles/cis", "/admin/platform/presets")
+
+
 def test_owner_routes_are_the_staff_directory_writes():
-    assert _OWNER_KEYS and all(p.startswith("/admin/platform/staff") and m != "GET" for m, p in _OWNER_KEYS)
+    assert _OWNER_KEYS and all(p.startswith(_OWNER_PREFIXES) and m != "GET" for m, p in _OWNER_KEYS)
 
 
 @pytest.mark.parametrize("key", _OWNER_KEYS)
