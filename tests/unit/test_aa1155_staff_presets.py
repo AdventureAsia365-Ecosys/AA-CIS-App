@@ -203,6 +203,62 @@ async def test_update_is_audited_before_and_after_and_a_no_op_writes_nothing(db)
     assert (err.value.status, err.value.code) == (404, "preset_not_found")
 
 
+async def _dead_role_preset(db):
+    """A preset naming a CIS and a Booking custom role, both archived since (the Booking one in Booking)."""
+    db.add_custom_role("custom_zz_role", label="Invented", based_on="content_lead")
+    db.add_booking_role("custom_zz_ops")
+    await sp.create_preset(db, actor_id=db.owner, fields={
+        "code": "zz_dead", "label": "Invented dead", "cis_role": "custom_zz_role", "booking_mode": "set",
+        "booking_role": "custom_zz_ops"})
+    db.custom_roles["custom_zz_role"]["archived"] = True
+    db.booking_custom["custom_zz_ops"]["archived"] = True
+
+
+@pytest.mark.parametrize("fields", [
+    {"archived": True},
+    {"label": "Invented retired"},
+    {"description": "Invented note", "sort_order": 7},
+    {"booking_mode": "clear", "booking_role": None},   # the CIS role is not re-checked: its field did not change
+])
+@pytest.mark.asyncio
+async def test_a_preset_whose_custom_role_was_archived_can_still_be_retired(db, fields):
+    await _dead_role_preset(db)
+    after = await sp.update_preset(db, actor_id=db.owner, code="zz_dead", fields=fields)
+    assert db.audit[-1]["action"] == sp.PRESET_UPDATED and db.audit[-1]["resource_id"] == "zz_dead"
+    assert all(getattr(after, k) == v for k, v in fields.items())
+
+
+@pytest.mark.parametrize("fields, code", [
+    ({"cis_role": "custom_zz_role2"}, "custom_role"),                       # a changed role is re-checked
+    ({"booking_role": "custom_zz_gone"}, "booking_role"),
+])
+@pytest.mark.asyncio
+async def test_a_changed_or_restored_preset_role_must_be_live(db, fields, code):
+    await _dead_role_preset(db)
+    db.add_custom_role("custom_zz_role2", label="Invented two", archived=True)
+    with pytest.raises(sd.StaffDirectoryError) as err:
+        await sp.update_preset(db, actor_id=db.owner, code="zz_dead", fields=fields)
+    assert (err.value.status, err.value.code) == (400, code)
+    await sp.update_preset(db, actor_id=db.owner, code="zz_dead", fields={"archived": True})
+    with pytest.raises(sd.StaffDirectoryError) as err:                      # restoring re-checks every role
+        await sp.update_preset(db, actor_id=db.owner, code="zz_dead", fields={"archived": False})
+    assert (err.value.status, err.value.code) == (400, "custom_role")
+    assert db.presets["zz_dead"]["archived"] is True
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_booking_view_does_not_block_a_relabel_or_archive(db):
+    db.add_booking_role("custom_zz_ops")
+    await sp.create_preset(db, actor_id=db.owner, fields={
+        "code": "zz_ops", "label": "Invented ops", "booking_mode": "set", "booking_role": "custom_zz_ops"})
+    db.booking_unreadable = True
+    await sp.update_preset(db, actor_id=db.owner, code="zz_ops", fields={"label": "Invented ops two"})
+    await sp.update_preset(db, actor_id=db.owner, code="zz_ops", fields={"archived": True})
+    with pytest.raises(sd.StaffDirectoryError) as err:
+        await sp.update_preset(db, actor_id=db.owner, code="zz_ops", fields={"archived": False})
+    assert (err.value.status, err.value.code) == (503, "booking_roles_unavailable")
+
+
 @pytest.mark.asyncio
 async def test_only_an_owner_edits_presets(db):
     other = db.add(email="lead@adventure.asia", username="lead", role="admin")

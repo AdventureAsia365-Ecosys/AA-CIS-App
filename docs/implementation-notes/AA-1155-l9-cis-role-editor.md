@@ -28,6 +28,14 @@ Migration CIS 465 ships first in its own migration-only PR (MIG-4); this code PR
 - **Editors on the Staff page** (`PresetEditor.tsx`, `RoleEditor.tsx`, kit only): everyone with `staff.read` reads
   them; `can_edit` (owner on a Cognito session) shows the write buttons; the backend re-checks the owner in the write's
   transaction. Preset names and descriptions are data (shown as an owner wrote them, not translated).
+- **Review fix (dead custom role in a preset)**: a preset edit re-checks a custom role (CIS active with capabilities,
+  Booking active and the view readable) only when that role's field changes or the preset is restored, never when the
+  result is archived (`staff_presets._live`). Before, every PATCH re-checked both, so a preset whose custom role was
+  archived since could not even be archived (400 `custom_role` / `booking_role`, 503 when the Booking view was
+  unreadable). The apply still refuses such a preset (400), so nothing unsafe is granted.
+- **Review fix (role editor)**: archiving a CIS custom role that an active preset grants (`cis_role`) is refused with
+  409 `role_in_use_by_preset`, naming the presets. Keep lists do not block (keeping a role nobody can hold is
+  harmless). The read runs in a savepoint and an unreadable preset table (465 not applied) counts as no preset.
 
 ## Changed
 - The four preset literals left `api/services/staff_presets.py`, `frontend/lib/staffPresets.ts`, `PeoplePresets.tsx`
@@ -45,6 +53,9 @@ Migration CIS 465 ships first in its own migration-only PR (MIG-4); this code PR
   backend stays the authority.
 - Thresholds: the only bounds added are column sizes / CHECK bounds (label 80, description 300, keep list 16, sort
   0-999, request list sizes), marked `technical-constant`; no policy value was added.
+- A Booking custom role is archived in Booking, out of CIS's reach: the CIS preset that sets it stays listed and its
+  apply answers 400 until an owner edits or archives the preset. Marking such a preset "not applicable" on the Staff
+  page is a follow-up (it needs a per-preset liveness read of both apps on the list route).
 
 ## Should know
 - The six editor routes live in `staff_roles.EDITOR_POLICY`, spread into `staff_authz.POLICY` (the file-size

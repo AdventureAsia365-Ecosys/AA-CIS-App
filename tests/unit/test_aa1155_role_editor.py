@@ -4,8 +4,8 @@
 The Booking editor's rules (AA-Booking app/auth/role_editor.py, task T6) on CIS: clone a built-in role (never admin,
 viewer or reviewer), tick capabilities, relabel, archive; 400 on an approve-class, staff-directory or unknown
 capability; owners only (403 for anyone else, before any write); one audit row with the role before and after. CIS adds
-two guards because a CIS holder is refused when its role is empty or archived: no empty role (400) and no archive while
-an active account holds the role (409). Invented role codes and labels only."""
+three guards because a CIS holder is refused when its role is empty or archived: no empty role (400), no archive while
+an active account holds the role (409) or an active preset grants it (409). Invented role codes and labels only."""
 from __future__ import annotations
 
 import pytest
@@ -175,6 +175,27 @@ async def test_archive_and_restore_and_never_while_held(db):
     assert role["archived"] is True and db.audit[-1]["details"]["summary"] == "archived"
     role = await editor.update_role(db, actor_id=db.owner, code=CODE, archived=False)
     assert role["archived"] is False and db.audit[-1]["details"]["summary"] == "restored"
+
+
+@pytest.mark.asyncio
+async def test_no_archive_while_an_active_preset_grants_the_role(db):
+    from api.services import staff_presets as sp   # noqa: PLC0415
+
+    db.add_custom_role(CODE, label="Invented", based_on="content")
+    await sp.create_preset(db, actor_id=db.owner, fields={"code": "zz_writers", "label": "Invented preset",
+                                                          "cis_role": CODE})
+    await sp.create_preset(db, actor_id=db.owner, fields={      # a keep list naming the role does not block
+        "code": "zz_keeper", "label": "Invented keeper", "cis_role": "content", "additive_only": True,
+        "cis_keep_roles": [CODE]})
+    n = len(db.audit)
+    with pytest.raises(sd.StaffDirectoryError) as err:
+        await editor.update_role(db, actor_id=db.owner, code=CODE, archived=True, label="Renamed")
+    assert (err.value.status, err.value.code) == (409, "role_in_use_by_preset")
+    assert "Invented preset" in err.value.detail and "Invented keeper" not in err.value.detail
+    assert db.custom_roles[CODE]["label"] == "Invented" and len(db.audit) == n
+    await sp.update_preset(db, actor_id=db.owner, code="zz_writers", fields={"archived": True})
+    role = await editor.update_role(db, actor_id=db.owner, code=CODE, archived=True)
+    assert role["archived"] is True
 
 
 @pytest.mark.asyncio

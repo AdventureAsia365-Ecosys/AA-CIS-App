@@ -7,6 +7,8 @@ from contextlib import asynccontextmanager
 from copy import deepcopy
 from typing import Any, Optional
 
+import asyncpg
+
 from api.core import staff_roles
 from api.services import staff_presets
 from api.services import staff_role_editor as editor
@@ -17,6 +19,7 @@ class EditorDB(StaffDB):
     def __init__(self) -> None:
         super().__init__()
         self.booking_custom: dict[str, dict[str, Any]] = {}   # booking.v_staff_role_capability, by role code
+        self.booking_unreadable = False                          # True plays the view's grant revoked
         self.writes = 0
 
     @asynccontextmanager
@@ -50,8 +53,14 @@ class EditorDB(StaffDB):
             self.sql.append(sql)
             return [dict(p) for p in sorted(self.presets.values(),
                                             key=lambda p: (p["archived"], p["sort_order"], p["label"], p["code"]))]
+        if sql == editor.SQL_ROLE_PRESETS:
+            self.sql.append(sql)
+            hits = [p for p in self.presets.values() if p["cis_role"] == args[0] and not p["archived"]]
+            return [{"label": p["label"]} for p in sorted(hits, key=lambda p: (p["sort_order"], p["label"]))]
         if sql == staff_roles.SQL_BOOKING_ROLE:
             self.sql.append(sql)
+            if self.booking_unreadable:
+                raise asyncpg.InsufficientPrivilegeError("permission denied for view v_staff_role_capability")
             role = self.booking_custom.get(args[0])
             if role is None:
                 return []

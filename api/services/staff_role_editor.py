@@ -15,9 +15,11 @@ before any write (400 with a code; the CIS 462 CHECKs refuse the same if the cod
   approve class or the staff directory (``approve_class_capability``: ``*.approve``, ``*.approve_<x>``,
   ``staff.write``, ``staff.admin``; root spec D4).
 
-Two guards CIS adds, because a CIS holder is refused when its role is empty or archived (fail closed, R5.1): a role
-keeps at least one capability (400 ``no_capabilities``), and a role an active account holds cannot be archived (409
-``role_in_use``: move its holders to another role on the Staff page first). Roles are never deleted.
+Three guards CIS adds, because a CIS holder is refused when its role is empty or archived (fail closed, R5.1): a
+role keeps at least one capability (400 ``no_capabilities``), a role an active account holds cannot be archived (409
+``role_in_use``: move its holders to another role on the Staff page first), and a role an active people-role preset
+grants cannot be archived either (409 ``role_in_use_by_preset``: archive or edit the preset first, so no preset on the
+Staff page points at a dead role). Roles are never deleted.
 
 Readers: ``staff.read`` (the route policy). Writers: owners on a Cognito session (``staff.write`` + the owner re-read
 in the transaction). The staff identity cache of this task is dropped after each save; other tasks follow within its
@@ -26,6 +28,8 @@ in the transaction). The staff identity cache of this task is dropped after each
 from __future__ import annotations
 
 from typing import Any, Optional
+
+import asyncpg
 
 from api.core import staff_identity, staff_roles
 
@@ -56,6 +60,12 @@ SQL_HOLDERS = (
     "GROUP BY custom_role"
 )
 SQL_ROLE_HOLDERS = "SELECT count(*) AS n FROM shared.admin_users WHERE custom_role = $1 AND is_active"
+# The active presets (CIS 465) that grant this role; the keep lists are left out: keeping a role nobody can hold is
+# harmless. CIS 465 not readable here = no preset can name it.
+SQL_ROLE_PRESETS = (
+    "SELECT label FROM shared.staff_role_preset WHERE cis_role = $1 AND NOT archived ORDER BY sort_order, label"
+)
+_PRESETS_UNREADABLE = (asyncpg.UndefinedTableError, asyncpg.InsufficientPrivilegeError)
 
 
 def _refused(status: int, detail: str, code: str) -> Exception:
@@ -210,9 +220,8 @@ async def update_role(pool: Any, *, actor_id: str, code: Any, label: Any = None,
                 changes.append("capabilities " + " ".join([*(f"+{c}" for c in added), *(f"-{c}" for c in removed)]))
             label_changed = new_label is not None and new_label != before["label"]
             archive_changed = archived is not None and bool(archived) != before["archived"]
-            if archive_changed and archived and before["holders"]:
-                raise _refused(409, f"{before['holders']} active account(s) hold this role; give them another role "
-                                    "on the Staff page before archiving it", "role_in_use")
+            if archive_changed and archived:
+                await _require_unused(conn, code, before["holders"])
             if label_changed:
                 changes.append(f"label {before['label']} -> {new_label}")
             if archive_changed:
@@ -226,6 +235,22 @@ async def update_role(pool: Any, *, actor_id: str, code: Any, label: Any = None,
                 "before": _snapshot(before), "after": _snapshot(after), "summary": "; ".join(changes)})
     staff_identity.clear_cache()
     return after
+
+
+async def _require_unused(conn: Any, code: str, holders: int) -> None:
+    """Archiving: 409 ``role_in_use`` while an active account holds the role, 409 ``role_in_use_by_preset`` while an
+    active preset grants it (its labels in the detail)."""
+    if holders:
+        raise _refused(409, f"{holders} active account(s) hold this role; give them another role on the Staff page "
+                            "before archiving it", "role_in_use")
+    try:
+        async with conn.transaction():   # a savepoint: an unreadable table must not abort the editor's transaction
+            presets = [r["label"] for r in await conn.fetch(SQL_ROLE_PRESETS, code)]
+    except _PRESETS_UNREADABLE:
+        presets = []
+    if presets:
+        raise _refused(409, "The preset(s) " + ", ".join(presets) + " grant this role; archive them or give them "
+                            "another role before archiving it", "role_in_use_by_preset")
 
 
 async def _audit(conn: Any, actor_id: str, action: str, code: str, details: dict[str, Any]) -> None:

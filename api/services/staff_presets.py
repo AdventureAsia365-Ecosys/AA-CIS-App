@@ -223,10 +223,23 @@ def _roles(values: Any, *, name: str, known: tuple[str, ...]) -> tuple[str, ...]
     return tuple(dict.fromkeys(values))
 
 
-async def check_preset(conn: Any, p: Preset) -> Preset:
+def _live(p: Preset, before: Optional[Preset], name: str) -> bool:
+    """Whether the custom role in field ``name`` must be live (active, readable): always for a new preset; on an edit
+    only when that field changed or the preset is restored, and never when the result is archived (it cannot be
+    applied). So an owner can relabel or archive a preset whose custom role was archived since (CIS here, Booking in
+    Booking): the apply refuses such a preset, the edit that retires it does not."""
+    if before is None:
+        return True
+    if p.archived:
+        return False
+    return before.archived or getattr(before, name) != getattr(p, name)
+
+
+async def check_preset(conn: Any, p: Preset, before: Optional[Preset] = None) -> Preset:
     """The editor's rules for one preset (400 with a code; the CIS 465 CHECKs refuse the same if this is bypassed):
-    roles are assignable built-in ones or ACTIVE custom roles; the modes agree with their roles; an additive preset
-    never clears or replaces; the preset sets something."""
+    roles are assignable built-in ones or custom codes, ACTIVE when :func:`_live` says so (``before`` = the row an
+    edit changes); the modes agree with their roles; an additive preset never clears or replaces; the preset sets
+    something."""
     from api.services import staff_custom_roles as scr   # noqa: PLC0415
     from api.services import staff_directory as sd   # noqa: PLC0415
 
@@ -236,8 +249,9 @@ async def check_preset(conn: Any, p: Preset) -> Preset:
     description = _text(p.description or "", name="description", low=0, high=DESCRIPTION_MAX)
     if p.cis_role is not None:
         sd.require_cis_role(p.cis_role)
-        await scr.resolve_cis_custom(conn, p.cis_role)        # a custom code: active, with capabilities (400)
-    await _check_booking(conn, p)
+        if _live(p, before, "cis_role"):
+            await scr.resolve_cis_custom(conn, p.cis_role)    # a custom code: active, with capabilities (400)
+    await _check_booking(conn, p, live=_live(p, before, "booking_role"))
     crm = _check_crm(p)
     cis_keep = _roles(list(p.cis_keep_roles), name="cis_keep_roles", known=sd.CIS_ROLES)
     booking_keep = _roles(list(p.booking_keep_roles), name="booking_keep_roles", known=sd.BOOKING_ROLES)
@@ -254,8 +268,9 @@ async def check_preset(conn: Any, p: Preset) -> Preset:
                    booking_keep_roles=booking_keep, archived=bool(p.archived), additive_only=bool(p.additive_only))
 
 
-async def _check_booking(conn: Any, p: Preset) -> None:
-    """booking_mode is known and a Booking role goes with "set" only: a built-in one or an active custom role."""
+async def _check_booking(conn: Any, p: Preset, *, live: bool) -> None:
+    """booking_mode is known and a Booking role goes with "set" only: a built-in one or a custom code, active when
+    ``live``."""
     from api.services import staff_custom_roles as scr   # noqa: PLC0415
     from api.services import staff_directory as sd   # noqa: PLC0415
 
@@ -265,6 +280,7 @@ async def _check_booking(conn: Any, p: Preset) -> None:
         raise _error(400, "A Booking role goes with booking_mode set, and only with it", "booking_mode")
     if p.booking_role is not None:
         sd.require_booking_role(p.booking_role)
+    if p.booking_role is not None and live:
         await scr.check_booking_custom(conn, p.booking_role)  # a custom code: active (400), the view readable (503)
 
 
@@ -311,7 +327,7 @@ async def create_preset(pool: Any, *, actor_id: str, fields: dict[str, Any]) -> 
 
 async def update_preset(pool: Any, *, actor_id: str, code: str, fields: dict[str, Any]) -> Preset:
     """Change the fields sent of one preset (owners only; 404 unknown), audited before and after; a no-op writes
-    nothing."""
+    nothing. A custom role is re-checked only when its field changes or the preset is restored (:func:`_live`)."""
     from api.services import staff_directory as sd   # noqa: PLC0415
 
     unknown = set(fields) - set(EDITABLE)
@@ -328,7 +344,7 @@ async def update_preset(pool: Any, *, actor_id: str, code: str, fields: dict[str
                 raise _error(404, f"No preset {code}", "preset_not_found")
             before = from_record(record)
             after = replace(before, **{k: _coerce(k, v) for k, v in fields.items()})
-            after = await check_preset(conn, after)
+            after = await check_preset(conn, after, before)
             if after == before:
                 return before
             await conn.execute(SQL_UPDATE_PRESET, *_args(after, sd._actor_tag(actor_id)))

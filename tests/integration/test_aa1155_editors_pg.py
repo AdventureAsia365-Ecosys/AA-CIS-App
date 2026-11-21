@@ -6,7 +6,8 @@ before and after; the directory applies a preset read from the table.
   relabels it, cannot archive it while an active account holds it, archives it once free; an approve-class or
   unknown capability is refused before any write; a non-owner is refused.
 - T14 (R5.7): an owner creates and edits a preset (audited before and after); change_roles applies an edited preset
-  by code; an archived preset is refused.
+  by code; an archived preset is refused. A custom role an active preset grants cannot be archived (409); a preset
+  whose custom role was archived anyway (a Booking role is archived in Booking) can still be relabelled and archived.
 
 Invented names, codes and addresses only; every row this module adds is removed at the end (audit rows stay:
 append-only).
@@ -197,3 +198,31 @@ async def test_the_seeded_presets_are_read_in_sort_order(db):
     presets = await sp.list_presets(db.pool)
     seeded = [p.code for p in presets if p.code in {"platform_owner", "business_owner", "content_ops", "pricing_team"}]
     assert seeded == ["platform_owner", "business_owner", "content_ops", "pricing_team"]
+
+
+@pytest.mark.asyncio
+async def test_a_preset_naming_an_archived_custom_role_can_still_be_retired(db):
+    owner = await db.add(owner=True)
+    await sre.create_role(db.pool, actor_id=owner, code=ROLE, label="Zz front desk", based_on="content")
+    await sp.create_preset(db.pool, actor_id=owner, fields={"code": PRESET, "label": "Zz front desk",
+                                                            "cis_role": ROLE, "sort_order": 900})
+    with pytest.raises(sd.StaffDirectoryError) as e:                 # the role editor names the preset
+        await sre.update_role(db.pool, actor_id=owner, code=ROLE, archived=True)
+    assert (e.value.status, e.value.code) == (409, "role_in_use_by_preset") and "Zz front desk" in e.value.detail
+    assert await db.admin.fetchval("SELECT archived FROM shared.staff_role WHERE code = $1", ROLE) is False
+
+    # The role archived outside this guard (as a Booking role is, in Booking): the dead preset is refused on apply,
+    # but relabelling and archiving it still work, and restoring it re-checks the role.
+    await db.admin.execute("UPDATE shared.staff_role SET archived = true WHERE code = $1", ROLE)
+    relabelled = await sp.update_preset(db.pool, actor_id=owner, code=PRESET, fields={"label": "Zz retired desk"})
+    archived = await sp.update_preset(db.pool, actor_id=owner, code=PRESET, fields={"archived": True})
+    assert relabelled.label == "Zz retired desk" and archived.archived is True
+    assert (await _audit(db, sp.PRESET_UPDATED, PRESET))[-1]["after"]["archived"] is True
+    with pytest.raises(sd.StaffDirectoryError) as e:
+        await sp.update_preset(db.pool, actor_id=owner, code=PRESET, fields={"archived": False})
+    assert (e.value.status, e.value.code) == (400, "custom_role")
+
+    # Preset first, then the role: the archive goes through.
+    await db.admin.execute("UPDATE shared.staff_role SET archived = false WHERE code = $1", ROLE)
+    role = await sre.update_role(db.pool, actor_id=owner, code=ROLE, archived=True)
+    assert role["archived"] is True
