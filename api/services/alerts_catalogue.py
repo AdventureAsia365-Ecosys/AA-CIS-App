@@ -60,9 +60,9 @@ MAX_PAGES = 10  # technical-constant: page bound of an AWS list call (a few doze
 RUNBOOK_MARK = " Runbook: "
 CACHE_PREFIX = "admin:platform:alerts"
 CACHE_TTL_S = 300  # technical-constant: cache refresh of a read (the AWS describe calls), like /admin/overview/ops
-# technical-constant: the Booking / CRM registries are two cheap reads; a short cache keeps one slow or failed peer
-# call from hiding its rows for the full AWS cache window (S287 live check: the CRM call took 3.8 s once).
-PEERS_CACHE_TTL_S = 30
+# The Booking / CRM registries are two cheap reads; a short cache keeps one slow or failed peer call from hiding its
+# rows for the full AWS cache window (S287 live check: the CRM call took 3.8 s once).
+PEERS_CACHE_TTL_S = 30  # technical-constant: cache refresh of the two peer registry reads
 
 _OPERATORS = {
     "GreaterThanThreshold": ">", "GreaterThanOrEqualToThreshold": ">=", "LessThanThreshold": "<",
