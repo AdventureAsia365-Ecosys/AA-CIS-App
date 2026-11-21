@@ -5,7 +5,8 @@ The checks (shared/ops_checks.py, run by the api's ops metrics sampler; shared/j
 services/recompute/lifecycle.py and services/acp_contract/research_coverage.py for their limits) read the values in
 force through these accessors, never a module constant (tech lead S279: a threshold is a setting, maker-checker and
 audited, with today's value as the seeded default). The keys equal the CIS 469 seed
-(tests/integration/test_aa1171_migration_469.py and the settings-lint reader check, tests/unit/test_s279_settings_lint.py).
+(tests/integration/test_aa1171_migration_469.py and the settings-lint reader check,
+tests/unit/test_s279_settings_lint.py).
 ``shared.settings.get`` serves the last snapshot (the api and the worker refresh it in the background) and the
 compiled default before the first refresh, so a read never blocks a sampler tick and never fails.
 
