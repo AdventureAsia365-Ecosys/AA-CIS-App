@@ -84,6 +84,7 @@ const ICONS: Record<NavIcon, React.ReactNode> = {
   writingMemory: <PenLine size={16} />,
   decisions: <Scale size={16} />,
   staff: <UserCog size={16} />,
+  roles: <ShieldCheck size={16} />,   // AA-1155
   audit: <ScrollText size={16} />,
   jobs: <ListChecks size={16} />,
   alerts: <BellRing size={16} />,

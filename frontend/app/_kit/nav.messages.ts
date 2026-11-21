@@ -67,6 +67,7 @@ export const NAV_MESSAGES = defineMessages(
     "B2B desk": "B2B desk",
     // Platform
     "Staff & access": "Staff & access",
+    "Roles & permissions": "Roles & permissions",
     "Audit log": "Audit log",
     "Jobs": "Jobs",
     "Alert recipients": "Alert recipients",
@@ -132,6 +133,7 @@ export const NAV_MESSAGES = defineMessages(
     "Agency tiers": "Hạng đại lý",
     "B2B desk": "Bàn B2B",
     "Staff & access": "Nhân sự & quyền",
+    "Roles & permissions": "Vai trò & quyền",
     "Audit log": "Nhật ký kiểm tra",
     "Jobs": "Job",
     "Alert recipients": "Người nhận cảnh báo",
