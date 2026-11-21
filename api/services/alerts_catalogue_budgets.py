@@ -1,8 +1,8 @@
 """AA-1171 (S287 alerts catalogue P0, decision D7) — the budget and cost anomaly rows of Platform › Alerts › Catalogue.
 
 acc2 budgets come from the Platform › Infra read of the Terraform docs output (:func:`main_budget_rows`); the budgets
-and anomaly subscriptions of acc1, acc3 and the management account are static from their Terraform roots
-(:data:`EXTERNAL_BUDGETS`, no cross-account read role), with each account's ID inserted at run time only
+and anomaly subscriptions of the LLM serving account, acc3 and the management account are static from their Terraform
+roots (:data:`EXTERNAL_BUDGETS`, no cross-account read role), with each account's ID inserted at run time only
 (``shared.aws_client.accounts``, env ``AWS_MGMT_ACCOUNT_ID``); no account ID is written in this public repo. Split out
 of api/services/alerts_catalogue.py (file size limit).
 """
@@ -24,10 +24,10 @@ from api.services.alerts_catalogue_rows import (
 # A change of one of these values in Terraform needs the matching change here (tests/unit/test_aa1171_alerts_catalogue
 # checks the names against the generated alarm page when it is published; the root PR keeps them in step).
 EXTERNAL_BUDGETS: tuple[dict, ...] = (
-    {"account": "acc1", "name": "aa1-llm-monthly-total", "type": TYPE_BUDGET,
+    {"account": "serving", "name": "aa1-llm-monthly-total", "type": TYPE_BUDGET,
      "condition": "monthly cost of the LLM serving account", "threshold": "ACTUAL > 50 %, 80 %, 100 %; "
      "FORECASTED > 100 % of 100 USD", "file": "accounts/acc1-bedrock/cost_guard.tf", "channel": ["e-mail (direct)"]},
-    {"account": "acc1", "name": "aa1-cost-anomaly-daily", "type": TYPE_ANOMALY,
+    {"account": "serving", "name": "aa1-cost-anomaly-daily", "type": TYPE_ANOMALY,
      "condition": "cost anomaly of the LLM serving account (daily digest)", "threshold": "impact >= 10 USD",
      "file": "accounts/acc1-bedrock/cost_guard.tf", "channel": ["e-mail (direct)"]},
     {"account": "acc3", "name": "aa3-llm-monthly-total", "type": TYPE_BUDGET,
@@ -51,7 +51,7 @@ EXTERNAL_BUDGETS: tuple[dict, ...] = (
      "condition": "cost anomaly of each account of the organization (daily digest)", "threshold": "impact >= 15 USD",
      "file": "accounts/management/budgets.tf", "channel": ["e-mail (direct)"]},
 )
-EXTERNAL_ROLE = {"acc1": "LLM serving account", "acc3": "LLM fallback account", "mgmt": "management account"}
+EXTERNAL_ROLE = {"serving": "LLM serving account", "acc3": "LLM fallback account", "mgmt": "management account"}
 
 
 def external_account_id(key: str) -> Optional[str]:
@@ -61,6 +61,14 @@ def external_account_id(key: str) -> Optional[str]:
         return value if re.fullmatch(r"[0-9]{12}", value) else None
     try:
         from shared.aws_client import accounts
+
+        if key == "serving":
+            # AA-1095: the serving account is a registry satellite (data, never a key in this code).
+            for conn in accounts.satellite_connections().values():
+                value = conn.resolved_account_id() or ""
+                if re.fullmatch(r"[0-9]{12}", value):
+                    return value
+            return None
 
         return accounts.account_id(key)
     except Exception:  # noqa: BLE001 — a label never fails the page

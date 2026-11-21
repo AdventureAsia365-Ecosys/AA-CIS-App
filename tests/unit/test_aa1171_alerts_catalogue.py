@@ -176,7 +176,7 @@ def test_peer_rows_map_the_registry_contract():
 
 
 def test_external_budgets_take_account_ids_at_run_time_only():
-    rows = cat.external_budget_rows(NOW.isoformat(), {"acc1": "123456789012", "acc3": None, "mgmt": None}.get)
+    rows = cat.external_budget_rows(NOW.isoformat(), {"serving": "123456789012", "acc3": None, "mgmt": None}.get)
     assert {r["account_id"] for r in rows} == {"123456789012", None}
     assert all(r["editable_via"] == "terraform" and r["state"] == "not_live" for r in rows)
     import re

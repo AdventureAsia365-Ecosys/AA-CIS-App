@@ -37,7 +37,9 @@ class _HashedAccountId:
 
 
 FORBIDDEN = [
-    ("the acc1 account key", re.compile(r"(?i)(?<![a-z0-9])acc1(?![0-9])")),
+    # AA-1171: the Terraform root path accounts/acc1-bedrock/ (S278, AA-1095: the LLM serving account) may be linked
+    # from the alerts catalogue; the bare key still fails.
+    ("the acc1 account key", re.compile(r"(?i)(?<![a-z0-9])acc1(?![0-9]|-bedrock/)")),
     ("the acc1 account ID", _HashedAccountId()),
     ("the acc1 invoker role", re.compile(r"(?<![A-Za-z0-9])AA-Bedrock-Invoker")),
     ("the acc1 Cost Explorer role", re.compile(r"(?<![A-Za-z0-9])AA-CostExplorer-Reader")),
@@ -109,5 +111,6 @@ def test_patterns_catch_the_forms_that_used_to_exist():
     fake = "4" + "2" * 11       # a 12-digit run that is not the retired ID (built at run time, AA-902)
     assert not _HashedAccountId.search(f"arn:aws:iam::{fake}:role/x")
     for s in ["acc3", "AA3-Bedrock-Invoker", "AA3-CostExplorer-Reader", "aa3-bedrock-batch-inference-role",
-              "BEDROCK_ACCT_PRIMARY", "acc10", "pqnghiep1354", "aa365-admin"]:
+              "BEDROCK_ACCT_PRIMARY", "acc10", "pqnghiep1354", "aa365-admin",
+              "accounts/acc1-bedrock/cost_guard.tf"]:
         assert not any(p.search(s) for _, p in FORBIDDEN), s

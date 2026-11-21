@@ -16,9 +16,10 @@ Sources (no cross-schema DB read, no new write path):
   ARN when GetResources is refused), ``events:ListRules`` + ``ListTargetsByRule`` (which rules notify a topic). Free
   API calls, run on a cache miss only (5 minutes in Redis, :mod:`api.services.ops_overview.cache`); no GetMetricData.
 - **Budgets**: acc2 from the Terraform docs output (Platform › Infra, :mod:`api.services.platform_infra`: the
-  generated alarm page of the Docs bundle); acc1, acc3 and the management account statically from their Terraform
-  roots (:data:`EXTERNAL_BUDGETS`, D7: no cross-account read role), with the account ID inserted at run time
-  (``shared.aws_client.accounts`` and env ``AWS_MGMT_ACCOUNT_ID``); none is written in this public repo.
+  generated alarm page of the Docs bundle); the LLM serving account, acc3 and the management account statically
+  from their Terraform roots (:data:`EXTERNAL_BUDGETS`, D7: no cross-account read role), with the account ID
+  inserted at run time (``shared.aws_client.accounts`` and env ``AWS_MGMT_ACCOUNT_ID``); none is written in this
+  public repo.
 - **CIS in-app checks**: the registry of ``shared/ops_checks.py`` (fixed checks, per-stage families, digests) with the
   thresholds in force (``shared/ops_thresholds.py``, CIS 469) and the last bell of each check (shared.notifications).
 - **Booking and CRM in-app checks**: each app exports its own check registry with the thresholds in force (Booking
@@ -635,7 +636,7 @@ async def budgets_section() -> dict:
         logger.warning("alerts_catalogue_infra_unreadable", error=type(e).__name__)
         infra = {"groups": []}
     main_id = await asyncio.to_thread(accounts.account_id, accounts.MAIN_ACCOUNT_KEY)
-    ids = {k: await asyncio.to_thread(external_account_id, k) for k in ("acc1", "acc3", "mgmt")}
+    ids = {k: await asyncio.to_thread(external_account_id, k) for k in ("serving", "acc3", "mgmt")}
     rows = main_budget_rows(infra, as_of, main_id) + external_budget_rows(as_of, ids.get)
     doc = infra.get("doc") or {}
     return {"status": "ok" if not doc.get("missing") else "partial", "as_of": as_of, "rows": rows,
