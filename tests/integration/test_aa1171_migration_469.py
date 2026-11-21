@@ -1,4 +1,4 @@
-"""AA-1171 (S287 alerts catalogue P0) — CIS 469 on a real Postgres (conftest replays every migration): the eight
+"""AA-1171 (S287 alerts catalogue P0) — CIS 469 on a real Postgres (conftest replays every migration): the fifteen
 cis.ops.* settings rows equal the compiled defaults, values outside the bounds are refused, and
 shared.alert_recipient.topic: default 'alerts', CHECK alerts | page, one active row per (topic, e-mail) so one address
 may be on both topics; a re-run changes nothing. Runs in a transaction that is rolled back; invented addresses only."""
@@ -66,6 +66,9 @@ async def test_a_value_must_stay_within_its_bounds(conn):
     await _refused(conn, INS_VALUE, t.JOBS_STARVED_AFTER_S, "60")
     await _refused(conn, INS_VALUE, t.ROLE_CONNECTIONS_PCT, "100")
     await _refused(conn, INS_VALUE, t.BELL_EVERY_HOURS, "0")
+    await _refused(conn, INS_VALUE, t.BELL_EVERY_NIGHTLY_HOURS, "24")
+    await _refused(conn, INS_VALUE, t.REPLY_CUT_ALERT_PCT, "0.5")
+    assert await conn.fetchval(INS_VALUE, t.QF_DRIFT_NEW_MODEL_PCT, "0.5") is not None
     assert await conn.fetchval(INS_VALUE, t.JOBS_STARVED_AFTER_S, "1200") is not None
     assert await conn.fetchval(INS_VALUE, t.JOBS_OVERDUE_FACTOR, "3.5") is not None
 

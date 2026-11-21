@@ -1,4 +1,4 @@
-"""AA-1171 (S287 alerts catalogue P0, tech lead decision D3) — CIS 469: the eight in-app check thresholds are compiled
+"""AA-1171 (S287 alerts catalogue P0, tech lead decision D3) — CIS 469: the fifteen in-app check thresholds and bell windows are compiled
 with today's values as defaults, a plain label and a complete EN + VI guide, maker-checker, and the accessors of
 shared/ops_thresholds.py return them in the units the checks use. No DB."""
 from datetime import timedelta
@@ -15,6 +15,13 @@ DEFAULTS = {
     t.RESEARCH_STALE_SHARE_PCT: 20,
     t.APP_SPEND_NEAR_PCT: 80,
     t.BELL_EVERY_HOURS: 6,
+    t.REPLY_CUT_ALERT_PCT: 5,
+    t.QF_MIN_REQUESTS: 20,
+    t.QF_DRIFT_ALERT_PCT: 10,
+    t.QF_DRIFT_NEW_MODEL_PCT: 1,
+    t.BELL_EVERY_ROUTE_HOURS: 1,
+    t.BELL_EVERY_DAILY_HOURS: 24,
+    t.BELL_EVERY_NIGHTLY_HOURS: 20,
 }
 
 
@@ -40,6 +47,21 @@ def test_accessors_return_the_units_the_checks_use():
     assert t.research_stale_share() == 0.2
     assert t.app_spend_near_ratio() == 0.8
     assert t.bell_every() == timedelta(hours=6)
+    assert t.reply_cut_alert_pct() == 5.0 and t.qf_drift_alert_pct() == 10.0 and t.qf_drift_new_model_pct() == 1.0
+    assert t.qf_min_requests() == 20 and isinstance(t.qf_min_requests(), int)
+    assert [t.bell_every(k) for k in t.BELL_KEYS] == [timedelta(hours=h) for h in (6, 1, 24, 20)]
+
+
+def test_bell_every_refuses_a_key_that_is_no_bell_window():
+    import pytest
+
+    with pytest.raises(KeyError):
+        t.bell_every(t.QF_MIN_REQUESTS)
+
+
+def test_the_nightly_window_stays_under_a_day():
+    d = settings.definition(t.BELL_EVERY_NIGHTLY_HOURS)
+    assert d.max_value < 24, "a once-a-night check must bell on every night even when its run starts earlier"
 
 
 def test_by_check_names_only_known_keys():
