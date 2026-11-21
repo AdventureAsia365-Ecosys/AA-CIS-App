@@ -53,6 +53,7 @@ from api.routers.admin_data_model import router as admin_data_model_router  # AA
 from api.routers.admin_docs import router as admin_docs_router  # AA-898 — /admin/docs/*
 from api.routers.admin_product_catalogue import router as admin_product_catalogue_router  # AA-1106 — Product map
 from api.routers.admin_platform_delivery import router as admin_platform_delivery_router  # AA-1108 — Delivery
+from api.routers.admin_platform_compliance import router as admin_platform_compliance_router  # AA-1170 — Compliance
 from api.routers.admin import verify_admin_secret  # AA-577 — reused to gate Swagger/ReDoc/openapi.json
 from api.routers.admin_pipeline import router as admin_pipeline_router
 from api.routers.admin_settings import router as admin_settings_router
@@ -345,6 +346,8 @@ app.include_router(admin_docs_router)
 app.include_router(admin_product_catalogue_router)
 # AA-1108 — GET /admin/platform/delivery (admin page Platform › Delivery), the root Delivery metrics summary.
 app.include_router(admin_platform_delivery_router)
+# AA-1170 — /admin/platform/compliance (admin page Platform › Compliance): readiness per framework.
+app.include_router(admin_platform_compliance_router)
 
 
 app.include_router(v1_tours_router)

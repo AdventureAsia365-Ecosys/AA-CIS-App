@@ -425,6 +425,7 @@ const AREA_NAMES: Record<string, { en: string; vi: string }> = {
   agency_defaults: { en: "Agency defaults", vi: "Mặc định của đại lý" },
   payments: { en: "Payments", vi: "Thanh toán đại lý" },
   delivery: { en: "Delivery metrics", vi: "Chỉ số phát hành" },
+  compliance: { en: "Compliance readiness", vi: "Mức sẵn sàng tuân thủ" },   // AA-1170
 };
 
 export function areaName(area: string, lang: string): string {
@@ -444,6 +445,7 @@ const UNITS_VI: Record<string, string> = {
   "requests/min": "yêu cầu/phút", "calls/min": "lượt gọi/phút", "writes/min": "lượt ghi/phút",
   "submissions/hour": "lượt gửi/giờ", "base currency": "tiền tệ gốc", "deploys/week": "lần deploy/tuần",
   minutes: "phút", events: "sự kiện", "USD/day": "USD/ngày", x: "lần",
+  ratio: "tỉ lệ", pages: "trang",   // AA-1170 (cis.compliance.*)
 };
 
 export function unitName(unit: string, lang: string): string {

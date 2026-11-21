@@ -198,6 +198,9 @@ export const PAGE_RULES: PageRule[] = [
   { prefix: "/admin/docs", caps: ["docs.read"], roles: EVERY_STAFF },
   // AA-883 — Platform pages (staff directory first). Matches /admin/platform and /admin/platform/…
   // only, never a sibling such as /admin/platform-x (pageRule compares prefix or prefix + "/").
+  // AA-1170 — Platform › Compliance (readiness per framework): compliance.read (admin at first; a custom role may hold
+  // it). Before the "/admin/platform" rule (first match wins).
+  { prefix: "/admin/platform/compliance", caps: ["compliance.read"], roles: ["admin"] },
   { prefix: "/admin/platform", caps: ["staff.read"], roles: ["admin"] },
   // Content work — every staff role but the read-only viewer (these pages only write).
   { prefix: "/admin/upload", caps: ["content.write"], roles: CONTENT_WORKERS },
@@ -335,6 +338,9 @@ export const API_READ_RULES: { prefix: string; caps: readonly Capability[]; role
   // (re-checked by the backend: tenant.book.read and require_tenant_scope); writes stay admin (API_WRITE_RULES
   // "platform/"). Before the "platform" rule (first match wins).
   { prefix: "platform/crm", caps: ["tenant.book.read"], roles: TENANT_BOOK },
+  // AA-1170 — backend /admin/platform/compliance* (readiness scores, controls, evidence): compliance.read, re-checked
+  // by the backend (staff_policy). Before the "platform" rule (first match wins).
+  { prefix: "platform/compliance", caps: ["compliance.read"], roles: ["admin"] },
   // AA-883 — backend /admin/platform/* (staff directory): admin only, re-checked by the backend
   // (staff_policy, capability staff.read). Matches "platform" and "platform/…", not "platform-stats".
   { prefix: "platform", caps: ["staff.read"], roles: ["admin"] },
@@ -422,6 +428,8 @@ export type Capability =
   | "tenant.book.account.read"    // AA-1035: plans, usage, cost, Tenant QA, AI budget of the own book (not support)
   | "tenant.member.resend"        // AA-1035: send a non-owner invitation again (support, customer_success)
   | "tenant.book.write"           // AA-1035: non-billing Tenant 360 writes of the own book (customer_success)
+  // AA-1170 — Platform › Compliance: read the readiness page (compliance.read), re-read the evidence now (compliance.write)
+  | "compliance.read" | "compliance.write"
   // AA-1035 R2 slice 2
   | "tenant.view_as"              // read-only "view as tenant" (admin, customer_success, support), scoped
   | "lab.tenant_text.read"        // ai_ops: tenant text in the Writing Lab only, every read logged by the backend
@@ -445,7 +453,7 @@ export const ROLE_PERMS: Record<StaffRole, readonly Capability[]> = {
     "tenant.member.write", "tenant.assign", "billing.read", "billing.write", "wave.run", "lab.read",
     "tenant.member.resend", "tenant.book.write", "tenant.view_as", "notifications.read",
     "reference_price.read", "reference_price.write", "settings.write", "settings.approve", "learn.preview",
-    "docs.read", "content.publish",
+    "docs.read", "content.publish", "compliance.read", "compliance.write",
   ],
   content_lead: [
     "content.read", "content.write", "review.act", "master.admin", "atoms.write", "photos.write",

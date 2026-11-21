@@ -85,8 +85,7 @@ PHOTOS_WRITE = "photos.write"
 A4_UNPUBLISH = "a4.unpublish"
 QUALITY_WRITE = "quality.write"              # T2/T9 quality: sentence cut/rewrite, labels, place cards
 CONTENT_SETTINGS_WRITE = "content.settings.write"   # gates, brand, SEO
-TENANT_READ = "tenant.read"
-TENANT_WRITE = "tenant.write"
+TENANT_READ, TENANT_WRITE = "tenant.read", "tenant.write"
 OPS_READ = "ops.read"
 OPS_WRITE = "ops.write"                      # job cancel/retry/retention, scheduled ops checks
 AI_ADMIN = "ai.admin"                        # stage models + routes, model catalog, Jev questions
@@ -144,15 +143,14 @@ TENANT_CONTENT_BOOK_READ = "tenant_content.book.read"
 # catalogue roles, customer_success and finance (not the read-only viewer, AA-878: refused on every listed read).
 # Write (inline edit, accept, parse, Excel import): admin and customer_success (the customer-service team's CIS role;
 # content_lead lost it in AA-1146 D5, S285). Never a selling price (root ADR 0005 d7).
-REFERENCE_PRICE_READ = "reference_price.read"
-REFERENCE_PRICE_WRITE = "reference_price.write"
+REFERENCE_PRICE_READ, REFERENCE_PRICE_WRITE = "reference_price.read", "reference_price.write"
 # S279 thresholds L1 (tech lead S279 Q1; CIS 407) — Platform › Settings (/admin/settings/registry): propose a new value
 # of a threshold, limit, cap or policy value (settings.write), approve / reject it (settings.approve). Admin role only;
 # the delegated pages (finance billing, ai_ops gateway) keep their own capabilities.
-SETTINGS_WRITE = "settings.write"
-SETTINGS_APPROVE = "settings.approve"
+SETTINGS_WRITE, SETTINGS_APPROVE = "settings.write", "settings.approve"
 DOCS_READ = "docs.read"  # AA-1133 B7 (tech lead S283 "all staff after fix"): /admin/docs, every role (ROLE_PERMS)
 LEARN_PREVIEW = "learn.preview"  # AA-1105: AA Academy draft modules (/learn/v1 reads it; admin and content_lead)
+COMPLIANCE_READ, COMPLIANCE_WRITE = "compliance.read", "compliance.write"  # AA-1170 Platform › Compliance (Q10)
 
 _CONTENT_WORK = frozenset({CONTENT_READ, CONTENT_WRITE, REVIEW_ACT})
 
@@ -169,7 +167,7 @@ ROLE_PERMS: dict[str, frozenset[str]] = {
         TENANT_CONTENT_READ, CATALOG_READ, TENANT_BOOK_READ, TENANT_BOOK_ACCOUNT_READ, TENANT_MEMBER_WRITE,
         TENANT_ASSIGN, BILLING_READ, BILLING_WRITE, WAVE_RUN, LAB_READ, TENANT_MEMBER_RESEND, TENANT_BOOK_WRITE,
         TENANT_VIEW_AS, NOTIFICATIONS_READ, REFERENCE_PRICE_READ, REFERENCE_PRICE_WRITE, SETTINGS_WRITE,
-        SETTINGS_APPROVE, LEARN_PREVIEW,
+        SETTINGS_APPROVE, LEARN_PREVIEW, COMPLIANCE_READ, COMPLIANCE_WRITE,
     },
     # AA Catalogue W, Tenant QA W, Writing Lab R (wave, review queue, master content, atoms / photos, SEO).
     "content_lead": _CONTENT_WORK | {
@@ -602,6 +600,8 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/settings/registry/{key}/proposals"): SETTINGS_WRITE,
     **{("POST", "/admin/settings/registry/proposals/{value_id}/" + a): SETTINGS_APPROVE for a in ("approve", "reject")},
     ("GET", "/admin/platform/catalogue"): OPS_READ, ("GET", "/admin/platform/delivery"): OPS_READ,  # AA-1106, AA-1108
+    **{("GET", "/admin/platform/compliance" + p): COMPLIANCE_READ for p in ("", "/controls", "/controls/{control_id}")},
+    ("POST", "/admin/platform/compliance/refresh"): COMPLIANCE_WRITE,   # AA-1170 (Refresh re-reads the evidence)
     # ── admin_photos — Drive sync + assignment (Photos page, admin-only)
     ("POST", "/admin/photos/sync"): PHOTOS_WRITE,
     ("POST", "/admin/photos/sync/schedule"): PHOTOS_WRITE,   # AA-844, daily (MACHINE_ROUTES)
