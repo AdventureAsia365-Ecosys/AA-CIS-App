@@ -77,6 +77,7 @@ def test_role_perms_match_the_s241_matrix():
         "learn.preview",                                   # AA-1105 AA Academy drafts (admin, content_lead)
         "docs.read",                                       # AA-1133 B7 the docs reader (every role)
         "content.publish",                                 # AA-1146 D1 (admin, content_lead)
+        "compliance.read", "compliance.write",             # AA-1170 Platform › Compliance (admin only at first)
     }
     # admin holds every role capability but the Lab-only logged read of ai_ops and the book-scoped Tenant QA read of
     # customer_success (admin reads tenant text in its own right: tenant_content.read)
