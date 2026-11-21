@@ -106,9 +106,12 @@ REQUIRED_CIS_SCHEMA = 322
 # view) is not needed by this code.
 # 454 (AA-1133 — the docs reader's page feedback reads and writes acp_shared.docs_feedback; both feedback routes answer
 # 503 without it).
+# 462 (AA-1155 T8 — the staff identity resolver reads shared.admin_users.custom_role on every Cognito sign-in and a
+# custom holder's role from shared.staff_role / staff_role_capability; the Staff page writes custom_role and
+# is_business_owner and reads the roles catalogue; without 462 every Cognito staff sign-in fails).
 # 464 (AA-1168 follow-up — the publish route's claim() reads and writes acp_shared.publish_log.sent_message; every
 # publish fails without it). 463 (the disclosure wording setting) is not needed: the reader serves the compiled default.
-REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 395, 397, 398, 402, 408, 409, 411, 420, 428, 435, 439, 443, 454, 464)  # noqa: E501
+REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 395, 397, 398, 402, 408, 409, 411, 420, 428, 435, 439, 443, 454, 462, 464)  # noqa: E501
 # Versions this code needs that were registered after a higher one (reserved numbers): 297 (AA-920 WM-25) was reserved
 # in S255 and applied after 299. max() is already 299 without it, so the version reported is capped below the lowest
 # listed version that is not registered (297 missing -> 296 -> "schema_behind").

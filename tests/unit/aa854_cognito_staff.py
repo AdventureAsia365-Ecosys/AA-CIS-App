@@ -6,7 +6,7 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Any, Optional
 
-from api.core import identity_config, staff_identity
+from api.core import identity_config, staff_identity, staff_roles
 from api.core.identity_verifier import IssuerConfig, MultiIssuerVerifier
 from tests.unit.test_identity_verifier import _DROP, FakeFetcher, LocalIssuer
 
@@ -54,14 +54,25 @@ class Directory:
         self.touches: list[str] = []
         self.fail = False
         self.fail_touch = False
+        # AA-1155: shared.staff_role (+ capabilities) as the custom-role read sees it: code -> row; fail_roles = the
+        # role read raises (a revoked grant, the table gone).
+        self.custom_roles: dict[str, dict[str, Any]] = {}
+        self.fail_roles = False
+
+    def add_custom_role(self, code: str = "custom_content", *, label: str = "Content", based_on: str = "content_lead",
+                        archived: bool = False, capabilities: Any = ("content.read", "tenant.read")) -> str:
+        self.custom_roles[code] = {"code": code, "label": label, "based_on": based_on, "archived": archived,
+                                   "capabilities": list(capabilities)}
+        return code
 
     def add(self, *, role: str = "admin", email: Optional[str] = EMAIL, active: bool = True,
             iss: Optional[str] = None, sub: Optional[str] = None, username: str = "staff-1",
-            display_name: Optional[str] = "Staff One") -> str:
+            display_name: Optional[str] = "Staff One", custom_role: Optional[str] = None) -> str:
         uid = str(uuid.uuid4())
         self.rows.append({
             "id": uid, "username": username, "role": role, "email": email, "display_name": display_name,
             "is_active": active, "cognito_iss": iss, "cognito_sub": sub, "last_login_at": None,
+            "custom_role": custom_role,
         })
         return uid
 
@@ -87,6 +98,11 @@ class Directory:
                     self.links += 1
                     return dict(r)
             return None
+        if sql == staff_roles.SQL_CIS_ROLE:
+            if self.fail_roles:
+                raise OSError("permission denied for table staff_role")
+            found = self.custom_roles.get(args[0])
+            return dict(found) if found is not None else None
         if sql == staff_identity.SQL_BY_EMAIL:
             r = next((r for r in self.rows if (r["email"] or "").lower() == args[0]), None)
             return None if r is None else {"id": r["id"], "is_active": r["is_active"],

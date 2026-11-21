@@ -61,7 +61,11 @@ ALLOW_LISTED_PATHS = [
 def test_constants_and_the_dev_only_map():
     assert e2e_staff.E2E_CIS_CS_TEST_STAFF_EMAIL == CS_E2E
     assert e2e_staff.E2E_CIS_CS_TEST_STAFF_ROLE == "customer_success"
-    assert dict(e2e_staff.DEV_ONLY_E2E_STAFF_ROLES) == {ADMIN_E2E: "admin", CS_E2E: "customer_success"}
+    # AA-1155 added A10f (content_lead) and A10g (the custom-role maker, directory role content_lead).
+    assert dict(e2e_staff.DEV_ONLY_E2E_STAFF_ROLES) == {
+        ADMIN_E2E: "admin", CS_E2E: "customer_success",
+        "e2e-cis-content-lead@e2e-mail.lumiguides.it.com": "content_lead",
+        "e2e-custom-maker@e2e-mail.lumiguides.it.com": "content_lead"}
     with pytest.raises(TypeError):
         e2e_staff.DEV_ONLY_E2E_STAFF_ROLES["x@e2e-mail.lumiguides.it.com"] = "admin"  # type: ignore[index]
     # The live precheck finds the deployed address among the module's upper-case str constants.
