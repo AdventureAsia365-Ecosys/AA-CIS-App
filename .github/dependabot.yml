@@ -31,6 +31,23 @@ updates:
         patterns: ["*"]
     commit-message:
       prefix: "chore(deps)"
+  # AA-1164: the Node base image of frontend/Dockerfile is pinned by tag and digest; Dependabot moves both weekly,
+  # Node 22 patch and minor only (a major version is a deliberate change), one PR at a time. Like the PRs above, it
+  # gets no repository secrets; the deploy that follows its merge rebuilds and redeploys the image.
+  - package-ecosystem: docker
+    directory: "/frontend"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 1
+    ignore:
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
+    groups:
+      base-image:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
   # AA-1022 (S263): version updates for the GitHub Actions used in .github/workflows, weekly, grouped into one PR (the
   # same setup as AA-CIS-Infra). Dependabot keeps a SHA pin and its "# vX.Y.Z" comment in step when it bumps one. Like
   # the PRs above, these get no repository secrets.
