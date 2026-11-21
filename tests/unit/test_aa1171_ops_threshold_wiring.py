@@ -110,3 +110,67 @@ async def test_bell_window_follows_the_setting(setting):
     setting[ops_thresholds.BELL_EVERY_HOURS] = 2
     out = await ops_checks.raise_alert(pool, finding, now=now)
     assert out["bell"] is True and pool.conn.bells == 1
+
+
+def test_each_check_family_bells_on_its_own_window_setting(setting):
+    """Every bell window is a setting (route, daily, nightly, default); only route_back keeps a technical window."""
+    families = {"route_fb.st": ops_thresholds.BELL_EVERY_ROUTE_HOURS, "route_last.st": ops_thresholds.BELL_EVERY_ROUTE_HOURS,
+                "route_cost.st": ops_thresholds.BELL_EVERY_DAILY_HOURS,
+                "route_cut.st": ops_thresholds.BELL_EVERY_DAILY_HOURS,
+                "llm_stage_coverage.st": ops_thresholds.BELL_EVERY_DAILY_HOURS,
+                "route_digest": ops_thresholds.BELL_EVERY_NIGHTLY_HOURS,
+                "qf_cut.st": ops_thresholds.BELL_EVERY_NIGHTLY_HOURS, "qf_digest": ops_thresholds.BELL_EVERY_NIGHTLY_HOURS,
+                "research_stale_share": ops_thresholds.BELL_EVERY_NIGHTLY_HOURS,
+                "research_auto_failed": ops_thresholds.BELL_EVERY_NIGHTLY_HOURS,
+                "jobs_starved": ops_thresholds.BELL_EVERY_HOURS}
+    for name, key in families.items():
+        assert ops_checks.check_for(name).bell_key == key, name
+    setting[ops_thresholds.BELL_EVERY_ROUTE_HOURS] = 3
+    setting[ops_thresholds.BELL_EVERY_DAILY_HOURS] = 48
+    setting[ops_thresholds.BELL_EVERY_NIGHTLY_HOURS] = 16
+    assert ops_checks.check_for("route_fb.st").bell_every == timedelta(hours=3)
+    assert ops_checks.check_for("llm_stage_coverage.st").bell_every == timedelta(hours=48)
+    assert ops_checks.check_for("qf_drift.st").bell_every == timedelta(hours=16)
+    back = ops_checks.check_for("route_back.st")
+    assert back.fixed_bell == timedelta(minutes=1) and back.bell_every == timedelta(minutes=1)
+
+
+def test_route_cut_share_follows_the_setting(setting):
+    from shared.llm_client import route_watch
+
+    stats = {"st": {"replies": 100, "cut": 7}}
+    assert [f.check for f in route_watch.cut_findings(stats, {})] == ["route_cut.st"]        # 7 % > 5 %
+    setting[ops_thresholds.REPLY_CUT_ALERT_PCT] = 8
+    assert route_watch.cut_findings(stats, {}) == []
+    setting[ops_thresholds.REPLY_CUT_ALERT_PCT] = 6
+    assert route_watch.cut_findings(stats, {})[0].details["threshold_pct"] == 6.0
+
+
+def test_quality_funnel_rules_follow_the_settings(setting):
+    from services.quality import funnel
+
+    rec, end = datetime(2026, 11, 14, tzinfo=timezone.utc), datetime(2026, 11, 21, tzinfo=timezone.utc)
+
+    def w(stage, model, win, answered, cut=0):
+        return {"stage": stage, "model": model, "win": win, "answered": answered, "fallback_answered": 0,
+                "replies": answered, "cut": cut}
+
+    rows = [w("t9_write", "m-old", "prior", 200), w("t9_write", "m-old", "recent", 170, cut=12),
+            w("t9_write", "m-new", "recent", 30)]
+    checks = lambda: sorted(f.check for f in funnel.watch_findings(  # noqa: E731
+        funnel.summarize_watch(rows, {}, recent=rec, end=end)))
+    assert checks() == ["qf_cut.t9_write", "qf_drift.t9_write"]               # 6 % cut, 15 % drift
+    setting[ops_thresholds.REPLY_CUT_ALERT_PCT] = 7
+    setting[ops_thresholds.QF_DRIFT_ALERT_PCT] = 20
+    assert checks() == []
+    setting[ops_thresholds.QF_DRIFT_ALERT_PCT] = 10
+    setting[ops_thresholds.QF_MIN_REQUESTS] = 250                               # 200 rows a week: under the floor
+    assert checks() == []
+    setting[ops_thresholds.QF_MIN_REQUESTS] = 20
+    rows.append(w("t9_write", "m-new", "prior", 4))                             # 2 % of the prior week
+    assert checks() == []                                                        # m-new is not new under 1 %
+    setting[ops_thresholds.QF_DRIFT_NEW_MODEL_PCT] = 5
+    assert checks() == ["qf_drift.t9_write"]
+    th = funnel.thresholds()
+    assert (th["min_requests"], th["cut_alert_pct"], th["drift_alert_pct"], th["drift_new_model_pct"]) == \
+        (20, 7.0, 10.0, 5.0)

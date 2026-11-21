@@ -142,7 +142,17 @@ def test_cis_check_rows_carry_settings_and_state():
     assert starved["state"] == "ALARM" and rows["rds_xid_age"]["state"] == "OK"
     assert rows["llm_call_log_write_failed"]["threshold"] == "1 line"
     assert "llm_stage_coverage.<stage>" in rows and "route_fb.<stage>" in rows and "qf_digest" in rows
-    assert rows["qf_cut.<stage>"]["editable_via"] == "none"
+    qf_cut, qf_fb, digest = rows["qf_cut.<stage>"], rows["qf_fb.<stage>"], rows["qf_digest"]
+    assert qf_cut["editable_via"] == "settings" and qf_cut["threshold"] == "5 %; 20 requests"
+    assert "cis.ops.reply_cut_alert_pct" in qf_cut["threshold_source"]
+    assert "route policy" in qf_fb["threshold_source"] and digest["editable_via"] == "settings"
+    assert not any("code constant" in (r["coverage_gap"] or "") for r in rows.values())
+    # every bell window is a setting, except route_back's technical one-tick window
+    assert "cis.ops.bell_every_nightly_hours" in qf_cut["threshold_source"]
+    assert "cis.ops.bell_every_route_hours" in rows["route_fb.<stage>"]["threshold_source"]
+    assert "cis.ops.bell_every_daily_hours" in rows["llm_stage_coverage.<stage>"]["threshold_source"]
+    assert "cis.ops.bell_every_hours" in starved["threshold_source"]
+    assert "bell repeat" not in rows["route_back.<stage>"]["threshold_source"]
     assert all(r["type"] == "in_app_check" and r["app"] == "cis" for r in rows.values())
 
 

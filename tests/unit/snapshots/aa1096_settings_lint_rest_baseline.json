@@ -478,7 +478,6 @@
   "shared/llm_client/route_evidence.py:BREAK_GLASS_MIN_CHARS",
   "shared/llm_client/route_versions.py:NOTE_MAX",
   "shared/llm_client/route_watch.py:BASELINE_MIN",
-  "shared/llm_client/route_watch.py:CUT_ALERT_PCT",
   "shared/llm_client/route_watch.py:DIGEST_MAX_STAGES",
   "shared/llm_client/shadow.py:_MAX_OUTPUT_CHARS",
   "shared/llm_client/stage_coverage.py:MAX_MODELS_LISTED",

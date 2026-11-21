@@ -41,10 +41,12 @@ Two kinds of checks:
 - **LLM stage coverage** (AA-1026, S267), evaluated on the same tick from the database (:func:`stage_coverage_findings`,
   ``shared/llm_client/stage_coverage.py``, $0): one check per active stage with no model that answers now,
   ``llm_stage_coverage.<stage>`` (:func:`check_for`; the stage names are data, so these checks are not in
-  :data:`CHECKS`). Bell at most once per 24 h per stage (``Check.bell_every``), e-mail once per stage and UTC day.
+  :data:`CHECKS`). Bell at most once per ``cis.ops.bell_every_daily_hours`` (24 h by default) per stage
+  (``Check.bell_key``), e-mail once per stage and UTC day.
 
 Dedupe (one advisory-locked transaction, so two api tasks never double up): a check writes a bell only when it has
-none in the last ``cis.ops.bell_every_hours`` (6 h by default), and mails only for the first bell of the UTC day: at
+none in the last ``Check.bell_every`` (the setting the check names in ``bell_key``: ``cis.ops.bell_every_hours``,
+6 h by default, unless the check family has its own route / daily / nightly window), and mails only for the first bell of the UTC day: at
 most one e-mail per
 check per UTC day. A failed publish deletes the bell it just wrote, so the next tick tries both again. E-mail is
 skipped (bell only, one log line) when ALERTS_TOPIC_ARN is unset.
@@ -75,7 +77,8 @@ _LOCK_KEY = 1_025_263_001
 
 # AA-1171 (D3, CIS 469): the thresholds of the state checks, the near-cap share and the default bell window are settings
 # on Platform › Settings (area "ops", maker-checker), read on every evaluation through shared/ops_thresholds.py; the
-# seeded defaults are the values of the CloudWatch alarms these checks replaced (900 s, 80 %, 1e9, 6 h, 80 %).
+# seeded defaults are the values of the CloudWatch alarms these checks replaced (900 s, 80 %, 1e9, 6 h, 80 %). The bell
+# window of each check family is a setting too (Check.bell_key: the default, route, daily or nightly window).
 
 JOB_RUNNER_PAGE = "/admin/job-runner"
 PLATFORM_PAGE = "/admin/platform/apps"
@@ -83,12 +86,25 @@ COST_PAGE = "/admin/ai-gateway"
 DATA_COVERAGE_PAGE = "/admin/data-coverage"
 
 
+# The bell window settings of the check families (hours, shared/ops_thresholds.BELL_KEYS).
+BELL_DEFAULT = ops_thresholds.BELL_EVERY_HOURS            # 6 h: the state checks, log events, spend
+BELL_ROUTE = ops_thresholds.BELL_EVERY_ROUTE_HOURS        # 1 h: route_fb, route_last (llm_route_watch)
+BELL_DAILY = ops_thresholds.BELL_EVERY_DAILY_HOURS        # 24 h: stage coverage, route_cost, route_cut
+BELL_NIGHTLY = ops_thresholds.BELL_EVERY_NIGHTLY_HOURS    # 20 h: research, route digest, quality funnel (once a night)
+
+
 @dataclass(frozen=True)
 class Check:
     title: str
     action: str
     page: str = PLATFORM_PAGE
-    bell_every: Optional[timedelta] = None      # None = cis.ops.bell_every_hours (AA-1026: stage coverage bells daily)
+    bell_key: str = BELL_DEFAULT                 # the setting with this check's bell window (hours)
+    fixed_bell: Optional[timedelta] = None       # a technical window that is no setting (route_back only)
+
+    @property
+    def bell_every(self) -> timedelta:
+        """The bell window in force: at most one bell per this window while the check keeps firing."""
+        return self.fixed_bell or ops_thresholds.bell_every(self.bell_key)
 
 
 CHECKS: dict[str, Check] = {
@@ -120,27 +136,27 @@ CHECKS: dict[str, Check] = {
                                   "a research run for that market (POST /admin/segment-research/preview, the cost is "
                                   "shown before anything is bought) and run it once approved. The Data coverage page "
                                   "shows the same share per market.", DATA_COVERAGE_PAGE,
-                                  bell_every=timedelta(hours=20)),
+                                  bell_key=BELL_NIGHTLY),
     # AA-1122: services/acp_contract/research_auto.py (the nightly research tick) raises these four itself.
     "research_auto_failed": Check("Automatic search demand research failed", "Automatic research runs failed or "
                                   "stopped, or its spend ledger could not be read; after the set number of failures "
                                   "in a row it pauses until a run succeeds. Open the run on the SEO Intelligence "
                                   "Research tab (its error and stop reason), fix the cause, then Preview and Run once "
                                   "by hand.",
-                                  "/admin/seo-intelligence?tab=research", bell_every=timedelta(hours=20)),
+                                  "/admin/seo-intelligence?tab=research", bell_key=BELL_NIGHTLY),
     "research_auto_capped": Check("Automatic search demand research capped", "An automatic research run was skipped "
                                   "or stopped at its per-run or monthly cap while places still wait. The Research tab "
                                   "shows what waits and its preview price; raise the cap on Platform › Settings only "
                                   "after checking the month's spend.", "/admin/seo-intelligence?tab=research",
-                                  bell_every=timedelta(hours=20)),
+                                  bell_key=BELL_NIGHTLY),
     "research_new_waiting": Check("New places waiting for search demand", "The oldest never-researched place has "
                                   "waited longer than the alert window: automatic research is off, capped or failing. "
                                   "Check the Research tab.", "/admin/seo-intelligence?tab=research",
-                                  bell_every=timedelta(hours=20)),
+                                  bell_key=BELL_NIGHTLY),
     "research_month_spend": Check("Search demand research near its monthly cap", "Research (DataForSEO, the keyword "
                                   "LLM and Jev, manual and automatic runs) reached the warning share of its monthly "
                                   "cap. At the cap every research run stops until the next UTC month.",
-                                  "/admin/seo-intelligence?tab=research", bell_every=timedelta(hours=20)),
+                                  "/admin/seo-intelligence?tab=research", bell_key=BELL_NIGHTLY),
     "cis_app_too_many_connections": Check("cis_app connection refused", "The api or worker could not get a database "
                                           "connection (too many connections for role cis_app). Check pool sizes "
                                           "before raising the limit."),
@@ -194,7 +210,7 @@ STAGE_COVERAGE_CHECK = Check(
     "LLM stage has no live model", "Every model on this stage's route is switched off, refused by its account, "
     "behind an open circuit or has not answered in the last 36 hours. Jobs of the stage fail or wait. Check the Stage "
     "coverage card on AI gateway > Routing, run the availability sweep, then give the stage a model that answers.",
-    ROUTING_PAGE, bell_every=timedelta(hours=24))
+    ROUTING_PAGE, bell_key=BELL_DAILY)
 
 
 # AA-1042 (S268): the route alerts of the llm_route_watch job (shared/llm_client/route_watch.py), one check per stage
@@ -211,64 +227,70 @@ PREFIX_CHECKS: dict[str, Check] = {
         "LLM stage served by a fallback model", "The stage's first model refused or failed for a large share of its "
         "requests, so a later model or provider answered them. Open AI gateway > Trace to see every attempt and its "
         "reason; check the provider (refusal, quota, outage) before changing the route. Thresholds: Trace > Alert "
-        "settings.", TRACE_PAGE, bell_every=timedelta(hours=1)),
+        "settings.", TRACE_PAGE, bell_key=BELL_ROUTE),
     ROUTE_LAST_PREFIX: Check(
         "LLM stage reached the last model of its route", "A request needed the last model of its stage's route: one "
         "more failure and the stage stops. Open AI gateway > Trace, then fix the refusing provider or add a model to "
-        "the route.", TRACE_PAGE, bell_every=timedelta(hours=1)),
+        "the route.", TRACE_PAGE, bell_key=BELL_ROUTE),
     ROUTE_BACK_PREFIX: Check(
         "LLM stage primary model is back", "The stage's first model answers again after a fallback alert. Nothing to "
-        "do; AI gateway > Trace shows the share per rung.", TRACE_PAGE, bell_every=timedelta(minutes=1)),
+        "do; AI gateway > Trace shows the share per rung.", TRACE_PAGE,
+        # technical-constant: route_watch raises route_back once per recovery (degraded_since); the window only
+        # folds two raises of one tick, so it is no alerting policy.
+        fixed_bell=timedelta(minutes=1)),
     ROUTE_COST_PREFIX: Check(
         "LLM fallback raised a stage's cost", "Requests answered by a fallback model cost more than the primary "
         "would have over the last 24 hours. Check AI gateway > Trace and the provider of the primary.", TRACE_PAGE,
-        bell_every=timedelta(hours=24)),
+        bell_key=BELL_DAILY),
     ROUTE_CUT_PREFIX: Check(
-        "LLM stage replies cut at their token ceiling", "More than 5 % of the stage's billed replies in the last 24 "
-        "hours stopped on their output-token ceiling (max_tokens / length). The gateway retries a cut reply once with "
+        "LLM stage replies cut at their token ceiling", "More than the alert share (cis.ops.reply_cut_alert_pct, 5 % "
+        "by default) of the stage's billed replies in the last 24 hours stopped on their output-token ceiling (max_tokens / length). The gateway retries a cut reply once with "
         "double the ceiling, so each cut costs a second call. Raise the stage's ceiling (the call site's constant, "
         "or a stage x model row) or set the model's min_output_tokens capability; AI gateway > Trace shows the "
-        "attempts.", TRACE_PAGE, bell_every=timedelta(hours=24)),
+        "attempts.", TRACE_PAGE, bell_key=BELL_DAILY),
 }
 # AA-900 (S271 W0, root ADR 0020 "Measurement"): the nightly quality funnel watchdog (job kind quality_funnel_watch,
 # services/quality/funnel.py has the rules and thresholds), one finding per stage over the trailing 7 days, stored in
 # the CIS-08 snapshot. Alerts fire on the transition only, as ONE digest per night (QF_DIGEST_CHECK, the new findings);
 # the per-stage checks stay registered for the stored findings' names and texts. Bell window 20 h, not 24 h: the
 # daily report chain's start drifts, and a run a few hours earlier than the night before must still bell (as
-# ROUTE_DIGEST_CHECK).
+# ROUTE_DIGEST_CHECK). AA-1171: the window is the setting cis.ops.bell_every_nightly_hours (12-23 h) and the
+# thresholds are settings (cis.ops.qf_*, cis.ops.reply_cut_alert_pct).
 QF_CUT_PREFIX = "qf_cut."
 QF_FALLBACK_PREFIX = "qf_fb."
 QF_DRIFT_PREFIX = "qf_drift."
 QF_DIGEST_CHECK = "qf_digest"
-QF_BELL_EVERY = timedelta(hours=20)
+QF_BELL_KEY = BELL_NIGHTLY
 FUNNEL_PAGE = "/admin/reports"
 PREFIX_CHECKS.update({
     QF_CUT_PREFIX: Check(
-        "Content stage replies cut over the week", "More than 5 % of the stage's billed replies in the last 7 days "
+        "Content stage replies cut over the week", "More than the alert share (cis.ops.reply_cut_alert_pct, 5 % by "
+        "default) of the stage's billed replies in the last 7 days "
         "stopped on their output-token ceiling: each cut costs a retry and can leave content short. The quality "
         "funnel (report CIS-08, GET /admin/quality/funnel) shows the stage per week; raise the ceiling or the "
-        "model's min_output_tokens.", FUNNEL_PAGE, bell_every=QF_BELL_EVERY),
+        "model's min_output_tokens.", FUNNEL_PAGE, bell_key=QF_BELL_KEY),
     QF_FALLBACK_PREFIX: Check(
         "Content stage served by fallback models over the week", "At least the stage's fallback_alert_pct (route "
         "policy, default 20 %) of its answered requests in the last 7 days came from a fallback model, so the "
         "content was not written or checked by the calibrated model. Check AI gateway > Trace and the quality funnel "
-        "(report CIS-08) before trusting the week's yield.", FUNNEL_PAGE, bell_every=QF_BELL_EVERY),
+        "(report CIS-08) before trusting the week's yield.", FUNNEL_PAGE, bell_key=QF_BELL_KEY),
     QF_DRIFT_PREFIX: Check(
-        "Content stage served-model drift", "At least 10 % of the stage's answered requests in the last 7 days came "
-        "from a model that served almost none of them the week before (a route, catalog or provider change). A "
+        "Content stage served-model drift", "At least the drift share (cis.ops.qf_drift_alert_pct, 10 % by default) "
+        "of the stage's answered requests in the last 7 days came from a model that served almost none of them "
+        "(under cis.ops.qf_drift_new_model_pct) the week before (a route, catalog or provider change). A "
         "route change on a gated stage needs an eval run (root ADR 0020, d12): check the route history and the "
-        "quality funnel (report CIS-08).", FUNNEL_PAGE, bell_every=QF_BELL_EVERY),
+        "quality funnel (report CIS-08).", FUNNEL_PAGE, bell_key=QF_BELL_KEY),
 })
 PREFIX_CHECKS_EXACT: dict[str, Check] = {
     ROUTE_DIGEST_CHECK: Check(
         "LLM route digest", "The daily summary of the stage routes: stages answered by a fallback model or with "
         "requests that got no answer in the last 24 hours. Details on AI gateway > Trace.", TRACE_PAGE,
-        bell_every=timedelta(hours=20)),
+        bell_key=BELL_NIGHTLY),
     QF_DIGEST_CHECK: Check(
         "Content quality funnel alerts", "The nightly quality funnel (report CIS-08) found new problems over the "
         "last 7 days: content stages cut at their token ceiling, served by fallback models, or answered by a model "
         "that was not serving them the week before. Only findings that were not there the night before are raised; "
-        "the funnel page lists every open one.", FUNNEL_PAGE, bell_every=QF_BELL_EVERY),
+        "the funnel page lists every open one.", FUNNEL_PAGE, bell_key=QF_BELL_KEY),
 }
 
 
@@ -603,7 +625,7 @@ def render(finding: Finding, environment: Optional[str] = None) -> tuple[str, st
 
 async def raise_alert(pool, finding: Finding, client: Any = None, *,
                       client_factory: Callable[[], Any] = sns_client, now: Optional[datetime] = None) -> dict:
-    """Bell (at most one per check per ``cis.ops.bell_every_hours``, or the check's own ``bell_every``) and, for the
+    """Bell (at most one per check per ``Check.bell_every``, the bell window setting of its family) and, for the
     first bell of the
     UTC day, one SNS e-mail.
     Returns what was done. Raises only on a database error (the caller logs it). ``now`` is for tests."""
@@ -617,7 +639,7 @@ async def raise_alert(pool, finding: Finding, client: Any = None, *,
             await conn.execute("SELECT pg_advisory_xact_lock($1)", _LOCK_KEY)
             row = await conn.fetchrow(LAST_BELL_SQL, event_type, now)
             last = row["last"] if row else None
-            if last is not None and last >= now - (chk.bell_every or ops_thresholds.bell_every()):
+            if last is not None and last >= now - chk.bell_every:
                 return {"bell": False}
             bell_id = await conn.fetchval(BELL_SQL, PLATFORM_TENANT_ID, event_type, finding.check, payload,
                                           BELL_ROLES)

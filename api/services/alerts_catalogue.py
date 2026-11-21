@@ -352,10 +352,12 @@ from api.services.alerts_catalogue_budgets import (  # noqa: E402
 # ── CIS in-app checks ────────────────────────────────────────────────────────────────────────────
 
 # Where the threshold of a check family without a cis.ops.* key lives.
+_ROUTE_POLICY = "AI gateway › Trace › Alert settings (route policy)"
 _FAMILY_SOURCE: dict[str, tuple[str, str, Optional[str]]] = {
     # prefix -> (editable_via, threshold_source, edit_href)
-    "route_": (EDIT_SETTINGS, "AI gateway › Trace › Alert settings (route policy)", "/admin/ai-gateway?tab=trace"),
-    "qf_": (EDIT_NONE, "code constants of the quality funnel (services/quality/funnel.py)", None),
+    "route_": (EDIT_SETTINGS, _ROUTE_POLICY, "/admin/ai-gateway?tab=trace"),
+    "qf_digest": (EDIT_SETTINGS, "the quality funnel settings of the findings it sums up (cis.ops.qf_*, "
+                  "cis.ops.reply_cut_alert_pct)", f"{SETTINGS_PAGE}?app=cis&area=ops"),
     "llm_stage_coverage.": (EDIT_NONE, "no threshold: any active stage without a live model", None),
     "research_auto_": (EDIT_SETTINGS, "Platform › Settings, area seo (cis.seo.research_*)",
                        f"{SETTINGS_PAGE}?app=cis&area=seo"),
@@ -407,6 +409,8 @@ def cis_check_rows(as_of: str, last_alerts: dict[str, datetime], now: datetime) 
         if keys:
             editable, source, href = EDIT_SETTINGS, "Platform › Settings, " + ", ".join(keys), settings_href(
                 "cis", keys[0])
+            if name == ops_checks.QF_FALLBACK_PREFIX:
+                source += "; fallback share: " + _ROUTE_POLICY
             threshold = _threshold_text(keys)
         elif name in log_events:
             editable, source, href, threshold = EDIT_NONE, "no threshold: any matching log line", None, "1 line"
@@ -420,11 +424,10 @@ def cis_check_rows(as_of: str, last_alerts: dict[str, datetime], now: datetime) 
         else:
             last = last_alerts.get(name)
             label = name
-        window = chk.bell_every or ops_thresholds.bell_every()
-        firing = last is not None and last >= now - window
+        firing = last is not None and last >= now - chk.bell_every
+        if chk.fixed_bell is None:
+            source += f"; bell repeat: Platform › Settings, {chk.bell_key}"
         gap = "Runs in the CIS api process: silent while the api is down (its no-healthy-task alarm covers that)."
-        if editable == EDIT_NONE and name.startswith("qf_"):
-            gap = "Threshold is a code constant, not yet a setting."
         rows.append(_row(
             id=f"check:cis:{label}", name=label, app="cis", component=_STATE_COMPONENT.get(name, "observability"),
             type=TYPE_IN_APP, source="cis", severity="ticket", mutable=False, condition=chk.title,
