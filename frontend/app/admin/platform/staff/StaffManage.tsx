@@ -28,11 +28,19 @@
 // preset), "Business owner" and "Content + Product & operations" (PATCH …/roles {"preset": …}; in Add staff the
 // preset fills the role fields); the CIS / Booking / CRM fields and the Pricing team preset sit behind "Show all
 // roles". Booking content_creator is retired: never offered, an old grant shows as "(retired)" and Sync removes it.
+//
+// AA-1155 (spec task T9, R5.3 / R3.3): the CIS and Booking role pickers list each app's custom roles next to the
+// built-in ones (GET /api/admin/platform/roles, the same catalogue as Platform › Roles & permissions); saving a custom
+// role puts the person in cis-custom / booking-custom (the backend's Sync does the same). The business-owner marker
+// (at most one person) is set or cleared here by an owner (PUT …/business-owner), audited by the backend.
 
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, Mail, RefreshCw, XCircle } from "lucide-react";
 import { useMemo, useState } from "react";
-import { Button, ConfirmModal, Field, K, Modal, RADIUS, sans, useT, Checkbox, Input, Select } from "../../../_kit";
+import { Button, ConfirmModal, Field, K, Modal, RADIUS, apiGet, sans, useT, Checkbox, Input, Select } from "../../../_kit";
+import {
+  ROLES_PATH, cisRoleOf, customRoleLabel, customRoleOptions, type RolesCatalogue,
+} from "@/lib/rolesMatrix";
 import { ASSIGNABLE_STAFF_ROLES, isStaffRole, staffErrorMessage } from "@/lib/rbac";
 import { RBAC_MESSAGES } from "@/lib/rbac.messages";
 import type { Translator } from "../../../_kit/core/i18n";
@@ -69,6 +77,16 @@ export interface StaffAccount {
   last_invite_requested_at?: string | null;
   last_invite_not_sent_at?: string | null;
   invite_status?: InviteStatus | null;
+  /** AA-1155 (CIS 462): the CIS custom role code (role then holds its built-in base) and its name; the marker. */
+  custom_role?: string | null;
+  custom_role_label?: string | null;
+  is_business_owner?: boolean;
+}
+
+/** AA-1155: every app's built-in and custom roles (the Staff page pickers, Platform › Roles & permissions). */
+export function useRolesCatalogue() {
+  return useQuery({ queryKey: ["platform-roles"], queryFn: () => apiGet<RolesCatalogue>(ROLES_PATH),
+    staleTime: 60_000 });
 }
 
 export type InviteStatus = "sent" | "queued" | "not_sent";
@@ -126,10 +144,13 @@ export function useStaffWords() {
   const role = useT(RBAC_MESSAGES);
   const booking = useT(BOOKING_ROLE);
   const crm = useT(CRM_ROLE);
+  const catalogue = useRolesCatalogue().data;
   return useMemo(() => ({
-    roleLabel: (r: string) => (isStaffRole(r) ? role(r) : r),
+    // AA-1155: a custom role code shows its name from the roles catalogue
+    roleLabel: (r: string) => (isStaffRole(r) ? role(r) : customRoleLabel(catalogue, "cis", r) ?? r),
     bookingRoleLabel: (r: string | null) =>
-      (!r ? m("none") : Object.hasOwn(BOOKING_ROLE_LABEL, r) ? booking(r as BookingRoleLabelKey) : r),
+      (!r ? m("none") : Object.hasOwn(BOOKING_ROLE_LABEL, r) ? booking(r as BookingRoleLabelKey)
+        : customRoleLabel(catalogue, "booking", r) ?? r),
     /** AA-1031: CRM roles in words ("Agency admin, Support"), or "None". */
     crmRolesLabel: (roles: readonly string[] | null | undefined) => {
       const known = CRM_ROLES.filter((r) => (roles ?? []).includes(r));
@@ -148,7 +169,7 @@ export function useStaffWords() {
           return m("never");
       }
     },
-  }), [m, role, booking, crm]);
+  }), [m, role, booking, crm, catalogue]);
 }
 
 /** The refusal words of staffWrite(), in the UI language. */
@@ -199,7 +220,7 @@ function detailText(detail: unknown, fallback: string, status: number, w: WriteW
 
 /** One staff directory write through the BFF. Never throws: the result is an Outcome. */
 async function staffWrite(
-  method: "POST" | "PATCH", path: string, okMessage: string, w: WriteWords, body?: unknown,
+  method: "POST" | "PATCH" | "PUT", path: string, okMessage: string, w: WriteWords, body?: unknown,
 ): Promise<Outcome> {
   let res: Response;
   try {
@@ -304,14 +325,23 @@ function Label({ text, htmlFor, hint, children }: { text: string; htmlFor: strin
 }
 
 function CisRoleSelect({ id, value, onChange, disabled }: { id: string; value: string; onChange: (v: string) => void; disabled?: boolean }) {
+  const m = useT(MANAGE);
   const { roleLabel } = useStaffWords();
+  const custom = customRoleOptions(useRolesCatalogue().data, "cis");   // AA-1155: active CIS custom roles
+  const listed = (ASSIGNABLE_STAFF_ROLES as readonly string[]).includes(value) || custom.some((c) => c.code === value);
   return (
     <Select id={id} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} style={fieldStyle}>
-      {/* AA-878 — the read-only viewer is never assignable here; a viewer row shows its role, not selectable. */}
-      {!(ASSIGNABLE_STAFF_ROLES as readonly string[]).includes(value) && value && (
+      {/* AA-878 — the read-only viewer is never assignable here; a viewer row shows its role, not selectable.
+          AA-1155: an archived custom role shows the same way. */}
+      {!listed && value && (
         <option value={value} disabled>{roleLabel(value)}</option>
       )}
       {ASSIGNABLE_STAFF_ROLES.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
+      {custom.length > 0 && (
+        <optgroup label={m("customRoleGroup")}>
+          {custom.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
+        </optgroup>
+      )}
     </Select>
   );
 }
@@ -319,12 +349,23 @@ function CisRoleSelect({ id, value, onChange, disabled }: { id: string; value: s
 function BookingRoleSelect({ id, value, onChange }: { id: string; value: string; onChange: (v: string) => void }) {
   const m = useT(MANAGE);
   const { bookingRoleLabel } = useStaffWords();
+  const custom = customRoleOptions(useRolesCatalogue().data, "booking");   // AA-1155: active Booking custom roles
+  const unlisted = !!value && !RETIRED_BOOKING_ROLES.includes(value)
+    && !(BOOKING_ROLES as readonly string[]).includes(value) && !custom.some((c) => c.code === value);
   return (
     <Select id={id} value={value} onChange={(e) => onChange(e.target.value)} style={fieldStyle}>
       <option value="">{m("noBooking")}</option>
-      {/* AA-1150: a retired grant shows its role, never selectable (Sync or a change removes it). */}
-      {RETIRED_BOOKING_ROLES.includes(value) && <option value={value} disabled>{bookingRoleLabel(value)}</option>}
+      {/* AA-1150: a retired grant shows its role, never selectable (Sync or a change removes it). AA-1155: so does an
+          archived custom role. */}
+      {(RETIRED_BOOKING_ROLES.includes(value) || unlisted) && (
+        <option value={value} disabled>{bookingRoleLabel(value)}</option>
+      )}
       {BOOKING_ROLES.map((r) => <option key={r} value={r}>{bookingRoleLabel(r)}</option>)}
+      {custom.length > 0 && (
+        <optgroup label={m("customRoleGroup")}>
+          {custom.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
+        </optgroup>
+      )}
     </Select>
   );
 }
@@ -496,7 +537,7 @@ function CreateRoleFields({ access, onAccess, role, onRole, booking, onBooking, 
 
 // ── Manage one account (drawer) ──────────────────────────────────────────────────────────────────
 
-type Confirm = null | "disable" | "sign-out" | "pricing" | PeoplePreset;
+type Confirm = null | "disable" | "sign-out" | "pricing" | "business-owner" | PeoplePreset;
 
 export function StaffManagePanel({ staff, selfId, onOutcome, crmAvailable = true }: {
   staff: StaffAccount;
@@ -509,7 +550,8 @@ export function StaffManagePanel({ staff, selfId, onOutcome, crmAvailable = true
   const w = useWriteWords();
   const { roleLabel, bookingRoleLabel, crmRolesLabel } = useStaffWords();
   const refresh = useRefreshStaff();
-  const [role, setRole] = useState(staff.role);
+  const savedRole = cisRoleOf(staff);   // AA-1155: the custom role code of a custom holder
+  const [role, setRole] = useState(savedRole);
   const [booking, setBooking] = useState(staff.booking_role ?? "");
   const savedCrm = crmRolesOf(staff);
   const [crmRoles, setCrmRoles] = useState<CrmRole[]>(savedCrm);
@@ -526,7 +568,7 @@ export function StaffManagePanel({ staff, selfId, onOutcome, crmAvailable = true
     );
   }
 
-  const run = async (key: string, method: "POST" | "PATCH", path: string, ok: string, body?: unknown) => {
+  const run = async (key: string, method: "POST" | "PATCH" | "PUT", path: string, ok: string, body?: unknown) => {
     setBusy(key);
     const outcome = await staffWrite(method, path, ok, w, body);
     setBusy(null);
@@ -535,7 +577,7 @@ export function StaffManagePanel({ staff, selfId, onOutcome, crmAvailable = true
     onOutcome(outcome);
   };
 
-  const roleChanged = role !== staff.role;
+  const roleChanged = role !== savedRole;
   const bookingChanged = booking !== (staff.booking_role ?? "");
   const crmChanged = !sameRoles(crmRoles, savedCrm);
   const saveRoles = () => {
@@ -545,8 +587,8 @@ export function StaffManagePanel({ staff, selfId, onOutcome, crmAvailable = true
     if (crmChanged) body.crm_roles = crmRoles;
     void run("roles", "PATCH", `${base}/roles`, m("rolesSaved"), body);
   };
-  const pricingInPlace = hasPricingTeamRoles(staff);   // AA-1091
-  const pricing = pricingTeamPlan(staff);
+  const pricingInPlace = hasPricingTeamRoles({ ...staff, role: savedRole });   // AA-1091
+  const pricing = pricingTeamPlan({ ...staff, role: savedRole });   // AA-1155: a custom role is never replaced
   const pricingBlocked = [
     pricing.blocked.cis && m("pricingCisRole", roleLabel(pricing.blocked.cis)),
     pricing.blocked.booking && m("pricingBookingRole", bookingRoleLabel(pricing.blocked.booking)),
@@ -592,7 +634,7 @@ export function StaffManagePanel({ staff, selfId, onOutcome, crmAvailable = true
           </div>
           <div style={{ fontSize: 12, color: K.muted, lineHeight: 1.5 }}>
             {m("eachChange")}
-            {roleChanged && role !== staff.role && m("cisChange", roleLabel(staff.role), roleLabel(role))}
+            {roleChanged && m("cisChange", roleLabel(savedRole), roleLabel(role))}
             {bookingChanged && m("bookingChange", bookingRoleLabel(staff.booking_role), bookingRoleLabel(booking || null))}
             {crmChanged && m("crmChange", crmRolesLabel(savedCrm), crmRolesLabel(crmRoles))}
           </div>
@@ -616,6 +658,9 @@ export function StaffManagePanel({ staff, selfId, onOutcome, crmAvailable = true
             </div>
           )}
         </div>
+      )}
+      {(staff.is_active || staff.is_business_owner) && (
+        <BusinessOwnerRow staff={staff} busy={!!busy} onAsk={() => setConfirm("business-owner")} />
       )}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         {staff.is_active ? (
@@ -661,6 +706,20 @@ export function StaffManagePanel({ staff, selfId, onOutcome, crmAvailable = true
         </>}
         onConfirm={() => void run("disable", "POST", `${base}/disable`, m("disabledDone"))}
       />
+      <ConfirmModal
+        open={confirm === "business-owner"}
+        onClose={() => setConfirm(null)}
+        busy={busy === "business-owner"}
+        title={staff.is_business_owner ? m("businessOwnerClearQ") : m("businessOwnerSetQ")}
+        confirmLabel={staff.is_business_owner ? m("businessOwnerClear") : m("businessOwnerSet")}
+        body={<>
+          <strong>{staff.display_name || staff.username}</strong>{" "}
+          {staff.is_business_owner ? m("businessOwnerClearBody") : m("businessOwnerSetBody")}
+        </>}
+        onConfirm={() => void run("business-owner", "PUT", `${base}/business-owner`,
+          staff.is_business_owner ? m("businessOwnerCleared") : m("businessOwnerDone"),
+          { value: !staff.is_business_owner })}
+      />
       <PresetConfirm staff={staff} preset={isPeoplePreset(confirm) ? confirm : null} busy={busy === "preset"}
         onClose={() => setConfirm(null)}
         onConfirm={(p, done) => void run("preset", "PATCH", `${base}/roles`, done, { preset: p })} />
@@ -693,6 +752,27 @@ export function StaffManagePanel({ staff, selfId, onOutcome, crmAvailable = true
           : m("signedOutEnabled"))}
       />
     </section>
+  );
+}
+
+/** AA-1155 (R3.3): the business-owner marker of this account (at most one person; set by an owner, audited). */
+function BusinessOwnerRow({ staff, busy, onAsk }: { staff: StaffAccount; busy: boolean; onAsk: () => void }) {
+  const m = useT(MANAGE);
+  return (
+    <div data-testid="staff-business-owner" style={{
+      display: "flex", gap: 10, alignItems: "flex-start", flexWrap: "wrap", padding: "10px 12px", background: K.line2,
+      borderRadius: RADIUS.sm,
+    }}>
+      <span style={{ flex: "1 1 220px", minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: K.ink3 }}>{m("businessOwnerTitle")}</span>
+        <span style={{ fontSize: 12, color: K.muted, lineHeight: 1.45 }}>
+          {staff.is_business_owner ? m("businessOwnerIs") : m("businessOwnerNote")}
+        </span>
+      </span>
+      <Button size="sm" variant="secondary" testId="staff-business-owner-toggle" onClick={onAsk} disabled={busy}>
+        {staff.is_business_owner ? m("businessOwnerClear") : m("businessOwnerSet")}
+      </Button>
+    </div>
   );
 }
 

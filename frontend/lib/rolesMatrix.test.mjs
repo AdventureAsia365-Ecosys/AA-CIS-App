@@ -87,3 +87,14 @@ test("4. capability columns, areas and the filter", () => {
   assert.ok(matchesFilter(desk, "TENANT") && matchesFilter(desk, "desk") && matchesFilter(desk, " "));
   assert.ok(!matchesFilter(desk, "billing"));
 });
+
+test("5. the Staff page pickers: active custom roles by name, labels of archived ones, the row's CIS role", async () => {
+  const { cisRoleOf, customRoleLabel, customRoleOptions } = await import("./rolesMatrix.ts");
+  assert.deepEqual(customRoleOptions(DATA, "cis").map((o) => o.code), ["custom_bot", "custom_desk", "custom_e2e_probe"]);
+  assert.deepEqual(customRoleOptions(DATA, "booking"), [{ code: "custom_ops_books", label: "Ops and books" }]);
+  assert.deepEqual(customRoleOptions(undefined, "cis"), []);
+  assert.equal(customRoleLabel(DATA, "cis", "custom_old"), "Old desk");     // no issue id in the UI
+  assert.equal(customRoleLabel(DATA, "cis", "custom_none"), null);
+  assert.equal(cisRoleOf({ role: "content_lead", custom_role: "custom_desk" }), "custom_desk");
+  assert.equal(cisRoleOf({ role: "content", custom_role: null }), "content");
+});

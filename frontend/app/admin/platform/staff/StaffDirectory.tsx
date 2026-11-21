@@ -39,6 +39,7 @@ import {
   Checkbox,
 } from "../../../_kit";
 import { canWriteStaff, type StaffViewer } from "@/lib/rbac";
+import { cisRoleOf } from "@/lib/rolesMatrix";
 import { BOOKING_ADMIN_URL, bookingStaffUrl } from "@/lib/apps";
 import {
   CreateStaffModal,
@@ -135,7 +136,9 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
       header: t("colName"),
       cell: (c) => <NameCell s={c.row.original} />,
     },
-    { accessorKey: "role", header: t("colCisRole"), cell: (c) => <RoleBadge role={c.row.original.role} /> },
+    // AA-1155: a custom holder shows its custom role, not the built-in base the row keeps
+    { id: "role", accessorFn: (r) => cisRoleOf(r), header: t("colCisRole"),
+      cell: (c) => <RoleBadge role={cisRoleOf(c.row.original)} /> },
     {
       id: "booking_role",
       accessorFn: (r) => r.booking_role ?? "",
@@ -268,7 +271,7 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
           loading={list.isLoading}
           searchable
           searchPlaceholder={t("searchPlaceholder")}
-          searchText={(r) => [r.id, roleLabel(r.role), r.booking_role ? bookingRoleLabel(r.booking_role) : ""].join(" ")}
+          searchText={(r) => [r.id, roleLabel(cisRoleOf(r)), r.booking_role ? bookingRoleLabel(r.booking_role) : ""].join(" ")}
           enableCsv
           csvFilename="cis-staff.csv"
           emptyTitle={t("emptyTitle")}
@@ -305,6 +308,7 @@ function NameCell({ s }: { s: StaffAccount }) {
       <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
         <span style={{ fontWeight: 600, color: K.ink }}>{s.display_name || s.username}</span>
         {s.is_owner && <Badge tone="accent" dot={false}>{t("owner")}</Badge>}
+        {s.is_business_owner && <Badge tone="info" dot={false}>{t("businessOwner")}</Badge>}
         {s.breakglass && <Badge tone="warning" dot={false}>{t("breakGlass")}</Badge>}
       </span>
       <span style={{ fontSize: 12, color: K.muted }}>{s.email ?? t("noWorkEmail", s.username)}</span>
@@ -348,16 +352,17 @@ function StaffDrawer({ id, fallback, onClose, canWrite, selfId, crmAvailable }: 
       {s && (
         <div data-testid="staff-detail-ready" style={{ display: "flex", flexDirection: "column", gap: 18, fontFamily: sans }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <RoleBadge role={s.role} />
+            <RoleBadge role={cisRoleOf(s)} />
             <ActiveBadge active={s.is_active} />
             {s.is_owner && <Badge tone="accent" dot={false}>{t("owner")}</Badge>}
+            {s.is_business_owner && <Badge tone="info" dot={false}>{t("businessOwner")}</Badge>}
             {s.breakglass && <Badge tone="warning" dot={false}>{t("breakGlass")}</Badge>}
           </div>
           <dl style={{ display: "grid", gridTemplateColumns: "max-content 1fr", gap: "10px 18px", margin: 0, fontSize: 13 }}>
             <Field label={t("fName")} value={s.display_name || "—"} />
             <Field label={t("fWorkEmail")} value={s.email || t("noCompanySignIn")} />
             <Field label={t("fUsername")} value={s.username} />
-            <Field label={t("colCisRole")} value={roleLabel(s.role)} />
+            <Field label={t("colCisRole")} value={roleLabel(cisRoleOf(s))} />
             {/* AA-816 C6: the Booking role is the shared.staff_app_grant row, written here together with the
                 booking-<role> Cognito group. */}
             <Field label={t("colBookingRole")} value={bookingRoleLabel(s.booking_role)} />

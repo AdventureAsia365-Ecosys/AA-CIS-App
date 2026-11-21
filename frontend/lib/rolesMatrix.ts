@@ -108,3 +108,31 @@ export function matchesFilter(row: MatrixRow, query: string): boolean {
   if (!q) return true;
   return [row.code, row.label, ...(row.capabilities ?? [])].some((v) => v.toLowerCase().includes(q));
 }
+
+// ── AA-1155 T9: the Staff page pickers (the same catalogue) ──────────────────────────────────────────────────────
+
+export interface RoleOption {
+  code: string;
+  label: string;
+}
+
+/** The custom roles of an app a picker offers: active ones only, by name. */
+export function customRoleOptions(data: RolesCatalogue | undefined, app: "cis" | "booking"): RoleOption[] {
+  return (data?.[app]?.custom ?? [])
+    .filter((r) => !r.archived)
+    .map((r) => ({ code: r.code, label: clean(r.label) }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/** The name of a custom role code of an app (archived ones too), or null when the catalogue does not know it. */
+export function customRoleLabel(data: RolesCatalogue | undefined, app: "cis" | "booking", code: string | null | undefined):
+  string | null {
+  if (!code) return null;
+  const label = data?.[app]?.custom?.find((r) => r.code === code)?.label;
+  return label === undefined ? null : clean(label);
+}
+
+/** The CIS role a staff row grants: its custom role when it has one, else its built-in role. */
+export function cisRoleOf(s: { role: string; custom_role?: string | null }): string {
+  return s.custom_role || s.role;
+}
