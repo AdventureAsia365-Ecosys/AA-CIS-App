@@ -2641,7 +2641,7 @@ row's `admin_users.custom_role`: the session's role is that code and its capabil
 (never the approve class, `staff.write` / `staff.admin`, or an unknown name); `admin_users.role` keeps the role's
 `based_on` and authorisation never falls back to it. Fail closed for these holders only (no custom role, unknown or
 archived role, no usable capability, a read error: 403 `custom_role_unavailable`); built-in holders never read the
-tables. `staff_authz.role_perms()` is the one lookup (a custom code holds capabilities only with its verified Cognito
+tables. `staff_roles.role_perms()` is the one lookup (a custom code holds capabilities only with its verified Cognito
 session, so the secret cannot claim one); a custom role's tenant scope comes from its capabilities
 (`tenant_scope.principal_scope`: `tenant.read` / `tenant_content.read` / billing / spend reads -> every tenant, the
 book reads -> its book, `content.read` -> internal). Seed `custom_content` "Content" = content_lead minus
@@ -2653,13 +2653,13 @@ book reads -> its book, `content.read` -> internal). Seed `custom_content` "Cont
 equal by `lib/rbacCaps.test.mjs`. **Staff page (T9):** the CIS and Booking pickers list each app's custom roles (`GET
 /admin/platform/roles`, `staff.read`: CIS built-in + custom, Booking built-in names + custom roles from the bk-062 view
 `booking.v_staff_role_capability`, the CRM groups, TripPlanner); a custom CIS role writes `custom_role` (role =
-`based_on`) and the group `cis-custom`, a Booking custom code is the `staff_app_grant` row and the group
+`based_on`) and the group `cis-custom` (`api/services/staff_custom_roles.py`), a Booking custom code is the `staff_app_grant` row and the group
 `booking-custom` (Sync does the same); the business-owner marker (`admin_users.is_business_owner`, one holder) is
 `PUT /admin/platform/staff/{id}/business-owner` (`staff.write`, owners only, audited `staff.business_owner_changed`
 before / after, never an E2E address). **Roles & permissions (T10):** Platform › Roles & permissions
 `/admin/platform/roles` (admin), read-only, from the same catalogue (`lib/rolesMatrix.ts`; no person, agent or E2E row,
 no issue id). **AI controls (T11):** every route under `/admin/budgets` and `/admin/ai-gateway` (six routers) also runs
-`staff_authz.require_cognito_session` (403 for the secret with any `x-admin-role`, a legacy session, the Preview
+`api/core/cognito_session.require_cognito_session` (403 for the secret with any `x-admin-role`, a legacy session, the Preview
 credential or the machine); `PUT` / `DELETE /admin/budgets/...` write `spend_budget.updated` / `.deleted` audit rows
 with before and after in the write's transaction. A10f (`e2e-cis-content-lead@`, content_lead) and A10g
 (`e2e-custom-maker@`, a custom role based on content_lead, Booking custom grant on Dev) are Dev-only and read-only in CIS

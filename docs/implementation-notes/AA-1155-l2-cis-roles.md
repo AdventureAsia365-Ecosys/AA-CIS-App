@@ -5,7 +5,7 @@ S286 (`AA-1155-custom-roles-foundation.md`). No migration in this lane.
 
 ## Decisions
 - **Role of a custom holder = the custom code** (`custom_content`), not its `based_on`. Every role check goes through
-  `staff_authz.role_perms()`: built-in -> ROLE_PERMS, custom code -> the capabilities of this request's verified
+  `staff_roles.role_perms()` (called by `staff_authz.has_perm` / `has_any_perm`): built-in -> ROLE_PERMS, custom code -> the capabilities of this request's verified
   Cognito identity (contextvar), nothing otherwise. So a forged `x-admin-role: custom_x` with the admin secret holds
   no capability ("Unknown staff role"), and code that still tests `role == "admin"` never admits a custom holder.
 - **Built-in group outranks `cis-custom`** (same precedence rule as today); `booking-custom` alone is no CIS role.
@@ -45,6 +45,9 @@ S286 (`AA-1155-custom-roles-foundation.md`). No migration in this lane.
   other `tenant.read` GETs (route matrix test lists the difference to content_lead). Flagged for the tech lead.
 
 ## Should know
+- Module layout (code-health ratchets: `staff_authz.py` and `staff_directory.py` may not grow): custom-role reads in
+  `api/core/staff_roles.py`, the Cognito-only dependency in `api/core/cognito_session.py`, the directory's custom-role
+  helpers and the business-owner write in `api/services/staff_custom_roles.py`.
 - Tests: `tests/unit/test_aa1155_custom_roles_authz.py` (T8), `test_aa1155_staff_directory_custom.py` (T9),
   `test_aa1155_ai_controls_cognito.py` + budget audit in `test_aa1025_admin_central_budgets.py` (T11),
   `frontend/lib/rbacCaps.test.mjs` + `rolesMatrix.test.mjs` (T10), `tests/integration/test_aa1155_custom_roles_pg.py`.
