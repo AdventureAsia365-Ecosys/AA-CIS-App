@@ -25,6 +25,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from typing import Any, Callable, Optional
 
 from services.quality import settings_keys as K
@@ -183,6 +184,33 @@ def cross_problem(key: str, value: Any, get: Optional[Callable[[str], Any]] = No
 _ALL = frozenset(K.ALL_KEYS)
 
 
+# AA-788 (S279 Done-when, root ADR 0020 "a gate may hold content only with a passing measurement record"): the switch
+# of a measured check to its holding mode names the measurement record that passed, as the evidence of the proposal.
+# The record's reference is printed by the scorer only when the record clears the bar (scripts/aa788/pilot.py
+# `score`): "<prefix><run id(s)>:<12 hex of the record's sha256>". Any other evidence text is refused for that value.
+# {(key, value): (reference prefix, what the record is)}; a key or value not listed keeps the generic evidence rule.
+F12_PILOT_EVIDENCE_PREFIX = "aa788-pilot:"
+HOLD_EVIDENCE: dict[tuple[str, str], tuple[str, str]] = {
+    (K.MODES["t10_f12_scope"], "block"): (
+        F12_PILOT_EVIDENCE_PREFIX, "the passing F12 scope pilot measurement record (scripts/aa788/pilot.py score)"),
+}
+_EVIDENCE_REF_RE = re.compile(r"[a-z0-9][a-z0-9_.+-]{2,200}:[0-9a-f]{12}")
+
+
+def evidence_problem(key: str, value: Any, evidence_ref: Optional[str]) -> Optional[str]:
+    """Why ``evidence_ref`` cannot back ``value`` for ``key`` (None = fine). Only the holding values of HOLD_EVIDENCE
+    have a rule: their evidence must be a measurement record reference of the listed kind."""
+    rule = HOLD_EVIDENCE.get((key, value if isinstance(value, str) else ""))
+    if rule is None:
+        return None
+    prefix, what = rule
+    ref = (evidence_ref or "").strip()
+    if not ref.startswith(prefix) or not _EVIDENCE_REF_RE.fullmatch(ref[len(prefix):]):
+        return (f"the value {value!r} lets this check hold content, so its evidence must be {what}: a reference "
+                f"\"{prefix}<run id>:<12 hex>\" as the scorer prints it for a passing record")
+    return None
+
+
 def ui_values() -> dict:
     """What the admin pages show (GET /admin/quality/thresholds): values in force, no copy in the frontend."""
     from services.quality import registry, writing_policy
@@ -213,8 +241,13 @@ def settings_fp() -> str:
 
 
 def prompt_fp() -> str:
-    """'' while every value a writer prompt renders is its default, else 8 hex of those values (PROMPT_KEYS)."""
-    return _fp(K.PROMPT_KEYS)
+    """'' while every value a writer prompt renders is its default, else 8 hex of those values (PROMPT_KEYS).
+
+    AA-1167: the writer prompts' untrusted-data fence switch (cis.llm.prompt_data_fence) is one of them: with it on,
+    the S1 v2 / T2 / T9 prompts differ from the registered version's default render, so the ledger's prompt_version
+    carries the '.s<fp>' suffix (shared/llm_client/prompt_registry.settings_suffix)."""
+    from services.ai_safety import prompt_fence
+    return _fp(K.PROMPT_KEYS + (prompt_fence.KEY,))
 
 
 __all__ = ["START_TIME_REASON", "cross_problem", "governs", "prompt_fp", "settings_fp", "ui_values"]

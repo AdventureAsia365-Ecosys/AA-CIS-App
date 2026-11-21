@@ -2600,7 +2600,23 @@ would lose those rights); CRM roles are untouched; one audit row with `details.p
 "Business owner" (`preset="business_owner"`: CIS admin + Booking admin, CRM unchanged) and "Content + Product &
 operations" (`preset="content_ops"`: CIS `content_lead`, no Booking role and no CRM role until custom roles exist,
 tech lead decision Q1); every other role (the three fields and the Pricing team preset) is behind "Show all roles".
-Add staff offers the same presets (the create fills the role fields from them). Root ADR 0006 +
+Add staff offers the same presets (the create fills the role fields from them). **Presets as data (AA-1155 T14,
+CIS 465)**: the presets above are rows of `shared.staff_role_preset` (code, label, description, the CIS role or a CIS
+custom role, the Booking mode keep / set / clear + role, the CRM mode keep / replace / add + roles, `additive_only`
+with its keep lists, sort order, `archived`), seeded with those four and edited by an `is_owner` user in the Staff
+page's "People-role presets" section (`GET/POST /admin/platform/presets`, `PATCH /admin/platform/presets/{code}`,
+audited `staff.preset_created` / `staff.preset_updated` with before and after); `PATCH …/roles {"preset": code}`
+reads the active row in the write's transaction (`api/services/staff_presets.py`). The code keeps only the guards: no
+preset field can set the owner flag, the self-demote and last-owner checks run on what it changes, and an
+additive-only preset refuses (409 `preset_would_replace`) to replace a held role. **CIS role editor (AA-1155 T13)**:
+the same page's "CIS custom roles" section lets an `is_owner` user clone a built-in CIS role (never admin, viewer or
+reviewer) into a `custom_<name>` role, tick its capabilities, relabel, archive or restore it (`GET/POST
+/admin/platform/roles/cis`, `PATCH /admin/platform/roles/cis/{code}`, `api/services/staff_role_editor.py`, the same
+rules as the Booking editor: approve-class or unknown capability 400, audited `staff.role_created` /
+`staff.role_updated`); a role an active account holds is not archived (409 `role_in_use`), nor one an active preset
+grants (409 `role_in_use_by_preset`). A preset edit re-checks a custom role only when its field changes or the preset
+is restored, so a preset whose custom role was archived since (a Booking role is archived in Booking) can still be
+relabelled or archived; applying it answers 400. Root ADR 0006 +
 amendments 0006a / 0006b are the design; tenants are separate (`cis_tenant_token`, role `tenant`).
 
 **R2 roles and tenant scope (AA-1035 slice 1, root ADR 0019 d3 / d4; CIS 362-364).** `shared.admin_role` also has
@@ -2987,6 +3003,7 @@ the guide is owner tier (`ai_gateway_guide.read_asset`); the BFF decodes it like
 
 **Delivery (AA-1108).** Platform › Delivery `/admin/platform/delivery` (admin only: PAGE_RULES `/admin/platform`, BFF `API_READ_RULES` "platform", POLICY `GET /admin/platform/delivery` = `ops.read`). CI/CD and DORA per app (CIS, Booking, Partner CRM, TripPlanner, Infra, root) on Dev: the five DORA keys (deployment frequency, lead time, change failure rate, failed deployment recovery time, rework rate) each with its sample size n, the lead-time segments (open → first green CI → merge queue → merged → deployed → verified), CI health per workflow (p50 / p95, failure rate, re-runs, minutes), the main branch state, merge-queue wait and ejections, flaky jobs, deploys and failed deploys with recovery time, a 12-week trend, links to every GitHub run, commit and pull request. Source: the root workflow "Delivery metrics" (`tools/delivery/delivery_metrics.py`, hourly, the root run's `GITHUB_TOKEN` over the six public repos, raw events kept 400 days) uploads `docs-reader/delivery/summary.json`; `api/services/delivery_metrics.py` reads it under the docs-reader prefix grant (no table, no write path, no GitHub token here), caches it like the docs manifest (5 min, `?refresh=1` at most every 30 s, the page's Refresh button), keeps the known keys and apps with an id, masks any 12-digit run, and colours each metric green / amber / red ("few" under the minimum n) with the settings of area `delivery` (CIS 433, keys in `services/reports/delivery_settings.py`, starting at the DORA "high" band). 404 when nothing is published, 503 when storage or the format fails. Router `api/routers/admin_platform_delivery.py`; page `frontend/app/admin/platform/delivery/` (overview cards + one tab per app, `?app=<id>`), helpers `frontend/lib/deliveryMetrics.ts`. The definitions (deploy, change, failed deploy, recovery, rework, environment) are the root guide `docs/guides/delivery-metrics.md` (`GUIDE-12-delivery`).
 **Delivery time range (AA-1135).** One range for every tab (`?range=7d|28d|90d|custom&from=&to=` on the page and the API). Presets come from the collector (`ranges.d7|d28|d90` per app in the same summary). A custom range of whole UTC days is recomputed from the collector's day files (`docs-reader/delivery/events/yyyy/mm/dd.ndjson`, read only) by `api/services/delivery_range.py` in a child process (`api/services/delivery_range_worker.py`; the store is about 50 MB of events, so the memory never stays in the API process) with `api/services/delivery_engine.py`, a **byte copy** of the root `tools/delivery/delivery_engine.py` (lock `api/services/delivery_engine.lock.json`; never edit it here, sync with the root `tools/delivery/sync_engine.py`, which also writes the parity fixture `tests/unit/fixtures/delivery_range/`). Custom ranges pause (409) while the published `definitions.engine_sha256` differs from the copy, and refuse (409 `out_of_step`) day files that do not rebuild the summary's store (`definitions.store_fingerprint`); 422 for a reversed range, one longer than `cis.delivery.custom_range_max_days` (CIS 450) or outside the stored history; results cached per range until the next summary (`cis.delivery.custom_range_cache_entries`). Cold path (S284): the child starts from a boot that never imports the app (`delivery_range._BOOT`, an empty `api` package in place of `api/__init__.py`); the window-independent work (day file reads, fingerprint check, every app's context) is done once per summary and kept as a snapshot in a private temporary folder of the API process, prepared in the background when a preset is served (`delivery_range.warm`), so a custom range of a prepared summary only cuts its window (no S3 read); a summary found out of step is remembered and refused at once. Benchmark: `scripts/aa1135_delivery_range_bench.py` against a local copy of the store. The page adds a DORA trend chart, the delivery flow diagram (median / p95 per step), merge-queue charts (wait histogram, ejection reasons, weekly ejection rate), a churn treemap and card sorting (`?sort=`).
+**Compliance readiness (AA-1170, phase 1).** Platform › Compliance `/admin/platform/compliance` (capabilities `compliance.read` / `compliance.write` in `staff_authz`, administrator only at first, a custom role may hold them; PAGE_RULES and BFF `API_READ_RULES` "platform/compliance" before the "platform" rules). Schema `compliance` (CIS 466, CIS-owned, `cis_app` DML): `requirement` (every requirement of ISO/IEC 27001:2022, SOC 2 TSC common criteria, ISO/IEC 42001:2023, OWASP Top 10 2021, OWASP Top 10 for LLM 2025 and the EU AI Act deployer articles, as identifiers with our own short labels; the standards' text is copyrighted and never stored), `control` + `requirement_mapping` (the common controls and what they cover, full / partial; **never committed**: loaded from the private register by `scripts/compliance/load_register.py`, DRY RUN by default, run by the orchestrator as `cis_app`; `scripts/compliance/register.example.json` is an invented example), `evidence` (append-only by trigger: one row per published check result) and `score_snapshot` (one row per UTC day and framework). Evidence, phase 1: the root workflow "Compliance evidence" (`tools/compliance/collect.py`, daily, about ten checks with the run's `GITHUB_TOKEN` and the root registers) uploads `docs-reader/compliance/evidence.json` with the Docs sync role; `api/services/compliance.py` reads it under the docs-reader grant when the page loads (cached 5 min; Refresh = `POST /admin/platform/compliance/refresh`, compliance.write), cleans it (no 12-digit run, no ARN, GitHub links only, 8 KiB detail) and ingests it (unique `(source, check_id, collected_at)`). Score (`api/services/compliance_score.py`, pure): Evidenced % per framework, strict (met / all requirements) and weighted (+ partial x `cis.compliance.partial_weight`); a check counts only when its newest evidence passes and is within the validity window of its source read **at score time** (`cis.compliance.validity_hours.<source>`, so a shorter setting turns evidence stale at once), its collector was heard within `cis.compliance.collector_heartbeat_hours`, and its published fact passes the setting (drill age, access review age, overdue docs). The S286 hand scores are a reference line (`cis.compliance.reference_scores`). Settings: area `compliance` (CIS 466; keys in `api/services/compliance_settings.py`). The Object Lock evidence store, the AWS / DB collectors and the read-only GitHub App are phase 2. Page `frontend/app/admin/platform/compliance/` (Overview, Controls + drawer), helpers `frontend/lib/compliance.ts`; the banner says "Readiness score (Dev environment), not a certification".
 
 **Platform apps, audit and cost (AA-884).** Router `api/routers/admin_platform_ops.py` (read only, admin-only POLICY
 entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
@@ -4169,7 +4186,10 @@ lexicon + out-of-scope gazetteer from the TRIP name and "other trips" lines, `LE
 `SOCIAL_PROOF_RE`, repeats, hashtag spelling). It fixes what is safe in place before the gates
 (logged as the `F13_autofix` flag) and two gates report the rest: **F12_scope** (a place outside
 the SCOPE in title/meta/headings/body; warn by default — AA-788: setting `cis.quality_modes.t10_f12_scope` = block makes a body finding
-block for one sentence repair and hold when it is left, a title/meta-only finding stays a warning) and
+block for one sentence repair and hold when it is left, a title/meta-only finding stays a warning; S287: no code
+switch — the setting is read at gate time, and its `block` value is refused unless the evidence is a passing pilot
+measurement record reference `aa788-pilot:<run id>:<12 hex>` printed by `scripts/aa788/pilot.py score`, root ADR 0020
+precision bar for a deterministic detector, `quality_settings.evidence_problem`) and
 **F13_hygiene** (warn). Blogs also drop FAQ pairs the seed cannot answer (age, fitness, price…),
 logged under `F7_faq_autofix`.
 S234 (AA-771): LinkedIn has a **channel spec** by brand register (`services/acp_shared/channel_spec.py`:
@@ -4177,7 +4197,9 @@ consumer_social / editorial / warm_practical / observational, from the voice adj
 word band 120–250 (editorial 300), ≤3 hashtags, first line ≤140 chars; hygiene.autofix applies the hashtag cap
 (each tag once — AA-780 S246) and first-line split. **F14_social_shape** (LinkedIn shape; warn, blocks above 1.3× the band → full
 rewrite; AA-780: under the band's floor blocks on attempt 1 only → one full rewrite to the target (AA-788: the rewrite
-is also given the source's fact sentences the post does not tell yet; kill switch: setting `cis.quality_modes.t10_f14_floor` = warn), and never
+is also given the source's fact sentences the post does not tell yet; kill switch: setting `cis.quality_modes.t10_f14_floor` = warn;
+S287: an F14 word-count violation reads as `length_short` / `length_long` like a blog's F4 one,
+`length_contract.ledger_length_codes`, with no floor of its own), and never
 holds a piece — `quality_gates.never_holds`; the AA-528 regression guard keeps a repairable rewrite of a floor-only attempt 1 for the attempt-3 repair, and on a revert waives the floor block), **F15_voice** (stock-phrase hard list; blocks on attempt 1 only, for one sentence repair, and
 never holds a piece — `hold_failure` skips it; AA-780 S246: a STOCK_PATTERNS sentence still in the final attempt's text is cut in code after the loop, `service._cut_stock_lines` — never the hook or the CTA, never below the word band; shown as the non-blocking `F15_stock_cut` flag) and **F15_voice_warn** (trade register, audience-number leak,
 generic or repeated opener, AA-780 broetry — ≥2 consecutive prose sentences of ≤5 words, bullets and emoji-only lines excluded; warn only, never repaired; stored as warn findings of F15_voice since AA-924, whose stock-list findings sit in F2_lexicon). All pass for every other channel. The F9 judge
@@ -5490,6 +5512,21 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   converted to an HTML fragment before it is sent to WordPress (AA-613 fixed raw `##`/`**`
   appearing on the site). Export has two modes: a full HTML document and a bare HTML fragment
   for pasting into a CMS. Every export and publish writes an audit row.
+  **AA-1167 (OWASP LLM05):** nothing AI-written leaves unsanitized. `services/ai_safety/html_sanitizer.py` rebuilds the
+  Markdown render from an allow-list (`export.render_markdown_body`: the WordPress body, both HTML exports and the
+  subject gate's link check; script, iframe, style, svg, form and `on*` handlers go, links only http(s) / mailto / tel /
+  relative, no `img`) and strips markup from plain text (`sanitize_plain_text`: the Facebook message, the plain-text
+  export, the WordPress title and meta description). The allow-lists are security invariants, not settings;
+  `tests/unit/test_aa1167_publish_guard.py` fails on a Markdown render or a post builder that bypasses them.
+  **AA-1167 (OWASP LLM01):** the writer calls of the S1 v2, T2 and T9 flows (the first-draft writers and their repair
+  writers: T9 sentence repair, extend, SEO fit and FAQ; the S1 / T2 / T3 grounding repair, flag fix, meta re-repair
+  and itinerary nudge) can fence every quoted untrusted value (supplier source, Facts Entries, web search data) in
+  `<untrusted_data>` tags with one system line saying it is data, never instructions
+  (`services/ai_safety/prompt_fence.py`), behind the setting `cis.llm.prompt_data_fence` (CIS 467, off = the prompts as
+  before; prompt versions s1_generate v4 / t9_write v9, same CIS 467). The text a repair call is asked to rewrite (the
+  draft sentence, section or meta) stays outside the fence. Judges, filters and extractors (brand audit, F9 / brand
+  fit, FAQ filter and answer fit, seed adjudication, source facts, place cards) are not fenced yet. The trap set
+  (`services/ai_safety/trap_set.py`, paid run `scripts/aa1167/trap_run.py`) measures the writers before it is turned on.
 
 ## Ownership / frequency / cross-tenant table (AA-540)
 

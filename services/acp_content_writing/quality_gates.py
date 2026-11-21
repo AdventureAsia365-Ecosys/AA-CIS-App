@@ -2091,11 +2091,11 @@ def gate_faq_contract(content_text: str) -> GateResultLite:
 
 # ---------------------------------------------------------------- F12 / F13 (AA-768, S234)
 
-# F12_scope warns for one checkpoint round (S234 plan C4); flip to True once the replay and the
-# live checkpoint show 0 false positives. It is repairable either way: a body violation quotes
-# its sentence, so sentence_repair can fix it once it blocks. AA-788 — the code default stays False; the
-# promotion is the per-check mode below (setting t10_f12_scope = block), so it is switched on and off without a deploy.
-F12_SCOPE_BLOCKING = False
+# F12_scope warned for one checkpoint round (S234 plan C4); repairable in every mode (a body violation quotes its
+# sentence). AA-788 S287: no code switch; the mode is only the setting t10_f12_scope, read at gate time, and `block`
+# needs a passing pilot measurement record as evidence (quality_settings.evidence_problem, root ADR 0020).
+# A finding naming a place in the SEO title or meta starts with one of these; every other one is in the body.
+SEO_FINDING_PREFIXES = ("title ", "meta ")
 
 
 # ---------------------------------------------------------------- AA-788: per-check modes of the promoted checks
@@ -2123,8 +2123,8 @@ def _check_mode(mode_key: str, allowed: tuple[str, ...], default: str) -> str:
 
 
 def f12_scope_mode() -> str:
-    """AA-788 — F12_scope's mode: `block` or `warn` (setting t10_f12_scope, seeded warn = F12_SCOPE_BLOCKING off)."""
-    return _check_mode("t10_f12_scope", (WARN_MODE, BLOCK_MODE), BLOCK_MODE if F12_SCOPE_BLOCKING else WARN_MODE)
+    """AA-788 — F12_scope's mode: `block` or `warn` (setting t10_f12_scope, seeded warn; an unknown value is warn)."""
+    return _check_mode("t10_f12_scope", (WARN_MODE, BLOCK_MODE), WARN_MODE)
 
 
 def f9_brand_style_mode() -> str:
@@ -2155,7 +2155,7 @@ def gate_scope(content_text: str, hygiene_ctx: Optional[HygieneContext], seo_tit
     vs = found["scope"]
     if mode != BLOCK_MODE:
         return _result(qr.F12_SCOPE, vs, repairable=True, blocking=False)
-    body = [v for v in vs if not v.startswith(("title ", "meta "))]
+    body = [v for v in vs if not v.startswith(SEO_FINDING_PREFIXES)]
     result = _result(qr.F12_SCOPE, vs, repairable=True, blocking=bool(body) or not vs)
     if vs:
         _log_promotion(qr.F12_SCOPE, mode, result, "body finding" if body else "title / meta finding only")
@@ -2218,7 +2218,7 @@ def gate_trip_facts(content_text: str, trip_ctx: Optional[TripFactContext], seo_
     def body_blocking(vs: list[str], flag: bool) -> bool:
         # a title / meta finding alone never holds a piece: service._fit_seo_meta already refused that
         # meta and asked for a new one; what is left is a warning for the admin
-        return flag and any(not v.startswith(("title ", "meta ")) for v in vs)
+        return flag and any(not v.startswith(SEO_FINDING_PREFIXES) for v in vs)
     return [_result(F17_GATE, found["trip_fact"], repairable=True,
                     blocking=body_blocking(found["trip_fact"], F17_BLOCKING) if found["trip_fact"] else F17_BLOCKING),
             _result(F18_GATE, found["rarity"], repairable=True,
@@ -3010,7 +3010,7 @@ __all__ = [
     "unused_source_facts",
     "faq_pairs", "merge_faq_pairs", "FAQ_MAX_PAIRS",
     "faq_subject_tokens", "faq_answer_problem", "drop_subjectless_faq", "paa_for_scope", "PAA_MAX_QUESTIONS",
-    "gate_scope", "gate_hygiene", "F12_SCOPE_BLOCKING",
+    "gate_scope", "gate_hygiene", "SEO_FINDING_PREFIXES",
     "WARN_MODE", "BLOCK_MODE", "REPAIR_MODE",
     "PROMOTION_LOG_EVENT", "f12_scope_mode", "f9_brand_style_mode", "f14_floor_mode", "brand_style_sentences",
     "promote_brand_style", "F9_STYLE_PROBLEM",

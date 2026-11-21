@@ -34,6 +34,7 @@ from typing import Any, Optional
 import structlog
 
 from services.acp_shared.grounding import find_novel_numeric_claims
+from services.ai_safety import prompt_fence as _pf  # AA-1167: the SOURCE of the sentence repair as fenced data
 
 logger = structlog.get_logger()
 
@@ -350,6 +351,7 @@ nothing in the sentence is supported, return an empty string. Return strict JSON
 
 # AA-1078: quality_signal.task of the sentence repair (stage s1_flag_fix / t2_flag_fix share it with the field fix).
 REPAIR_TASK = "sentence_repair"
+REPAIR_RUN_KEYS = ("model_tier", "brand_forbidden_words", "prompt_fence")  # graph state keys of repair_and_recheck
 
 
 def _repair_prompt(violations: list[dict], source: str, forbidden) -> str:
@@ -411,27 +413,25 @@ def apply_replacements(generated: dict, violations: list[dict], replacements: di
 
 def repair(generated: dict, violations: list[dict], tour: dict, *, model_tier=None, forbidden=(),
            stage: str = "s1_flag_fix", tenant_id: Optional[str] = None, system_prompt: str = REPAIR_SYSTEM,
-           still_unsupported=None) -> dict:
+           still_unsupported=None, fence: Optional[bool] = None) -> dict:
     """One writer call that rewrites only the violating sentences (stage s1_flag_fix). Never raises:
     returns {generated, fields, cost_usd, error}.
 
-    AA-793: T3 reuses it for a tenant rewrite with stage ``t2_flag_fix``, the tenant's id (cost is
-    logged to the tenant), a brand-neutral fact-editor prompt and T3's own unsupported-number test.
-    The defaults keep A1's call byte-identical."""
+    AA-793: T3 reuses it for a tenant rewrite with stage ``t2_flag_fix``, the tenant's id (cost is logged to the
+    tenant), a brand-neutral fact-editor prompt and T3's own unsupported-number test. The defaults keep A1's call
+    byte-identical. AA-1167: ``fence`` (None = the setting) fences the SOURCE, never the sentences."""
     from json_repair import repair_json
     from shared.llm_client.call_log import bind_task, billed_fields, record_call_sync, record_unusable_sync
     from shared.llm_client.client import LLMClient
     from shared.llm_client.models import LLMRequest
 
-    source = source_text(tour)
-    parts = source_number_parts(tour)
+    source, parts, on = source_text(tour), source_number_parts(tour), _pf.enabled(fence)
     resp, logged = None, False  # AA-927
     try:
         with bind_task(REPAIR_TASK):     # AA-1078: the gateway's own rows of this call carry the task too
             resp = LLMClient().generate(LLMRequest(
-                system_prompt=system_prompt, user_prompt=_repair_prompt(violations, source, forbidden),
-                model_tier=model_tier, stage=stage, max_tokens=4096,
-            ))
+                system_prompt=system_prompt + _pf.system_rule(on), model_tier=model_tier, stage=stage, max_tokens=4096,
+                user_prompt=_repair_prompt(violations, _pf.fence("source", source, on=on), forbidden)))
         raw = resp.content.strip()
         if raw.startswith("```"):
             raw = raw.split("```")[1]
@@ -469,13 +469,13 @@ def _codes(violations: list[dict]) -> list[str]:
 
 
 def repair_and_recheck(generated: dict, violations: list[dict], tour: dict, *, model_tier=None,
-                       brand_forbidden_words=None) -> dict:
+                       brand_forbidden_words=None, prompt_fence: Optional[bool] = None) -> dict:
     """One sentence repair against the source, then a re-check. Returns {generated, violations,
     notes, fields, cost_usd}; `generated` is unchanged when the repair changed nothing."""
     from .forbidden_words import all_forbidden
 
     fixed = repair(generated, violations, tour, model_tier=model_tier,
-                   forbidden=all_forbidden(brand_forbidden_words))
+                   forbidden=all_forbidden(brand_forbidden_words), fence=prompt_fence)
     if not fixed["fields"]:
         return {"generated": generated, "violations": violations, "notes": None, "fields": [],
                 "cost_usd": fixed["cost_usd"], "check": None, "contract": None}
@@ -624,8 +624,7 @@ def grounding_node(state: dict) -> dict:
                 rr = cut_and_recheck(generated, found, tour)
                 train_report = {"found": len(found), "cut": rr["cut"], "left": len(rr["violations"])}
             else:
-                rr = repair_and_recheck(generated, found, tour, model_tier=state.get("model_tier"),
-                                        brand_forbidden_words=state.get("brand_forbidden_words"))
+                rr = repair_and_recheck(generated, found, tour, **{k: state.get(k) for k in REPAIR_RUN_KEYS})
             generated, violations, fields, cost = rr["generated"], rr["violations"], rr["fields"], rr["cost_usd"]
             notes = rr["notes"] if rr["notes"] is not None else notes
             last_check, contract = rr.get("check") or first, rr.get("contract")

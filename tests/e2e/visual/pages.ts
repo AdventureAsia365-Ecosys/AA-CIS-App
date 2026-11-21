@@ -66,6 +66,9 @@ export const PAGES: VisualPage[] = [
   // AA-1135: an app tab on the 7-day preset (flow diagram, DORA trend) and a queue repo on 90 days (queue charts)
   { slug: "platform-delivery-app-7d", route: "/admin/platform/delivery", path: "/admin/platform/delivery?app=cis&range=7d", auth: "staff" },
   { slug: "platform-delivery-queue-90d", route: "/admin/platform/delivery", path: "/admin/platform/delivery?app=merge-queue&repo=cis&range=90d", auth: "staff" },
+  // AA-1170: Platform › Compliance, the Overview and the Controls tab
+  { slug: "platform-compliance", route: "/admin/platform/compliance", path: "/admin/platform/compliance", auth: "staff" },
+  { slug: "platform-compliance-controls", route: "/admin/platform/compliance", path: "/admin/platform/compliance?tab=controls", auth: "staff" },
   { slug: "platform-settings", route: "/admin/platform/settings", path: "/admin/platform/settings", auth: "staff" },
   // AA-1127 (S285): the search view (Area column, long TripPlanner keys) ran 58 px past a phone frame
   { slug: "platform-settings-search", route: "/admin/platform/settings", path: "/admin/platform/settings?app=tripplanner&key=tripplanner.spend", auth: "staff" },

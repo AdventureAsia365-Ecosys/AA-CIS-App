@@ -2604,7 +2604,7 @@
       },
       "ChangeRolesBody": {
         "additionalProperties": false,
-        "description": "Only the fields sent are changed; ``\"booking_role\": null`` removes the Booking grant, ``\"crm_roles\": []``\n(or null) removes every CRM role. ``\"preset\": \"platform_owner\"`` (AA-1031) is sent alone and sets CIS admin +\nBooking admin + CRM Agency admin; ``\"preset\": \"pricing_team\"`` (AA-1091) gives CIS customer_success + Booking\ncontracting, keeping a role that already has those rights; it only adds (409 preset_would_replace rather than\nreplace another role). AA-1150: ``\"business_owner\"`` = CIS admin + Booking admin (CRM unchanged);\n``\"content_ops\"`` = CIS content_lead, no Booking role, no CRM role.",
+        "description": "Only the fields sent are changed; ``\"booking_role\": null`` removes the Booking grant, ``\"crm_roles\": []``\n(or null) removes every CRM role. ``\"preset\": <code>`` is sent alone and applies the roles of that preset\n(AA-1155 T14: a row of shared.staff_role_preset, edited on the Staff page; GET /admin/platform/presets lists\nthem). An additive-only preset keeps a role that already has its rights and never replaces another one (409\npreset_would_replace); an unknown or archived preset is 400 ``preset``.",
         "properties": {
           "booking_role": {
             "anyOf": [
@@ -2650,12 +2650,7 @@
           "preset": {
             "anyOf": [
               {
-                "enum": [
-                  "platform_owner",
-                  "pricing_team",
-                  "business_owner",
-                  "content_ops"
-                ],
+                "pattern": "^[a-z][a-z0-9_]{1,47}$",
                 "type": "string"
               },
               {
@@ -3163,6 +3158,277 @@
           "title"
         ],
         "title": "CreateBody",
+        "type": "object"
+      },
+      "CreatePresetBody": {
+        "additionalProperties": false,
+        "properties": {
+          "additive_only": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Additive Only"
+          },
+          "archived": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived"
+          },
+          "booking_keep_roles": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "admin",
+                        "sales",
+                        "contracting",
+                        "finance"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "pattern": "^custom_[a-z][a-z0-9_]{1,46}$",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "maxItems": 16,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Booking Keep Roles"
+          },
+          "booking_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "keep",
+                  "set",
+                  "clear"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Booking Mode"
+          },
+          "booking_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "admin",
+                  "sales",
+                  "contracting",
+                  "finance"
+                ],
+                "type": "string"
+              },
+              {
+                "pattern": "^custom_[a-z][a-z0-9_]{1,46}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Booking Role"
+          },
+          "cis_keep_roles": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "admin",
+                        "content_lead",
+                        "content",
+                        "tenant_qa",
+                        "customer_success",
+                        "support",
+                        "finance",
+                        "ai_ops"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "pattern": "^custom_[a-z][a-z0-9_]{1,46}$",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "maxItems": 16,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cis Keep Roles"
+          },
+          "cis_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "admin",
+                  "content_lead",
+                  "content",
+                  "tenant_qa",
+                  "customer_success",
+                  "support",
+                  "finance",
+                  "ai_ops"
+                ],
+                "type": "string"
+              },
+              {
+                "pattern": "^custom_[a-z][a-z0-9_]{1,46}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cis Role"
+          },
+          "code": {
+            "pattern": "^[a-z][a-z0-9_]{1,47}$",
+            "title": "Code",
+            "type": "string"
+          },
+          "crm_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "keep",
+                  "replace",
+                  "add"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crm Mode"
+          },
+          "crm_roles": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "platform_admin",
+                    "ops",
+                    "support"
+                  ],
+                  "type": "string"
+                },
+                "maxItems": 3,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crm Roles"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "label": {
+            "maxLength": 80,
+            "title": "Label",
+            "type": "string"
+          },
+          "sort_order": {
+            "anyOf": [
+              {
+                "maximum": 999.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sort Order"
+          }
+        },
+        "required": [
+          "label",
+          "code"
+        ],
+        "title": "CreatePresetBody",
+        "type": "object"
+      },
+      "CreateRoleBody": {
+        "additionalProperties": false,
+        "description": "Clone ``based_on`` (a built-in CIS role, never admin or viewer) into ``code``; ``capabilities`` replaces the\ncloned set when given.",
+        "properties": {
+          "based_on": {
+            "maxLength": 32,
+            "title": "Based On",
+            "type": "string"
+          },
+          "capabilities": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 200,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capabilities"
+          },
+          "code": {
+            "pattern": "^custom_[a-z][a-z0-9_]{1,46}$",
+            "title": "Code",
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 80,
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "label",
+          "based_on"
+        ],
+        "title": "CreateRoleBody",
         "type": "object"
       },
       "CreateStaffBody": {
@@ -8141,6 +8407,233 @@
         "title": "Prerequisite",
         "type": "object"
       },
+      "PresetFields": {
+        "additionalProperties": false,
+        "description": "The editable fields of a preset (never an owner flag).",
+        "properties": {
+          "additive_only": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Additive Only"
+          },
+          "archived": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived"
+          },
+          "booking_keep_roles": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "admin",
+                        "sales",
+                        "contracting",
+                        "finance"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "pattern": "^custom_[a-z][a-z0-9_]{1,46}$",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "maxItems": 16,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Booking Keep Roles"
+          },
+          "booking_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "keep",
+                  "set",
+                  "clear"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Booking Mode"
+          },
+          "booking_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "admin",
+                  "sales",
+                  "contracting",
+                  "finance"
+                ],
+                "type": "string"
+              },
+              {
+                "pattern": "^custom_[a-z][a-z0-9_]{1,46}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Booking Role"
+          },
+          "cis_keep_roles": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "admin",
+                        "content_lead",
+                        "content",
+                        "tenant_qa",
+                        "customer_success",
+                        "support",
+                        "finance",
+                        "ai_ops"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "pattern": "^custom_[a-z][a-z0-9_]{1,46}$",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "maxItems": 16,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cis Keep Roles"
+          },
+          "cis_role": {
+            "anyOf": [
+              {
+                "enum": [
+                  "admin",
+                  "content_lead",
+                  "content",
+                  "tenant_qa",
+                  "customer_success",
+                  "support",
+                  "finance",
+                  "ai_ops"
+                ],
+                "type": "string"
+              },
+              {
+                "pattern": "^custom_[a-z][a-z0-9_]{1,46}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cis Role"
+          },
+          "crm_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "keep",
+                  "replace",
+                  "add"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crm Mode"
+          },
+          "crm_roles": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "platform_admin",
+                    "ops",
+                    "support"
+                  ],
+                  "type": "string"
+                },
+                "maxItems": 3,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crm Roles"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "sort_order": {
+            "anyOf": [
+              {
+                "maximum": 999.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sort Order"
+          }
+        },
+        "title": "PresetFields",
+        "type": "object"
+      },
       "PreviewBody": {
         "additionalProperties": false,
         "properties": {
@@ -13049,6 +13542,52 @@
           "content_text"
         ],
         "title": "UpdateContentBody",
+        "type": "object"
+      },
+      "UpdateRoleBody": {
+        "additionalProperties": false,
+        "description": "Only the fields sent change; ``capabilities`` is the full new set; ``archived`` retires or restores the role.",
+        "properties": {
+          "archived": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived"
+          },
+          "capabilities": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 200,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capabilities"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          }
+        },
+        "title": "UpdateRoleBody",
         "type": "object"
       },
       "UpdateTenantRequest": {
@@ -37241,6 +37780,269 @@
         ]
       }
     },
+    "/admin/platform/compliance": {
+      "get": {
+        "operationId": "get_overview_admin_platform_compliance_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Compliance readiness: Evidenced % per framework, trend, stale evidence, heartbeat (Dev)",
+        "tags": [
+          "admin-platform-compliance"
+        ]
+      }
+    },
+    "/admin/platform/compliance/controls": {
+      "get": {
+        "operationId": "get_controls_admin_platform_compliance_controls_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Compliance controls with their state and checks",
+        "tags": [
+          "admin-platform-compliance"
+        ]
+      }
+    },
+    "/admin/platform/compliance/controls/{control_id}": {
+      "get": {
+        "operationId": "get_control_admin_platform_compliance_controls__control_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "control_id",
+            "required": true,
+            "schema": {
+              "maxLength": 40,
+              "pattern": "^[A-Z][A-Z0-9]{1,9}(-[A-Z0-9]{1,10}){1,3}$",
+              "title": "Control Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "One control: requirements covered, checks and evidence history",
+        "tags": [
+          "admin-platform-compliance"
+        ]
+      }
+    },
+    "/admin/platform/compliance/refresh": {
+      "post": {
+        "operationId": "post_refresh_admin_platform_compliance_refresh_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Re-read the published compliance evidence file now and ingest it",
+        "tags": [
+          "admin-platform-compliance"
+        ]
+      }
+    },
     "/admin/platform/cost": {
       "get": {
         "operationId": "get_cost_admin_platform_cost_get",
@@ -39268,6 +40070,222 @@
         ]
       }
     },
+    "/admin/platform/presets": {
+      "get": {
+        "operationId": "list_presets_admin_platform_presets_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "The Staff page's people-role presets",
+        "tags": [
+          "admin-platform"
+        ]
+      },
+      "post": {
+        "operationId": "create_preset_admin_platform_presets_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePresetBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create a people-role preset (owners, audited)",
+        "tags": [
+          "admin-platform"
+        ]
+      }
+    },
+    "/admin/platform/presets/{code}": {
+      "patch": {
+        "operationId": "update_preset_admin_platform_presets__code__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "code",
+            "required": true,
+            "schema": {
+              "title": "Code",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PresetFields"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Change a people-role preset (owners, audited before and after)",
+        "tags": [
+          "admin-platform"
+        ]
+      }
+    },
     "/admin/platform/roles": {
       "get": {
         "description": "AA-1155 (R5.3, R5.4): generated from code (built-in roles) and the tables (custom roles); no person, no E2E\nidentity. Feeds the Staff page pickers and the Roles & permissions page.",
@@ -39327,6 +40345,222 @@
           }
         },
         "summary": "Every app's staff roles: built-in and custom (read-only)",
+        "tags": [
+          "admin-platform"
+        ]
+      }
+    },
+    "/admin/platform/roles/cis": {
+      "get": {
+        "operationId": "cis_role_editor_admin_platform_roles_cis_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "The CIS role editor: built-in and custom roles, capabilities",
+        "tags": [
+          "admin-platform"
+        ]
+      },
+      "post": {
+        "operationId": "create_cis_role_admin_platform_roles_cis_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRoleBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create a CIS custom role from a built-in one (owners, audited)",
+        "tags": [
+          "admin-platform"
+        ]
+      }
+    },
+    "/admin/platform/roles/cis/{code}": {
+      "patch": {
+        "operationId": "update_cis_role_admin_platform_roles_cis__code__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "code",
+            "required": true,
+            "schema": {
+              "title": "Code",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateRoleBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Relabel, set the capabilities of or archive a CIS custom role",
         "tags": [
           "admin-platform"
         ]

@@ -51,6 +51,7 @@ from services.acp_angle_gate.goals import Goal
 from services.acp_shared.channel_spec import apply_spec, channel_spec, sanitize_best_final_style
 from services.acp_content_writing.brief_grounding import ground_angle
 from services.acp_content_writing.reader_checklist import checklist_block
+from services.ai_safety import prompt_fence as _pf  # AA-1167: untrusted text as fenced data
 from services.quality import writing_policy as _wp  # AA-1047: SEO bands and the policy lines
 
 _BLOG_FORMAT_INSTRUCTIONS = """
@@ -364,6 +365,25 @@ Rules:
   no restating the brief back.""" + _SUMMARY_INSTRUCTIONS
 
 
+def _seed_with_facts(seed_text: str, facts_text: str | None, fence: bool = False) -> str:
+    """AA-529 — the CONTENT SEED text with the FACTS section appended (when there are facts): one helper for the plain
+    seed the brief grounding reads and the text the prompt shows. AA-1167 — `fence` puts the seed and the Facts
+    Entries (each on its own) between <untrusted_data> tags; the FACTS instruction between them stays outside, it is
+    ours. False is the AA-529 text byte for byte."""
+    seed = _pf.fence("content_seed", seed_text, on=fence)
+    if not facts_text:
+        return seed
+    return (
+        f"{seed}\n\nFACTS: additional citable facts NOT in the itinerary above "
+        "(reference prices, travel seasons, visa/entry requirements, estimated transfer "
+        "times between places, and similar claims a tour's own itinerary text wouldn't "
+        "state). Use these freely as real, verifiable source material; for the blog channel, "
+        "tag a sentence built from one of these with [F:<fact id>] using the id shown, the "
+        "same way an atom/moment above is tagged [R:<id>]. Never invent a fact id.\n"
+        f"{_pf.fence('facts_entries', facts_text, on=fence)}"
+    )
+
+
 def build_user_prompt(
     *, content_seed: str, goal: Goal, channel_style: ChannelStyle,
     brand_audience: BrandAudience, angle: dict, cta: str,
@@ -378,6 +398,7 @@ def build_user_prompt(
     brief_grounding: str | None = None,
     reader_checklist: str | None = None,
     walk_focus: str | None = None,
+    fence: bool = False,
 ) -> str:
     """`angle` is the chosen `angle_gate_option` row (name/why_it_works/formula_fit/
     best_final_style). `revision_feedback` (AA-450 Phase 1's confirmed retry shape — specific,
@@ -437,7 +458,12 @@ def build_user_prompt(
 
     `walk_focus` (AA-741 S271 review): the `[Moment id=...]` id of a Segment-grain Blog Subject's own moment
     (walk_focus.usable_focus). On a route-aware blog prompt whose walk holds that id, the moment is marked FOCUS and
-    `_WALK_FOCUS_RULE` follows the route format; None, or an id not on the walk, adds nothing."""
+    `_WALK_FOCUS_RULE` follows the route format; None, or an id not on the walk, adds nothing.
+
+    `fence` (AA-1167, setting cis.llm.prompt_data_fence, resolved by generate.py): the CONTENT SEED, the Facts
+    Entries, the DESTINATION / TRIP / LEAD WITH values and the SEARCH QUESTIONS (web search data) go between
+    <untrusted_data> tags (services/ai_safety/prompt_fence.py) and the system prompt gets prompt_fence.SYSTEM_RULE.
+    False (the default) is the prompt byte for byte as before."""
     # AA-771 (S233) — the full brand pack (render_brand_block) replaces the AUDIENCE / MINDSET /
     # BRAND NAME lines; the invented "discerning travellers" fallback audience is gone.
 
@@ -463,16 +489,8 @@ def build_user_prompt(
     # branches above (flat atom text, or the route-aware moments render) with one change, since
     # the route-aware branch otherwise never sees `content_seed` again once `is_route_aware` is
     # True.
-    if facts_text:
-        seed_text = (
-            f"{seed_text}\n\nFACTS: additional citable facts NOT in the itinerary above "
-            "(reference prices, travel seasons, visa/entry requirements, estimated transfer "
-            "times between places, and similar claims a tour's own itinerary text wouldn't "
-            "state). Use these freely as real, verifiable source material; for the blog channel, "
-            "tag a sentence built from one of these with [F:<fact id>] using the id shown, the "
-            "same way an atom/moment above is tagged [R:<id>]. Never invent a fact id.\n"
-            f"{facts_text}"
-        )
+    base_seed = seed_text
+    seed_text = _seed_with_facts(base_seed, facts_text)
 
     # AA-771 (S234) — non-blog channels only (the blog prompt stays byte-identical): the register
     # spec (LinkedIn), the brand's voice in place of the channel style, and the sanitised brief.
@@ -514,12 +532,12 @@ def build_user_prompt(
         f"CALL TO ACTION TO INCLUDE: {cta}",
         "",
         f"CONTENT SEED (the only source of facts, together with its own FACTS section if one is "
-        f"present below; do not add facts beyond either):\n{seed_text}",
+        f"present below; do not add facts beyond either):\n{_seed_with_facts(base_seed, facts_text, fence)}",
     ]
     if destination:
-        lines.insert(-2, f"DESTINATION: {destination}")
+        lines.insert(-2, f"DESTINATION: {_pf.fence('destination', destination, on=fence)}")
     if trip_name:
-        lines.insert(-2, f"TRIP: {trip_name}")
+        lines.insert(-2, f"TRIP: {_pf.fence('trip_name', trip_name, on=fence)}")
     if scope:
         lines.insert(-2, scope)
     if spec is not None:
@@ -535,13 +553,14 @@ def build_user_prompt(
     if lead_focus and channel_style["channel"] != "blog":
         # AA-790 (S251) — six LinkedIn posts from one request all opened on the same fact
         lines.insert(-2, "LEAD WITH THIS FACT FROM THE CONTENT SEED (other pieces from this brief lead with other "
-                         f"facts; open on it in your own words, then build the post around it): {lead_focus}")
+                         f"facts; open on it in your own words, then build the post around it): "
+                         f"{_pf.fence('lead_focus', lead_focus, on=fence)}")
     if search_questions and channel_style["channel"] == "blog":
         # AA-779 — People Also Ask questions for this piece's own places (quality_gates.paa_for_scope),
         # after the CONTENT SEED so the lines.insert(-2, …) positions above are unchanged.
         lines.append("\nSEARCH QUESTIONS (what readers search for about these places; for the FAQ only, "
                      "and only when a CONTENT SEED or FACTS fact answers one):\n"
-                     + "\n".join(f"- {q}" for q in search_questions))
+                     + _pf.fence("search_questions", "\n".join(f"- {q}" for q in search_questions), on=fence))
     # AA-790 round 10 — the traveller's practical questions with the seed's own answers; '' when the mode is off.
     checklist = checklist_block(reader_checklist, content_seed=content_seed, channel=channel_style["channel"],
                                 route_segments=route_segments if is_route_aware else None, facts_text=facts_text,

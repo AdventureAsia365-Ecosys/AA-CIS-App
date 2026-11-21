@@ -148,6 +148,7 @@ LOGGED_CALL_SITES: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
         ("services/content_generation/s1_batch.py", "ingest_s1_batch"),),
     # AA-790 (S251) T9 writer re-panel: the row right after the reply parses, the billed unusable row in the except.
     ("scripts/aa790/t9_writer_repanel.py", "call_writer"): _self("scripts/aa790/t9_writer_repanel.py", "call_writer"),
+    ("scripts/aa1167/trap_run.py", "_call"): _self("scripts/aa1167/trap_run.py", "_call"),
 }
 
 # (path, enclosing function) -> why no llm_call_log row is written there.
@@ -156,6 +157,8 @@ EXCLUDED: dict[tuple[str, str], str] = {
         "`_judge` is a local variable (stored judge JSON)",
     ("api/routers/admin_pipeline/tour_detail.py", "get_tour_detail"):
         "`_judge` is a local variable (stored judge JSON)",
+    ("scripts/aa788/pilot.py", "isolated"): "the AA-788 pilot wraps LLMClient.generate to enforce the run cap "
+                                            "before each call; the wrapped T9 writer call site writes the row",
     ("scripts/aa729/evalpatch.py", "install"): "the AA-729 harness wraps LLMClient.generate to count calls; the "
                                                "wrapped call's own caller writes the row",
     ("scripts/aa645/brandfit_measure.py", "main"): "reads score_brand_fit's signature (inspect) to check the image / "

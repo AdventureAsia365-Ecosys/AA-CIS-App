@@ -56,7 +56,7 @@ BEFORE = {   # the value each key had before the move, and where it lived
     "cis.seo.aim_s1_meta_min": 130, "cis.seo.aim_s1_meta_max": 148,
     "cis.seo.aim_t2_meta_min": 145, "cis.seo.aim_t2_meta_max": 152,
     "cis.t9.blog_chars_min": 4700, "cis.t9.blog_chars_max": 13000,    # length_contract literals
-    "cis.quality_modes.t10_f12_scope": "warn",          # quality_gates F12_SCOPE_BLOCKING off
+    "cis.quality_modes.t10_f12_scope": "warn",          # quality_gates.f12_scope_mode default
     "cis.quality_modes.t10_f9_brand_style": "warn",
     "cis.quality_modes.t10_f14_floor": "repair",        # F14_FLOOR_BLOCKING on
     "cis.quality_modes.t10_f9_policy": "interim",

@@ -647,6 +647,18 @@
     "capability": "ops.read",
     "module": "api.routers.admin_product_catalogue"
   },
+  "GET /admin/platform/compliance": {
+    "capability": "compliance.read",
+    "module": "api.routers.admin_platform_compliance"
+  },
+  "GET /admin/platform/compliance/controls": {
+    "capability": "compliance.read",
+    "module": "api.routers.admin_platform_compliance"
+  },
+  "GET /admin/platform/compliance/controls/{control_id}": {
+    "capability": "compliance.read",
+    "module": "api.routers.admin_platform_compliance"
+  },
   "GET /admin/platform/cost": {
     "capability": "spend.read",
     "module": "api.routers.admin_platform_ops"
@@ -691,9 +703,17 @@
     "capability": "ops.read",
     "module": "api.routers.admin_platform_ops"
   },
+  "GET /admin/platform/presets": {
+    "capability": "staff.read",
+    "module": "api.routers.admin_platform_roles"
+  },
   "GET /admin/platform/roles": {
     "capability": "staff.read",
     "module": "api.routers.admin_platform"
+  },
+  "GET /admin/platform/roles/cis": {
+    "capability": "staff.read",
+    "module": "api.routers.admin_platform_roles"
   },
   "GET /admin/platform/staff": {
     "capability": "staff.read",
@@ -1207,6 +1227,14 @@
     "capability": "tenant.write",
     "module": "api.routers.admin_plans"
   },
+  "PATCH /admin/platform/presets/{code}": {
+    "capability": "staff.write",
+    "module": "api.routers.admin_platform_roles"
+  },
+  "PATCH /admin/platform/roles/cis/{code}": {
+    "capability": "staff.write",
+    "module": "api.routers.admin_platform_roles"
+  },
   "PATCH /admin/platform/staff/{staff_id}/roles": {
     "capability": "staff.write",
     "module": "api.routers.admin_platform"
@@ -1583,6 +1611,10 @@
     "capability": "alerts.write",
     "module": "api.routers.admin_alert_recipients"
   },
+  "POST /admin/platform/compliance/refresh": {
+    "capability": "compliance.write",
+    "module": "api.routers.admin_platform_compliance"
+  },
   "POST /admin/platform/crm/agencies": {
     "capability": "tenant.write",
     "module": "api.routers.admin_crm_console"
@@ -1626,6 +1658,14 @@
   "POST /admin/platform/crm/agencies/{tenant_id}/unlock": {
     "capability": "tenant.write",
     "module": "api.routers.admin_crm_console"
+  },
+  "POST /admin/platform/presets": {
+    "capability": "staff.write",
+    "module": "api.routers.admin_platform_roles"
+  },
+  "POST /admin/platform/roles/cis": {
+    "capability": "staff.write",
+    "module": "api.routers.admin_platform_roles"
   },
   "POST /admin/platform/staff": {
     "capability": "staff.write",

@@ -10,6 +10,11 @@ A:**` pairs) — every other channel's content_text is plain prose, so running i
 markdown renderer would be a no-op at best and could mis-render a literal "#"/"*" the tenant
 actually typed at worst. The router enforces this (400 for html on a non-blog piece), not this
 module — this module only renders, it doesn't decide when rendering is appropriate.
+
+AA-1167 (OWASP LLM05) — every render here passes the AI text through services/ai_safety/html_sanitizer.py before it
+leaves: the HTML modes rebuild the Markdown render from an allow-list (Python-Markdown passes raw HTML through, so a
+<script> or an iframe in the text used to reach the agency's WordPress site live), the plain-text mode drops markup.
+The guard tests/unit/test_aa1167_publish_guard.py keeps every Markdown render and every publish path on it.
 """
 from __future__ import annotations
 
@@ -19,6 +24,7 @@ from typing import Optional
 import markdown
 
 from services.acp_content_writing import ai_marking
+from services.ai_safety.html_sanitizer import sanitize_html, sanitize_plain_text
 
 _HTML_DOC_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
@@ -54,13 +60,22 @@ def render_content_text_to_fragment(content_text: str, *, ai: Optional[dict] = N
 
     AA-1168 — with `ai`, the article also ends with the visible disclosure paragraph
     (ai_marking.disclosure_html(): EU AI Act Art. 50, the reader of the post or embed sees it), in the wording of the
-    setting cis.content.ai_disclosure for `lang` (None: English)."""
-    body = markdown.markdown(content_text, extensions=["extra", "nl2br"])
+    setting cis.content.ai_disclosure for `lang` (None: English).
+
+    AA-1167 — the Markdown render is sanitized (html_sanitizer.sanitize_html) before it is wrapped: only the markup
+    Markdown writes for a blog piece survives; our own wrapper and AI mark are added after."""
+    body = render_markdown_body(content_text)
     if ai is None:
         return f"<article>\n{body}\n</article>"
     tail = f"\n{ai_marking.html_meta_tags(ai)}" if meta_tags else ""
     return (f"<article{ai_marking.html_attributes(ai)}>\n{body}\n{ai_marking.disclosure_html(ai, lang)}\n"
             f"</article>{tail}")
+
+
+def render_markdown_body(content_text: str) -> str:
+    """AA-1167 — the one Markdown render of AI text for a reader: Python-Markdown ("extra" + "nl2br", AA-613), then the
+    allow-list sanitizer. The WordPress post, the HTML exports and the subject gate's link check all read this."""
+    return sanitize_html(markdown.markdown(content_text or "", extensions=["extra", "nl2br"]))
 
 
 def render_content_text_to_document(content_text: str, *, title: str = "Content",
@@ -81,8 +96,9 @@ def render_content_text_to_document(content_text: str, *, title: str = "Content"
 def render_content_text_to_plain(content_text: str, *, ai: dict, lang: Optional[str] = None) -> str:
     """AA-1168 — the plain-text download (every channel): the piece text, then the visible disclosure line and the
     one-line `AI-Content:` mark (ai_marking.text_with_disclosure()). A saved `.txt` file keeps no HTTP headers, so the
-    mark has to travel in the text itself."""
-    return ai_marking.text_with_disclosure(content_text, ai, lang)
+    mark has to travel in the text itself. AA-1167: the piece text has its markup removed first
+    (sanitize_plain_text)."""
+    return ai_marking.text_with_disclosure(sanitize_plain_text(content_text), ai, lang)
 
 
 def render_content_text_to_html(content_text: str, *, title: str = "Content") -> str:
@@ -97,4 +113,5 @@ __all__ = [
     "render_content_text_to_document",
     "render_content_text_to_fragment",
     "render_content_text_to_plain",
+    "render_markdown_body",
 ]

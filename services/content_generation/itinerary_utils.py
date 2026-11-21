@@ -87,7 +87,7 @@ def in_clamp(ratio: float) -> bool:
 
 def nudge_itinerary_day(client: LLMClient, source_day_text: str, current_title: str,
                          current_body: str, target_word_count: int, *, stage: str = "s1_itinerary_nudge",
-                         voice_hint: str | None = None):
+                         voice_hint: str | None = None, fence: bool | None = None):
     """AA-353: single targeted rewrite of one day that clamped outside [ITINERARY_CLAMP_MIN,
     ITINERARY_CLAMP_MAX] of its source word count. One attempt — callers do not loop this
     themselves (graph.py's generate_node never retries it; flag_fix_node.py's AA-329c repair
@@ -96,11 +96,16 @@ def nudge_itinerary_day(client: LLMClient, source_day_text: str, current_title: 
 
     AA-792: ``voice_hint`` (T2 only, from nudge_voice_hint) keeps the draft's tenant brand voice
     instead of the A1 calm/editorial register. None → the A1 prompt, byte-identical.
+
+    AA-1167: ``fence`` (None = the setting cis.llm.prompt_data_fence; the graph passes its run's mode) puts the
+    source day between <untrusted_data> tags; the current draft under repair stays outside.
     """
+    from services.ai_safety import prompt_fence
+    on = prompt_fence.enabled(fence)
     # AA-608: strip routine meal-logistics codes from the source day too, so a length nudge
     # cannot reintroduce a B/L/D token the main writer strip already removed.
     from .prompts import strip_itinerary_meal_metadata, t2_dashless
-    source_day_text = strip_itinerary_meal_metadata(source_day_text)
+    source_day_text = prompt_fence.fence("source_day", strip_itinerary_meal_metadata(source_day_text), on=on)
     user_prompt = f"""SOURCE (this day only, from the original tour itinerary):
 {source_day_text}
 
@@ -116,7 +121,7 @@ on-brand."""
         # str.replace, not .format(): the shared rules end with a literal JSON {"title": …} example.
         # AA-778: the T2 prompt reads the shared rules without the em-dash (t2_dashless); A1 is unchanged.
         system_prompt=(t2_dashless(_T2_ITINERARY_NUDGE_SYSTEM_PROMPT.replace("{voice_hint}", voice_hint))
-                       if voice_hint else _ITINERARY_NUDGE_SYSTEM_PROMPT),
+                       if voice_hint else _ITINERARY_NUDGE_SYSTEM_PROMPT) + prompt_fence.system_rule(on),
         user_prompt=user_prompt,
         # AA-518: was a hardcoded "haiku" literal — now admin-configurable via the
         # "s1_itinerary_nudge" stage (seeded to haiku, matching this exact prior value).

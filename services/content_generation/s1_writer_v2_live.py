@@ -124,8 +124,12 @@ def _call(client: LLMClient, state: dict, *, call: str, system: str, user: str, 
 
 def writer_prompts(state: dict) -> dict:
     """The writer call's attempt-1 prompts of an A1 graph state: {"system", "user", "tour", "facts", "plan",
-    "forbidden", "view"}. One builder for the live write and the gateway batch lane (AA-1076,
-    services/llm_batch/consumers.py), so a batch reply is used only for the bytes the live call would send."""
+    "forbidden", "view", "fence"}. One builder for the live write and the gateway batch lane (AA-1076,
+    services/llm_batch/consumers.py), so a batch reply is used only for the bytes the live call would send.
+
+    AA-1167: `fence` is the setting cis.llm.prompt_data_fence (state key "prompt_fence" pins it for a trap run or a
+    test), read once here so the writer and the meta call of one draft use the same mode."""
+    from services.ai_safety import prompt_fence
     from services.quality.s1_facts import build_fact_table
     from .forbidden_words import all_forbidden
 
@@ -137,10 +141,11 @@ def writer_prompts(state: dict) -> dict:
     # renders "" (byte-identical prompt). The stamp says which release the draft was written with.
     from services.writing_memory import insertion
     view = state.get("writing_memory")
-    system = v2.w_system_prompt(forbidden, house_rules=insertion.a1_house_rules(view))
-    user = v2.w_user_prompt(tour, facts, plan)
+    fence = prompt_fence.enabled(state.get("prompt_fence"))
+    system = v2.w_system_prompt(forbidden, house_rules=insertion.a1_house_rules(view), fence=fence)
+    user = v2.w_user_prompt(tour, facts, plan, fence=fence)
     return {"system": system, "user": user, "tour": tour, "facts": facts, "plan": plan, "forbidden": forbidden,
-            "view": view}
+            "view": view, "fence": fence}
 
 
 def _batch_reply(stage: str, system: str, user: str):
@@ -196,7 +201,8 @@ def write(state: dict, client: Optional[LLMClient] = None) -> dict:
     page = v2.page_from_writer("w", tour, facts, plan, w["parsed"])
 
     keywords = v2.relevant_keywords(state.get("seo"), tour)
-    msys, muser = v2.meta_system_prompt(forbidden), v2.meta_user_prompt(page, tour, facts, keywords)
+    msys = v2.meta_system_prompt(forbidden, fence=wp["fence"])
+    muser = v2.meta_user_prompt(page, tour, facts, keywords, fence=wp["fence"])
     m1 = _call(client, state, call="meta", system=msys, user=muser, max_tokens=v2.META_MAX_TOKENS,
                raise_access_denied=False)
     _add(m1)

@@ -12,9 +12,9 @@
       "refs": "AA-1096"
     },
     "prompt_registry": {
-      "sha": "96c05aa7686c5f50",
-      "evidence": "parity:tests/unit/test_s279_quality_settings_parity.py",
-      "refs": "AA-1096"
+      "sha": "773f6e3574c72992",
+      "evidence": "parity:tests/unit/test_aa1167_prompt_fence_parity.py",
+      "refs": "AA-1167"
     },
     "route_defaults": {
       "sha": "cb9811986582d658",

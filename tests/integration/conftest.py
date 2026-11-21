@@ -300,8 +300,9 @@ def _apply_schema(conn):
     # schemas x1_244_ci_shape creates (X1_LEGACY_EMPTY_SCHEMAS) let 019 create acp_silver_s4.social_content (RLS on),
     # which the 244 / 245 exact RLS-set guards refuse. AA-850: a left-over `retired` (CIS 294) has the wave-1 names
     # taken. AA-1105: a left-over `learn` (CIS 420) loses learn.learner's FK to shared.admin_users (shared CASCADE).
+    # AA-1170: a left-over `compliance` (CIS 466) keeps its evidence rows, which the append-only trigger never drops.
     for schema in ("acp_shared", "acp_contract", "acp_deliver", "catalog", "geo", *X1_LEGACY_EMPTY_SCHEMAS, "retired",
-                   "learn"):
+                   "learn", "compliance"):
         try:
             cur.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
         except psycopg2.Error as e:

@@ -111,9 +111,13 @@ REQUIRED_CIS_SCHEMA = 322
 # is_business_owner and reads the roles catalogue; without 462 every Cognito staff sign-in fails).
 # 464 (AA-1168 follow-up — the publish route's claim() reads and writes acp_shared.publish_log.sent_message; every
 # publish fails without it). 463 (the disclosure wording setting) is not needed: the reader serves the compiled default.
+# 465 (AA-1155 T13 / T14 — the Staff page applies a people-role preset from shared.staff_role_preset and the CIS role
+# editor writes shared.staff_role / staff_role_capability as cis_app; every preset apply answers 503 without it).
+# 466 (AA-1170 — Platform › Compliance reads and writes schema compliance; every compliance route fails without it, and
+# the readers of the cis.compliance.* settings need the compiled keys of the same file).
 # 469 (AA-1171 — the alert recipients page and its reconcile read and write shared.alert_recipient.topic; every
 # recipients read fails without it. Its cis.ops.* settings alone would not need it: the reader serves the defaults).
-REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 395, 397, 398, 402, 408, 409, 411, 420, 428, 435, 439, 443, 454, 462, 464, 469)  # noqa: E501
+REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 395, 397, 398, 402, 408, 409, 411, 420, 428, 435, 439, 443, 454, 462, 464, 465, 466, 469)  # noqa: E501
 # Versions this code needs that were registered after a higher one (reserved numbers): 297 (AA-920 WM-25) was reserved
 # in S255 and applied after 299. max() is already 299 without it, so the version reported is capped below the lowest
 # listed version that is not registered (297 missing -> 296 -> "schema_behind").

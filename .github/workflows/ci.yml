@@ -583,7 +583,7 @@ jobs:
       READY_URL: https://api-cis.lumiguides.it.com/health/ready
       INFRA_REPO: AdventureAsia365-Ecosys/AA-CIS-Infra
       # AA-CIS-Infra main after AA-1105 S2 (#841): owners.yaml knows the learn schema (was M3 #493/#494, pinned since #1145).
-      INFRA_TOOLS_SHA: 56d553ba20a834cc2fa7a1d0e905ea317bf97401
+      INFRA_TOOLS_SHA: d146d2799ecf8d149e2d0d8b075aa6c9a9e00349
       # pgvector/pgvector:0.8.1-pg15, the image of the Infra classify and DB Schema Dump replay.
       REPLAY_IMAGE: pgvector/pgvector@sha256:94aee7e88f98125114657cab98e28c5dfa8dd517a6bf83fd98b503439f1e3de6
     steps:

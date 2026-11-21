@@ -110,7 +110,17 @@ def build_t2_system_prompt(state: dict) -> str:
     from services.writing_memory.insertion import t2_block
     # AA-778: the contrast rules and the forbidden-words block are shared with A1 (pinned); T2 reads them
     # without the em-dash.
-    return t2_dashless(system + _forbidden_words_block(state) + t2_block(state.get("writing_memory")))
+    # AA-1167: the untrusted-data line when the state's fence is on (initial_state_for reads the setting); "" off.
+    return t2_dashless(system + _forbidden_words_block(state) + t2_block(state.get("writing_memory"))
+                       + _fence_rule(state))
+
+
+def _fence_rule(state: dict) -> str:
+    """AA-1167: the untrusted-data system line of the state's fence mode (`prompt_fence`, set by
+    api/routers/v1_pipeline.initial_state_for from the setting cis.llm.prompt_data_fence); "" when off or unset (a
+    state built elsewhere, the Bedrock Batch seed), so those prompts stay byte-identical."""
+    from services.ai_safety import prompt_fence
+    return prompt_fence.system_rule(state.get("prompt_fence") is True)
 
 
 def _core_idea_lens_block(core_idea) -> str:
@@ -150,7 +160,7 @@ def build_s1_system_prompt(state: dict) -> str:
     if brand_sp:
         system += f"\n\nCLIENT BRAND CONTEXT (append only — do not override the base rules above):\n{brand_sp}"
     system += build_brand_diff_block(state)
-    return system + _forbidden_words_block(state)
+    return system + _forbidden_words_block(state) + _fence_rule(state)
 
 
 def _language_line(state: dict) -> str:
@@ -211,6 +221,8 @@ def build_s1_user_prompt(state: dict) -> str:
         # AA-814 follow-up (T2_FACTS): the Facts Entry lines the t2_rewrite job put on the T2 source; absent with the
         # switch off and on every A1 tour -> no FACTS block, prompt byte-identical.
         facts=(state["tour"].get(FACTS_KEY) or "") if is_t2 else "",
+        # AA-1167: the state's fence mode (initial_state_for); False when unset.
+        fence=state.get("prompt_fence") is True,
     )
     style_guide = state.get("brand_style_guide", "") or ""
     if style_guide and not is_t2:

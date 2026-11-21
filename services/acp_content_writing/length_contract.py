@@ -213,13 +213,22 @@ def long_message(length: int, n_words: int) -> str:
             f"{ceiling_chars():,} chars")
 
 
+# AA-788 (S279 Done-when: "F14 under-length uses the AA-1077 length floor and the length_short code, no separate
+# floor") — a social post's F14_social_shape word-count violation ("post is N words, under the 120–250-word band …",
+# "… over the …", "… far over the …", quality_gates.gate_social_shape) reads with the same two sides and codes as a
+# blog's F4 one. Its floor stays the brand's channel spec band (AA-780), the blog's stays floor_chars(): no new floor.
+_F14_SHORT = " words, under the "
+_F14_LONG = (" words, over the ", " words, far over the ")
+
+
 def violation_side(violation: str) -> Optional[str]:
-    """The side an F4_extreme_length violation reports, for new and old wording alike: 'length_short: …' / '… only
-    N chars — effectively empty' → 'short'; 'length_long: …' / '… far beyond …' → 'long'; anything else None."""
+    """The side a length violation reports, for new and old wording alike: F4 'length_short: …' / '… only N chars —
+    effectively empty' and F14 '… N words, under the … band' → 'short'; F4 'length_long: …' / '… far beyond …' and
+    F14 '… N words, (far) over the … band' → 'long'; anything else None."""
     v = str(violation or "")
-    if v.startswith(CODE_SHORT) or (" only " in v and " chars" in v):
+    if v.startswith(CODE_SHORT) or (" only " in v and " chars" in v) or _F14_SHORT in v:
         return SHORT
-    if v.startswith(CODE_LONG) or "far beyond" in v:
+    if v.startswith(CODE_LONG) or "far beyond" in v or any(m in v for m in _F14_LONG):
         return LONG
     return None
 
@@ -236,10 +245,23 @@ def entry_side(entry: Optional[dict]) -> Optional[str]:
 
 
 def code_for(entry: Optional[dict]) -> Optional[str]:
-    """'length_short' / 'length_long' for a failed F4 entry whose side reads, else None (the caller keeps the legacy
-    'length' code)."""
+    """'length_short' / 'length_long' for a failed F4 (or, AA-788, F14_social_shape) entry whose side reads, else None
+    (the caller keeps the legacy 'length' code)."""
     s = entry_side(entry)
     return CODE_SHORT if s == SHORT else CODE_LONG if s == LONG else None
+
+
+def ledger_length_codes(gate_ledger: Optional[list]) -> list[str]:
+    """AA-788 — the length codes of one attempt's ledger, blog and social alike: 'length_short' / 'length_long' for
+    each failed F4_extreme_length or F14_social_shape entry whose side reads (deduplicated, ledger order). The
+    under-length reading of the T10 pilot (scripts/aa788/pilot.py) and of any report that groups a short social post
+    with a short blog."""
+    from services.acp_content_writing.quality_gates import expand_ledger  # lazy: quality_gates imports this module
+
+    gates = (_qr.F4_EXTREME_LENGTH, _qr.F14_SOCIAL_SHAPE)
+    entries = [g for g in gate_ledger or [] if isinstance(g, dict) and g.get("gate")]
+    codes = [code_for(g) for g in expand_ledger(entries) if g.get("gate") in gates]
+    return list(dict.fromkeys(c for c in codes if c))
 
 
 __all__ = ["floor_chars", "ceiling_chars", "CHARS_PER_WORD", "target_margin", "NORMALIZER_STEPS",
@@ -247,4 +269,4 @@ __all__ = ["floor_chars", "ceiling_chars", "CHARS_PER_WORD", "target_margin", "N
            "target_chars", "target_words", "extend_target_chars", "short_rewrite_target", "floor_guard", "side",
            "NO_SOURCE_MENTION", "REPLACE_NOT_DELETE", "KEEP_NOT_CUT", "is_cut_violation", "keeps_not_cut",
            "cut_projection",
-           "short_message", "long_message", "violation_side", "entry_side", "code_for"]
+           "short_message", "long_message", "violation_side", "entry_side", "code_for", "ledger_length_codes"]

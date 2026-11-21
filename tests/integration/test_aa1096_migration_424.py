@@ -53,12 +53,28 @@ async def test_the_edited_rows_equal_the_compiled_defaults(conn):
         assert "emergency" not in r["description"] and "env var" not in r["description"], key
 
 
+def _edited_later() -> set:
+    """Keys whose description / guide a later file changes (a settings-guide or settings-edit block after 424, e.g. CIS
+    468): a replay of 424 alone puts its own text back on those, which the later file then owns."""
+    from scripts.settings import gen_compiled_defaults as gen
+    keys: set = set()
+    for path in sorted(gen.MIGRATIONS.glob("*.sql")):
+        m = gen.FILE_RE.match(path.name)
+        if not m or int(m.group(1)) <= 424:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for block in gen.GUIDE_RE.findall(text) + gen.EDIT_RE.findall(text):
+            keys |= {r["key"] for r in json.loads(block)}
+    return keys
+
+
 @pytest.mark.asyncio
 async def test_rerun_changes_nothing(conn):
     body = open(M428, encoding="utf-8").read().replace("BEGIN;", "", 1).rsplit("COMMIT;", 1)[0]
-    before = await conn.fetch("SELECT key, env_override, description, guide::text AS g FROM shared.setting_definition "
-                              "ORDER BY key")
+    sql = ("SELECT key, env_override, description, guide::text AS g FROM shared.setting_definition "
+           "WHERE NOT key = ANY($1::text[]) ORDER BY key")
+    later = sorted(_edited_later())
+    before = await conn.fetch(sql, later)
     await conn.execute(body)
-    after = await conn.fetch("SELECT key, env_override, description, guide::text AS g FROM shared.setting_definition "
-                             "ORDER BY key")
+    after = await conn.fetch(sql, later)
     assert [tuple(r) for r in before] == [tuple(r) for r in after]

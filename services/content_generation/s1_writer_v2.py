@@ -31,6 +31,7 @@ import json
 import re
 from typing import Any, Optional
 
+from services.ai_safety import prompt_fence as _pf
 from services.quality import writing_policy as _wp
 from services.seo_intelligence import keyword_fit as _keyword_fit
 from services.quality.s1_facts import build_fact_table, field_text, item_lines
@@ -144,8 +145,15 @@ def ask_supplier(facts: dict) -> list[str]:
     return out
 
 
-def render_fact_sheet(tour: dict, facts: dict, plan: dict) -> str:
-    """The new writer's only input: the source organised by code. Every value is verbatim from the source."""
+def render_fact_sheet(tour: dict, facts: dict, plan: dict, fence: bool = False) -> str:
+    """The new writer's only input: the source organised by code. Every value is verbatim from the source.
+
+    AA-1167 — ``fence`` (setting cis.llm.prompt_data_fence, resolved by the caller): every block of source text is
+    put between <untrusted_data> tags (services/ai_safety/prompt_fence.py); the headings and code-built lines (DAYS TO
+    WRITE, the NOT IN THE SOURCE labels) stay outside, they are our instructions. False = main's sheet byte for byte."""
+    def q(label: str, text: str) -> str:
+        return _pf.fence(label, text, on=fence)
+
     days_line = ", ".join(f"Day {d['day']}" for d in plan["days"])
     groups = sorted({d["range"] for d in plan["days"] if d["range"]})
     # AA-990 (S253): one object per day stays the preferred shape, but a source that groups days with no day-by-day
@@ -158,46 +166,51 @@ def render_fact_sheet(tour: dict, facts: dict, plan: dict) -> str:
                          f" rule 6 for these days only), and never invent what happens on each day."
                          for a, b in groups)
     parts = [
-        f"TOUR (source name): {field_text(tour.get('name')).strip()}",
-        f"COUNTRY: {field_text(tour.get('country')).strip() or '(not stated)'}",
-        f"DURATION (source, verbatim): {field_text(tour.get('duration')).strip() or '(not stated)'}",
+        q("source_tour", "\n".join([
+            f"TOUR (source name): {field_text(tour.get('name')).strip()}",
+            f"COUNTRY: {field_text(tour.get('country')).strip() or '(not stated)'}",
+            f"DURATION (source, verbatim): {field_text(tour.get('duration')).strip() or '(not stated)'}"])),
         "",
         f"DAYS TO WRITE (checked by code): {days_line}.{group_note}",
     ]
     if plan["mode"] == "source_days":
         parts.append("\nSOURCE BY DAY (verbatim):")
-        shown = set()
+        shown, day_lines = set(), []
         for d in plan["days"]:
             key = d["range"] or (d["day"], d["day"])
             if key in shown:
                 continue
             shown.add(key)
             label = f"Days {key[0]}–{key[1]}" if d["range"] else f"Day {d['day']}"
-            parts.append(f"[{label}] {d['source'].strip() or '(no text in the source)'}")
+            day_lines.append(f"[{label}] {d['source'].strip() or '(no text in the source)'}")
+        parts += [q("source_days", "\n".join(day_lines))] if day_lines else []
     else:
         note = ("the source has no day markers; it is one day" if plan["mode"] == "single_day"
                 else "the source has no day markers; follow its order and do not assign a place to a day unless the"
                      " source makes the day plain")
         itin_text = field_text(tour.get("itineraries")).strip() or "(none)"
-        parts.append(f"\nSOURCE ITINERARY (verbatim; {note}):\n{itin_text}")
+        parts.append(f"\nSOURCE ITINERARY (verbatim; {note}):\n{q('source_itinerary', itin_text)}")
     hl = tour.get("highlights")
     hl_text = "\n".join(f"- {h}" for h in hl) if isinstance(hl, list) else field_text(hl)
     parts += [
         "\nSOURCE OVERVIEW (verbatim):",
-        f"Summary: {field_text(tour.get('summary')).strip() or '(none)'}",
-        f"Description: {field_text(tour.get('description')).strip() or '(none)'}",
-        f"Highlights:\n{hl_text.strip() or '(none)'}",
-        "\nINCLUDED (source):\n" + _bullets([e["value"] for e in facts.get("included") or []]),
-        "\nNOT INCLUDED (source):\n" + _bullets([e["value"] for e in facts.get("excluded") or []]),
+        q("source_overview", "\n".join([
+            f"Summary: {field_text(tour.get('summary')).strip() or '(none)'}",
+            f"Description: {field_text(tour.get('description')).strip() or '(none)'}",
+            f"Highlights:\n{hl_text.strip() or '(none)'}"])),
+        "\nINCLUDED (source):\n" + q("source_included", _bullets([e["value"] for e in facts.get("included") or []])),
+        "\nNOT INCLUDED (source):\n"
+        + q("source_excluded", _bullets([e["value"] for e in facts.get("excluded") or []])),
         "\nOPTIONAL OR CONDITIONAL (only ever as optional / conditional):\n"
-        + _bullets([e["value"] for e in facts.get("optional") or []]),
+        + q("source_optional", _bullets([e["value"] for e in facts.get("optional") or []])),
         "\nFIGURES (the only numbers you may use, with the same unit and the same thing they count):\n"
-        + _bullets(figures(facts)),
+        + q("source_figures", _bullets(figures(facts))),
         "\nNOT IN THE SOURCE (never state or guess these):\n"
         + _bullets([MISSING_LABELS.get(k, k) for k in facts.get("missing") or []]),
         "\nCONFLICTS IN THE SOURCE (do not resolve them; leave the point out):\n"
-        + _bullets([c.get("detail") or c["value"] for c in facts.get("conflicts") or []]),
-        "\nDO NOT USE (never repeat):\n" + _bullets(sorted({e["value"] for e in facts.get("do_not_use") or []})),
+        + q("source_conflicts", _bullets([c.get("detail") or c["value"] for c in facts.get("conflicts") or []])),
+        "\nDO NOT USE (never repeat):\n"
+        + q("source_do_not_use", _bullets(sorted({e["value"] for e in facts.get("do_not_use") or []}))),
     ]
     return "\n".join(parts)
 
@@ -215,9 +228,11 @@ def _forbidden_line(words: list[str]) -> str:
             if words else "")
 
 
-def w_system_prompt(forbidden: list[str], background: str = "allow", house_rules: str = "") -> str:
+def w_system_prompt(forbidden: list[str], background: str = "allow", house_rules: str = "",
+                    fence: bool = False) -> str:
     """The W writer's system prompt. `house_rules` (AA-919, the writing-memory slot `a1_house_rules`) sits after the
-    forbidden-words line; "" (release 0, no memory) is dropped by the filter, so the prompt is byte-identical."""
+    forbidden-words line; "" (release 0, no memory) is dropped by the filter, so the prompt is byte-identical.
+    AA-1167: `fence` adds the untrusted-data line after it (False: dropped by the filter, byte-identical)."""
     return "\n".join(filter(None, [
         "You write the master page of one tour for a white-label tour catalogue. Travel agencies resell the page",
         "unchanged, so it must be accurate, neutral and free of any brand.",
@@ -249,6 +264,7 @@ def w_system_prompt(forbidden: list[str], background: str = "allow", house_rules
         " abstract filler (\"unhurried\", \"rewards attention\", \"a different register\"), no second person.",
         _forbidden_line(forbidden),
         house_rules,
+        _pf.system_rule(fence, sep=""),
         "",
         "Output ONLY valid JSON. No preamble, no markdown.",
     ]))
@@ -276,14 +292,15 @@ def _examples_block(examples: Optional[list[dict]]) -> str:
     return "\n\nREFERENCE EXAMPLES\n" + "\n\n".join(rows) + "\n"
 
 
-def w_user_prompt(tour: dict, facts: dict, plan: dict, examples: Optional[list[dict]] = None) -> str:
+def w_user_prompt(tour: dict, facts: dict, plan: dict, examples: Optional[list[dict]] = None,
+                  fence: bool = False) -> str:
     return ("Write this tour's master page from the fact sheet." + _examples_block(examples)
-            + "\n\nFACT SHEET\n" + render_fact_sheet(tour, facts, plan) + "\n\n" + _W_OUTPUT)
+            + "\n\nFACT SHEET\n" + render_fact_sheet(tour, facts, plan, fence) + "\n\n" + _W_OUTPUT)
 
 
 # ------------------------------------------------------------------ prompts: E (short page; code builds the frame)
 
-def e_system_prompt(forbidden: list[str], background: str = "allow") -> str:
+def e_system_prompt(forbidden: list[str], background: str = "allow", fence: bool = False) -> str:
     return "\n".join(filter(None, [
         "You write a few short lines for the master page of one tour in a white-label tour catalogue. Code builds"
         " the rest of the page (the facts box, inclusions and the day fact lines) from the supplier's text.",
@@ -297,6 +314,7 @@ def e_system_prompt(forbidden: list[str], background: str = "allow") -> str:
         " day's place(s) or main activity, sentence case. Exactly the days under DAYS TO WRITE.",
         "4. Calm, factual, third person, present tense; no hype, no filler.",
         _forbidden_line(forbidden),
+        _pf.system_rule(fence, sep=""),
         "",
         "Output ONLY valid JSON. No preamble, no markdown.",
     ]))
@@ -313,9 +331,10 @@ _E_OUTPUT = """OUTPUT JSON:
 }"""
 
 
-def e_user_prompt(tour: dict, facts: dict, plan: dict, examples: Optional[list[dict]] = None) -> str:
+def e_user_prompt(tour: dict, facts: dict, plan: dict, examples: Optional[list[dict]] = None,
+                  fence: bool = False) -> str:
     return ("Write the short lines for this tour from the fact sheet." + _examples_block(examples)
-            + "\n\nFACT SHEET\n" + render_fact_sheet(tour, facts, plan) + "\n\n" + _E_OUTPUT)
+            + "\n\nFACT SHEET\n" + render_fact_sheet(tour, facts, plan, fence) + "\n\n" + _E_OUTPUT)
 
 
 # Fact lines code copies from a source day, verbatim (house-style appendix: "End with a fact line built only from
@@ -594,7 +613,7 @@ def parse_json(raw: str) -> Optional[dict]:
 
 # ------------------------------------------------------------------ the meta call
 
-def meta_system_prompt(forbidden: list[str]) -> str:
+def meta_system_prompt(forbidden: list[str], fence: bool = False) -> str:
     from services.content_generation.seo_meta_utils import SEO_META_FORBIDDEN
     lo, hi = META_TARGET
     return "\n".join(filter(None, [
@@ -609,21 +628,25 @@ def meta_system_prompt(forbidden: list[str]) -> str:
         "3. Use a KEYWORD only if it fits the sentence naturally; never force one in, never more than one.",
         "4. Never use: " + ", ".join(SEO_META_FORBIDDEN) + ", a call to action, Adventure Asia or any operator name.",
         _forbidden_line(forbidden),
+        _pf.system_rule(fence, sep=""),
         "",
         'Output ONLY valid JSON: {"seo_title": "...", "seo_meta": "..."}',
     ]))
 
 
-def meta_user_prompt(page: dict, tour: dict, facts: dict, keywords: list[str]) -> str:
+def meta_user_prompt(page: dict, tour: dict, facts: dict, keywords: list[str], fence: bool = False) -> str:
+    """AA-1167: `fence` puts the page draft (written from the source), the source figures and the search keywords
+    between <untrusted_data> tags; False is main's prompt byte for byte."""
     return "\n".join([
         "PAGE",
-        f"Name: {field_text(page.get('name'))}",
-        f"Subtitle: {field_text(page.get('subtitle'))}",
-        f"Summary: {field_text(page.get('summary'))[:1500]}",
-        f"Duration (source): {field_text(tour.get('duration')).strip() or '(not stated)'}",
-        f"Country: {field_text(tour.get('country')).strip() or '(not stated)'}",
-        "FIGURES (only numbers you may use):\n" + _bullets(figures(facts)[:30]),
-        "KEYWORDS (optional):\n" + _bullets(keywords),
+        _pf.fence("page_draft", "\n".join([
+            f"Name: {field_text(page.get('name'))}",
+            f"Subtitle: {field_text(page.get('subtitle'))}",
+            f"Summary: {field_text(page.get('summary'))[:1500]}",
+            f"Duration (source): {field_text(tour.get('duration')).strip() or '(not stated)'}",
+            f"Country: {field_text(tour.get('country')).strip() or '(not stated)'}"]), on=fence),
+        "FIGURES (only numbers you may use):\n" + _pf.fence("source_figures", _bullets(figures(facts)[:30]), on=fence),
+        "KEYWORDS (optional):\n" + _pf.fence("search_keywords", _bullets(keywords), on=fence),
     ])
 
 
@@ -682,13 +705,14 @@ def finalize_meta(page: dict, meta_json: Optional[dict]) -> dict:
 
 def arm_prompts(arm: str, tour: dict, facts: dict, plan: dict, *, forbidden: list[str],
                 background: str = "allow", examples: Optional[list[dict]] = None,
-                aplus_state: Optional[dict[str, Any]] = None) -> tuple[str, str]:
+                aplus_state: Optional[dict[str, Any]] = None, fence: bool = False) -> tuple[str, str]:
     """(system, user) of an arm's writer call. `aplus_state` is the graph-state dict today's builders read
-    (tour, seo, brand_* fields); A+ uses them byte for byte and appends the DAYS block."""
+    (tour, seo, brand_* fields); A+ uses them byte for byte and appends the DAYS block. `fence` (AA-1167): the W and E
+    arms fence the source text; A+ is the retired v1 prompt and is never fenced."""
     if arm == "w":
-        return w_system_prompt(forbidden, background), w_user_prompt(tour, facts, plan, examples)
+        return w_system_prompt(forbidden, background, fence=fence), w_user_prompt(tour, facts, plan, examples, fence)
     if arm == "e":
-        return e_system_prompt(forbidden, background), e_user_prompt(tour, facts, plan, examples)
+        return e_system_prompt(forbidden, background, fence), e_user_prompt(tour, facts, plan, examples, fence)
     if arm == "aplus":
         from services.content_generation.batch_prompt import build_s1_system_prompt, build_s1_user_prompt
         state = {"tour": tour, "seo": {}, "few_shots": [], **(aplus_state or {})}
