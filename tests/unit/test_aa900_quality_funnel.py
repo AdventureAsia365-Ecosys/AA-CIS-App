@@ -219,7 +219,7 @@ def test_the_stage_route_policy_sets_the_fallback_threshold_and_can_raise_the_mi
                   {"t10_judge": {"stage": "t10_judge", "min_requests": 5}}) == []
     s = funnel.summarize_watch(rows, {}, recent=REC, end=END,
                                policies={"t10_judge": {"stage": "t10_judge", "min_requests": 5}})["stages"][0]
-    assert s["policy"] == {"fallback_alert_pct": 20.0, "min_requests": funnel.MIN_REQUESTS, "policy_min_requests": 5}
+    assert s["policy"] == {"fallback_alert_pct": 20.0, "min_requests": 20, "policy_min_requests": 5}
 
 
 def test_the_watch_reads_the_route_policy_table():
@@ -302,7 +302,7 @@ def _snap(watch_rows=()):
                                                  "pieces": 2}],
                                  "first_gate_holds": []},
                           "s1": {"by_week": [], "gate_fails": []}, "t2": {"by_week": [], "gate_fails": None}},
-            "stages": [], "thresholds": funnel.THRESHOLDS, "unavailable": {"t2_objects": "UndefinedTableError: x"},
+            "stages": [], "thresholds": funnel.thresholds(), "unavailable": {"t2_objects": "UndefinedTableError: x"},
             "watch": funnel.summarize_watch(list(watch_rows), {}, recent=REC, end=END),
             "totals": funnel.totals(t9, [], [], last_week="2026-11-02", t9_unattributed={"2026-11-02": 0.2})}
 

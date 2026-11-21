@@ -237,6 +237,18 @@ export function AppHealthStrip({ section }: { section: Section<HealthData> | und
                 <SourceHint source={HEALTH_SRC.shared} size={11} />
               </span>
             )}
+            {section.alarm_totals && (
+              <span data-testid="ops-health-alarm-totals">
+                <b style={{ color: section.alarm_totals.firing > 0 ? K.danger : K.ink }}>
+                  {t("alarmTotals", section.alarm_totals.total, section.alarm_totals.firing)}
+                </b>{" "}
+                {t("alarmTypes")}{" "}
+                {Object.entries(section.alarm_totals.by_type)
+                  .map(([k, n]) => `${t(`alarmType_${k}` as "alarmType_other")} ${n}`).join(", ")}
+                {" · "}
+                <a href="/admin/platform/alerts" style={{ color: K.accentDeep, fontWeight: 600 }}>{t("allAlerts")}</a>
+              </span>
+            )}
             {section.alarms_error && <span>{t("alarmsUnreadable")}</span>}
             <span>{t("updatedAt", new Date(section.as_of).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }))}</span>
           </div>

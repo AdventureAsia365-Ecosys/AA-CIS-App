@@ -234,6 +234,31 @@ CATALOG: dict[str, Limit] = {
         _v("crm_slo (alarm_breaching, alarm_periods)"), "text",
         "CRM alarms ring only when this many periods out of the last ones breach",
         "Cảnh báo CRM chỉ kêu khi đủ số khung thời gian này vi phạm trong các khung gần nhất"),
+    # AA-1171: the coverage alarms of the S287 inventory (accounts/aa365 alert_severity.tf).
+    "alarms.api_5xx_percent": Limit(
+        _v("api_5xx_rate (five_xx_percent)"), "percent",
+        "CIS and Booking API: the alarm rings when server errors exceed this share of requests",
+        "API CIS và Booking: cảnh báo kêu khi lỗi máy chủ vượt tỷ lệ này trên tổng request"),
+    "alarms.api_5xx_min_requests_per_window": Limit(
+        _v("api_5xx_rate (min_requests)"), "count",
+        "CIS and Booking API: fewer requests than this in a window are not judged",
+        "API CIS và Booking: ít request hơn số này trong một khung thời gian thì không đánh giá"),
+    "alarms.api_5xx_breaching_of_periods": Limit(
+        _v("api_5xx_rate (alarm_breaching, alarm_periods)"), "text",
+        "CIS and Booking API error alarms ring only when this many periods out of the last ones breach",
+        "Cảnh báo lỗi API CIS và Booking chỉ kêu khi đủ số khung thời gian này vi phạm trong các khung gần nhất"),
+    "alarms.alerts_delivery_failed_at_least": Limit(
+        _v("alerts_delivery_failed_threshold"), "count",
+        "The alert e-mail watchdog rings when this many alert deliveries fail in 5 minutes",
+        "Cảnh báo theo dõi việc gửi e-mail cảnh báo kêu khi số lần gửi thất bại trong 5 phút đạt mức này"),
+    "alarms.cis_worker_silent_seconds": Limit(
+        _v("cis_worker_liveness (period_s x periods)"), "seconds",
+        "The CIS worker alarm rings after this long with no running worker task",
+        "Cảnh báo worker CIS kêu sau khoảng thời gian này không có task worker nào chạy"),
+    "alarms.booking_worker_silent_seconds": Limit(
+        _v("booking_worker_liveness (period_s x periods)"), "seconds",
+        "The Booking worker alarm rings after this long with no job check sample from its worker",
+        "Cảnh báo worker Booking kêu sau khoảng thời gian này không có lần kiểm tra job nào từ worker của nó"),
 }
 
 

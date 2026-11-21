@@ -92,6 +92,7 @@ from api.routers.admin_tenant_assignments import router as admin_tenant_assignme
 from api.routers.admin_platform_ops import router as admin_platform_ops_router  # AA-884
 from api.routers.admin_crm_console import router as admin_crm_console_router  # AA-941
 from api.routers.admin_alert_recipients import router as admin_alert_recipients_router  # AA-913
+from api.routers.admin_alerts_catalogue import router as admin_alerts_catalogue_router  # AA-1171
 from api.routers.admin_aa_content import router as admin_aa_content_router  # AA-977
 from api.routers.admin_writing_memory import router as admin_writing_memory_router  # AA-917
 from api.routers.admin_claim_labels import router as admin_claim_labels_router  # AA-1048 W2
@@ -409,6 +410,7 @@ app.include_router(admin_platform_roles_router)  # AA-1155 — the CIS role edit
 app.include_router(admin_platform_ops_router)  # AA-884 — /admin/platform/{apps,audit,cost}
 app.include_router(admin_crm_console_router)  # AA-941 — /admin/platform/crm/* (CRM L1 console relay, no include prefix)
 app.include_router(admin_alert_recipients_router)  # AA-913 — /admin/platform/alert-recipients (no include prefix)
+app.include_router(admin_alerts_catalogue_router)  # AA-1171 — /admin/platform/alerts/* (no include prefix)
 app.include_router(admin_aa_content_router)  # AA-977 — /admin/aa-content (AA content editor, no include prefix)
 app.include_router(admin_writing_memory_router)  # AA-917 — /admin/writing-memory (no include prefix)
 app.include_router(admin_claim_labels_router)  # AA-1048 W2 — /admin/writing-memory/claim-labels (no include prefix)

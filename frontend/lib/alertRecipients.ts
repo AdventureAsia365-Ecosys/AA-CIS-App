@@ -6,12 +6,16 @@
 export type RecipientStatus = "pending" | "confirmed" | "removed";
 export type RemovedReason = "admin" | "unsubscribed" | "expired";
 export type SnsState = "confirmed" | "pending" | "missing";
+/** AA-1171: which topic a recipient is on (alerts = every alert, page = page-severity alerts only). */
+export type RecipientTopic = "alerts" | "page";
 
 export interface AlertRecipient {
   id: string;
   email: string;
   note: string | null;
   status: RecipientStatus;
+  /** AA-1171 (absent from an API older than CIS 469 = alerts). */
+  topic?: RecipientTopic;
   removed_reason: RemovedReason | null;
   has_subscription: boolean;
   created_at: string | null;
@@ -28,6 +32,9 @@ export interface AlertRecipient {
 export interface AlertRecipientsPage {
   configured: boolean;
   topic_name: string | null;
+  /** AA-1171: the page-severity topic's name, when it is set up; `topics` lists what a recipient may choose. */
+  page_topic_name?: string | null;
+  topics?: RecipientTopic[];
   bootstrap: { email: string; locked: true; state: SnsState | null } | null;
   ops_fallback_email: string | null;
   ops_mail_configured: boolean;

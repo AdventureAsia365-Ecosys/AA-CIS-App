@@ -19,6 +19,12 @@ admin-editable limits of the apps are on the CIS admin page Platform > Settings.
 
 | Setting | Value |
 |---|---|
+| `alerts_delivery_failed_at_least` | `1` |
+| `api_5xx_breaching_of_periods` | `2 of 3` |
+| `api_5xx_min_requests_per_window` | `20` |
+| `api_5xx_percent` | `5` |
+| `booking_worker_silent_seconds` | `900` |
+| `cis_worker_silent_seconds` | `600` |
 | `crm_slo_5xx_percent` | `2` |
 | `crm_slo_breaching_of_periods` | `2 of 3` |
 | `crm_slo_min_requests_per_window` | `20` |

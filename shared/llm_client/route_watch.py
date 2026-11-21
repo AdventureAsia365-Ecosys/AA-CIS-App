@@ -30,7 +30,8 @@ then ``DEFAULTS`` fill a missing value):
 - ``route_cost.<stage>`` — over ``COST_WINDOW`` the fallback-answered requests cost at least ``cost_shift_usd`` more
   than the same number of primary answers would have (the stage's primary average over ``BASELINE_WINDOW``, from at
   least ``BASELINE_MIN`` rows). Bell at most daily.
-- ``route_cut.<stage>`` — S271: more than ``CUT_ALERT_PCT`` % of the stage's replies of the last ``COST_WINDOW`` were
+- ``route_cut.<stage>`` — S271: more than ``cis.ops.reply_cut_alert_pct`` % (AA-1171 setting, 5 by default) of the
+  stage's replies of the last ``COST_WINDOW`` were
   cut at their token ceiling (status truncated, or billed unusable with a cut stop reason; the gateway's own cut rows
   and the provider's refused cuts included), with at least ``min_requests`` replies. Eval rows count under their real
   stage (unlike the other checks); shadow rows and the probe stages of ``token_floor.NO_RETRY_STAGES`` are left out
@@ -56,6 +57,7 @@ from typing import Any, Optional
 import structlog
 
 from shared.llm_client.expected_refusal import EXPECTED_SQL
+from shared import ops_thresholds
 from shared.ops_checks import (EVENT_TYPE_PREFIX, ROUTE_BACK_PREFIX, ROUTE_COST_PREFIX, ROUTE_CUT_PREFIX,
                                ROUTE_DIGEST_CHECK, ROUTE_FALLBACK_PREFIX, ROUTE_LAST_PREFIX, Finding)
 
@@ -163,7 +165,8 @@ STATS_SQL = f"""
 # Review S271: its own filter, not LEDGER_FILTER. Eval rows (is_experiment, an R2 / targeted-shadow run) are kept: they
 # drive the real stage paths with the real ceilings (the R2 judge cuts that motivated S271 were all eval rows), and
 # count under their real stage (quality_signal.real_stage, call_log._relabel). Shadow and Jev rows stay out.
-CUT_ALERT_PCT = 5.0
+# AA-1171: the cut share that alerts is the setting cis.ops.reply_cut_alert_pct (ops_thresholds.reply_cut_alert_pct),
+# shared with the weekly quality funnel rule qf_cut (services/quality/funnel.py).
 CUT_STAGE_EXPR = "coalesce(nullif(quality_signal ->> 'real_stage', ''), stage)"
 CUT_FILTER = "coalesce(is_shadow, false) = false AND coalesce(provider, '') <> 'typesafe'"
 CUT_ROW = "(status = 'truncated' OR (status = 'billed_unusable' AND stop_reason = ANY($2::text[])))"
@@ -356,10 +359,11 @@ async def read_cut_stats(db, since: datetime) -> dict[str, dict]:
 
 
 def cut_findings(cut_stats: dict[str, dict], rows: dict[str, dict]) -> list[Finding]:
-    """S271: ``route_cut.<stage>`` when more than ``CUT_ALERT_PCT`` % of a stage's replies over ``COST_WINDOW``
-    (billed ones and refused cuts) were cut at their token ceiling, with at least the policy's ``min_requests``
-    replies. Pure."""
+    """S271: ``route_cut.<stage>`` when more than ``cis.ops.reply_cut_alert_pct`` % of a stage's replies over
+    ``COST_WINDOW`` (billed ones and refused cuts) were cut at their token ceiling, with at least the policy's
+    ``min_requests`` replies. Pure."""
     out: list[Finding] = []
+    limit = ops_thresholds.reply_cut_alert_pct()
     for stage in sorted(cut_stats):
         st = cut_stats[stage] or {}
         replies, cut = int(st.get("replies") or 0), int(st.get("cut") or 0)
@@ -367,19 +371,19 @@ def cut_findings(cut_stats: dict[str, dict], rows: dict[str, dict]) -> list[Find
         if replies <= 0 or replies < pol.min_requests:
             continue
         pct = round(100.0 * cut / replies, 1)
-        if pct <= CUT_ALERT_PCT:
+        if pct <= limit:
             continue
         refused, evals = int(st.get("refused_cut") or 0), int(st.get("eval_rows") or 0)
         notes = ([f"{refused} refused by the provider"] if refused else []) + \
             ([f"{evals} of the replies from eval runs"] if evals else [])
         out.append(Finding(ROUTE_CUT_PREFIX + stage,
                            f"stage {stage}: {cut} of {replies} replies in the last 24 h were cut at their token "
-                           f"ceiling ({pct:g} %, threshold {CUT_ALERT_PCT:g} %"
+                           f"ceiling ({pct:g} %, threshold {limit:g} %"
                            + "".join(f"; {n}" for n in notes) + ")",
                            {"stage": stage, "replies": replies, "cut": cut, "cut_pct": pct,
                             "refused_cut": refused, "eval_rows": evals,
                             "cut_cost_usd": round(float(st.get("cut_cost_usd") or 0.0), 6),
-                            "threshold_pct": CUT_ALERT_PCT,
+                            "threshold_pct": limit,
                             "window_hours": int(COST_WINDOW.total_seconds() // 3600)}))
     return out
 

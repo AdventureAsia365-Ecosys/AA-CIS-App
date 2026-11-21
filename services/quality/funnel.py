@@ -41,18 +41,22 @@ workflow and ISO week (ICT, Monday first), from stored rows only (names: root do
 Watchdog (:func:`watch_findings`, over the trailing ``WATCH_DAYS`` days that end with the snapshot day; thresholds per
 stage from :func:`watch_policy`, documented in CONTEXT.md "Quality funnel"):
 
-- ``qf_cut.<stage>`` — more than ``CUT_ALERT_PCT`` % of the stage's billed replies were cut at their ceiling;
+- ``qf_cut.<stage>`` — more than ``cis.ops.reply_cut_alert_pct`` % of the stage's billed replies were cut at their
+  ceiling;
 - ``qf_fb.<stage>`` — at least the stage's ``shared.llm_route_policy`` ``fallback_alert_pct`` % (route_watch's rule:
   own row, ``*`` row, default 20) of the answered requests came from a fallback rung;
-- ``qf_drift.<stage>`` — served-model drift: at least ``DRIFT_ALERT_PCT`` % of the answered requests came from a
-  model that served under ``DRIFT_NEW_MODEL_PCT`` % of the stage's answers in the ``WATCH_DAYS`` before (a route,
-  catalog or provider change that moved the served model).
+- ``qf_drift.<stage>`` — served-model drift: at least ``cis.ops.qf_drift_alert_pct`` % of the answered requests came
+  from a model that served under ``cis.ops.qf_drift_new_model_pct`` % of the stage's answers in the ``WATCH_DAYS``
+  before (a route, catalog or provider change that moved the served model).
 
-Each needs at least ``max(MIN_REQUESTS, policy min_requests)`` rows in the window (and drift as many in the prior
-window). Alerts fire on the TRANSITION only (:func:`mark_repeats`): a finding the previous scheduled CIS-08 run already
-had is stored with ``repeat: true`` and not raised again, and the night's new findings go out as one ``qf_digest``
-alert (:func:`digest_finding`). The 24-hour route alerts of ``llm_route_watch`` stay as they are; these are the
-weekly-scale quality view of the same ledger.
+Each needs at least ``max(cis.ops.qf_min_requests, policy min_requests)`` rows in the window (and drift as many in the
+prior window). Alerts fire on the TRANSITION only (:func:`mark_repeats`): a finding the previous scheduled CIS-08 run
+already had is stored with ``repeat: true`` and not raised again, and the night's new findings go out as one
+``qf_digest`` alert (:func:`digest_finding`). The 24-hour route alerts of ``llm_route_watch`` stay as they are; these
+are the weekly-scale quality view of the same ledger.
+
+AA-1171 (S287): the four thresholds are settings on Platform › Settings (area "ops", CIS 469, maker-checker), read on
+every run through ``shared/ops_thresholds.py`` (:func:`thresholds` is what the snapshot stores), never module constants.
 """
 from __future__ import annotations
 
@@ -64,21 +68,26 @@ from shared.aa_llm.errors import TRUNCATED_STOP_REASONS
 from shared.llm_client import route_watch
 from shared.llm_client.expected_refusal import EXPECTED_SQL
 from shared.llm_client.route_watch import CUT_ROW, FALLBACK_RUNG, LEDGER_FILTER, OK, POSITION_EXPR, PRIMARY_RUNG
+from shared import ops_thresholds
 from shared.ops_checks import QF_CUT_PREFIX, QF_DIGEST_CHECK, QF_DRIFT_PREFIX, QF_FALLBACK_PREFIX, Finding
 
 SNAPSHOT_VERSION = 1
 WEEKS = 8                    # ISO weeks in the series (the snapshot day's week and the 7 before)
 WATCH_DAYS = 7
-MIN_REQUESTS = 20           # weekly floor; a stage's llm_route_policy min_requests above it wins (watch_policy)
-CUT_ALERT_PCT = route_watch.CUT_ALERT_PCT     # the route_cut rule of llm_route_watch, over a week instead of 24 h
 FALLBACK_ALERT_PCT = float(route_watch.DEFAULTS.fallback_alert_pct)   # used only when no policy is stored
-DRIFT_ALERT_PCT = 10.0
-DRIFT_NEW_MODEL_PCT = 1.0
-THRESHOLDS = {"watch_days": WATCH_DAYS, "min_requests": MIN_REQUESTS, "cut_alert_pct": CUT_ALERT_PCT,
-              "fallback_alert_pct": FALLBACK_ALERT_PCT, "drift_alert_pct": DRIFT_ALERT_PCT,
-              "drift_new_model_pct": DRIFT_NEW_MODEL_PCT,
-              "policy": "per stage: shared.llm_route_policy fallback_alert_pct; min = max(min_requests, policy)",
-              "alert_on": "transition: a finding present in the previous scheduled run is stored as a repeat"}
+
+
+def thresholds() -> dict:
+    """The watchdog thresholds in force (AA-1171 settings; the weekly floor is cis.ops.qf_min_requests, a stage's
+    llm_route_policy min_requests above it wins; the cut share is the route_cut rule of llm_route_watch over a week
+    instead of 24 h). Stored in the snapshot, so a report shows the values its findings used."""
+    return {"watch_days": WATCH_DAYS, "min_requests": ops_thresholds.qf_min_requests(),
+            "cut_alert_pct": ops_thresholds.reply_cut_alert_pct(), "fallback_alert_pct": FALLBACK_ALERT_PCT,
+            "drift_alert_pct": ops_thresholds.qf_drift_alert_pct(),
+            "drift_new_model_pct": ops_thresholds.qf_drift_new_model_pct(),
+            "policy": "per stage: shared.llm_route_policy fallback_alert_pct; min = max(min_requests, policy)",
+            "alert_on": "transition: a finding present in the previous scheduled run is stored as a repeat"}
+
 DIGEST_MAX_LINES = 8
 
 # The live route check of AI gateway > Trace (api/services/llm_route_trace.run_route_test): a few tiny real requests
@@ -485,7 +494,7 @@ async def compute(conn, day: date, *, weeks: int = WEEKS, now: Optional[datetime
         },
         "stages": stages,
         "watch": watch,
-        "thresholds": THRESHOLDS,
+        "thresholds": thresholds(),
         "unavailable": un,
         "totals": totals(t9, s1, t2, last_week=(day - timedelta(days=day.weekday())).isoformat(),
                          t9_unattributed=t9_unattributed),
@@ -533,10 +542,11 @@ def totals(t9: list[dict], s1: list[dict], t2: list[dict], *, last_week: str,
 def watch_policy(rows: dict[str, dict], stage: str) -> dict:
     """The thresholds of ``stage`` (pure): the route policy's ``fallback_alert_pct`` (``route_watch.effective``: the
     stage's own ``shared.llm_route_policy`` row, then the ``*`` row, then its defaults, field by field) and the minimum
-    rows ``max(MIN_REQUESTS, min_requests)``: the policy can raise the weekly floor of a noisy stage, never lower it
-    (its default of 5 is sized for route_watch's 60-minute window)."""
+    rows ``max(cis.ops.qf_min_requests, min_requests)``: the policy can raise the weekly floor of a noisy stage, never
+    lower it (its default of 5 is sized for route_watch's 60-minute window)."""
     pol = route_watch.effective(rows or {}, stage)
-    return {"fallback_alert_pct": float(pol.fallback_alert_pct), "min_requests": max(MIN_REQUESTS, pol.min_requests),
+    return {"fallback_alert_pct": float(pol.fallback_alert_pct),
+            "min_requests": max(ops_thresholds.qf_min_requests(), pol.min_requests),
             "policy_min_requests": pol.min_requests}
 
 
@@ -569,12 +579,13 @@ def summarize_watch(rows: list[dict], routes: dict[str, str], *, recent: datetim
         if int(r.get("answered") or 0):
             w["models"][r["model"]] = w["models"].get(r["model"], 0) + int(r["answered"])
     out = []
+    new_below = ops_thresholds.qf_drift_new_model_pct()
     for stage in sorted(by):
         s = by[stage]
         rec, pri = s["recent"], s["prior"]
         new_models = sorted(m for m, n in rec["models"].items()
                             if pri["answered"] and (pri["models"].get(m, 0) * 100.0 / pri["answered"])
-                            < DRIFT_NEW_MODEL_PCT)
+                            < new_below)
         new_answered = sum(rec["models"][m] for m in new_models)
         off_primary = sum(n for m, n in rec["models"].items() if s["primary_model"] and m != s["primary_model"])
         out.append({**s, "policy": watch_policy(policies or {}, stage),
@@ -591,28 +602,29 @@ def watch_findings(watch: dict) -> list[Finding]:
     (:func:`watch_policy`; a stage stored without it uses the module defaults)."""
     found: list[Finding] = []
     period = f"{watch.get('from', '')[:10]} to {watch.get('to', '')[:10]}"
+    cut_pct, drift_pct = ops_thresholds.reply_cut_alert_pct(), ops_thresholds.qf_drift_alert_pct()
     for s in watch.get("stages") or []:
         stage, rec, pri = s["stage"], s["recent"], s["prior"]
         pol = s.get("policy") or watch_policy({}, stage)
         min_n, fb_pct = int(pol["min_requests"]), float(pol["fallback_alert_pct"])
-        if rec["replies"] >= min_n and (s["cut_pct"] or 0) > CUT_ALERT_PCT:
+        if rec["replies"] >= min_n and (s["cut_pct"] or 0) > cut_pct:
             found.append(Finding(CUT_PREFIX + stage, f"{stage}: {s['cut_pct']} % of {rec['replies']} billed replies "
                                  f"cut at their token ceiling ({period})",
                                  {"stage": stage, "cut": rec["cut"], "replies": rec["replies"],
-                                  "threshold_pct": CUT_ALERT_PCT, "min_requests": min_n}))
+                                  "threshold_pct": cut_pct, "min_requests": min_n}))
         if rec["answered"] >= min_n and (s["fallback_pct"] or 0) >= fb_pct:
             found.append(Finding(FALLBACK_PREFIX + stage, f"{stage}: {s['fallback_pct']} % of {rec['answered']} "
                                  f"answered requests came from a fallback model ({period})",
                                  {"stage": stage, "fallback_answered": rec["fallback_answered"],
                                   "answered": rec["answered"], "threshold_pct": fb_pct, "min_requests": min_n}))
         if (rec["answered"] >= min_n and pri["answered"] >= min_n
-                and (s["drift_pct"] or 0) >= DRIFT_ALERT_PCT):
+                and (s["drift_pct"] or 0) >= drift_pct):
             found.append(Finding(DRIFT_PREFIX + stage, f"{stage}: {s['drift_pct']} % of {rec['answered']} answered "
                                  f"requests came from {', '.join(s['drift_models'])}, new against the week before "
                                  f"({period})",
                                  {"stage": stage, "models": s["drift_models"], "recent": rec["models"],
                                   "prior": pri["models"], "primary_model": s["primary_model"],
-                                  "threshold_pct": DRIFT_ALERT_PCT, "min_requests": min_n}))
+                                  "threshold_pct": drift_pct, "min_requests": min_n}))
     return found
 
 

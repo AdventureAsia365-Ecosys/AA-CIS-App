@@ -75,6 +75,9 @@ ALLOWED: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         # AA-1096 L4 (crm.ops.v1 1.13): the CRM settings registry, relayed by Platform › Settings (CRM tab,
         # api/services/crm_settings_relay.py).
         ("GET", r"/settings"),
+        # AA-1171 (crm.ops.v1 1.17): the CRM's in-app check registry with its thresholds in force, read by Platform ›
+        # Alerts › Catalogue (api/services/alerts_catalogue.py).
+        ("GET", r"/ops-checks"),
         ("GET", r"/settings/crm(\.[a-z0-9_]+){2,}/history"),
         ("POST", r"/settings/crm(\.[a-z0-9_]+){2,}/changes"),
         ("POST", rf"/settings/changes/{_ID}/(approve|reject)"),

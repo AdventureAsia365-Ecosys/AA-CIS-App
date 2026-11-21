@@ -35,6 +35,7 @@ from services.reports.generate import GENERATED_BY, Rendered, fmt
 from services.reports.money import (KPI_HEADERS, NOT_WIRED, _d, _kpi_line, _kpi_rows, _output, failed, pct,
                                     ratio, table, usd)
 from services.reports.registry import Registry, Report
+from shared.jobs.backlog import overdue_factor
 
 UTC = timezone.utc
 DEV_NOTE = "> Dev environment: load comes from development and test runs; trends only."
@@ -42,7 +43,6 @@ ICT_NOTE = "Days are ICT (UTC+7) calendar days."
 SCHEDULER_PREFIX = "scheduler:"
 DEAD_AFTER_DAYS = 30             # K-JOB-DEAD: a scheduled kind with no run in 30 days
 FAILRATE_FLAG = 0.02             # K-JOB-FAILRATE: < 2 %
-OVERDUE_FACTOR = 2               # overdue running = current attempt older than 2 x expected (shared/jobs/backlog.py)
 SLOW_MEAN_MS = 200.0             # K-DB-SLOWSTMT: calls >= 20 and mean > 200 ms
 SLOW_MIN_CALLS = 20
 SLOW_LOG_MS = 500.0              # OPS-13 "slow > 500 ms" (mean, from pg_stat_statements)
@@ -187,13 +187,13 @@ def job_health(facts: dict, expected: dict[str, int], now: datetime) -> dict:
     finished = sum(r["finished"] for r in rows)
     failed_n = sum(r["failed"] for r in rows)
     active = facts.get("job_active")
-    overdue, queued = [], {}
+    overdue, queued, factor = [], {}, overdue_factor()   # AA-1171: the setting cis.ops.jobs_overdue_factor
     if active is not None and not failed(active):
         for a in active:
             if a["status"] == "running":
                 began = _ts(a.get("attempt_started_at")) or _ts(a.get("started_at"))
                 exp = expected.get(a["kind"], 600)
-                if began is not None and (now - began).total_seconds() > OVERDUE_FACTOR * exp:
+                if began is not None and (now - began).total_seconds() > factor * exp:
                     overdue.append({"kind": a["kind"], "running_s": round((now - began).total_seconds()),
                                     "expected_s": exp})
             else:

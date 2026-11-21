@@ -9,7 +9,7 @@
 //
 // API (backend api/routers/admin_alert_recipients.py; BFF /api/admin/platform/*, admin only — lib/rbac.ts):
 //   GET    /api/admin/platform/alert-recipients[?refresh=true]   list (the backend reconciles with SNS first)
-//   POST   /api/admin/platform/alert-recipients                  {email, note?}
+//   POST   /api/admin/platform/alert-recipients                  {email, note?, topic?}  (AA-1171: alerts | page)
 //   POST   /api/admin/platform/alert-recipients/refresh          check SNS now
 //   POST   /api/admin/platform/alert-recipients/test-email       queue a test ops e-mail
 //   DELETE /api/admin/platform/alert-recipients/{id}
@@ -38,8 +38,8 @@ import {
   useLang,
   useT,
   useToast,
-  type ColumnDef, PageFrame,
-  Checkbox, Input,
+  type ColumnDef,
+  Checkbox, Input, Select,
 } from "../../../_kit";
 import { staffErrorMessage } from "@/lib/rbac";
 import { RBAC_MESSAGES } from "@/lib/rbac.messages";
@@ -55,6 +55,7 @@ import {
   statusTone,
   type AlertRecipient,
   type AlertRecipientsPage,
+  type RecipientTopic,
   type SnsState,
 } from "@/lib/alertRecipients";
 import { ALERT_WORDS_MESSAGES } from "@/lib/alertRecipients.messages";
@@ -143,16 +144,51 @@ function LockedRow({ email, label, state }: { email: string; label: string; stat
   );
 }
 
-function AddModal({ open, onClose, onAdded, limits, active }: {
+/** AA-1171: "All alerts" or "Page alerts only", shown only when the page topic is set up. */
+function TopicChoice({ topics, value, onChange }: {
+  topics: RecipientTopic[]; value: RecipientTopic; onChange: (t: RecipientTopic) => void;
+}) {
+  const t = useT(ALERTS);
+  if (!topics.includes("page")) return null;
+  return (
+    <label style={{ display: "flex", flexDirection: "column", gap: 5, fontSize: 12.5, fontWeight: 600, color: K.ink3 }}>
+      {t("topic")}
+      <Select
+        value={value}
+        onChange={(e) => onChange(e.target.value as RecipientTopic)}
+        options={[{ value: "alerts", label: t("topicAlerts") }, { value: "page", label: t("topicPage") }]}
+        data-testid="alert-recipient-topic"
+      />
+      <span style={{ fontWeight: 400, color: K.muted }}>{t("topicHelp")}</span>
+    </label>
+  );
+}
+
+/** AA-1171: the topic a recipient row is on. */
+function TopicBadge({ topic }: { topic: RecipientTopic | undefined }) {
+  const t = useT(ALERTS);
+  const page = topic === "page";
+  return <Badge tone={page ? "warning" : "neutral"} dot={false}>{page ? t("topicPage") : t("topicAlerts")}</Badge>;
+}
+
+/** The topics a recipient may choose (an API older than the page topic lists none: alerts only). */
+function topicsOf(data: AlertRecipientsPage | undefined): RecipientTopic[] {
+  return data?.topics ?? ["alerts"];
+}
+
+function AddModal({ open, onClose, onAdded, limits, active, topics }: {
   open: boolean;
   onClose: () => void;
   onAdded: (email: string, state: string) => void;
   limits: AlertRecipientsPage["limits"] | undefined;
   active: number;
+  /** AA-1171: the topics this environment manages (["alerts"] until the page topic is set up). */
+  topics: RecipientTopic[];
 }) {
   const t = useT(ALERTS);
   const sw = useSendWords();
   const [email, setEmail] = useState("");
+  const [topic, setTopic] = useState<RecipientTopic>("alerts");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -178,7 +214,7 @@ function AddModal({ open, onClose, onAdded, limits, active }: {
     if (!valid || noteTooLong || busy || blockedByTypo) return;
     setBusy(true);
     setError(null);
-    const out = await send("POST", API, sw, { email: trimmed, note: note.trim() || undefined });
+    const out = await send("POST", API, sw, { email: trimmed, note: note.trim() || undefined, topic });
     setBusy(false);
     if (!out.ok) {
       setError(out.message);
@@ -263,6 +299,7 @@ function AddModal({ open, onClose, onAdded, limits, active }: {
             {note.trim().length} / {maxNote}
           </span>
         </label>
+        <TopicChoice topics={topics} value={topic} onChange={setTopic} />
         {error && <Notice tone="danger">{error}</Notice>}
       </div>
     </Modal>
@@ -406,6 +443,12 @@ export default function AlertRecipients() {
       ),
     },
     {
+      id: "topic",
+      accessorFn: (r) => String(r.topic),
+      header: t("colTopic"),
+      cell: (c) => <TopicBadge topic={c.row.original.topic} />,
+    },
+    {
       accessorKey: "confirmed_at",
       header: t("colConfirmed"),
       cell: (c) => (c.row.original.confirmed_at ? formatDateTime(c.row.original.confirmed_at) : <span style={{ color: K.muted }}>—</span>),
@@ -452,7 +495,8 @@ export default function AlertRecipients() {
   );
 
   return (
-    <PageFrame>
+    // AA-1171: the page (page.tsx) renders the one PageFrame and the tab strip above this tab's header.
+    <>
       <PageHeader
         title={<span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><BellRing size={18} /> {t("title")}</span>}
         description={description}
@@ -569,6 +613,7 @@ export default function AlertRecipients() {
         onClose={() => setAdding(false)}
         limits={data?.limits}
         active={data?.limits.active ?? 0}
+        topics={topicsOf(data)}
         onAdded={(email, state) => {
           setAdding(false);
           toast.success(state === "confirmed"
@@ -591,7 +636,7 @@ export default function AlertRecipients() {
           </p>
         }
       />
-    </PageFrame>
+    </>
   );
 }
 

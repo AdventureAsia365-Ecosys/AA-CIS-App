@@ -1068,8 +1068,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     shrinking allowlist, no production `budget_retry=False`, every migration model key classified) and
     `tests/unit/test_aa900_s271_w0_gateway.py` (every budgeted call-site ceiling >= `token_floor.effort_floor(model,
     effort)` of every model of the stage's route, read from the migrations). Alert:
-    `route_cut.<stage>` (route_watch, > 5 % of a stage's replies cut over 24 h, refused cuts and eval rows
-    included). A ceiling is head-room, not the expected size: since t9_write v2 (AA-741 S271) every blog prompt carries a word band (950-1,300 since v6, a section plan since v7, never over
+    `route_cut.<stage>` (route_watch, > 5 % of a stage's replies cut over 24 h, setting
+    `cis.ops.reply_cut_alert_pct` since AA-1171, refused cuts and eval rows included). A ceiling is head-room, not the expected size: since t9_write v2 (AA-741 S271) every blog prompt carries a word band (950-1,300 since v6, a section plan since v7, never over
     1,600, never padded), a section cap and a one-pass rule (`prompts._BLOG_LENGTH_INSTRUCTIONS`), because the
     adaptive thinking of the 5.x writers is billed as output inside the same ceiling (bounded by the stage x model
     effort since CIS 381: medium for t9_write on Sonnet 5.5);
@@ -1495,13 +1495,16 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     the newest **scheduled** one (the run the watchdog read) plus 14 days of scheduled headline totals, never
     recomputed; the newest manual run is listed apart (`manual_run`, never alerted on). A succeeded scheduled
     CIS-08 run queues **`quality_funnel_watch`** (`services/jobs/quality_funnel_watch_job.py`, idempotent per run,
-    deploy-gate exempt). Findings over the trailing 7 days: `qf_cut.<stage>` (cut > 5 % of the billed replies),
+    deploy-gate exempt). Findings over the trailing 7 days: `qf_cut.<stage>` (cut > 5 % of the billed replies,
+    setting `cis.ops.reply_cut_alert_pct`, shared with `route_cut`),
     `qf_fb.<stage>` (fallback ≥ the stage's `shared.llm_route_policy` `fallback_alert_pct`, route_watch's own row →
     `*` row → default 20 rule), `qf_drift.<stage>` (≥ 10 % of answers from a model under 1 % of the stage's answers
-    the 7 days before, the minimum in both windows); minimum rows = max(20, the policy's `min_requests`). Alerts on
+    the 7 days before, the minimum in both windows; settings `cis.ops.qf_drift_alert_pct` and
+    `cis.ops.qf_drift_new_model_pct`); minimum rows = max(20, the policy's `min_requests`), the 20 being setting
+    `cis.ops.qf_min_requests` (AA-1171, CIS 469; the values above are the seeded defaults). Alerts on
     the **transition** only: a finding the previous scheduled run (≤ 7 days back) already had is stored with
     `repeat: true` and not raised again (drift: unless a new model drifts), and the night's new findings go out as
-    ONE `qf_digest` alert through `shared/ops_checks.alert_all` (bell at most every 20 h, as `route_digest`; one
+    ONE `qf_digest` alert through `shared/ops_checks.alert_all` (bell at most every 20 h, setting `cis.ops.bell_every_nightly_hours`, as `route_digest`; one
     e-mail per UTC day). A failed e-mail or bell makes the job raise a retryable error (the bell is deduplicated, so
     the retry is safe). T2 per-attempt gate codes are not stored on the version (in `shared.job.result.t3` only). No
     migration (store: `shared.report_run`, report CIS-08 in the registry copy). $0.
@@ -1535,7 +1538,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     (`shared/ops_checks.py` state checks `jobs_starved` > 900 s, `jobs_overdue` > 0, `rds_role_connections` > 80 %,
     `rds_xid_age` > 1e9, `recompute_lifecycle_lag`: a tour on/off event waiting over 30 min for a finished
     recompute, AA-1056; `research_stale_share`, measured once a day: more than 20 % of the search demand research
-    scope stale in a targeted market, AA-1055) and flushes the log events the process counted (structlog processor `ops_checks.capture`
+    scope stale in a targeted market, AA-1055; since AA-1171 every one of these thresholds, the 2 x overdue factor,
+    the 80 % app spend warning and the 6 h bell window are settings `cis.ops.*` on Platform › Settings, CIS 469,
+    read through `shared/ops_thresholds.py`; the values above are the seeded defaults) and flushes the log events the process counted (structlog processor `ops_checks.capture`
     on the JSON handler: the `*_write_failed` cost-log events, the `aa817_tenant_*` fail-closed events, a tenant route
     on the admin pool, `too many connections for role "cis_app"`; the worker flushes its own every 5 minutes). A
     finding writes the admin bell (`shared.notifications`, `platform.ops_check.<check>`, roles admin, at most one per
@@ -2949,7 +2954,7 @@ NavGroup, S264; no sections, no footer Settings entry):
 - **Trade** (AA-1037, root ADR 0019 d9 "Screens now") — Booking admin, Agency billing, Agency tiers, B2B desk: pages of
   AA-Booking's admin (`external` items; the URL comes from `lib/apps.ts appPageUrl`; same tab, never the active item),
   shown to `billing.read` or `tenant.book.account.read` (`lib/rbac.ts canSeeNavItem`); Booking checks its own grant;
-- **Platform** — Staff & access, Audit log, Jobs, Alert recipients, Settings, Infra limits, API Docs, Data model, Docs,
+- **Platform** — Staff & access, Audit log, Jobs, Alerts (Catalogue, Recipients), Settings, Infra limits, API Docs, Data model, Docs,
   UI kit.
 
 Moved pages answer **307** from their old URL with the query string kept (`ADMIN_ROUTE_MOVES`, served by
@@ -3072,6 +3077,22 @@ entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
   read returns that total as `totals.llm_month_usd`. A Bedrock row's account follows `cost_ops.ledger_account` (acc2,
   acc3, a live registry satellite, else `retired`) in the forecast split and in FI-02, and `ce.account_key()` names a
   live satellite's Cost Explorer rows by its key, so the forecast and the AWS bill tab show it as its own account.
+- **Alerts catalogue (AA-1171, S287 decisions D1–D7).** Platform › Alerts (`/admin/platform/alerts`, tabs Catalogue —
+  the default — and Recipients) is the one full list of what the platform watches: one row per alert condition
+  (CloudWatch alarm, EventBridge rule that notifies a topic, budget / cost anomaly alert, CIS / Booking / CRM in-app
+  check) with app, component, type, severity (`page` / `ticket`, the Infra `Severity` tag), condition and threshold,
+  where it is changed (`settings` / `terraform` / `none`; D2: Terraform stays the only writer of AWS alarm
+  thresholds, the page links the Infra file), channel, runbook, owner role, live state, freshness and a coverage gap
+  note, plus counts and the known gaps. Service `api/services/alerts_catalogue.py`, router
+  `api/routers/admin_alerts_catalogue.py`: `GET /admin/platform/alerts/catalogue` and `GET /admin/platform/alerts/
+  summary` (the Ecosystem status card; same document, no rows), both `ops.read`. Sources: DescribeAlarms +
+  `tag:GetResources` + `events:ListRules`/`ListTargetsByRule` (cached 5 min in Redis; no Redis = no AWS call); the
+  CIS checks of `shared/ops_checks.py` with their `cis.ops.*` values and last bell; Booking `GET /booking/ops/checks`
+  and CRM `crm.ops.v1 GET /ops-checks` with the staff member's own Cognito token (no cross-schema read); acc2
+  budgets from the Platform › Infra read of the Terraform docs output; acc1 / acc3 / management account budgets
+  static (D7), account IDs at run time (`shared/aws_client/accounts.py`, env `AWS_MGMT_ACCOUNT_ID`). Overview ›
+  Apps health groups alarms by the `App` tag (name prefix as fallback) and shows the account total per type
+  (`alarm_totals`). Notes: `docs/implementation-notes/AA-1171.md`.
 - **Alert recipients (AA-913).** Who gets the platform alert e-mails, chosen on the admin page instead of a
   Terraform variable. One list for everything: the CIS api manages the **e-mail subscriptions of the SNS alerts
   topic** (CloudWatch alarms of CIS, Booking, TripPlanner and shared; security EventBridge rules; cost anomalies;
@@ -3098,8 +3119,11 @@ entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
   active, 10 adds / 24 h, resend 1 per 10 min and 3 per 24 h per row, test e-mail 1 per 5 min (429 + Retry-After).
   IAM (AA-CIS-Infra): Subscribe (e-mail protocol), ListSubscriptionsByTopic, Unsubscribe, GetSubscriptionAttributes
   on that topic only; no `sns:Publish`, so the test e-mail tests the SES path and SNS delivery is checked with
-  `aws cloudwatch set-alarm-state`. Page `/admin/platform/alerts` (People & access › **Alert recipients**). Notes:
-  `docs/implementation-notes/AA-913.md`.
+  `aws cloudwatch set-alarm-state`. Page `/admin/platform/alerts?tab=recipients` (Platform › **Alerts** ›
+  Recipients). AA-1171 (D5): a second, page-severity topic (`PAGE_TOPIC_ARN`); each row names its `topic` (CIS 469:
+  `alerts` = every alert, `page` = page-severity alerts only), reconcile runs per topic, the bootstrap lives on the
+  alerts topic and is refused on both, and the CIS ops e-mails go to the `alerts` rows only. Notes:
+  `docs/implementation-notes/AA-913.md`, `docs/implementation-notes/AA-1171.md`.
 - **Pages** (admin only, kit + react-query, no polling; types in `frontend/lib/platform.ts`, links from
   `frontend/lib/apps.ts` `APP_REGISTRY`): `/admin/platform/apps` (nav group **Apps**; one card per app, Refresh =
   `?refresh=1`), `/admin/platform/audit` (People & access › **Audit log**; server filters, keyset "load older", chain

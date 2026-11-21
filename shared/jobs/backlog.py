@@ -40,7 +40,14 @@ from . import queue
 from .worker import claim_caps_for
 
 DEFAULT_EXPECTED_SECONDS = 600
-OVERDUE_FACTOR = 2
+
+
+def overdue_factor() -> float:
+    """AA-1171 (D3, CIS 469): a running attempt older than this many times its kind's expected seconds is overdue
+    (setting cis.ops.jobs_overdue_factor, default 2; the in-app check jobs_overdue and the Jobs page read it)."""
+    from shared import ops_thresholds
+
+    return ops_thresholds.jobs_overdue_factor()
 
 # One round trip each; all read-only, all on indexed or tiny sets (job_queued_due_idx,
 # job_running_idx, job_finished_idx; shared.job_worker is pruned to 7 days).
@@ -125,11 +132,12 @@ def backlog_sample(queued: Iterable[Mapping], running: Iterable[Mapping], worker
 
     # ── overdue running ──
     overdue = []
+    factor = overdue_factor()
     for r in running:
         k = kinds.get(r["kind"])
         expected = int(getattr(k, "expected_seconds", None) or DEFAULT_EXPECTED_SECONDS)
         age = _age(now, attempt_started(r))
-        if age > OVERDUE_FACTOR * expected:
+        if age > factor * expected:
             overdue.append({"id": str(r["id"]), "kind": r["kind"], "age_s": round(age), "expected_s": expected})
 
     # ── starved queued ──

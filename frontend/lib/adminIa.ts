@@ -142,7 +142,8 @@ export const ADMIN_IA: IaGroup[] = [
     { href: "/admin/platform/roles", label: "Roles & permissions", icon: "roles" },
     { href: "/admin/platform/audit", label: "Audit log", icon: "audit" },
     { href: "/admin/jobs", label: "Jobs", icon: "jobs" },
-    { href: "/admin/platform/alerts", label: "Alert recipients", icon: "alerts" },
+    // AA-1171: Platform › Alerts, tabs Catalogue (every alert condition) and Recipients (AA-913).
+    { href: "/admin/platform/alerts", label: "Alerts", icon: "alerts" },
     // S279 thresholds L1: every threshold, limit and cap, editable by the administrator (the settings registry).
     { href: "/admin/platform/settings", label: "Settings", icon: "settings" },
     // AA-1096: the limits that stay in Terraform (WAF, API Gateway throttles, Lambda concurrency, AWS budgets, alarm

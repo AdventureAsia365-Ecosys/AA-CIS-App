@@ -17,7 +17,19 @@ export type HealthState = "ok" | "warn" | "alarm" | "unknown";
 export interface AlarmBucket {
   total: number;
   no_data: number;
-  firing: { name: string; description: string; since: string | null }[];
+  firing: { name: string; description: string; since: string | null; severity?: string | null }[];
+  /** AA-1171: alarms of this app by type (load_balancer, database, lambda, metric_math, …) and by Severity tag. */
+  by_type?: Record<string, number>;
+  by_severity?: Record<string, number>;
+}
+
+/** AA-1171: every alarm of the account (grouped by the App tag, the name prefix as fallback). */
+export interface AlarmTotals {
+  total: number;
+  firing: number;
+  by_app: Record<string, number>;
+  by_type: Record<string, number>;
+  by_severity: Record<string, number>;
 }
 
 export interface AppHealth {
@@ -51,6 +63,9 @@ export interface HealthData {
   apps: AppHealth[];
   shared_alarms: AlarmBucket | null;
   alarms_error: string | null;
+  /** AA-1171: absent from an API older than the catalogue release. */
+  alarm_totals?: AlarmTotals | null;
+  alarms_grouped_by?: "tag" | "prefix";
 }
 
 export type TpMetric = "planner_session_started" | "trip_started" | "trip_edited" | "inquiry_sent" | "ai_search";

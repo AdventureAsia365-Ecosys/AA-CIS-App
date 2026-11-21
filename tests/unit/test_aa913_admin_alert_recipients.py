@@ -120,7 +120,7 @@ def test_admin_reads_the_page(client, token, db, sns):
     assert body["configured"] is True and body["topic_name"] == "aa-cis-dev-acp-alerts"
     assert body["bootstrap"] == {"email": BOOTSTRAP, "locked": True, "state": "confirmed"}
     assert body["ops_fallback_email"] is None            # same address as the bootstrap
-    assert body["unmanaged"] == [{"email": "console@x.com", "state": "confirmed"}]
+    assert body["unmanaged"] == [{"email": "console@x.com", "state": "confirmed", "topic": "alerts"}]
     assert [r["email"] for r in body["recipients"]] == ["ok@adventure.asia"]
     assert body["recipients"][0]["has_subscription"] is True
     assert body["limits"] == {"max_active": 10, "active": 1, "adds_left_today": 10, "max_note": 80}
@@ -452,7 +452,8 @@ def test_removed_while_pending_is_listed_as_leaving_not_unmanaged(client, token,
     sns.unsubscribe_error = "InvalidParameter"
     client.delete(f"{BASE}/{rid}", headers=_h(token))
     body = client.get(BASE, headers=_h(token)).json()
-    assert body["unmanaged"] == [] and body["leaving"] == [{"email": "p@adventure.asia", "state": "pending"}]
+    assert body["unmanaged"] == [] and body["leaving"] == [{"email": "p@adventure.asia", "state": "pending",
+                                                             "topic": "alerts"}]
 
 
 class _Redis:
@@ -474,7 +475,8 @@ def test_add_and_remove_drop_the_redis_summary(client, token, db, sns, monkeypat
     monkeypatch.setattr(app.state, "redis", _Redis(), raising=False)
     sns.subs["already@adventure.asia"] = sub_arn("already")       # confirmed in the console
     body = client.get(BASE, headers=_h(token)).json()
-    assert body["unmanaged"] == [{"email": "already@adventure.asia", "state": "confirmed"}] and sns.list_calls == 1
+    assert body["unmanaged"] == [{"email": "already@adventure.asia", "state": "confirmed", "topic": "alerts"}]
+    assert sns.list_calls == 1
     assert client.get(BASE, headers=_h(token)).json()["unmanaged"] and sns.list_calls == 1    # cached
     assert _add(client, token, "already@adventure.asia").status_code == 201                   # lists once more
     body = client.get(BASE, headers=_h(token)).json()

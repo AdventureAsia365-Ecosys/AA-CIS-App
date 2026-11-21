@@ -24,6 +24,10 @@ Pieces (pure first, I/O thin):
   confirmation was clicked afterwards -> unsubscribed again. Throttled to once per :data:`RECONCILE_TTL_S`.
   :func:`periodic_reconcile` runs it from the api's 5-minute ops sampler (api/core/ops_metrics_sampler.py), so a
   removed address that confirms late is unsubscribed within one tick even when nobody opens the page.
+- AA-1171 (D5): two topics. Each row names its ``topic`` (CIS 469): ``alerts`` = the alerts topic (every alert) or
+  ``page`` = the page-severity topic (``PAGE_TOPIC_ARN``; page alarms notify both topics, so an "alerts" recipient
+  already gets them). Reconcile runs per topic; the bootstrap lives on the alerts topic only; one address may be on
+  both topics. Without ``PAGE_TOPIC_ARN`` only the alerts topic is managed (the page choice answers 409).
 - :func:`ops_recipients` — who the ``ops_alert_email`` job mails: the confirmed rows plus ``ALERT_EMAIL_TO`` (the
   Terraform fallback, always included, so the locked row on the page is true for both paths). Pending rows get
   nothing (no confirmation = no consent).
@@ -67,6 +71,10 @@ RECONCILE_CACHE_KEY = "alert_recipients:reconcile"
 RESOURCE_TYPE = "alert_recipient"
 ACTOR_RECONCILE = "reconcile"
 ACTOR_PERIODIC = "job:alert_recipients_reconcile"   # the api's ops sampler tick (removed_by / audit actor)
+
+TOPIC_ALERTS = "alerts"
+TOPIC_PAGE = "page"
+TOPICS = (TOPIC_ALERTS, TOPIC_PAGE)
 
 STATUS_PENDING = "pending"
 STATUS_CONFIRMED = "confirmed"
@@ -152,9 +160,28 @@ class TopicConfig:
     topic_name: str
     bootstrap_email: Optional[str]
     region: str
+    page_topic_arn: Optional[str] = None     # AA-1171: PAGE_TOPIC_ARN (None = only the alerts topic is managed)
 
     def __repr__(self) -> str:   # never print the ARN (it carries the account id)
         return f"TopicConfig(topic_name={self.topic_name!r}, region={self.region!r})"
+
+    @property
+    def page_topic_name(self) -> Optional[str]:
+        return self.page_topic_arn.rsplit(":", 1)[-1] if self.page_topic_arn else None
+
+    def topics(self) -> tuple[str, ...]:
+        """The topics managed here: alerts, plus page when PAGE_TOPIC_ARN is set."""
+        return (TOPIC_ALERTS, TOPIC_PAGE) if self.page_topic_arn else (TOPIC_ALERTS,)
+
+    def arn_for(self, topic: str) -> str:
+        if topic == TOPIC_PAGE and self.page_topic_arn:
+            return self.page_topic_arn
+        if topic == TOPIC_ALERTS:
+            return self.topic_arn
+        raise KeyError(topic)
+
+    def name_for(self, topic: str) -> str:
+        return self.arn_for(topic).rsplit(":", 1)[-1]
 
 
 def _region() -> str:
@@ -179,8 +206,9 @@ def topic_config() -> Optional[TopicConfig]:
     bootstrap = bootstrap_email()
     if not arn or not bootstrap:
         return None
+    page = (os.environ.get("PAGE_TOPIC_ARN") or "").strip() or None
     return TopicConfig(topic_arn=arn, topic_name=arn.rsplit(":", 1)[-1], bootstrap_email=bootstrap,
-                       region=_region())
+                       region=_region(), page_topic_arn=page)
 
 
 # ── SNS ──────────────────────────────────────────────────────────────────────────────────────────
@@ -427,10 +455,11 @@ def plan_reconcile(rows: Sequence[Mapping[str, Any]], subs: Sequence[SnsSub], bo
 
 _ROW = ("id::text AS id, email, status, removed_reason, subscription_arn, confirmed_at, last_confirmation_sent_at, "
         "created_at")
-SQL_ACTIVE_FOR_UPDATE = (f"SELECT {_ROW} FROM shared.alert_recipient WHERE status <> 'removed' "
+# AA-1171: per topic ($1 = 'alerts' | 'page').
+SQL_ACTIVE_FOR_UPDATE = (f"SELECT {_ROW} FROM shared.alert_recipient WHERE status <> 'removed' AND topic = $1 "
                          "ORDER BY created_at FOR UPDATE")
 SQL_LATEST_REMOVED = (f"SELECT DISTINCT ON (email) {_ROW} FROM shared.alert_recipient WHERE status = 'removed' "
-                      "ORDER BY email, removed_at DESC")
+                      "AND topic = $1 ORDER BY email, removed_at DESC")
 # $1 id, $2 new status, $3 removed_reason, $4 removed_by, $5 newly learnt ARN (NULL = keep), $6 seen state
 SQL_RECONCILE_UPDATE = (
     "UPDATE shared.alert_recipient SET status = $2::text, removed_reason = $3::text, "
@@ -444,12 +473,14 @@ SQL_RECONCILE_UPDATE = (
 SQL_RECONCILE_SEEN = (
     "UPDATE shared.alert_recipient SET last_seen_state = $2::text, last_reconciled_at = now() WHERE id = $1::uuid"
 )
-SQL_CONFIRMED_EMAILS = "SELECT email FROM shared.alert_recipient WHERE status = 'confirmed' ORDER BY created_at"
+# The CIS ops e-mails (spend, settings) are ticket-level: the "alerts" recipients only, not the page-only ones.
+SQL_CONFIRMED_EMAILS = ("SELECT email FROM shared.alert_recipient WHERE status = 'confirmed' AND topic = 'alerts' "
+                        "ORDER BY created_at")
 
 # Reads for the page. created_by / removed_by are 'admin:<uuid>' (or reconcile / job:…); names come from the staff
 # directory, never password_hash or the Cognito identity. subscription_arn is reduced to a boolean.
 _PAGE_COLUMNS = (
-    "r.id::text AS id, r.email, r.note, r.status, r.removed_reason, (r.subscription_arn IS NOT NULL) AS "
+    "r.id::text AS id, r.email, r.note, r.status, r.topic, r.removed_reason, (r.subscription_arn IS NOT NULL) AS "
     "has_subscription, r.created_at, r.created_by, r.confirmed_at, r.removed_at, r.removed_by, "
     "r.last_confirmation_sent_at, r.last_seen_state, r.last_reconciled_at, "
     "coalesce(c.display_name, c.email, c.username) AS created_by_name, "
@@ -485,22 +516,43 @@ class ReconcileResult:
 
 async def reconcile(pool: Any, client: Any, cfg: TopicConfig, *, actor: str = ACTOR_RECONCILE,
                     now: Optional[datetime] = None) -> ReconcileResult:
-    """List the topic's e-mail subscriptions once, then apply :func:`plan_reconcile` in one transaction (active rows
-    locked FOR UPDATE), one ``alert_recipient.reconciled`` audit row per status change. Re-unsubscribes run after
-    the commit. Raises SnsError when SNS cannot be listed (nothing changed then)."""
+    """For each managed topic (AA-1171: alerts, and page when PAGE_TOPIC_ARN is set): list its e-mail subscriptions
+    once, then apply :func:`plan_reconcile` to that topic's rows in one transaction (active rows locked FOR UPDATE),
+    one ``alert_recipient.reconciled`` audit row per status change. Re-unsubscribes run after the commit. Raises
+    SnsError when a topic cannot be listed (that topic and the ones after it unchanged)."""
+    when = now or datetime.now(timezone.utc)
+    result = ReconcileResult(reconciled_at=when.isoformat())
+    for topic in cfg.topics():
+        part = await _reconcile_topic(pool, client, cfg, topic, actor=actor, when=when)
+        if topic == TOPIC_ALERTS:
+            result.locked = part.locked
+        for key in ("unmanaged", "leaving"):
+            getattr(result, key).extend({**u, "topic": topic} for u in getattr(part, key))
+        result.changes.extend({**c, "topic": topic} for c in part.changes)
+        result.unsubscribed.extend(part.unsubscribed)
+    if result.changes or result.unsubscribed:
+        logger.info("alert_recipients_reconciled", topic=cfg.topic_name, changes=len(result.changes),
+                    unsubscribed=len(result.unsubscribed))
+    return result
+
+
+async def _reconcile_topic(pool: Any, client: Any, cfg: TopicConfig, topic: str, *, actor: str,
+                           when: datetime) -> ReconcileResult:
     from services.acp_shared.audit_log import write_audit_log
 
-    subs = await list_email_subscriptions(client, cfg.topic_arn)
-    when = now or datetime.now(timezone.utc)
+    subs = await list_email_subscriptions(client, cfg.arn_for(topic))
     # removed_by says what removed the row: SNS (seen by a status check), never the admin whose page view ran the
     # check; the audit row keeps that admin as the actor. A job keeps its own name.
     removed_by = actor if actor.startswith("job:") else ACTOR_RECONCILE
+    # The Terraform bootstrap subscription lives on the alerts topic only. On the page topic the same address is a
+    # plain guard value: plan_reconcile plans no unsubscribe without one, and add() refuses the bootstrap address there
+    # (it already gets every page alert through the alerts topic), so no row of it can exist.
+    bootstrap = cfg.bootstrap_email
     async with pool.acquire() as conn:
         async with conn.transaction():
-            active = await conn.fetch(SQL_ACTIVE_FOR_UPDATE)
-            removed = await conn.fetch(SQL_LATEST_REMOVED)
-            plan = plan_reconcile([dict(r) for r in active] + [dict(r) for r in removed], subs,
-                                  cfg.bootstrap_email, when)
+            active = await conn.fetch(SQL_ACTIVE_FOR_UPDATE, topic)
+            removed = await conn.fetch(SQL_LATEST_REMOVED, topic)
+            plan = plan_reconcile([dict(r) for r in active] + [dict(r) for r in removed], subs, bootstrap, when)
             for u in plan.updates:
                 if u.changed or u.subscription_arn:
                     await conn.execute(SQL_RECONCILE_UPDATE, u.id, u.to_status, u.removed_reason,
@@ -512,10 +564,10 @@ async def reconcile(pool: Any, client: Any, cfg: TopicConfig, *, actor: str = AC
                 await write_audit_log(conn, tenant_id=None, actor=actor, action=AlertAudit.RECONCILED,
                                       resource_type=RESOURCE_TYPE, resource_id=u.id,
                                       details={"email": u.email, "from": u.from_status, "to": u.to_status,
-                                               "reason": u.removed_reason})
+                                               "reason": u.removed_reason, "topic": cfg.name_for(topic)})
     result = ReconcileResult(
-        reconciled_at=when.isoformat(), locked=plan.locked, unmanaged=list(plan.unmanaged),
-        leaving=list(plan.leaving),
+        reconciled_at=when.isoformat(), locked=plan.locked if topic == TOPIC_ALERTS else None,
+        unmanaged=list(plan.unmanaged), leaving=list(plan.leaving),
         changes=[{"id": u.id, "email": u.email, "from": u.from_status, "to": u.to_status,
                   "reason": u.removed_reason} for u in plan.changes])
     for un in plan.unsubscribe:
@@ -530,10 +582,8 @@ async def reconcile(pool: Any, client: Any, cfg: TopicConfig, *, actor: str = AC
         await write_audit_log(pool, tenant_id=None, actor=actor, action=AlertAudit.RECONCILED,
                               resource_type=RESOURCE_TYPE, resource_id=un.row_id,
                               details={"email": un.email, "from": STATUS_REMOVED, "to": STATUS_REMOVED,
-                                       "reason": "confirmed_after_removal", "sns": outcome})
-    if result.changes or result.unsubscribed:
-        logger.info("alert_recipients_reconciled", topic=cfg.topic_name, changes=len(result.changes),
-                    unsubscribed=len(result.unsubscribed))
+                                       "reason": "confirmed_after_removal", "sns": outcome,
+                                       "topic": cfg.name_for(topic)})
     return result
 
 

@@ -86,7 +86,7 @@ def test_summarize_counts_the_stale_share_per_market():
         "Ilvar Bay": {("US", "volume"), ("US", "serp"), ("UK", "volume")},
     }
     out = rc.summarize(fresh, fresh, ["US", "UK"], reatomized={"Torvan Pass", "Ilvar Bay"})
-    assert out["places_in_scope"] == 5 and out["limit"] == rc.STALE_SHARE_LIMIT
+    assert out["places_in_scope"] == 5 and out["limit"] == rc.stale_share_limit()
     us, uk = out["by_market"]["US"], out["by_market"]["UK"]
     assert (us["places_stale"], us["stale_share"], us["above_limit"]) == (2, 0.4, True)
     assert (uk["places_stale"], uk["stale_share"], uk["above_limit"]) == (2, 0.4, True)
@@ -233,11 +233,11 @@ async def test_read_only_pool_opens_a_bounded_read_only_transaction_under_the_ga
 # ── data coverage ────────────────────────────────────────────────────────────────────────────────────────────────────
 def _summary(us=(2, 10), uk=None):
     by = {"US": {"places_in_scope": us[1], "places_stale": us[0], "stale_share": us[0] / us[1],
-                 "above_limit": us[0] / us[1] > rc.STALE_SHARE_LIMIT}}
+                 "above_limit": us[0] / us[1] > rc.stale_share_limit()}}
     if uk:
         by["UK"] = {"places_in_scope": uk[1], "places_stale": uk[0], "stale_share": uk[0] / uk[1],
-                    "above_limit": uk[0] / uk[1] > rc.STALE_SHARE_LIMIT}
-    return {"markets": list(by), "places_in_scope": us[1], "limit": rc.STALE_SHARE_LIMIT, "by_market": by,
+                    "above_limit": uk[0] / uk[1] > rc.stale_share_limit()}
+    return {"markets": list(by), "places_in_scope": us[1], "limit": rc.stale_share_limit(), "by_market": by,
             "waiting_after_reatomize": 3}
 
 

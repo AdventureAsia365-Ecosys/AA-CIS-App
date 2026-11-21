@@ -12,10 +12,13 @@ Sources (acc2, us-west-1; read-only IAM on the CIS task role, AA-CIS-Infra modul
   derivable from the environment name), so kind ``probe``: no GetMetricData query, only its alarms. Its status on the
   overview comes from its own health check (``platform_apps._crm_card``, the probe /admin/platform/apps already runs)
   plus these alarms, through ``app_health.overall_status``.
-- Alarms: every alarm whose name starts with an app's prefix (``aa-cis-<env>-``, ``aa-booking-<env>-``,
-  ``aa-tripplanner-<env>-``, ``aa-crm-<env>-``; shared platform: ``aa-ecosys-<env>-``, ``aa-identity-<env>-``,
-  ``aa-email-<env>-``).
-  ``TargetTracking-*`` (ECS autoscaling, normal "AlarmLow") never matches a prefix and is skipped explicitly too.
+- Alarms: grouped by their ``App`` tag (AA-1171, S287: the name prefix put the shared RDS and the CRM WAF alarms under
+  CIS and missed alarms with another prefix), read with ``tag:GetResources`` (one paged call); ``identity``, ``shared``
+  and ``ecosystem`` go to the shared bucket. An alarm without an App tag, or every alarm when the tag read is refused,
+  falls back to its name prefix (``aa-cis-<env>-``, ``aa-booking-<env>-``, ``aa-tripplanner-<env>-``,
+  ``aa-crm-<env>-``; shared platform: ``aa-ecosys-<env>-``, ``aa-identity-<env>-``, ``aa-email-<env>-``,
+  ``aa-sec-<env>-``). Each bucket and the whole account carry a total and counts per alarm type (``alarm_totals``).
+  ``TargetTracking-*`` (ECS autoscaling, normal "AlarmLow") is skipped.
 
 Cost: one GetMetricData call = 16 metrics ($0.01 per 1,000 metrics → $0.00016), DescribeAlarms is free. Called only
 on a cache miss (5 min, ``cache.py``), never without Redis. No ``lambda:GetFunctionConfiguration`` (it returns env).
@@ -70,7 +73,42 @@ def app_sources(env: str) -> tuple[AppSource, ...]:
 
 
 def shared_alarm_prefixes(env: str) -> tuple[str, ...]:
-    return (f"aa-ecosys-{env}-", f"aa-identity-{env}-", f"aa-email-{env}-")
+    return (f"aa-ecosys-{env}-", f"aa-identity-{env}-", f"aa-email-{env}-", f"aa-sec-{env}-")
+
+
+# AA-1171: App tag values that are not one app's own (the shared bucket).
+SHARED_APP_TAGS = ("shared", "identity", "ecosystem")
+# AA-1171: the alarm type shown in the counts, by CloudWatch namespace (metric math and composite by their shape).
+_TYPE_BY_NAMESPACE = {"AWS/ApplicationELB": "load_balancer", "AWS/Lambda": "lambda", "AWS/RDS": "database",
+                      "AWS/SES": "email", "AWS/EC2": "instance", "AWS/SNS": "alert_delivery", "AWS/ECS": "service",
+                      "AWS/WAFV2": "waf", "AWS/ApiGateway": "api_gateway"}
+
+
+def alarm_type(a: dict, composite: bool = False) -> str:
+    """The type of one DescribeAlarms entry for the counts (AA-1171). Pure."""
+    if composite:
+        return "composite"
+    if a.get("Metrics"):
+        return "metric_math"
+    ns = str(a.get("Namespace") or "")
+    return _TYPE_BY_NAMESPACE.get(ns, "custom_metric" if ns and not ns.startswith("AWS/") else "other")
+
+
+def read_alarm_tags(tagging: Any) -> dict[str, dict]:
+    """{alarm ARN: tags} with tag:GetResources (paged). Raises on a refusal (the caller falls back to prefixes)."""
+    out: dict[str, dict] = {}
+    token: Optional[str] = None
+    for _ in range(MAX_ALARM_PAGES):
+        kw: dict[str, Any] = {"ResourceTypeFilters": ["cloudwatch:alarm"], "ResourcesPerPage": 100}
+        if token:
+            kw["PaginationToken"] = token
+        resp = tagging.get_resources(**kw)
+        for it in resp.get("ResourceTagMappingList") or []:
+            out[it.get("ResourceARN", "")] = {t["Key"]: t["Value"] for t in it.get("Tags") or []}
+        token = resp.get("PaginationToken")
+        if not token:
+            break
+    return out
 
 
 # (metric key, CloudWatch metric name, statistic) per kind; the key is what the parser sums.
@@ -202,11 +240,27 @@ def _probe_app(src: AppSource) -> dict:
     }
 
 
-def fetch_alarms(client: Any, env: str) -> tuple[dict, int]:
-    """DescribeAlarms (all pages, metric + composite) → ({app or 'shared': {total, firing[], no_data}}, calls)."""
+def alarm_owner(name: str, tag_app: Optional[str], apps: list[str],
+                prefixes: list[tuple[str, str]]) -> Optional[str]:
+    """AA-1171: the bucket of one alarm: its App tag (an app, or shared for identity / shared / ecosystem), else the
+    name prefix, else None (not ours). Pure."""
+    if tag_app in apps:
+        return tag_app
+    if tag_app in SHARED_APP_TAGS:
+        return "shared"
+    return next((app for p, app in prefixes if name.startswith(p)), None)
+
+
+def fetch_alarms(client: Any, env: str, tags: Optional[dict[str, dict]] = None) -> tuple[dict, int]:
+    """DescribeAlarms (all pages, metric + composite) → ({app or 'shared': {total, firing[], no_data, by_type,
+    by_severity}}, calls). ``tags`` ({alarm ARN: tags}, AA-1171) puts each alarm under its App tag; without it (or
+    for an alarm with no App tag) the name prefix decides."""
     prefixes = [(p, s.app) for s in app_sources(env) for p in s.alarm_prefixes]
     prefixes += [(p, "shared") for p in shared_alarm_prefixes(env)]
-    out = {key: {"total": 0, "no_data": 0, "firing": []} for key in [s.app for s in app_sources(env)] + ["shared"]}
+    apps = [s.app for s in app_sources(env)]
+    out = {key: {"total": 0, "no_data": 0, "firing": [], "by_type": {}, "by_severity": {}}
+           for key in apps + ["shared"]}
+    tags = tags or {}
     token: Optional[str] = None
     calls = 0
     while True:
@@ -215,20 +269,26 @@ def fetch_alarms(client: Any, env: str) -> tuple[dict, int]:
             kw["NextToken"] = token
         resp = client.describe_alarms(**kw)
         calls += 1
-        for a in list(resp.get("MetricAlarms", [])) + list(resp.get("CompositeAlarms", [])):
+        composite = list(resp.get("CompositeAlarms", []))
+        for a in list(resp.get("MetricAlarms", [])) + composite:
             name = a.get("AlarmName", "")
             if name.startswith("TargetTracking-"):
                 continue
-            owner = next((app for p, app in prefixes if name.startswith(p)), None)
+            t = tags.get(a.get("AlarmArn", ""), {})
+            owner = alarm_owner(name, t.get("App"), apps, prefixes)
             if owner is None:
                 continue
             bucket = out[owner]
             bucket["total"] += 1
+            kind = alarm_type(a, composite=a in composite)
+            bucket["by_type"][kind] = bucket["by_type"].get(kind, 0) + 1
+            sev = t.get("Severity") or "untagged"
+            bucket["by_severity"][sev] = bucket["by_severity"].get(sev, 0) + 1
             state = a.get("StateValue")
             if state == "ALARM":
                 since = a.get("StateUpdatedTimestamp")
                 bucket["firing"].append({
-                    "name": name,
+                    "name": name, "severity": t.get("Severity"),
                     "description": (a.get("AlarmDescription") or "")[:300],
                     "since": since.isoformat() if hasattr(since, "isoformat") else since,
                 })
@@ -289,12 +349,14 @@ def is_denied(e: Exception) -> bool:
     return _is_denied(e)
 
 
-def collect_health(now: Optional[datetime] = None, env: Optional[str] = None, client: Any = None) -> dict:
+def collect_health(now: Optional[datetime] = None, env: Optional[str] = None, client: Any = None,
+                   tagging: Any = None) -> dict:
     """The health section (sync; run it in a thread). Metrics and alarms fail independently."""
     now = now or datetime.now(timezone.utc)
     env = env or environment()
     sources = app_sources(env)
     start, end = window(now)
+    injected = client is not None
     client = client or _client("cloudwatch")
     try:
         results, calls = get_metric_data(client, metric_queries(sources, env), start, end)
@@ -311,9 +373,18 @@ def collect_health(now: Optional[datetime] = None, env: Optional[str] = None, cl
 
     alarms: Optional[dict] = None
     alarms_error: Optional[str] = None
+    tags: Optional[dict[str, dict]] = None
     try:
-        alarms, alarm_calls = fetch_alarms(client, env)
-        logger.info("ops_overview_alarms_fetch", calls=alarm_calls)
+        # A caller that passes its own CloudWatch client (tests) passes its tagging client too, or gets prefixes.
+        if tagging is None and not injected:
+            tagging = _client("resourcegroupstaggingapi")
+        if tagging is not None:
+            tags = read_alarm_tags(tagging)
+    except Exception as e:  # noqa: BLE001 — refused before the AA-1171 grant: group by name prefix
+        logger.info("ops_overview_alarm_tags_unavailable", error="denied" if _is_denied(e) else type(e).__name__)
+    try:
+        alarms, alarm_calls = fetch_alarms(client, env, tags)
+        logger.info("ops_overview_alarms_fetch", calls=alarm_calls, grouped_by="tag" if tags else "prefix")
     except Exception as e:  # noqa: BLE001
         logger.warning("ops_overview_cw_alarms_failed", error=repr(e)[:300])
         alarms_error = ("not_permitted" if _is_denied(e) else "aws_error")
@@ -332,4 +403,21 @@ def collect_health(now: Optional[datetime] = None, env: Optional[str] = None, cl
         "apps": apps,
         "shared_alarms": (alarms or {}).get("shared"),
         "alarms_error": alarms_error,
+        "alarm_totals": alarm_totals(alarms) if alarms is not None else None,
+        "alarms_grouped_by": "tag" if tags else "prefix",
     }
+
+
+def alarm_totals(alarms: dict) -> dict:
+    """AA-1171: the account's alarm count, per type and per app bucket (Overview › Apps health total line). Pure."""
+    by_type: dict[str, int] = {}
+    by_severity: dict[str, int] = {}
+    for bucket in alarms.values():
+        for k, n in (bucket.get("by_type") or {}).items():
+            by_type[k] = by_type.get(k, 0) + n
+        for k, n in (bucket.get("by_severity") or {}).items():
+            by_severity[k] = by_severity.get(k, 0) + n
+    return {"total": sum(b["total"] for b in alarms.values()),
+            "firing": sum(len(b["firing"]) for b in alarms.values()),
+            "by_app": {k: b["total"] for k, b in alarms.items()}, "by_type": dict(sorted(by_type.items())),
+            "by_severity": dict(sorted(by_severity.items()))}

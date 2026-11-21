@@ -27,6 +27,12 @@ export const ALERTS = defineMessages(
       `This address is outside ${domain}. Alerts include security details (who read a secret, from which IP address). Add an outside mailbox only if you trust it.`,
     note: "Note (optional)",
     notePlaceholder: "e.g. on-call phone",
+    topic: "Receives",
+    topicAlerts: "All alerts",
+    topicPage: "Page alerts only",
+    topicHelp:
+      "All alerts: every alarm, security alert, budget and in-app check. Page alerts only: the urgent ones (security, identity, the network gateway, the database down, failed alert delivery); everyone on All alerts gets these too.",
+    colTopic: "Receives",
     resentToast: (email: string) => `AWS sent the confirmation e-mail to ${email} again. Ask them to check spam too.`,
     removedPending: (email: string) =>
       `Removed ${email}. Its unconfirmed AWS subscription expires on its own within 3 days; if the link is clicked first, the automatic status check (every 5 minutes) unsubscribes it again.`,
@@ -110,6 +116,12 @@ export const ALERTS = defineMessages(
       `Địa chỉ này nằm ngoài ${domain}. Cảnh báo có chứa thông tin bảo mật (ai đã đọc một secret, từ địa chỉ IP nào). Chỉ thêm hộp thư bên ngoài nếu bạn tin cậy nó.`,
     note: "Ghi chú (không bắt buộc)",
     notePlaceholder: "ví dụ: điện thoại trực",
+    topic: "Nhận",
+    topicAlerts: "Mọi cảnh báo",
+    topicPage: "Chỉ cảnh báo khẩn",
+    topicHelp:
+      "Mọi cảnh báo: mọi alarm, cảnh báo bảo mật, ngân sách và kiểm tra trong app. Chỉ cảnh báo khẩn: các cảnh báo cần xử lý ngay (bảo mật, định danh, cổng mạng, database ngừng, gửi cảnh báo thất bại); người nhận Mọi cảnh báo cũng nhận các cảnh báo này.",
+    colTopic: "Nhận",
     resentToast: (email: string) => `AWS đã gửi lại e-mail xác nhận đến ${email}. Nhắc người nhận kiểm tra cả thư rác.`,
     removedPending: (email: string) =>
       `Đã gỡ ${email}. Đăng ký AWS chưa xác nhận của địa chỉ này sẽ tự hết hạn trong vòng 3 ngày; nếu đường dẫn được bấm trước đó, bước kiểm tra trạng thái tự động (mỗi 5 phút) sẽ huỷ đăng ký lại.`,

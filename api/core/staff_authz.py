@@ -714,9 +714,9 @@ POLICY: dict[tuple[str, str], Any] = {
     ("PUT", "/admin/platform/crm/agencies/{tenant_id}/insights-opt-out"): TENANT_WRITE,
     ("POST", "/admin/platform/crm/agencies/{tenant_id}/jobs/{job_id}/retry"): TENANT_WRITE,
 
-    # ── admin_alert_recipients (AA-913) — Platform › Alert recipients. Reads ops.read (admin); changes alerts.write
-    # (admin) and, in the router, a Cognito session for add / remove / resend / test (not for the status refresh).
-    ("GET", "/admin/platform/alert-recipients"): OPS_READ,
+    # ── Platform › Alerts (AA-913 recipients, AA-1171 catalogue): reads ops.read; changes alerts.write + Cognito.
+    ("GET", "/admin/platform/alert-recipients"): OPS_READ, ("GET", "/admin/platform/alerts/catalogue"): OPS_READ,
+    ("GET", "/admin/platform/alerts/summary"): OPS_READ,
     ("POST", "/admin/platform/alert-recipients"): ALERTS_WRITE,
     ("POST", "/admin/platform/alert-recipients/refresh"): ALERTS_WRITE,
     ("POST", "/admin/platform/alert-recipients/test-email"): ALERTS_WRITE,

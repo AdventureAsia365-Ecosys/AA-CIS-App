@@ -1,7 +1,8 @@
 """AA-913 — Platform › People & access › Alert recipients: who gets the platform alert e-mails.
 
   GET    /admin/platform/alert-recipients?refresh=false        list (reconciles with SNS first, throttled)
-  POST   /admin/platform/alert-recipients                      add {email, note?}: AWS sends the confirmation e-mail
+  POST   /admin/platform/alert-recipients                      add {email, note?, topic?}: AWS sends the confirmation
+                                                                e-mail (topic alerts = every alert, page = page only)
   POST   /admin/platform/alert-recipients/refresh              reconcile now, returns the GET body
   POST   /admin/platform/alert-recipients/test-email           queue a test ops e-mail (SES path)
   DELETE /admin/platform/alert-recipients/{recipient_id}       remove (unsubscribes from SNS)
@@ -28,7 +29,7 @@ The router is included without an include prefix (staff_policy reads the route t
 from __future__ import annotations
 
 import uuid
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -55,6 +56,8 @@ class AddRecipientBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     email: str = Field(..., max_length=320)
     note: Optional[str] = Field(None, max_length=200)
+    # AA-1171 (D5): alerts = every alert (the alerts topic); page = page-severity alerts only (the page topic).
+    topic: Literal["alerts", "page"] = "alerts"
 
 
 def _identity(request: Request) -> Any:
@@ -144,7 +147,7 @@ async def add_alert_recipient(body: AddRecipientBody, request: Request, sns: Any
     actor = _actor(request)
     try:
         return await svc.add(request.app.state.pool, sns, actor=actor, email=body.email, note=body.note,
-                             redis=_redis(request))
+                             redis=_redis(request), topic=body.topic)
     except svc.AlertRecipientError as exc:
         return _refused(exc)
 
