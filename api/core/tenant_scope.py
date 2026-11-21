@@ -49,6 +49,7 @@ from api.core.staff_authz import (
     principal_from_role,
     request_staff_identity,
 )
+from api.core.staff_roles import role_perms
 
 logger = structlog.get_logger()
 
@@ -98,9 +99,36 @@ SQL_IN_POOL = (
 )
 
 
+# AA-1155 (T8): a custom role's scope comes from its capabilities (never from its built-in base role): reading every
+# tenant (tenant.read), every tenant's text (tenant_content.read), every tenant's billing or AI spend -> all; the
+# caller's book -> book; content reads only -> internal; nothing else -> no tenant.
+_ALL_SCOPE_CAPS = frozenset({"tenant.read", "tenant_content.read", "billing.read", "spend.read"})
+_BOOK_SCOPE_CAPS = frozenset({"tenant.book.read", "tenant_content.book.read"})
+
+
+def _custom_scope(perms: frozenset[str]) -> Optional[str]:
+    if perms & _ALL_SCOPE_CAPS:
+        return SCOPE_ALL
+    if perms & _BOOK_SCOPE_CAPS:
+        return SCOPE_BOOK
+    return SCOPE_INTERNAL if "content.read" in perms else None
+
+
 def scope_for_role(role: Optional[str]) -> Optional[str]:
-    """The scope kind of a staff role, or None (unknown role: no tenant)."""
-    return TENANT_SCOPE.get(role or "") if (role or "") in ROLE_PERMS else None
+    """The scope kind of a staff role, or None (unknown role: no tenant). A custom role (AA-1155): from the request's
+    verified custom capabilities (:func:`api.core.staff_authz.role_perms`)."""
+    if (role or "") in ROLE_PERMS:
+        return TENANT_SCOPE.get(role or "")
+    perms = role_perms(role)
+    return _custom_scope(perms) if perms else None
+
+
+def principal_scope(principal: StaffPrincipal) -> Optional[str]:
+    """The scope of a staff principal: by role for a built-in role, by the principal's own (verified) capabilities for
+    a custom role (AA-1155)."""
+    if (principal.role or "") in ROLE_PERMS:
+        return TENANT_SCOPE.get(principal.role or "")
+    return _custom_scope(principal.perms) if principal.perms else None
 
 
 def _uuid_text(value: Any) -> Optional[str]:
@@ -152,7 +180,7 @@ async def require_tenant_scope(request: Request) -> None:
     if principal.is_machine:
         return
     raw = request.path_params.get("tenant_id")
-    scope = scope_for_role(principal.role)
+    scope = principal_scope(principal)
     if scope is None:
         raise _refuse(request, principal, raw, "unknown_role", OUT_OF_SCOPE)
     if scope == SCOPE_ALL:
@@ -186,7 +214,7 @@ async def tenant_scope_filter(request: Request, conn: Any) -> Optional[frozenset
     principal = principal_of(request)
     if principal.is_machine:
         return None
-    scope = scope_for_role(principal.role)
+    scope = principal_scope(principal)
     if scope == SCOPE_ALL:
         return None
     if scope == SCOPE_INTERNAL:

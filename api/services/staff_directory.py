@@ -90,8 +90,8 @@ import structlog
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import BotoCoreError, ClientError
 
-from api.core import e2e_staff, identity_config, staff_identity, view_as
-from api.services import staff_invite
+from api.core import e2e_staff, identity_config, staff_identity, staff_roles, view_as
+from api.services import staff_custom_roles as scr, staff_invite   # AA-1155: custom roles, business-owner marker
 # The Staff page's presets and the retired Booking roles (AA-1031, AA-1091, AA-1150), re-exported for the callers.
 from api.services.staff_presets import (  # noqa: F401
     CONTENT_OPS_CIS_ROLE, PRESET_BOOKING_ROLE, PRESET_BUSINESS_OWNER, PRESET_CIS_ROLE, PRESET_CONTENT_OPS,
@@ -158,14 +158,18 @@ _E2E_TEST_STAFF_ROLES = MappingProxyType({
     E2E_TEST_STAFF_EMAIL: E2E_TEST_STAFF_ROLE,
     E2E_CIS_ADMIN_TEST_STAFF_EMAIL: E2E_CIS_ADMIN_TEST_STAFF_ROLE,
     E2E_CIS_CS_TEST_STAFF_EMAIL: E2E_CIS_CS_TEST_STAFF_ROLE,
+    e2e_staff.E2E_CIS_CONTENT_LEAD_TEST_STAFF_EMAIL: e2e_staff.E2E_CIS_CONTENT_LEAD_TEST_STAFF_ROLE,
+    e2e_staff.E2E_CUSTOM_MAKER_TEST_STAFF_EMAIL: scr.E2E_ANY_CUSTOM_ROLE,
 })
 # The E2E addresses that may exist only on Dev (every entry of e2e_staff.DEV_ONLY_E2E_STAFF_ROLES).
-_DEV_ONLY_E2E_EMAILS = frozenset({E2E_CIS_ADMIN_TEST_STAFF_EMAIL, E2E_CIS_CS_TEST_STAFF_EMAIL})
+_DEV_ONLY_E2E_EMAILS = frozenset(e2e_staff.DEV_ONLY_E2E_STAFF_ROLES)
 # The name each E2E address goes by in the directory's refusals.
 _E2E_ACCOUNT_NAMES = MappingProxyType({
     E2E_TEST_STAFF_EMAIL: "E2E test account",
     E2E_CIS_ADMIN_TEST_STAFF_EMAIL: "E2E CIS admin account",
     E2E_CIS_CS_TEST_STAFF_EMAIL: "E2E customer success account",
+    e2e_staff.E2E_CIS_CONTENT_LEAD_TEST_STAFF_EMAIL: "E2E content lead account",
+    e2e_staff.E2E_CUSTOM_MAKER_TEST_STAFF_EMAIL: "E2E custom-role maker account",
 })
 
 # The break-glass account (ADR 0006 decision 11; S242 plan D1). Never written from the UI.
@@ -209,23 +213,23 @@ class StaffAudit:
 RESOURCE_TYPE = "admin_user"
 
 
-def cis_group(role: str) -> str:
-    return f"cis-{role}"
+def cis_group(role: str) -> str:   # AA-1155: a custom role code -> cis-custom
+    return staff_roles.CIS_CUSTOM_GROUP if staff_roles.is_custom_code(role) else f"cis-{role}"
 
 
-def booking_group(role: str) -> str:
-    return f"booking-{role}"
+def booking_group(role: str) -> str:   # AA-1155: a custom role code -> booking-custom
+    return staff_roles.BOOKING_CUSTOM_GROUP if staff_roles.is_custom_code(role) else f"booking-{role}"
 
 
 def crm_group(role: str) -> str:
     return CRM_ROLE_GROUPS[role]
 
 
-CIS_GROUPS: tuple[str, ...] = tuple(cis_group(r) for r in CIS_ROLES) + RETIRED_CIS_GROUPS
+CIS_GROUPS: tuple[str, ...] = tuple(cis_group(r) for r in CIS_ROLES) + scr.CIS_EXTRA + RETIRED_CIS_GROUPS
 # AA-1150: the retired Booking groups (booking-content_creator) are in the list Sync and create-over-an-existing-user
 # remove, after the assignable ones.
 RETIRED_BOOKING_GROUPS: tuple[str, ...] = tuple(booking_group(r) for r in RETIRED_BOOKING_ROLES)
-BOOKING_GROUPS: tuple[str, ...] = tuple(booking_group(r) for r in BOOKING_ROLES) + RETIRED_BOOKING_GROUPS
+BOOKING_GROUPS: tuple[str, ...] = tuple(booking_group(r) for r in BOOKING_ROLES) + scr.BK_EXTRA + RETIRED_BOOKING_GROUPS
 CRM_GROUPS: tuple[str, ...] = tuple(crm_group(r) for r in CRM_ROLES)
 
 
@@ -301,17 +305,17 @@ def require_display_name(name: Any) -> str:
 
 
 def require_cis_role(role: Any) -> str:
-    """A role the directory may write: an assignable one (never ``viewer`` nor the removed ``reviewer``)."""
-    if role not in CIS_ROLES:
-        raise StaffDirectoryError(400, f"CIS role must be one of {', '.join(CIS_ROLES)}", "cis_role")
+    """An assignable role (never ``viewer`` nor the removed ``reviewer``), or a CIS custom role code (AA-1155)."""
+    if role not in CIS_ROLES and not staff_roles.is_custom_code(role):
+        raise StaffDirectoryError(400, f"CIS role must be one of {', '.join(CIS_ROLES)} or a custom role", "cis_role")
     return role
 
 
 def require_booking_role(role: Any) -> Optional[str]:
     if role is None:
         return None
-    if role not in BOOKING_ROLES:
-        raise StaffDirectoryError(400, f"Booking role must be one of {', '.join(BOOKING_ROLES)}", "booking_role")
+    if role not in BOOKING_ROLES and not staff_roles.is_custom_code(role):
+        raise StaffDirectoryError(400, f"Booking role must be {', '.join(BOOKING_ROLES)} or custom", "booking_role")
     return role
 
 
@@ -328,7 +332,7 @@ def require_crm_roles(roles: Any) -> tuple[str, ...]:
 
 
 def require_e2e_test_scope(email: Any, role: Optional[str], booking_role: Optional[str],
-                           crm_roles: tuple[str, ...] = ()) -> None:
+                           crm_roles: tuple[str, ...] = (), based_on: Optional[str] = None) -> None:
     """An E2E test address may only hold its one CIS role (``content`` for :data:`E2E_TEST_STAFF_EMAIL`, ``admin``
     for :data:`E2E_CIS_ADMIN_TEST_STAFF_EMAIL`, ``customer_success`` for :data:`E2E_CIS_CS_TEST_STAFF_EMAIL`) with no
     Booking grant and no CRM role (400 ``e2e_test_scope``; root ADR 0006a A10 / A10b / A10d, the WORKFORCE trigger
@@ -338,7 +342,8 @@ def require_e2e_test_scope(email: Any, role: Optional[str], booking_role: Option
     allowed = _E2E_TEST_STAFF_ROLES.get(address)
     if allowed is None:
         return
-    if role != allowed or not e2e_staff.e2e_booking_role_allowed(address, booking_role) or crm_roles:
+    role_ok, allowed = scr.e2e_role_ok(allowed, role, based_on)   # AA-1155: A10g a custom role
+    if not role_ok or not e2e_staff.e2e_booking_role_allowed(address, booking_role) or crm_roles:
         name, booking = _E2E_ACCOUNT_NAMES[address], e2e_staff.e2e_booking_rule(address)
         raise StaffDirectoryError(
             400, f"The {name} may only have the CIS role {allowed}, {booking} and no CRM role", "e2e_test_scope")
@@ -529,12 +534,12 @@ SQL_ACTOR = (
     "SELECT id::text AS id, is_active, is_owner, role::text AS role FROM shared.admin_users WHERE id = $1::uuid"
 )
 SQL_TARGET = (
-    "SELECT id::text AS id, username, role::text AS role, email, display_name, is_active, is_owner "
-    "FROM shared.admin_users WHERE id = $1::uuid FOR UPDATE"
+    "SELECT id::text AS id, username, role::text AS role, email, display_name, is_active, is_owner, custom_role, "
+    "is_business_owner FROM shared.admin_users WHERE id = $1::uuid FOR UPDATE"
 )
 SQL_TARGET_BY_EMAIL = (
-    "SELECT id::text AS id, username, role::text AS role, email, display_name, is_active, is_owner "
-    "FROM shared.admin_users WHERE lower(email) = $1 FOR UPDATE"
+    "SELECT id::text AS id, username, role::text AS role, email, display_name, is_active, is_owner, custom_role, "
+    "is_business_owner FROM shared.admin_users WHERE lower(email) = $1 FOR UPDATE"
 )
 SQL_GRANT = (
     "SELECT role FROM shared.staff_app_grant WHERE admin_user_id = $1::uuid AND app = $2 FOR UPDATE"
@@ -546,12 +551,11 @@ SQL_OTHER_ACTIVE_OWNERS = (
 )
 SQL_USERNAME_TAKEN = "SELECT 1 FROM shared.admin_users WHERE username = $1"
 SQL_INSERT = (
-    "INSERT INTO shared.admin_users (username, password_hash, role, is_active, email, display_name, is_owner) "
-    "VALUES ($1, NULL, $2::shared.admin_role, true, $3, $4, false) RETURNING id::text AS id"
+    "INSERT INTO shared.admin_users (username, password_hash, role, is_active, email, display_name, is_owner, "
+    "custom_role) VALUES ($1, NULL, $2::shared.admin_role, true, $3, $4, false, $5) RETURNING id::text AS id"
 )
-SQL_SET_ROLE = (
-    "UPDATE shared.admin_users SET role = $2::shared.admin_role, updated_at = now() WHERE id = $1::uuid"
-)
+SQL_SET_ROLE = ("UPDATE shared.admin_users SET role = $2::shared.admin_role, custom_role = $3, updated_at = now() "
+                "WHERE id = $1::uuid")
 SQL_SET_ACTIVE = "UPDATE shared.admin_users SET is_active = $2, updated_at = now() WHERE id = $1::uuid"
 SQL_UPSERT_GRANT = (
     "INSERT INTO shared.staff_app_grant (admin_user_id, app, role) VALUES ($1::uuid, $2, $3) "
@@ -688,6 +692,8 @@ async def create_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, e
             crm_ok = await crm_grants_available(conn)
             if crm_roles and not crm_ok:
                 raise _crm_unavailable()
+            db_role, custom_role, based_on = await scr.check_new_roles(conn, role, None, booking_role, None)   # AA-1155
+            require_e2e_test_scope(email, role, booking_role, crm_roles, based_on=based_on)
             existing = await conn.fetchrow(SQL_TARGET_BY_EMAIL, email)
             if existing is not None:
                 if is_breakglass(existing["username"], existing["email"]):
@@ -695,7 +701,7 @@ async def create_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, e
                                               "breakglass")
                 grant = await conn.fetchval(SQL_GRANT, existing["id"], APP_BOOKING)
                 existing_crm = await _crm_roles(conn, existing["id"]) if crm_ok else ()
-                if (not existing["is_active"] or existing["role"] != role or grant != booking_role
+                if (not existing["is_active"] or scr.cis_code(existing) != role or grant != booking_role
                         or existing_crm != crm_roles):
                     raise StaffDirectoryError(
                         409, "A staff account with this address already exists; change it from its row",
@@ -706,7 +712,7 @@ async def create_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, e
             else:
                 username = await _free_username(conn, username_base(email))
                 try:
-                    staff_id = await conn.fetchval(SQL_INSERT, username, role, email, display_name)
+                    staff_id = await conn.fetchval(SQL_INSERT, username, db_role, email, display_name, custom_role)
                 except asyncpg.UniqueViolationError:
                     raise StaffDirectoryError(409, "That address or username was just taken; try again",
                                               "conflict") from None
@@ -827,7 +833,7 @@ async def change_roles(pool: Any, cognito: CognitoDirectory, *, actor_id: str, s
             await _require_owner(conn, actor_id)
             target = await _load_target(conn, staff_id)
             staff_id = target["id"]
-            old_role = target["role"]
+            old_role = scr.cis_code(target)   # AA-1155: the custom role code of a custom holder
             old_booking = await conn.fetchval(SQL_GRANT, staff_id, APP_BOOKING)
             crm_ok = await crm_grants_available(conn)
             if crm_given and not crm_ok:
@@ -839,8 +845,10 @@ async def change_roles(pool: Any, cognito: CognitoDirectory, *, actor_id: str, s
                 new_crm = require_crm_roles(set(old_crm) | {PRESET_CRM_ROLE})
             else:
                 new_crm = asked_crm if crm_given else old_crm
+            new_db_role, new_custom, based_on = await scr.check_new_roles(   # AA-1155: custom codes exist + active
+                conn, new_role, old_role, new_booking, old_booking if booking_role is not _UNSET else new_booking)
             require_e2e_test_scope(target["email"], new_role if new_role is not None else old_role,
-                                   new_booking if booking_role is not _UNSET else old_booking, new_crm)
+                                   new_booking if booking_role is not _UNSET else old_booking, new_crm, based_on)
             require_dev_only_e2e_environment(target["email"])
             changes: dict[str, Any] = {}
             if new_role is not None and new_role != old_role:
@@ -848,7 +856,7 @@ async def change_roles(pool: Any, cognito: CognitoDirectory, *, actor_id: str, s
                     if staff_id == actor_id:
                         raise StaffDirectoryError(400, "You cannot demote yourself", "self_demote")
                     await _guard_last_owner(conn, target)
-                await conn.execute(SQL_SET_ROLE, staff_id, new_role)
+                await conn.execute(SQL_SET_ROLE, staff_id, new_db_role, new_custom)
                 changes["role"] = {"before": old_role, "after": new_role}
             if booking_role is not _UNSET and new_booking != old_booking:
                 if new_booking is None:
@@ -873,14 +881,14 @@ async def change_roles(pool: Any, cognito: CognitoDirectory, *, actor_id: str, s
     steps: list[Step] = []
     if new_role is not None:
         steps.append((f"add_group:{cis_group(new_role)}", lambda: cognito.add_to_group(email, cis_group(new_role))))
-        if old_role != new_role and old_role in CIS_ROLES:   # AA-878: 'viewer' has no group
+        if scr.drops_group(old_role, new_role, cis_group, CIS_ROLES):   # AA-878: no viewer group; AA-1155: cis-custom
             steps.append((f"remove_group:{cis_group(old_role)}",
                           lambda: cognito.remove_from_group(email, cis_group(old_role))))
     if booking_role is not _UNSET:
         if new_booking is not None:
             steps.append((f"add_group:{booking_group(new_booking)}",
                           lambda: cognito.add_to_group(email, booking_group(new_booking))))
-        if old_booking is not None and old_booking != new_booking:
+        if scr.drops_group(old_booking, new_booking, booking_group):
             steps.append((f"remove_group:{booking_group(old_booking)}",
                           lambda: cognito.remove_from_group(email, booking_group(old_booking))))
     if crm_given:
@@ -1039,9 +1047,9 @@ async def sync_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, sta
         steps: list[Step] = _disable_steps(cognito, email)
     else:
         # never sync a drifted E2E row into more groups
-        require_e2e_test_scope(email, target["role"], booking, crm)
+        require_e2e_test_scope(email, scr.cis_code(target), booking, crm)
         require_dev_only_e2e_environment(email)
-        wanted = _wanted_groups(target["role"], booking, crm)
+        wanted = _wanted_groups(scr.cis_code(target), booking, crm)   # AA-1155: cis-custom / booking-custom
         steps = [("create_user", lambda: cognito.create_user(email)),
                  ("enable_user", lambda: cognito.enable(email))]
         steps += _add_group_steps(cognito, email, wanted)

@@ -182,7 +182,8 @@ def test_the_page_rule_opens_my_work_to_exactly_the_roles_with_a_tile():
     page_roles = set(re.findall(r'"([a-z_]+)"', roles.group(1)))
     with_tile = {r for r, perms in ROLE_PERMS.items() if admin_my_work.tiles_for(perms)}
     assert page_roles == with_tile == set(EXPECTED)
-    assert '{ prefix: "/admin/my-work", roles: MY_WORK }' in rbac
+    # AA-1155: the rule is decided by the tile capabilities; MY_WORK documents the roles holding them
+    assert '{ prefix: "/admin/my-work", caps: ["review.act", "content.write", "quality.write"], roles: MY_WORK }' in rbac
 
 
 def test_content_roles_land_on_my_work_and_admin_keeps_overview():

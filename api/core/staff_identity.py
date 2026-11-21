@@ -51,6 +51,15 @@ Rules
    the identity never carries ``e2e_allowlisted_writes``: that second flag is True for the A10b address only, and
    every A10b exception (the write allow-list, the route-level A10b-1 / A10b-2 checks, the sentence modes,
    ``docs.owner_read``) keys on it. So every write of an A10d session is refused 403 ``e2e_read_only``.
+5d. **Custom roles (AA-1155 T8, root ADR 0006a A14; api/core/staff_roles.py).** A token whose only CIS group is
+   ``cis-custom`` (a built-in ``cis-*`` group outranks it, like any precedence) resolves to the row's
+   ``admin_users.custom_role``: role = that code (``custom_<name>``), capabilities = the role's rows the code knows.
+   Fail closed for these holders only: no custom role on the row, an unknown or archived role, no usable capability,
+   or a read error -> 403 ``custom_role_unavailable`` (logged ``staff_identity_refused``). The role and its
+   capabilities are cached with the row. Built-in holders never read the role tables.
+5e. **Dev-only E2E A10f / A10g (AA-1155, root ADR 0006a A10f / A10g).** ``e2e-cis-content-lead@`` (content_lead) and
+   ``e2e-custom-maker@`` (a custom role) follow 5c: refused outside ``ENVIRONMENT`` dev, else ``e2e_read_only``
+   (no write allow-list).
 6. Rows are cached for :data:`STAFF_STATE_TTL_S` keyed by ``(iss, sub)`` (misses too), like the legacy
    verify-admin cache, so a deactivation takes effect within that TTL (plus the BFF's own verify cache).
 
@@ -78,7 +87,7 @@ import asyncpg
 import jwt
 import structlog
 
-from api.core import e2e_staff, identity_config
+from api.core import e2e_staff, identity_config, staff_roles
 from api.core.identity_verifier import MAX_TOKEN_CHARS, AuthUnavailable, InvalidToken, Principal
 
 logger = structlog.get_logger()
@@ -111,6 +120,10 @@ GROUP_ROLES: tuple[tuple[str, str], ...] = (
     ("cis-content", "content"),                    # 30
 )
 
+# AA-1155: the group of a custom-role holder (api/core/staff_roles.py); below every built-in group.
+CUSTOM_GROUP = staff_roles.CIS_CUSTOM_GROUP
+CUSTOM_ROLE_UNAVAILABLE = "custom_role_unavailable"
+
 STAFF_STATE_TTL_S = 60.0
 STAFF_STATE_MAX = 2048
 
@@ -140,6 +153,10 @@ class StaffRow:
     email: Optional[str]
     display_name: Optional[str]
     is_owner: bool = False
+    # AA-1155: shared.admin_users.custom_role (CIS 462) and the role it resolves to (state ok) or why not; read only
+    # for a row that names a custom role, cached with the row.
+    custom_role: Optional[str] = None
+    custom_grant: Optional[staff_roles.CustomGrant] = None
 
 
 @dataclass(frozen=True)
@@ -166,6 +183,15 @@ class StaffIdentity:
     # AA-1035 A10d: the A10b identity only; the one flag that opens the e2e_staff.E2E_ALLOWED_WRITES allow-list and the
     # other A10b exceptions. Never True without e2e_read_only.
     e2e_allowlisted_writes: bool = False
+    # AA-1155 (T8): the capabilities this session holds: ROLE_PERMS of a built-in role, the custom role's own set for a
+    # cis-custom holder (role = the custom code). /auth/verify-admin returns them; staff_authz reads them for a custom
+    # role (never the built-in base role of the row).
+    capabilities: frozenset[str] = frozenset()
+    custom_label: Optional[str] = None
+
+    @property
+    def is_custom(self) -> bool:
+        return staff_roles.is_custom_code(self.role)
 
 
 def legacy_login_enabled() -> bool:
@@ -203,12 +229,18 @@ def token_kind(token: Any) -> str:
 
 
 def role_from_groups(groups: Iterable[str]) -> Optional[str]:
-    """The highest CIS role among the token's groups, or None when it holds no ``cis-*`` staff group."""
+    """The highest built-in CIS role among the token's groups, or None when it holds no built-in ``cis-*`` group
+    (``cis-custom`` is not a role by itself: :func:`has_custom_group`)."""
     held = set(groups or ())
     for group, role in GROUP_ROLES:
         if group in held:
             return role
     return None
+
+
+def has_custom_group(groups: Iterable[str]) -> bool:
+    """AA-1155: the token holds ``cis-custom`` (its role is the directory row's custom role)."""
+    return CUSTOM_GROUP in set(groups or ())
 
 
 async def verify_staff_token(token: str) -> Principal:
@@ -230,7 +262,7 @@ async def verify_staff_token(token: str) -> Principal:
 
 # ── Directory lookup (shared.admin_users, migration 247) ──────────────────────────────────────────
 
-_ROW_COLUMNS = ("id::text AS id, username, role::text AS role, email, display_name, is_active, is_owner")
+_ROW_COLUMNS = ("id::text AS id, username, role::text AS role, email, display_name, is_active, is_owner, custom_role")
 
 SQL_BY_IDENTITY = (
     f"SELECT {_ROW_COLUMNS} FROM shared.admin_users WHERE cognito_iss = $1 AND cognito_sub = $2"
@@ -256,11 +288,12 @@ def clear_cache() -> None:
     _cache.clear()
 
 
-def _row(record: Any) -> StaffRow:
+def _row(record: Any, grant: Optional[staff_roles.CustomGrant] = None) -> StaffRow:
     return StaffRow(
         admin_id=record["id"], username=record["username"], db_role=record["role"],
         email=record["email"], display_name=record["display_name"],
         is_owner=bool(record.get("is_owner") or False),
+        custom_role=record.get("custom_role"), custom_grant=grant,
     )
 
 
@@ -297,7 +330,11 @@ async def _load(conn: Any, principal: Principal) -> Optional[StaffRow]:
     if not record["is_active"]:
         logger.warning("staff_identity_refused", reason="inactive", admin_id=record["id"], sub=principal.sub)
         return None
-    return _row(record)
+    custom_role = record.get("custom_role")
+    # AA-1155: a row that names a custom role reads it with the row (one cache entry); a read failure only marks the
+    # grant unreadable, so it refuses the custom holder and nobody else.
+    grant = await staff_roles.load_cis_grant(conn, custom_role) if custom_role else None
+    return _row(record, grant)
 
 
 async def _cached_row(db: Any, principal: Principal, *, touch_login: bool) -> tuple[Optional[StaffRow], bool]:
@@ -338,11 +375,25 @@ async def _touch(db: Any, row: StaffRow) -> bool:
         return False
 
 
+def _custom_grant(row: StaffRow, principal: Principal) -> staff_roles.CustomRole:
+    """AA-1155 (R5.1): the custom role of a cis-custom holder, or 403 custom_role_unavailable (fail closed)."""
+    grant = row.custom_grant
+    state = grant.state if grant is not None else staff_roles.STATE_NO_ROLE
+    if grant is None or not grant.ok or grant.role is None:
+        logger.warning("staff_identity_refused", reason=CUSTOM_ROLE_UNAVAILABLE, state=state, admin_id=row.admin_id,
+                       custom_role=row.custom_role, sub=principal.sub)
+        raise StaffAuthError(403, staff_roles.CUSTOM_ROLE_REFUSED, CUSTOM_ROLE_UNAVAILABLE)
+    return grant.role
+
+
 async def resolve_staff(db: Any, principal: Principal, *, touch_login: bool = False) -> StaffIdentity:
-    """The CIS staff member behind a verified WORKFORCE token, or StaffAuthError (403 no CIS group,
-    401 unknown / inactive / bound to another identity, 503 directory unavailable)."""
+    """The CIS staff member behind a verified WORKFORCE token, or StaffAuthError (403 no CIS group or an unreadable
+    custom role, 401 unknown / inactive / bound to another identity, 503 directory unavailable)."""
+    from api.core.staff_authz import ROLE_PERMS  # noqa: PLC0415 - staff_authz reads this module lazily
+
     role = role_from_groups(principal.groups)
-    if role is None:
+    custom = role is None and has_custom_group(principal.groups)
+    if role is None and not custom:
         logger.warning("staff_identity_refused", reason="no_cis_group", sub=principal.sub,
                        client_id=principal.client_id, groups=list(principal.groups))
         raise StaffAuthError(403, "No CIS staff group", "no_cis_group")
@@ -351,10 +402,15 @@ async def resolve_staff(db: Any, principal: Principal, *, touch_login: bool = Fa
     row, loaded_now = await _cached_row(db, principal, touch_login=touch_login)
     if row is None:
         raise StaffAuthError(401, "Staff user is inactive or unknown", "inactive_or_unknown")
-    if loaded_now and row.db_role != role:
-        # The group decides (ADR 0006); the reconcile job (C7) reports the difference.
+    custom_role: Optional[staff_roles.CustomRole] = None
+    if custom:
+        custom_role = _custom_grant(row, principal)
+        role = custom_role.code
+    elif loaded_now and (row.db_role != role or row.custom_role):
+        # The group decides (ADR 0006); the reconcile job (C7) reports the difference. AA-1155: a row with a custom
+        # role whose token resolved to a built-in group (a cis-* group left beside cis-custom outranks it) is drift too.
         logger.warning("staff_role_drift", admin_id=row.admin_id, group_role=role, db_role=row.db_role,
-                       sub=principal.sub)
+                       custom_role=row.custom_role, sub=principal.sub)
     e2e_read_only = e2e_staff.is_dev_only_e2e_staff(row.email) or e2e_staff.is_dev_only_e2e_staff(principal.email)
     # A10d: the A10b exceptions belong to the A10b address alone; a cs address on either side never gets them.
     e2e_allowlisted_writes = (
@@ -370,16 +426,21 @@ async def resolve_staff(db: Any, principal: Principal, *, touch_login: bool = Fa
             logger.info("staff_identity_e2e_read_only", admin_id=row.admin_id, sub=principal.sub,
                         client_id=principal.client_id, allowlisted_writes=e2e_allowlisted_writes)
     preview = identity_config.is_preview_client(principal.client_id)
+    final_role = PREVIEW_ROLE if preview else role
+    capabilities = (custom_role.capabilities if custom_role is not None and not preview
+                    else ROLE_PERMS.get(final_role, frozenset()))
     if preview:
         # AA-911 D-1: a Preview-host session is the viewer, never the group role and never an owner.
         logger.info("staff_identity_preview_capped", admin_id=row.admin_id, group_role=role, role=PREVIEW_ROLE,
                     client_id=principal.client_id)
     return StaffIdentity(
-        admin_id=row.admin_id, username=row.username, role=PREVIEW_ROLE if preview else role,
+        admin_id=row.admin_id, username=row.username, role=final_role,
         db_role=row.db_role, email=row.email or principal.email, display_name=row.display_name,
         iss=principal.iss, sub=principal.sub, client_id=principal.client_id,
         is_owner=False if preview or e2e_read_only else row.is_owner, preview=preview,
         e2e_read_only=e2e_read_only, e2e_allowlisted_writes=e2e_read_only and e2e_allowlisted_writes,
+        capabilities=frozenset(capabilities),
+        custom_label=custom_role.label if custom_role is not None and not preview else None,
     )
 
 

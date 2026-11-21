@@ -223,6 +223,11 @@ class VerifyAdminResponse(BaseModel):
     email: Optional[str] = None
     display_name: Optional[str] = None
     auth: str = "legacy"
+    # AA-1155 (T8, R5.2): the capabilities of this session (staff_authz.ROLE_PERMS of a built-in role, the custom role's
+    # own set for a cis-custom holder, whose role is then its custom code), sorted; the BFF gates pages by them
+    # (frontend/lib/rbac.ts can(), PAGE_RULES). custom_role_label: the custom role's name, else null.
+    capabilities: list[str] = []
+    custom_role_label: Optional[str] = None
 
 
 # A real bcrypt hash (cost 12, like the legacy staff password hashes) of a random value that was thrown

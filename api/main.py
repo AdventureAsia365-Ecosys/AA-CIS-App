@@ -24,6 +24,7 @@ from api.routers.auth import (
     AdminLoginRequest, AdminLoginResponse, VerifyAdminResponse,
     STAFF_ROLES,
 )
+from api.core.staff_authz import ROLE_PERMS
 from api.routers.v1_tours import router as v1_tours_router
 from api.routers.v1_tours import quota_router as v1_quota_router
 from api.routers.v1_marketplace import router as v1_marketplace_router
@@ -639,6 +640,7 @@ async def verify_admin(request: Request, db: asyncpg.Pool = Depends(get_pool)):
         return VerifyAdminResponse(
             admin_id=identity.admin_id, username=identity.username, role=identity.role, valid=True,
             email=identity.email, display_name=identity.display_name, auth=staff_identity.AUTH_COGNITO,
+            capabilities=sorted(identity.capabilities), custom_role_label=identity.custom_label,
         )
 
     if not staff_identity.legacy_login_enabled():
@@ -663,6 +665,7 @@ async def verify_admin(request: Request, db: asyncpg.Pool = Depends(get_pool)):
         email=email,
         display_name=display_name,
         auth=staff_identity.AUTH_LEGACY,
+        capabilities=sorted(ROLE_PERMS.get(role, frozenset())),
     )
 
 # AA-911 (root ADR 0019 d23, S271): the CIS -> AA-Booking sign-in bridge is retired. POST /auth/booking-token and

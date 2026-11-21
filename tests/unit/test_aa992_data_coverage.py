@@ -108,7 +108,9 @@ def test_the_page_entry_is_in_the_nav_and_rbac_admin_only():
     nav = (ROOT / "frontend" / "lib" / "adminIa.ts").read_text(encoding="utf-8")  # AA-1039: the nav model
     rbac = (ROOT / "frontend" / "lib" / "rbac.ts").read_text(encoding="utf-8")
     assert 'href: "/admin/data-coverage"' in nav
-    assert re.search(r'\{\s*prefix:\s*"/admin/data-coverage",\s*roles:\s*\["admin"\]\s*\}', rbac)
+    # AA-1155: decided by ops.read (admin only); the role list documents it
+    assert re.search(r'\{\s*prefix:\s*"/admin/data-coverage",\s*caps:\s*\["ops\.read"\],\s*roles:\s*\["admin"\]\s*\}',
+                     rbac)
 
 
 # ── status maths ─────────────────────────────────────────────────────────────────────────────────────────────────────

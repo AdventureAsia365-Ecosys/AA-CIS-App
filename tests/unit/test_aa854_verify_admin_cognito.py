@@ -17,6 +17,7 @@ from structlog.testing import capture_logs
 
 import api.main as main_mod
 from api.core import identity_config, staff_identity
+from api.core.staff_authz import ROLE_PERMS
 from api.main import app, get_pool
 from api.routers.auth import _create_admin_jwt
 from tests.unit.aa854_cognito_staff import (
@@ -57,8 +58,10 @@ def test_linked_admin_gets_200_with_directory_fields(client, directory, issuer):
     res = _verify(client, issuer.token())
     assert res.status_code == 200, res.text
     body = res.json()
+    # AA-1155 (T8, R5.2): the session's capabilities (ROLE_PERMS of the built-in role) and no custom role label.
     assert body == {"admin_id": uid, "username": "staff-1", "role": "admin", "valid": True,
-                    "email": EMAIL, "display_name": "Staff One", "auth": "cognito"}
+                    "email": EMAIL, "display_name": "Staff One", "auth": "cognito",
+                    "capabilities": sorted(ROLE_PERMS["admin"]), "custom_role_label": None}
     assert directory.touches == [uid]          # last_login_at
     assert directory.links == 0
 
@@ -139,7 +142,7 @@ def test_role_comes_from_the_highest_group_and_drift_is_logged_not_denied(client
     assert res.json()["role"] == "content"   # AA-1035: the retired cis-reviewer group adds nothing
     drift = [e for e in logs if e["event"] == "staff_role_drift"]
     assert drift == [{"event": "staff_role_drift", "log_level": "warning", "admin_id": uid,
-                      "group_role": "content", "db_role": "admin", "sub": SUB}]
+                      "group_role": "content", "db_role": "admin", "custom_role": None, "sub": SUB}]
 
 
 @pytest.mark.parametrize("groups, role", [
@@ -259,7 +262,8 @@ def test_legacy_flag_explicitly_on_accepts_hs256_and_reports_auth_legacy(legacy,
     res = _verify(TestClient(app), _create_admin_jwt(uid, "u-content", "content"))
     assert res.status_code == 200, res.text
     assert res.json() == {"admin_id": uid, "username": "u-content", "role": "content", "valid": True,
-                          "email": None, "display_name": None, "auth": "legacy"}
+                          "email": None, "display_name": None, "auth": "legacy",
+                          "capabilities": sorted(ROLE_PERMS["content"]), "custom_role_label": None}
 
 
 @pytest.mark.parametrize("value", [None, "false", "0", "no", "off", "", "  ", "ture", "enabled"])

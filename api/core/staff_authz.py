@@ -68,7 +68,7 @@ from typing import Any, Optional
 import structlog
 from fastapi import Header, HTTPException, Request
 
-from api.core import e2e_staff
+from api.core import e2e_staff, staff_roles
 from api.core.secret_compare import secrets_equal
 
 logger = structlog.get_logger()
@@ -666,6 +666,8 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/platform/staff/{staff_id}/sync"): STAFF_WRITE,
     # S242 — resend the staff invitation e-mail (queues a staff_invite_email job; owners only, like every write)
     ("POST", "/admin/platform/staff/{staff_id}/invite"): STAFF_WRITE,
+    ("PUT", "/admin/platform/staff/{staff_id}/business-owner"): STAFF_WRITE,   # AA-1155 R3.3 (audited)
+    ("GET", "/admin/platform/roles"): STAFF_READ,   # AA-1155 R5.3 / R5.4: every app's staff roles
 
     # ── /v1 routers the staff BFF calls with the admin secret (/api/pipeline, the /api/tenant staff
     # branch). Their own guard keeps tenant JWTs out; POLICY narrows the staff roles.
@@ -834,9 +836,8 @@ AWAITING_ROUTE: dict[tuple[str, str], str] = {}
 # frontend/lib/auth-server.ts mirrors this tuple).
 STAFF_PATH_PREFIXES: tuple[str, ...] = ("/admin", "/v1/pipeline", "/v1/rules", "/v1/social")
 
-# Machine callers send the secret and no x-admin-role. (method, route) -> who calls it. Of the GETs only
-# /admin/overview has a POLICY entry (ops.read); the job-runner ones are open to any secret holder and
-# are listed so the allowlist stays complete if they ever get one.
+# Machine callers send the secret and no x-admin-role. (method, route) -> who calls it. Of the GETs only /admin/overview
+# has a POLICY entry (ops.read); the job-runner ones are open to any secret holder, listed to keep the allowlist whole.
 MACHINE_ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/admin/job-runner/deploy-gate"): ("CI deploy-dev.yml: pre-deploy gate (open wave / running "
                                                "deploy-blocking kind, AA-993 G5) + post-deploy smoke"),
@@ -891,8 +892,8 @@ def principal_from_role(role_header: Optional[str], identity: Any = None) -> Sta
         return MACHINE
     role = role_header.strip()
     cognito = identity is not None and getattr(identity, "auth", None) == "cognito"
-    return StaffPrincipal(
-        kind="staff", role=role, perms=ROLE_PERMS.get(role, frozenset()),
+    return StaffPrincipal(   # AA-1155: a custom code holds capabilities only with its verified session
+        kind="staff", role=role, perms=ROLE_PERMS.get(role) or staff_roles.verified_custom_perms(role, identity),
         auth="cognito" if cognito else None,
         is_owner=bool(cognito and getattr(identity, "is_owner", False)),
         e2e_read_only=bool(identity is not None and getattr(identity, "e2e_read_only", False)),
@@ -902,13 +903,12 @@ def principal_from_role(role_header: Optional[str], identity: Any = None) -> Sta
 
 
 def has_perm(role: Optional[str], capability: str) -> bool:
-    return capability in ROLE_PERMS.get(role or "", frozenset())
+    return capability in staff_roles.role_perms(role)   # AA-1155: built-in or verified custom role
 
 
 def has_any_perm(role: Optional[str], *capabilities: str) -> bool:
     """AA-1035: the role holds at least one of ``capabilities``."""
-    perms = ROLE_PERMS.get(role or "", frozenset())
-    return any(c in perms for c in capabilities)
+    return any(c in staff_roles.role_perms(role) for c in capabilities)
 
 
 def sees_tenant_money(role: Optional[str]) -> bool:
@@ -967,7 +967,7 @@ def denial_reason(principal: StaffPrincipal, method: str, route: str) -> Optiona
         # the content pages (content.read); every other role is refused (deny by default).
         if principal.is_machine:
             return None
-        if principal.role not in ROLE_PERMS:
+        if not (principal.role in ROLE_PERMS or staff_roles.is_verified_custom(principal)):
             return "Unknown staff role"
         if OPEN_READ not in principal.perms:
             return f"Role '{principal.role}' lacks the '{OPEN_READ}' permission"
@@ -976,7 +976,7 @@ def denial_reason(principal: StaffPrincipal, method: str, route: str) -> Optiona
         if (method, route) in MACHINE_ROUTES:
             return None
         return "This route needs a staff role (x-admin-role); machine callers are not allowed"
-    if principal.role not in ROLE_PERMS:
+    if not (principal.role in ROLE_PERMS or staff_roles.is_verified_custom(principal)):
         return "Unknown staff role"
     capabilities = policy_capabilities(entry)
     if len(capabilities) > 1:

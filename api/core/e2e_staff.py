@@ -82,10 +82,23 @@ E2E_CIS_ADMIN_TEST_STAFF_ROLE = "admin"
 E2E_CIS_CS_TEST_STAFF_EMAIL = "e2e-cis-cs@e2e-mail.lumiguides.it.com"
 E2E_CIS_CS_TEST_STAFF_ROLE = "customer_success"
 
-# Every Dev-only CIS E2E identity and its one directory role (read-only map). A10b admin, A10d customer_success.
+# A10f / A10g (AA-1155, S286, root ADR 0006a A10f / A10g; CIS 462 admin_users_email_chk). A10f: exactly content_lead,
+# no custom role, no Booking or CRM grant. A10g: the custom-role maker, a CIS custom role whose based_on is
+# content_lead (admin_users.role keeps content_lead) and, Dev only, a Booking custom role. Both read-only in CIS (no
+# write allow-list): the two-person publish proof on synthetic test tours needs a synthetic-tour marker CIS does not
+# have yet (implementation notes AA-1155-l2-cis-roles).
+E2E_CIS_CONTENT_LEAD_TEST_STAFF_EMAIL = "e2e-cis-content-lead@e2e-mail.lumiguides.it.com"
+E2E_CIS_CONTENT_LEAD_TEST_STAFF_ROLE = "content_lead"
+E2E_CUSTOM_MAKER_TEST_STAFF_EMAIL = "e2e-custom-maker@e2e-mail.lumiguides.it.com"
+E2E_CUSTOM_MAKER_TEST_STAFF_ROLE = "content_lead"   # the directory role column (the custom role's based_on)
+
+# Every Dev-only CIS E2E identity and its one directory role (read-only map). A10b admin, A10d customer_success,
+# A10f content_lead, A10g content_lead (+ a custom role).
 DEV_ONLY_E2E_STAFF_ROLES: Mapping[str, str] = MappingProxyType({
     E2E_CIS_ADMIN_TEST_STAFF_EMAIL: E2E_CIS_ADMIN_TEST_STAFF_ROLE,
     E2E_CIS_CS_TEST_STAFF_EMAIL: E2E_CIS_CS_TEST_STAFF_ROLE,
+    E2E_CIS_CONTENT_LEAD_TEST_STAFF_EMAIL: E2E_CIS_CONTENT_LEAD_TEST_STAFF_ROLE,
+    E2E_CUSTOM_MAKER_TEST_STAFF_EMAIL: E2E_CUSTOM_MAKER_TEST_STAFF_ROLE,
 })
 
 # The two other WORKFORCE E2E identities of root ADR 0006a, named here for the staff directory reconcile's "known E2E
@@ -118,6 +131,9 @@ E2E_BOOKING_PRICING_CHECKER_TEST_STAFF_EMAIL = "e2e-booking-pricing-checker@e2e-
 DEV_ONLY_E2E_BOOKING_ROLES: Mapping[str, str] = MappingProxyType({
     E2E_CIS_CS_TEST_STAFF_EMAIL: E2E_CIS_CS_PRICING_BOOKING_ROLE,
 })
+
+# AA-1155: a custom role code (api/core/staff_roles.CUSTOM_CODE_RE; repeated here, this module imports nothing).
+_CUSTOM_CODE = re.compile(r"^custom_[a-z][a-z0-9_]{1,46}$")
 
 # The one ENVIRONMENT value under which the account may exist (compared exactly).
 DEV_ONLY_ENVIRONMENT = "dev"
@@ -217,21 +233,34 @@ def is_e2e_cis_cs(email: Any) -> bool:
     return normalise(email) == E2E_CIS_CS_TEST_STAFF_EMAIL
 
 
+def is_e2e_custom_maker(email: Any) -> bool:
+    """True for the A10g address (after trimming and lower-casing)."""
+    return normalise(email) == E2E_CUSTOM_MAKER_TEST_STAFF_EMAIL
+
+
 def e2e_booking_role_allowed(email: Any, booking_role: Any) -> bool:
     """A10e-2: True for no Booking grant, or for the one grant :data:`DEV_ONLY_E2E_BOOKING_ROLES` allows the address,
-    only where ``ENVIRONMENT`` is exactly ``"dev"`` (the staff directory's E2E scope rule)."""
+    only where ``ENVIRONMENT`` is exactly ``"dev"`` (the staff directory's E2E scope rule). A10g (AA-1155): any Booking
+    custom role code, Dev only."""
+    if booking_role is None:
+        return True
+    if is_e2e_custom_maker(email):
+        return (isinstance(booking_role, str) and _CUSTOM_CODE.match(booking_role) is not None
+                and dev_only_e2e_environment())
     allowed = DEV_ONLY_E2E_BOOKING_ROLES.get(normalise(email))
-    return booking_role is None or (allowed is not None and booking_role == allowed and dev_only_e2e_environment())
+    return allowed is not None and booking_role == allowed and dev_only_e2e_environment()
 
 
 def e2e_booking_rule(email: Any) -> str:
     """How the directory's 400 ``e2e_test_scope`` words the Booking part of an E2E address's scope."""
+    if is_e2e_custom_maker(email):
+        return "no Booking role other than a custom role (Dev only)"
     allowed = DEV_ONLY_E2E_BOOKING_ROLES.get(normalise(email))
     return f"no Booking role other than {allowed} (Dev only)" if allowed else "no Booking role"
 
 
 def is_dev_only_e2e_staff(email: Any) -> bool:
-    """True for every Dev-only CIS E2E address (:data:`DEV_ONLY_E2E_STAFF_ROLES`: A10b, A10d)."""
+    """True for every Dev-only CIS E2E address (:data:`DEV_ONLY_E2E_STAFF_ROLES`: A10b, A10d, A10f, A10g)."""
     return normalise(email) in DEV_ONLY_E2E_STAFF_ROLES
 
 

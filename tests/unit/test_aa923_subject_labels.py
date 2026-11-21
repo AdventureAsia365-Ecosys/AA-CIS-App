@@ -170,5 +170,6 @@ def test_policy_and_bff_write_rule():
         assert staff_authz.POLICY[("POST", path)] == staff_authz.QUALITY_WRITE
     from pathlib import Path
     rbac = (Path(__file__).resolve().parents[2] / "frontend" / "lib" / "rbac.ts").read_text()
-    assert '{ prefix: "content-quality/a1-content/", roles: TENANT_QA }' in rbac
-    assert '{ prefix: "content-quality/tour-versions/", roles: TENANT_QA }' in rbac
+    # AA-1155: capability first; the roles document it
+    assert '{ prefix: "content-quality/a1-content/", caps: ["quality.write"], roles: TENANT_QA }' in rbac
+    assert '{ prefix: "content-quality/tour-versions/", caps: ["quality.write"], roles: TENANT_QA }' in rbac

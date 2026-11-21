@@ -11,6 +11,15 @@
   POST  /admin/platform/staff/{staff_id}/sign-out   "reset": end every session, re-enable if disabled (C6)
   POST  /admin/platform/staff/{staff_id}/sync       retry the Cognito half after a 502 saved_cognito_pending (C6)
   POST  /admin/platform/staff/{staff_id}/invite     queue another invitation e-mail (S242; rate-limited, 429)
+  PUT   /admin/platform/staff/{staff_id}/business-owner   set / clear the business-owner marker (AA-1155, owners only,
+                                                    audited before and after)
+  GET   /admin/platform/roles                       every app's staff roles: CIS built-in + custom, Booking built-in +
+                                                    custom, the CRM staff groups, TripPlanner (AA-1155: the Staff
+                                                    page pickers and the read-only Roles & permissions page)
+
+AA-1155 (spec tasks T9 / T10): the CIS role and the Booking role of a write may be a custom role code
+(``custom_<name>``); every row carries ``custom_role`` (+ its ``custom_role_label``) and ``is_business_owner``.
+``role`` stays the row's built-in role column (a custom holder's ``based_on``); the UI shows the custom role.
 
 Invitation e-mail (S242, api/services/staff_invite.py): the create queues one by default (``send_invite``), in the
 same transaction as the row; the worker sends it through SES. Every row carries ``last_invited_at`` (SES accepted),
@@ -38,15 +47,17 @@ scope["route"].path, see staff_authz._route_template).
 from __future__ import annotations
 
 import uuid
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from typing_extensions import Annotated
 
+from api.core import staff_roles
 from api.core.staff_authz import STAFF_ROLES, request_staff_identity, staff_policy
 from api.routers.admin import verify_admin_secret
-from api.services import staff_directory, staff_invite
+from api.services import staff_custom_roles, staff_directory, staff_invite
 from api.services.staff_directory import CognitoDirectory, StaffDirectoryError, WriteResult, get_cognito
 
 router = APIRouter(prefix="/admin/platform", tags=["admin-platform"],
@@ -58,6 +69,7 @@ STAFF_COLUMNS: tuple[str, ...] = (
     "id", "username", "role", "is_active", "created_at", "updated_at",
     "email", "display_name", "is_owner", "last_login_at", "linked", "booking_role", "crm_roles", "breakglass",
     "last_invited_at", "last_invite_requested_at", "last_invite_not_sent_at", "invite_status",
+    "custom_role", "custom_role_label", "is_business_owner",   # AA-1155 (CIS 462)
 )
 _TIME_COLUMNS: tuple[str, ...] = (
     "created_at", "updated_at", "last_login_at", "last_invited_at", "last_invite_requested_at",
@@ -67,9 +79,11 @@ _TIME_COLUMNS: tuple[str, ...] = (
 _SELECT = (
     "SELECT u.id::text AS id, u.username, u.role::text AS role, u.is_active, u.created_at, u.updated_at, "
     "u.email, u.display_name, u.is_owner, u.last_login_at, (u.cognito_sub IS NOT NULL) AS linked, "
+    "u.custom_role, sr.label AS custom_role_label, u.is_business_owner, "
     "g.role AS booking_role, " + staff_invite.SELECT_INVITE_COLUMNS + " "
     "FROM shared.admin_users u "
-    "LEFT JOIN shared.staff_app_grant g ON g.admin_user_id = u.id AND g.app = 'booking'"
+    "LEFT JOIN shared.staff_app_grant g ON g.admin_user_id = u.id AND g.app = 'booking' "
+    "LEFT JOIN shared.staff_role sr ON sr.code = u.custom_role"
 )
 # AA-1031: the same SELECT with the CRM roles (migration 330), used once shared.staff_crm_grant exists.
 _CRM_COLUMN = (
@@ -79,9 +93,12 @@ _CRM_COLUMN = (
 _SELECT_WITH_CRM = _SELECT.replace("g.role AS booking_role, ", "g.role AS booking_role, " + _CRM_COLUMN, 1)
 
 # AA-1035 R2: staff_directory.CIS_ROLES / BOOKING_ROLES (root ADR 0019 d3; reviewer is no longer assignable).
-CisRole = Literal["admin", "content_lead", "content", "tenant_qa", "customer_success", "support", "finance", "ai_ops"]
+# AA-1155: or a custom role code (staff_roles.CUSTOM_CODE_RE; the writer checks it is an active role).
+CustomRoleCode = Annotated[str, StringConstraints(pattern=staff_roles.CUSTOM_CODE_RE.pattern)]
+CisRole = Union[Literal["admin", "content_lead", "content", "tenant_qa", "customer_success", "support", "finance",
+                        "ai_ops"], CustomRoleCode]
 # AA-1150: content_creator is retired (staff_directory.RETIRED_BOOKING_ROLES): never granted again, Sync removes it.
-BookingRole = Literal["admin", "sales", "contracting", "finance"]
+BookingRole = Union[Literal["admin", "sales", "contracting", "finance"], CustomRoleCode]
 CrmRole = Literal["platform_admin", "ops", "support"]
 # AA-1091: pricing_team = CIS customer_success + Booking contracting (staff_directory.PRESET_PRICING_TEAM).
 # AA-1150 lean people-role presets: platform_owner is "Administrator"; business_owner = CIS admin + Booking admin;
@@ -103,7 +120,7 @@ def _staff_row(row: Any) -> dict:
     for key in _TIME_COLUMNS:
         value = out[key]
         out[key] = value.isoformat() if value is not None else None
-    for key in ("is_active", "is_owner", "linked"):
+    for key in ("is_active", "is_owner", "linked", "is_business_owner"):
         out[key] = bool(out[key])
     out["crm_roles"] = list(staff_directory.require_crm_roles(out["crm_roles"] or []))
     out["breakglass"] = staff_directory.is_breakglass(out["username"], out["email"])
@@ -314,6 +331,31 @@ async def resend_staff_invite(staff_id: str, request: Request):
 # ── AA-816 (S242 C7) — directory health: the latest staff_directory_reconcile report ─────────────────
 # Report only (services/staff_reconcile.py): WORKFORCE users vs these rows, group/role drift, cutover
 # readiness. A separate path segment (staff-directory), so no /staff/{staff_id} route can shadow it.
+
+class BusinessOwnerBody(BaseModel):
+    """AA-1155 (R3.3): ``true`` makes this account the business owner (at most one), ``false`` clears it."""
+    model_config = ConfigDict(extra="forbid")
+    value: bool
+
+
+@router.put("/staff/{staff_id}/business-owner", summary="Set or clear the business-owner marker (owners only, audited)")
+async def set_business_owner(staff_id: str, body: BusinessOwnerBody, request: Request):
+    sid = _uuid_or_404(staff_id)
+    try:
+        result = await staff_custom_roles.set_business_owner(request.app.state.pool, actor_id=_actor_id(request),
+                                                          staff_id=str(sid), value=body.value)
+    except StaffDirectoryError as exc:
+        raise _refused(exc) from None
+    return await _respond(request, result)
+
+
+@router.get("/roles", summary="Every app's staff roles: built-in and custom (read-only)")
+async def list_roles(request: Request):
+    """AA-1155 (R5.3, R5.4): generated from code (built-in roles) and the tables (custom roles); no person, no E2E
+    identity. Feeds the Staff page pickers and the Roles & permissions page."""
+    async with request.app.state.pool.acquire() as conn:
+        return await staff_roles.roles_catalogue(conn)
+
 
 @router.get("/staff-directory/health", summary="Latest staff directory reconcile report (read-only)")
 async def staff_directory_health(request: Request):

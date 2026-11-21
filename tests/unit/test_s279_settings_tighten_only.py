@@ -40,6 +40,15 @@ class _Conn:
     async def execute(self, sql, *a):
         self.executed.append(a)
 
+    def transaction(self):   # AA-1155 T11: the budget write and its audit row share one transaction
+        class _Tx:
+            async def __aenter__(self):
+                return None
+
+            async def __aexit__(self, *a):
+                return False
+        return _Tx()
+
 
 class _Pool:
     def __init__(self, conn):

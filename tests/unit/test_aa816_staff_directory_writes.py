@@ -141,7 +141,7 @@ class StaffDB(Directory):
         if sql == sd.SQL_USERNAME_TAKEN:
             return 1 if any(r["username"] == args[0] for r in self.rows) else None
         if sql == sd.SQL_INSERT:
-            username, role, email, display_name = args
+            username, role, email, display_name, *_ = args   # AA-1155: + custom_role (test_aa1155_*)
             uid = str(uuid.uuid4())
             self.rows.append({"id": uid, "username": username, "role": role, "email": email,
                               "display_name": display_name, "is_active": True, "cognito_iss": None,

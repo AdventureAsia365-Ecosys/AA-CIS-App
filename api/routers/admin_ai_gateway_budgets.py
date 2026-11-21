@@ -18,6 +18,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from api.core.cognito_session import require_cognito_session as cognito_only   # AA-1155 T11
 from api.core.staff_authz import staff_policy
 from api.routers.admin import verify_admin_secret
 from api.services import llm_connection_budgets as budgets
@@ -25,7 +26,7 @@ from api.services import llm_connection_split as rules
 from api.services.platform_apps import relay_authorization
 
 router = APIRouter(prefix="/admin/ai-gateway", tags=["admin-ai-gateway"],
-                   dependencies=[Depends(verify_admin_secret), Depends(staff_policy)])
+                   dependencies=[Depends(verify_admin_secret), Depends(staff_policy), Depends(cognito_only)])
 
 _KEY = Path(..., pattern=r"^[a-z0-9][a-z0-9-]{1,62}$")
 

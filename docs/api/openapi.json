@@ -1594,6 +1594,21 @@
         "title": "BudgetUpdate",
         "type": "object"
       },
+      "BusinessOwnerBody": {
+        "additionalProperties": false,
+        "description": "AA-1155 (R3.3): ``true`` makes this account the business owner (at most one), ``false`` clears it.",
+        "properties": {
+          "value": {
+            "title": "Value",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "BusinessOwnerBody",
+        "type": "object"
+      },
       "CandidateEdit": {
         "additionalProperties": false,
         "properties": {
@@ -2594,6 +2609,10 @@
                 "type": "string"
               },
               {
+                "pattern": "^custom_[a-z][a-z0-9_]{1,46}$",
+                "type": "string"
+              },
+              {
                 "type": "null"
               }
             ],
@@ -2649,6 +2668,10 @@
                   "finance",
                   "ai_ops"
                 ],
+                "type": "string"
+              },
+              {
+                "pattern": "^custom_[a-z][a-z0-9_]{1,46}$",
                 "type": "string"
               },
               {
@@ -3148,6 +3171,10 @@
                 "type": "string"
               },
               {
+                "pattern": "^custom_[a-z][a-z0-9_]{1,46}$",
+                "type": "string"
+              },
+              {
                 "type": "null"
               }
             ],
@@ -3184,18 +3211,26 @@
             "type": "string"
           },
           "role": {
-            "enum": [
-              "admin",
-              "content_lead",
-              "content",
-              "tenant_qa",
-              "customer_success",
-              "support",
-              "finance",
-              "ai_ops"
+            "anyOf": [
+              {
+                "enum": [
+                  "admin",
+                  "content_lead",
+                  "content",
+                  "tenant_qa",
+                  "customer_success",
+                  "support",
+                  "finance",
+                  "ai_ops"
+                ],
+                "type": "string"
+              },
+              {
+                "pattern": "^custom_[a-z][a-z0-9_]{1,46}$",
+                "type": "string"
+              }
             ],
-            "title": "Role",
-            "type": "string"
+            "title": "Role"
           },
           "send_invite": {
             "default": true,
@@ -13266,6 +13301,25 @@
             "default": "legacy",
             "title": "Auth",
             "type": "string"
+          },
+          "capabilities": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "custom_role_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Role Label"
           },
           "display_name": {
             "anyOf": [
@@ -39079,6 +39133,70 @@
         ]
       }
     },
+    "/admin/platform/roles": {
+      "get": {
+        "description": "AA-1155 (R5.3, R5.4): generated from code (built-in roles) and the tables (custom roles); no person, no E2E\nidentity. Feeds the Staff page pickers and the Roles & permissions page.",
+        "operationId": "list_roles_admin_platform_roles_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Every app's staff roles: built-in and custom (read-only)",
+        "tags": [
+          "admin-platform"
+        ]
+      }
+    },
     "/admin/platform/staff": {
       "get": {
         "operationId": "list_staff_admin_platform_staff_get",
@@ -39406,6 +39524,88 @@
           }
         },
         "summary": "One CIS staff account",
+        "tags": [
+          "admin-platform"
+        ]
+      }
+    },
+    "/admin/platform/staff/{staff_id}/business-owner": {
+      "put": {
+        "operationId": "set_business_owner_admin_platform_staff__staff_id__business_owner_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "staff_id",
+            "required": true,
+            "schema": {
+              "title": "Staff Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BusinessOwnerBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set or clear the business-owner marker (owners only, audited)",
         "tags": [
           "admin-platform"
         ]

@@ -5,6 +5,7 @@ migration 340. No database: a fake pool answers. Invented scopes only.
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
@@ -17,15 +18,31 @@ from shared.llm_client import central_budget
 
 
 class Conn:
-    def __init__(self, fail=None, status="DELETE 1"):
-        self.fail, self.status = fail, status
+    """execute records the writes (the audit INSERT of AA-1155 T11 comes after the budget write); fetchval answers the
+    row before the change."""
+
+    def __init__(self, fail=None, status="DELETE 1", before=None):
+        self.fail, self.status, self.before = fail, status, before
         self.executed: list = []
+        self.in_tx = 0
 
     async def execute(self, sql, *args):
         self.executed.append((sql, args))
-        if self.fail is not None:
+        if self.fail is not None and "audit_log" not in sql:
             raise self.fail
         return self.status
+
+    async def fetchval(self, sql, *args):
+        assert sql == ab.BEFORE_SQL
+        return self.before
+
+    @asynccontextmanager
+    async def transaction(self):
+        self.in_tx += 1
+        yield
+
+    def audits(self) -> list:
+        return [(sql, args) for sql, args in self.executed if "acp_shared.audit_log" in sql]
 
 
 class Pool:
@@ -124,3 +141,52 @@ def test_delete_a_central_cap(monkeypatch):
     with pytest.raises(HTTPException) as e:
         asyncio.run(ab.delete_central_budget("global", _req(Conn()), None))
     assert e.value.status_code == 422
+
+
+# ── AA-1155 T11 (R5.5): every budget change is audited with before and after ─────────────────────────────────────
+
+def _details(audit) -> dict:
+    sql, args = audit
+    return next(json.loads(a) for a in args if isinstance(a, str) and a.startswith("{"))
+
+
+def test_a_budget_change_writes_one_audit_row_with_before_and_after(monkeypatch):
+    monkeypatch.setattr(central_budget, "invalidate", lambda: None)
+    before = {"provider": "dfs", "scope": "global", "per_run_usd": None, "per_day_usd": 10, "hard_stop": True,
+              "alert_pct": 80, "updated_at": "2026-11-01T00:00:00+00:00", "updated_by": "admin-y"}
+    conn = Conn(before=json.dumps(before))
+    asyncio.run(ab.upsert_budget("dfs", "global", ab.BudgetUpdate(per_day_usd=4.0), _req(conn), "s", "admin-x"))
+    assert conn.in_tx == 1
+    assert conn.executed[0][0] == ab.UPSERT_SQL       # the write first, its audit row last (QRY-4)
+    [audit] = conn.audits()
+    args = audit[1]
+    assert "admin:admin-x" in args and ab.AUDIT_UPDATED in args and "dfs/global" in args
+    details = _details(audit)
+    assert details["before"]["per_day_usd"] == 10.0 and details["after"]["per_day_usd"] == 4.0
+    assert "per_month_usd" not in details["after"]
+
+
+def test_a_new_budget_is_audited_with_no_before(monkeypatch):
+    monkeypatch.setattr(central_budget, "invalidate", lambda: None)
+    conn = Conn()
+    asyncio.run(ab.upsert_budget("llm", "eval", ab.BudgetUpdate(per_month_usd=3.0), _req(conn), "s", None))
+    details = _details(conn.audits()[0])
+    assert details["before"] is None and details["after"]["per_month_usd"] == 3.0
+
+
+def test_a_deleted_cap_is_audited_with_before_and_no_after(monkeypatch):
+    monkeypatch.setattr(central_budget, "invalidate", lambda: None)
+    before = {"provider": "llm", "scope": "eval", "per_month_usd": 3, "hard_stop": False, "alert_pct": 80}
+    conn = Conn(before=json.dumps(before))
+    asyncio.run(ab.delete_central_budget("eval", _req(conn), "admin-x"))
+    [audit] = conn.audits()
+    assert ab.AUDIT_DELETED in audit[1]
+    details = _details(audit)
+    assert details["before"]["per_month_usd"] == 3.0 and details["after"] is None
+
+
+def test_a_missing_cap_is_a_404_and_no_audit_row():
+    conn = Conn(status="DELETE 0")
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(ab.delete_central_budget("eval", _req(conn), "admin-x"))
+    assert e.value.status_code == 404 and conn.audits() == []

@@ -2634,6 +2634,37 @@ audited `tenant.assignment_set` / `_removed`; since slice 2 the PUT takes only a
 staff). The frontend matrix (`frontend/lib/rbac.ts`) mirrors the roles and capabilities; the role x route decisions
 are pinned in `tests/unit/snapshots/aa1035_role_route_matrix.json`.
 
+**Custom staff roles (AA-1155 spec tasks T8-T11, root ADR 0006a A14 / A10f / A10g; CIS 462).** Built-in roles stay
+in `staff_authz.ROLE_PERMS`; CIS custom roles are data (`shared.staff_role` + `staff_role_capability`, code
+`custom_<name>`), read by `api/core/staff_roles.py`. A token whose only CIS group is `cis-custom` resolves to the
+row's `admin_users.custom_role`: the session's role is that code and its capabilities the role's rows the code knows
+(never the approve class, `staff.write` / `staff.admin`, or an unknown name); `admin_users.role` keeps the role's
+`based_on` and authorisation never falls back to it. Fail closed for these holders only (no custom role, unknown or
+archived role, no usable capability, a read error: 403 `custom_role_unavailable`); built-in holders never read the
+tables. `staff_roles.role_perms()` is the one lookup (a custom code holds capabilities only with its verified Cognito
+session, so the secret cannot claim one); a custom role's tenant scope comes from its capabilities
+(`tenant_scope.principal_scope`: `tenant.read` / `tenant_content.read` / billing / spend reads -> every tenant, the
+book reads -> its book, `content.read` -> internal). Seed `custom_content` "Content" = content_lead minus
+`content.settings.write` plus `tenant.read` (Q7; a unit test compares the migration with the code). Note:
+`tenant.read` means "read every tenant", so it opens the Tenant 360 reads too, not only the directory.
+`/auth/verify-admin` returns `capabilities` (and `custom_role_label`); the BFF caches them, sets the display cookies
+`cis_caps` / `cis_role_name`, and `lib/rbac.ts` decides every page (`PAGE_RULES[].caps`), BFF rule (`API_RULES`,
+`API_READ_RULES`, `API_WRITE_RULES`) and `can()` by capabilities; the role lists beside them are documentation kept
+equal by `lib/rbacCaps.test.mjs`. **Staff page (T9):** the CIS and Booking pickers list each app's custom roles (`GET
+/admin/platform/roles`, `staff.read`: CIS built-in + custom, Booking built-in names + custom roles from the bk-062 view
+`booking.v_staff_role_capability`, the CRM groups, TripPlanner); a custom CIS role writes `custom_role` (role =
+`based_on`) and the group `cis-custom` (`api/services/staff_custom_roles.py`), a Booking custom code is the `staff_app_grant` row and the group
+`booking-custom` (Sync does the same); the business-owner marker (`admin_users.is_business_owner`, one holder) is
+`PUT /admin/platform/staff/{id}/business-owner` (`staff.write`, owners only, audited `staff.business_owner_changed`
+before / after, never an E2E address). **Roles & permissions (T10):** Platform › Roles & permissions
+`/admin/platform/roles` (admin), read-only, from the same catalogue (`lib/rolesMatrix.ts`; no person, agent or E2E row,
+no issue id). **AI controls (T11):** every route under `/admin/budgets` and `/admin/ai-gateway` (six routers) also runs
+`api/core/cognito_session.require_cognito_session` (403 for the secret with any `x-admin-role`, a legacy session, the Preview
+credential or the machine); `PUT` / `DELETE /admin/budgets/...` write `spend_budget.updated` / `.deleted` audit rows
+with before and after in the write's transaction. A10f (`e2e-cis-content-lead@`, content_lead) and A10g
+(`e2e-custom-maker@`, a custom role based on content_lead, Booking custom grant on Dev) are Dev-only and read-only in CIS
+(`e2e_staff.DEV_ONLY_E2E_STAFF_ROLES`). Readiness requires 462.
+
 **R2 slice 2 (AA-1035, S268; no migration).** *Assignments page* `/admin/tenants/assignments` (admin, customer_success,
 support): `GET /admin/tenant-assignments` (every partner tenant of the caller's scope with owner / backup / support and
 the pool flag) and `GET /admin/tenant-assignments/staff` (the assignable staff, `tenant.assign`); writes stay the
@@ -2860,7 +2891,8 @@ sign-out; staff have no password) and `/sync` (retry). DB first, then Cognito; a
 **Reconcile job.** `staff_directory_reconcile` on `shared.job` (`services/staff_reconcile.py`,
 `services/jobs/staff_reconcile_job.py`): report only, `ListUsers` / `ListUsersInGroup` only (no `AdminGetUser`,
 it counts as MAU). Reports drift (Cognito users missing from the directory, rows missing from Cognito,
-group/role/email drift, rows bound to another sub or issuer, non-`CONFIRMED` users, break-glass state) and
+group/role/email drift, rows bound to another sub or issuer, non-`CONFIRMED` users, break-glass state; AA-1155: a
+custom role row must be in `cis-custom` alone and a Booking custom grant in `booking-custom`) and
 **cutover readiness** (active rows without an email or `cognito_sub`). On demand: Staff page "Check now"
 (`POST /admin/platform/staff-directory/reconcile`, read `GET …/health`, `staff.read`); the daily run goes
 through the machine route `POST /admin/job-runner/staff-reconcile/schedule` once the ops-probe Lambda calls it

@@ -16,7 +16,10 @@ What it reports (the `result` of a `staff_directory_reconcile` job, services/job
                                not in the pool, or the issuer is another pool's.
   (c) group_drift              for each active row matched to a Cognito user: the CIS role vs the highest
                                cis-* group (the C3 sign-in rule, staff_identity.role_from_groups), the Booking
-                               grant (staff_app_grant app='booking') vs the booking-* groups, the CRM roles
+                               grant (staff_app_grant app='booking') vs the booking-* groups (AA-1155: a row with
+                               admin_users.custom_role must be in cis-custom alone, a Booking custom grant in
+                               booking-custom; a built-in cis-* group left beside cis-custom outranks it at sign-in,
+                               so it is drift), the CRM roles
                                (staff_crm_grant, AA-1031) vs the crm-* groups (skipped, with a note, while
                                migration 330 is not applied), the email (row
                                matched by sub, emails differ), and an active row whose Cognito user is disabled.
@@ -33,10 +36,11 @@ What it reports (the `result` of a `staff_directory_reconcile` job, services/job
                                booking-admin. Each deviation is an issue.
   known_e2e_exceptions         Dev only (ENVIRONMENT exactly "dev", api/core/e2e_staff.dev_only_e2e_environment):
                                the E2E staff identities root ADR 0006a A10 / A10a / A10b / A10c / A10d / A10e /
-                               A10e-2 allows, each with its ADR clause, listed apart and NOT counted in drift_total.
-                               Only the exact address with one of its exact staff group sets (A10d: alone, or with
-                               booking-contracting under A10e-2) (and, for A10 / A10b / A10d, its directory row with
-                               the expected role; A10a / A10c / A10e / A10e-2 have no row) is listed;
+                               A10e-2 / A10f / A10g allows, each with its ADR clause, listed apart and NOT
+                               counted in drift_total. Only the exact address with one of its exact staff group
+                               sets (A10d: alone, or with booking-contracting under A10e-2) (and, for A10 / A10b /
+                               A10d / A10f / A10g, its directory row with the expected role, and no group drift;
+                               A10a / A10c / A10e / A10e-2 have no row) is listed;
                                an E2E address with any other group set, a missing or wrong row, or on any other
                                environment goes through the categories above like every user (AA-816 S253).
 
@@ -51,7 +55,7 @@ from datetime import datetime, timezone
 from types import MappingProxyType
 from typing import Any, Iterable, Optional
 
-from api.core import e2e_staff
+from api.core import e2e_staff, staff_roles
 from api.core.identity_config import workforce_issuer
 from api.core.staff_identity import GROUP_ROLES, role_from_groups
 
@@ -64,7 +68,12 @@ ENV_BREAKGLASS_EMAIL = "COGNITO_BREAKGLASS_EMAIL"
 # ADR 0006 "Break-glass": the account is in cis-admin and booking-admin.
 BREAKGLASS_GROUPS: tuple[str, ...] = ("cis-admin", "booking-admin")
 
-CIS_GROUPS: tuple[str, ...] = tuple(g for g, _ in GROUP_ROLES)
+# AA-1155: a CIS custom role holder is in cis-custom (its role is admin_users.custom_role; admin_users.role keeps the
+# custom role's based_on) and a Booking custom grant (staff_app_grant.role = a custom code) in booking-custom.
+CIS_CUSTOM_GROUP = staff_roles.CIS_CUSTOM_GROUP
+BOOKING_CUSTOM_GROUP = staff_roles.BOOKING_CUSTOM_GROUP
+CUSTOM_LABEL = "custom"   # what a drift entry shows for a custom group (the group does not say which custom role)
+CIS_GROUPS: tuple[str, ...] = tuple(g for g, _ in GROUP_ROLES) + (CIS_CUSTOM_GROUP,)
 BOOKING_GROUP_ROLES: tuple[tuple[str, str], ...] = (
     ("booking-admin", "admin"),
     ("booking-sales", "sales"),
@@ -72,7 +81,7 @@ BOOKING_GROUP_ROLES: tuple[tuple[str, str], ...] = (
     ("booking-content_creator", "content_creator"),
     ("booking-finance", "finance"),   # AA-1035 R2 (CIS 363, root ADR 0019 d3 / d9)
 )
-BOOKING_GROUPS: tuple[str, ...] = tuple(g for g, _ in BOOKING_GROUP_ROLES)
+BOOKING_GROUPS: tuple[str, ...] = tuple(g for g, _ in BOOKING_GROUP_ROLES) + (BOOKING_CUSTOM_GROUP,)
 # AA-1031: the AA-Partner staff groups (root ADR 0006b decision 6) and their staff_crm_grant role codes; a person may
 # hold several. Same pairs as api/services/staff_directory.CRM_ROLE_GROUPS (a test keeps them equal).
 CRM_GROUP_ROLES: tuple[tuple[str, str], ...] = (
@@ -92,7 +101,7 @@ CONFIRMED = "CONFIRMED"
 PENDING_STATUSES: frozenset[str] = frozenset({"FORCE_CHANGE_PASSWORD"})
 
 ROWS_SQL = """
-    SELECT id::text AS id, username, role::text AS role, is_active, email, cognito_iss, cognito_sub
+    SELECT id::text AS id, username, role::text AS role, custom_role, is_active, email, cognito_iss, cognito_sub
       FROM shared.admin_users
      ORDER BY lower(username)
 """
@@ -108,7 +117,8 @@ NOTES = (
     "as drift: staff sign in with an email code, which may leave that status as it is.",
     "Report only: nothing in Cognito or shared.admin_users was changed.",
 )
-KNOWN_E2E_NOTE = ("Dev: the E2E staff accounts root ADR 0006a allows (A10, A10a, A10b, A10c, A10d, A10e, A10e-2) "
+KNOWN_E2E_NOTE = ("Dev: the E2E staff accounts root ADR 0006a allows (A10, A10a, A10b, A10c, A10d, A10e, A10e-2, A10f, "
+                  "A10g) "
                   "are listed under known_e2e_exceptions and not counted as drift, only with their exact address and "
                   "staff groups.")
 CRM_NOT_COMPARED_NOTE = ("CRM roles were not compared: the directory table for them (CIS migration 330) is not applied "
@@ -183,6 +193,22 @@ KNOWN_E2E_STAFF: "MappingProxyType[str, KnownE2E]" = MappingProxyType({
         reason=("Dev-only AA-Booking pricing checker E2E writer (approve, reject or withdraw the E2E pricing maker's "
                 "versions on synthetic trip plans); never in the CIS staff directory."),
         groups=frozenset({"booking-contracting"}), directory_role=None),
+    # AA-1155 A10f (S286): the Dev-only CIS content_lead E2E account (the second person of content publishing), in the
+    # CIS directory as content_lead with no custom role (CIS 462), no Booking or CRM group.
+    e2e_staff.E2E_CIS_CONTENT_LEAD_TEST_STAFF_EMAIL: KnownE2E(
+        clause="ADR 0006a A10f",
+        reason=("Dev-only CIS content lead E2E account (the second person of two-person content publishing): "
+                "read-only session, no Booking access."),
+        groups=frozenset({"cis-content_lead"}), directory_role=e2e_staff.E2E_CIS_CONTENT_LEAD_TEST_STAFF_ROLE),
+    # AA-1155 A10g (S286): the Dev-only custom-role maker, exactly cis-custom + booking-custom (the ADR's one set); its
+    # directory row holds content_lead (the CIS custom role's based_on) and the custom role, its Booking grant a custom
+    # code. _row_drift checks the custom role against cis-custom and the custom grant against booking-custom.
+    e2e_staff.E2E_CUSTOM_MAKER_TEST_STAFF_EMAIL: KnownE2E(
+        clause="ADR 0006a A10g",
+        reason=("Dev-only custom-role maker E2E account (a CIS custom role and a Booking custom role): read-only CIS "
+                "session, Booking writes on synthetic records only."),
+        groups=frozenset({CIS_CUSTOM_GROUP, BOOKING_CUSTOM_GROUP}),
+        directory_role=e2e_staff.E2E_CUSTOM_MAKER_TEST_STAFF_ROLE),
 })
 
 
@@ -339,7 +365,21 @@ def parse_users(raw_users: list[dict], raw_groups: dict[str, Optional[list[dict]
 
 def _booking_role_from_groups(groups: Iterable[str]) -> list[str]:
     held = set(groups)
-    return [role for group, role in BOOKING_GROUP_ROLES if group in held]
+    roles = [role for group, role in BOOKING_GROUP_ROLES if group in held]
+    return roles + ([CUSTOM_LABEL] if BOOKING_CUSTOM_GROUP in held else [])
+
+
+def expected_cis_groups(row: dict) -> list[str]:
+    """The one cis-* group a directory row stands for: cis-custom for a custom role holder (AA-1155), else
+    cis-<role>."""
+    return [CIS_CUSTOM_GROUP] if row.get("custom_role") else [f"cis-{row.get('role')}"]
+
+
+def expected_booking_groups(grant_role: Optional[str]) -> list[str]:
+    """The booking-* group a Booking grant stands for (booking-custom for a custom code, AA-1155), or none."""
+    if not grant_role:
+        return []
+    return [BOOKING_CUSTOM_GROUP] if staff_roles.is_custom_code(grant_role) else [f"booking-{grant_role}"]
 
 
 def _sorted_groups(groups: Iterable[str]) -> list[str]:
@@ -504,16 +544,16 @@ def _row_drift(row: dict, u: CognitoUser, grant_role: Optional[str],
     out: list[dict] = []
     base = {"username": row["username"], "email": u.email or row.get("email")}
     cis_groups = [g for g in _sorted_groups(u.groups) if g in CIS_GROUPS]
-    group_role = role_from_groups(u.groups)
-    # AA-1035: the group must be the row's own (cis-<role>); a leftover cis-reviewer (no CIS role since the alias went)
-    # is drift too, so the Staff page "Sync" moves the person to the group of the row.
-    wrong_group = bool(cis_groups) and cis_groups != [f"cis-{row.get('role')}"]
-    if group_role != row.get("role") or len(cis_groups) > 1 or wrong_group:
-        out.append({**base, "kind": "cis_role", "directory": row.get("role"), "cognito": group_role,
-                    "cognito_groups": cis_groups})
+    # AA-1035: the group must be the row's own (cis-<role>), alone; a leftover cis-reviewer (no CIS role since the alias
+    # went) is drift too, so the Staff page "Sync" moves the person to the group of the row. AA-1155: a custom role
+    # holder's own group is cis-custom; a built-in group beside it outranks it at sign-in (the person keeps that role).
+    if cis_groups != expected_cis_groups(row):
+        group_role = role_from_groups(u.groups) or (CUSTOM_LABEL if CIS_CUSTOM_GROUP in cis_groups else None)
+        out.append({**base, "kind": "cis_role", "directory": row.get("custom_role") or row.get("role"),
+                    "cognito": group_role, "cognito_groups": cis_groups})
     booking_groups = [g for g in _sorted_groups(u.groups) if g in BOOKING_GROUPS]
-    booking_roles = _booking_role_from_groups(u.groups)
-    if booking_roles != ([grant_role] if grant_role else []):
+    if booking_groups != expected_booking_groups(grant_role):
+        booking_roles = _booking_role_from_groups(u.groups)
         out.append({**base, "kind": "booking_role", "directory": grant_role,
                     "cognito": booking_roles[0] if len(booking_roles) == 1 else (booking_roles or None),
                     "cognito_groups": booking_groups})

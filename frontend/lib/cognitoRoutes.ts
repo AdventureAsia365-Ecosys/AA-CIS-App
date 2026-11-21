@@ -19,7 +19,7 @@ import {
 } from "./cognito";
 import { adminVerifyCache, verifyStaffToken } from "./auth-server";
 import { isTransientStatus, loginErrorFor } from "./loginErrors";
-import { isStaffRole } from "./rbac";
+import { isStaffSubject } from "./rbac";
 import {
   POST_LOGIN_PATH,
   REFRESH_SKEW_S,
@@ -75,7 +75,7 @@ export async function handleCallback(request: NextRequest, kind: StaffClientKind
   // The backend decides who this is (admin_users row via iss+sub, first-link by email) and the role
   // (highest cis-* group). A user without a cis-* group, or with an inactive row, is refused here.
   const verified = await verifyStaffToken(tokens.accessToken);
-  if (!verified.ok || !isStaffRole(verified.role)) {
+  if (!verified.ok || !isStaffSubject(verified)) {
     console.warn(`[auth] cognito callback: verify-admin refused client=${kind} status=${verified.ok ? "role" : verified.status}`);
     // A backend that did not answer (timeout, 5xx) is not a refusal: say so instead of "no access".
     const response = toLogin(request, loginErrorFor(verified));
@@ -86,11 +86,17 @@ export async function handleCallback(request: NextRequest, kind: StaffClientKind
 
   const response = NextResponse.redirect(new URL(POST_LOGIN_PATH, origin), { status: 303 });
   clearOAuthTx(response);
-  setStaffSessionCookies(response, kind, tokens, { role: verified.role, name: verified.name });
+  setStaffSessionCookies(response, kind, tokens, displayOf(verified));
   return noStore(response);
 }
 
 type ApplyCookies = (response: NextResponse) => void;
+
+/** AA-1155: the display cookies of a verified session (role, name, capability list, custom role name). */
+function displayOf(verified: { role: string; name: string; capabilities: string[]; customLabel: string | null }) {
+  return { role: verified.role, name: verified.name, capabilities: verified.capabilities,
+    roleName: verified.customLabel };
+}
 
 type RefreshOutcome =
   // apply() writes the rotated session cookies onto whatever response the caller builds (a no-op when
@@ -131,13 +137,13 @@ async function refreshSession(request: NextRequest, skipIfFreshS: number): Promi
 
   const verified = await verifyStaffToken(tokens.accessToken);
   if (current) adminVerifyCache.delete(current);
-  if (verified.ok && isStaffRole(verified.role)) {
+  if (verified.ok && isStaffSubject(verified)) {
     return {
       ok: true,
       expiresAt: tokenExp(tokens.accessToken),
       apply: (response) =>
         setStaffSessionCookies(
-          response, rt.kind, tokens, { role: verified.role, name: verified.name }, rt.sessionEnd, rt.refreshToken,
+          response, rt.kind, tokens, displayOf(verified), rt.sessionEnd, rt.refreshToken,
         ),
     };
   }

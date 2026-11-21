@@ -28,7 +28,8 @@ export type NavIcon =
   | "quality" | "trace" | "reviewLog" | "slate" | "compliance"
   | "aiGateway" | "spend" | "usage"
   | "lab" | "writingMemory" | "decisions"
-  | "staff" | "audit" | "jobs" | "alerts" | "infra" | "apiDocs" | "dataModel" | "docs" | "uiKit" | "productMap" | "delivery"
+  | "staff" | "roles" | "audit" | "jobs" | "alerts" | "infra" | "apiDocs" | "dataModel" | "docs" | "uiKit" | "productMap"
+  | "delivery"
   | "bookingAdmin" | "agencyBilling" | "agencyTiers" | "b2bDesk";
 
 export interface IaItem {
@@ -137,6 +138,8 @@ export const ADMIN_IA: IaGroup[] = [
   ] },
   { label: "Platform", items: [
     { href: "/admin/platform/staff", label: "Staff & access", icon: "staff" },
+    // AA-1155 (R5.4): every app's staff roles and their permissions, read-only (built-in from code, custom from data).
+    { href: "/admin/platform/roles", label: "Roles & permissions", icon: "roles" },
     { href: "/admin/platform/audit", label: "Audit log", icon: "audit" },
     { href: "/admin/jobs", label: "Jobs", icon: "jobs" },
     { href: "/admin/platform/alerts", label: "Alert recipients", icon: "alerts" },

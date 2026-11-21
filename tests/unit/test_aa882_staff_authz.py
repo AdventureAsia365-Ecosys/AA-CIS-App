@@ -397,8 +397,15 @@ def test_app_admin_reaches_patch_llm_config(client, monkeypatch):
 
 
 def test_app_admin_reaches_put_budget(client):
-    resp = client.put("/admin/budgets/no-such-provider/global", json={}, headers=_headers("admin"))
+    from api.main import app
+    from tests.unit.aa1155_cognito_session import cognito_session_assumed
+
+    with cognito_session_assumed(app):   # AA-1155 T11: the budget routes need a verified Cognito session
+        resp = client.put("/admin/budgets/no-such-provider/global", json={}, headers=_headers("admin"))
     assert resp.status_code == 422, resp.text  # the endpoint's own validation, before any DB call
+    # Without one, the admin secret and an admin role header are refused before the endpoint (403).
+    resp = client.put("/admin/budgets/no-such-provider/global", json={}, headers=_headers("admin"))
+    assert resp.status_code == 403, resp.text
 
 
 def test_app_admin_reaches_retention_run(client):

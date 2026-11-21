@@ -7,9 +7,8 @@
                                            p50 / p95 latency and error rate over 24 h / 7 d; the CRM's AI and
                                            guardrail rows (crm.ops.v1 GET /llm/usage, the daily rollup, with the
                                            staff member's own token) and a static Mapbox row.                spend.read
-  GET /admin/ai-gateway/trace?job_id=      every logged paid call of one job in time order (LLM, Jev, DataForSEO,
-      /admin/ai-gateway/trace?tour_id=     geocoder ledgers); or of one tour (its jobs, the pieces they wrote, the
-                                           tour_id columns).                                                 spend.read
+  GET /admin/ai-gateway/trace?job_id=      every logged paid call of one job, in time order (LLM, Jev, DFS, geocoder),
+      /admin/ai-gateway/trace?tour_id=     or of one tour (its jobs, the pieces they wrote, tour_id columns). spend.read
   GET /admin/ai-gateway/budgets            every spending cap by tier: provider daily caps and job caps
                                            (shared.spend_budget), LLM connection monthly budgets, the tenant tier
                                            (shared.tenant_ai_budget, AA-1016), today's spend, coverage. spend.read
@@ -94,6 +93,7 @@ from typing import Literal, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from api.core.cognito_session import require_cognito_session as cognito_only   # AA-1155 T11
 from api.core.staff_authz import StaffPrincipal, denial_reason, staff_policy
 from api.core.tenant_scope import TENANT_SCOPED
 from api.routers.admin import verify_admin_secret
@@ -106,7 +106,7 @@ from shared import provider_credit
 from shared.llm_client import app_profile, capacity
 
 router = APIRouter(prefix="/admin/ai-gateway", tags=["admin-ai-gateway"],
-                   dependencies=[Depends(verify_admin_secret), Depends(staff_policy)])
+                   dependencies=[Depends(verify_admin_secret), Depends(staff_policy), Depends(cognito_only)])
 
 
 @router.get("/providers", summary="Every paid AI and data provider: health, spend, budget, balance (read-only, $0)")

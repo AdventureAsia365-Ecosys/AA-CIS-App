@@ -357,7 +357,7 @@ def test_summary_fields_hold_counts_only():
 def test_group_role_maps_match_sign_in_and_the_grant_table():
     from api.core.staff_identity import GROUP_ROLES
 
-    assert sr.CIS_GROUPS == tuple(g for g, _ in GROUP_ROLES)
+    assert sr.CIS_GROUPS == tuple(g for g, _ in GROUP_ROLES) + ("cis-custom",)   # AA-1155
     # AA-1035: CIS 363 replaced the 247 check (adds finance)
     mig = (REPO / "api" / "migrations" / "363_staff_roles_reviewer_merge_finance_grant.sql").read_text()
     check = re.search(r"staff_app_grant_role_chk CHECK \(\s*role IN \(([^)]*)\)\)", mig).group(1)
@@ -406,9 +406,9 @@ def test_known_e2e_addresses_match_the_directory_and_the_a10b_module():
     assert e2e_staff.E2E_CONTENT_TEST_STAFF_EMAIL == staff_directory.E2E_TEST_STAFF_EMAIL
     assert sr.KNOWN_E2E_STAFF[E2E_REV].directory_role == staff_directory.E2E_TEST_STAFF_ROLE
     assert sr.KNOWN_E2E_STAFF[E2E_CIS_ADMIN].directory_role == staff_directory.E2E_CIS_ADMIN_TEST_STAFF_ROLE
-    assert set(sr.KNOWN_E2E_STAFF) - {e2e_staff.E2E_BOOKING_PRICING_CHECKER_TEST_STAFF_EMAIL} == {
-        E2E_REV, E2E_BOOKING, E2E_CIS_ADMIN, E2E_CRM_STAFF, E2E_CIS_CS, E2E_BK_STAFF, E2E_BK_MAKER, E2E_BK_CHECKER}
-    assert {e.clause for e in sr.KNOWN_E2E_STAFF.values()} - {"ADR 0006a A10e-2"} == {  # A10e-2: test_aa1091_e2e_cs_*
+    assert set(sr.KNOWN_E2E_STAFF) - {e2e_staff.E2E_BOOKING_PRICING_CHECKER_TEST_STAFF_EMAIL} == {E2E_REV,
+        E2E_BOOKING, E2E_CRM_STAFF, E2E_BK_STAFF, E2E_BK_MAKER, E2E_BK_CHECKER, *e2e_staff.DEV_ONLY_E2E_STAFF_ROLES}
+    assert {e.clause for e in sr.KNOWN_E2E_STAFF.values()} - {f"ADR 0006a A10{x}" for x in ("e-2", "f", "g")} == {
         "ADR 0006a A10", "ADR 0006a A10a", "ADR 0006a A10b", "ADR 0006a A10c", "ADR 0006a A10d", "ADR 0006a A10e"}
     # A10e (AA-1087): exactly one Booking group each, never in the CIS directory (AA-CIS-Infra workforce.py).
     for email, group in A10E_GROUPS.items():
