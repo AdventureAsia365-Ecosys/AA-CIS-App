@@ -245,3 +245,45 @@ def test_routes_are_ops_read():
     assert POLICY[("GET", "/admin/platform/alerts/catalogue")] == OPS_READ
     assert POLICY[("GET", "/admin/platform/alerts/summary")] == OPS_READ
     assert crm_console.is_allowed("GET", "/ops-checks")
+
+
+# ── S287 live check follow-ups: no issue IDs in descriptions, CRM registry read timeout, short peer cache ───────
+
+@pytest.mark.parametrize("raw, expected", [
+    ("Decrypt by a principal other than the CRM task role or an AWS service. AA-932, design v3 §4.1.",
+     "Decrypt by a principal other than the CRM task role or an AWS service. design v3 §4.1."),
+    ("Blocks above the limit; check the caller and whether the limit fits real use. AA-1165.",
+     "Blocks above the limit; check the caller and whether the limit fits real use."),
+    ("p95 over 2 s in 2 of 3 five-minute windows (latency SLO, AA-969).",
+     "p95 over 2 s in 2 of 3 five-minute windows (latency SLO)."),
+    ("Group membership changed (CloudTrail). ADR 0006 decision 11, AA-854.",
+     "Group membership changed (CloudTrail). ADR 0006 decision 11."),
+    ("AA-939: a partner pool admin call outside the invitation flow.",
+     "A partner pool admin call outside the invitation flow."),
+    ("AA-942 (CRM-14, V1): aa-cis-dev task role decrypts a CRM key.",
+     "aa-cis-dev task role decrypts a CRM key."),
+    ("No issue reference here.", "No issue reference here."),
+    ("", ""),
+])
+def test_strip_issue_refs_removes_tracker_ids(raw, expected):
+    assert cat.strip_issue_refs(raw) == expected
+
+
+def test_split_runbook_text_carries_no_issue_id():
+    text, url = cat.split_runbook("Root sign-in seen. AA-873. Runbook: https://example.test/rb#root")
+    assert url == "https://example.test/rb#root"
+    assert "AA-" not in text and text == "Root sign-in seen."
+
+
+def test_event_codes_in_conditions_are_not_issue_ids():
+    # Only AA-<n> is a tracker id; CloudTrail / SES event codes and runbook ids stay.
+    assert cat.strip_issue_refs("Runbook CIS-08 for EVENT-0087.") == "Runbook CIS-08 for EVENT-0087."
+
+
+def test_crm_ops_checks_read_uses_the_list_timeout():
+    assert crm_console._timeout("GET", "/ops-checks") == crm_console.LIST_TIMEOUT_S
+    assert crm_console._timeout("GET", "/tenants/x/usage") == crm_console.READ_TIMEOUT_S
+
+
+def test_peer_cache_is_short():
+    assert cat.PEERS_CACHE_TTL_S <= 60 < cat.CACHE_TTL_S
