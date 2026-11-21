@@ -8,6 +8,7 @@ control ids (EX- prefix). Runs in a transaction that is rolled back."""
 import json
 import os
 import sys
+from datetime import datetime, timezone
 
 import asyncpg
 import pytest
@@ -50,7 +51,7 @@ async def _control(conn, control_id="EX-IAM-01"):
         control_id, json.dumps([{"check_id": "gh_default_branch_rules", "required": True}]))
 
 
-async def _evidence(conn, status="pass", at="2026-11-20T02:00:00Z"):
+async def _evidence(conn, status="pass", at=datetime(2026, 11, 20, 2, 0, tzinfo=timezone.utc)):
     return await conn.fetchval(
         "INSERT INTO compliance.evidence (source, check_id, status, collected_at, collector, collector_version, detail) "
         "VALUES ('root_daily', 'gh_default_branch_rules', $1, $2::timestamptz, 'compliance-evidence.yml', "
