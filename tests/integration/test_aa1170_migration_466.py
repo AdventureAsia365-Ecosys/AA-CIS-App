@@ -3,7 +3,7 @@ the cis.compliance.* settings (conftest replays 466 with the other files). Regis
 cis_app DML only, nothing for aa_app_user or PUBLIC; the default privileges FOR ROLE cis_owner the isolation probe
 expects; the 253 catalogue rows; evidence append-only (UPDATE / DELETE / TRUNCATE refused, a DELETE only under the
 retention purge flag) and ingested once per (source, check, time); a mapping needs a known requirement and goes with its
-control; the seven settings equal the compiled defaults with a complete guide; a re-run changes nothing. Invented
+control; the eight settings equal the compiled defaults with a complete guide; a re-run changes nothing. Invented
 control ids (EX- prefix). Runs in a transaction that is rolled back."""
 import json
 import os

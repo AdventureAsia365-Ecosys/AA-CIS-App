@@ -770,6 +770,42 @@
    }
   },
   {
+   "key": "cis.compliance.ci_scan_max_age_days",
+   "app": "cis",
+   "area": "compliance",
+   "label": "Compliance: days an image scan counts",
+   "description": "Platform > Compliance (AA-1170): the check ci_image_scan_sbom passes while the newest CI run of every image repo that reached main (the merge queue) scanned the image, wrote an SBOM and is at most this many days old; the oldest of those scans decides. Older, the check fails and the vulnerability controls it feeds drop: a scan that stopped running is not fresh evidence.",
+   "value_type": "int",
+   "unit": "days",
+   "min_value": 1,
+   "max_value": 90,
+   "allowed_values": null,
+   "default_value": 8,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How recent the newest image scan and SBOM of each image repo must be for the image scan check to pass.",
+     "raise": "Older scans still count; vulnerabilities published since the last scan may go unseen longer.",
+     "lower": "Every image repo must merge (and so scan) more often to keep the check green.",
+     "when": "Keep it a little above a week: the weekly release merges scan every image repo at least once a week.",
+     "example": "With the default 8, a repo whose last merge-queue scan ran on 10 November fails the check from 19 November."
+    },
+    "vi": {
+     "what": "Lần quét image và SBOM mới nhất của mỗi repo có image phải mới tới đâu thì check quét image mới đạt.",
+     "raise": "Lần quét cũ hơn vẫn được tính; lỗ hổng công bố sau lần quét cuối có thể bị bỏ sót lâu hơn.",
+     "lower": "Mỗi repo có image phải merge (tức là quét lại) thường hơn để giữ check xanh.",
+     "when": "Giữ cao hơn một tuần một chút: các lần merge bản phát hành hằng tuần quét mỗi repo ít nhất một lần mỗi tuần.",
+     "example": "Với mặc định 8, repo có lần quét qua merge queue cuối cùng ngày 10 tháng 11 sẽ trượt check từ ngày 19 tháng 11."
+    }
+   }
+  },
+  {
    "key": "cis.compliance.collector_heartbeat_hours",
    "app": "cis",
    "area": "compliance",

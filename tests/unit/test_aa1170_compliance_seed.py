@@ -4,7 +4,7 @@
 1. The catalogue lists every requirement of each in-scope framework (counts per framework, unique ids), in our own
    words: a label is at most 80 characters, never reads like normative text ("shall", "must", "the organization") and is
    not a bare copy of another label. The standards' text is copyrighted; only identifiers are theirs (tech lead S287).
-2. The seven settings are compiled with the seeded defaults, a plain label and a complete EN + VI guide.
+2. The eight settings are compiled with the seeded defaults, a plain label and a complete EN + VI guide.
 3. No tracked file of this repo carries a control id of the private register (the register is loaded from a private
    file, never committed; examples use the invented EX- prefix)."""
 from __future__ import annotations
@@ -62,7 +62,7 @@ def test_labels_are_our_own_short_wording():
     assert titles
 
 
-def test_the_seven_settings_are_compiled_with_the_seeded_defaults():
+def test_the_eight_settings_are_compiled_with_the_seeded_defaults():
     expected = {
         "cis.compliance.validity_hours.root_daily": (72, "medium", "maker_checker"),
         keys.HEARTBEAT_HOURS: (36, "medium", "maker_checker"),
@@ -70,6 +70,7 @@ def test_the_seven_settings_are_compiled_with_the_seeded_defaults():
         keys.DRILL_MAX_AGE_DAYS: (90, "medium", "maker_checker"),
         keys.ACCESS_REVIEW_MAX_AGE_DAYS: (100, "medium", "maker_checker"),
         keys.DOCS_OVERDUE_MAX: (0, "low", "maker_checker"),
+        keys.CI_SCAN_MAX_AGE_DAYS: (8, "medium", "maker_checker"),
     }
     assert set(keys.ALL) == set(expected) | {keys.REFERENCE_SCORES}
     assert keys.VALIDITY_HOURS == {"root_daily": "cis.compliance.validity_hours.root_daily"}
@@ -86,6 +87,8 @@ def test_the_seven_settings_are_compiled_with_the_seeded_defaults():
             assert all(guide[lang][part] for part in ("what", "raise", "lower", "when", "example")), (key, lang)
     for check_id, (fact, key, kind) in keys.FACT_LIMITS.items():
         assert key in keys.ALL and kind in ("age_days", "max") and fact and check_id
+    # the image scan is graded on the date of its oldest newest scan (a CI scan that stopped running fails)
+    assert keys.FACT_LIMITS["ci_image_scan_sbom"] == ("last_date", keys.CI_SCAN_MAX_AGE_DAYS, "age_days")
 
 
 def test_no_private_control_id_is_tracked():
