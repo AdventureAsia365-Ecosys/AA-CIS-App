@@ -1068,8 +1068,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     shrinking allowlist, no production `budget_retry=False`, every migration model key classified) and
     `tests/unit/test_aa900_s271_w0_gateway.py` (every budgeted call-site ceiling >= `token_floor.effort_floor(model,
     effort)` of every model of the stage's route, read from the migrations). Alert:
-    `route_cut.<stage>` (route_watch, > 5 % of a stage's replies cut over 24 h, refused cuts and eval rows
-    included). A ceiling is head-room, not the expected size: since t9_write v2 (AA-741 S271) every blog prompt carries a word band (950-1,300 since v6, a section plan since v7, never over
+    `route_cut.<stage>` (route_watch, > 5 % of a stage's replies cut over 24 h, setting
+    `cis.ops.reply_cut_alert_pct` since AA-1171, refused cuts and eval rows included). A ceiling is head-room, not the expected size: since t9_write v2 (AA-741 S271) every blog prompt carries a word band (950-1,300 since v6, a section plan since v7, never over
     1,600, never padded), a section cap and a one-pass rule (`prompts._BLOG_LENGTH_INSTRUCTIONS`), because the
     adaptive thinking of the 5.x writers is billed as output inside the same ceiling (bounded by the stage x model
     effort since CIS 381: medium for t9_write on Sonnet 5.5);
@@ -1495,13 +1495,16 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
     the newest **scheduled** one (the run the watchdog read) plus 14 days of scheduled headline totals, never
     recomputed; the newest manual run is listed apart (`manual_run`, never alerted on). A succeeded scheduled
     CIS-08 run queues **`quality_funnel_watch`** (`services/jobs/quality_funnel_watch_job.py`, idempotent per run,
-    deploy-gate exempt). Findings over the trailing 7 days: `qf_cut.<stage>` (cut > 5 % of the billed replies),
+    deploy-gate exempt). Findings over the trailing 7 days: `qf_cut.<stage>` (cut > 5 % of the billed replies,
+    setting `cis.ops.reply_cut_alert_pct`, shared with `route_cut`),
     `qf_fb.<stage>` (fallback ≥ the stage's `shared.llm_route_policy` `fallback_alert_pct`, route_watch's own row →
     `*` row → default 20 rule), `qf_drift.<stage>` (≥ 10 % of answers from a model under 1 % of the stage's answers
-    the 7 days before, the minimum in both windows); minimum rows = max(20, the policy's `min_requests`). Alerts on
+    the 7 days before, the minimum in both windows; settings `cis.ops.qf_drift_alert_pct` and
+    `cis.ops.qf_drift_new_model_pct`); minimum rows = max(20, the policy's `min_requests`), the 20 being setting
+    `cis.ops.qf_min_requests` (AA-1171, CIS 469; the values above are the seeded defaults). Alerts on
     the **transition** only: a finding the previous scheduled run (≤ 7 days back) already had is stored with
     `repeat: true` and not raised again (drift: unless a new model drifts), and the night's new findings go out as
-    ONE `qf_digest` alert through `shared/ops_checks.alert_all` (bell at most every 20 h, as `route_digest`; one
+    ONE `qf_digest` alert through `shared/ops_checks.alert_all` (bell at most every 20 h, setting `cis.ops.bell_every_nightly_hours`, as `route_digest`; one
     e-mail per UTC day). A failed e-mail or bell makes the job raise a retryable error (the bell is deduplicated, so
     the retry is safe). T2 per-attempt gate codes are not stored on the version (in `shared.job.result.t3` only). No
     migration (store: `shared.report_run`, report CIS-08 in the registry copy). $0.
