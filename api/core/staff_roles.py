@@ -39,6 +39,18 @@ CUSTOM_CODE_RE = re.compile(r"^custom_[a-z][a-z0-9_]{1,46}$")
 CIS_CUSTOM_GROUP = "cis-custom"
 BOOKING_CUSTOM_GROUP = "booking-custom"
 
+# AA-1155 T13 (R5.6) / T14 (R5.7): the routes of the CIS role editor and the people-role presets
+# (api/routers/admin_platform_roles.py), merged into staff_authz.POLICY: reads staff.read, writes staff.write (an owner
+# on a Cognito session, re-checked in the write's transaction, audited before and after).
+EDITOR_POLICY: dict[tuple[str, str], str] = {
+    ("GET", "/admin/platform/roles/cis"): "staff.read",
+    ("POST", "/admin/platform/roles/cis"): "staff.write",
+    ("PATCH", "/admin/platform/roles/cis/{code}"): "staff.write",
+    ("GET", "/admin/platform/presets"): "staff.read",
+    ("POST", "/admin/platform/presets"): "staff.write",
+    ("PATCH", "/admin/platform/presets/{code}"): "staff.write",
+}
+
 # The approve class (CIS 462 staff_role_capability_not_approve_chk): reserved for built-in roles.
 _APPROVE_RE = re.compile(r"\.approve(_[a-z0-9_]+)?$")
 RESERVED_CAPABILITIES: frozenset[str] = frozenset({"staff.write", "staff.admin"})

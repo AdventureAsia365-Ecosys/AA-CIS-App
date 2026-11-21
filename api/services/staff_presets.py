@@ -167,30 +167,32 @@ def plan(preset: Preset, old_role: Optional[str], old_booking: Optional[str],
     ``old_booking`` and ``old_crm``. Pure: the directory checks the roles, the guards and ``lost``."""
     out = Plan()
     if preset.cis_role is not None:
-        if not preset.additive_only:
-            out.role = preset.cis_role
-        elif old_role in preset.cis_keep_roles or old_role == preset.cis_role:
-            pass
-        elif old_role is None or old_role in CIS_EMPTY_ROLES:
-            out.role = preset.cis_role
-        else:
-            out.lost.append(f"CIS {old_role}")
+        out.role = _slot(preset, preset.cis_role, old_role, preset.cis_keep_roles, CIS_EMPTY_ROLES, f"CIS {old_role}",
+                         out.lost)
     if preset.booking_mode == "clear":
         out.booking = None
     elif preset.booking_mode == "set":
-        if not preset.additive_only:
-            out.booking = preset.booking_role
-        elif old_booking in preset.booking_keep_roles or old_booking == preset.booking_role:
-            pass
-        elif old_booking is None or old_booking in RETIRED_BOOKING_ROLES:   # AA-1150: a retired grant gives nothing
-            out.booking = preset.booking_role
-        else:
-            out.lost.append(f"Booking {old_booking}")
+        out.booking = _slot(preset, preset.booking_role, old_booking, preset.booking_keep_roles,
+                            RETIRED_BOOKING_ROLES, f"Booking {old_booking}", out.lost)   # AA-1150: retired = empty
     if preset.crm_mode == "replace":
         out.crm = tuple(preset.crm_roles)
     elif preset.crm_mode == "add":
         out.crm = tuple(sorted(set(old_crm) | set(preset.crm_roles)))
     return out
+
+
+def _slot(preset: Preset, new: Any, old: Optional[str], keep: tuple[str, ...], empty: Any, name: str,
+          lost: list[str]) -> Any:
+    """One app's planned role: ``new`` for a plain preset; for an additive-only one KEEP when the held role is listed
+    (or is ``new``), ``new`` in an empty slot (None or one of ``empty``), else KEEP with ``name`` added to ``lost``."""
+    if not preset.additive_only:
+        return new
+    if old in keep or old == new:
+        return KEEP
+    if old is None or old in empty:
+        return new
+    lost.append(name)
+    return KEEP
 
 
 def would_replace(preset: Preset, lost: list[str]) -> Exception:
@@ -232,22 +234,11 @@ async def check_preset(conn: Any, p: Preset) -> Preset:
         raise _error(400, "A preset code is a lower-case letter then 1-47 letters, digits or _", "invalid_code")
     label = _text(p.label, name="label", low=1, high=LABEL_MAX)
     description = _text(p.description or "", name="description", low=0, high=DESCRIPTION_MAX)
-    cis_role = p.cis_role
-    if cis_role is not None:
-        sd.require_cis_role(cis_role)
-        await scr.resolve_cis_custom(conn, cis_role)          # a custom code: active, with capabilities (400)
-    if p.booking_mode not in BOOKING_MODES:
-        raise _error(400, f"booking_mode is one of {', '.join(BOOKING_MODES)}", "booking_mode")
-    if (p.booking_mode == "set") != (p.booking_role is not None):
-        raise _error(400, "A Booking role goes with booking_mode set, and only with it", "booking_mode")
-    if p.booking_role is not None:
-        sd.require_booking_role(p.booking_role)
-        await scr.check_booking_custom(conn, p.booking_role)  # a custom code: active (400), the view readable (503)
-    if p.crm_mode not in CRM_MODES:
-        raise _error(400, f"crm_mode is one of {', '.join(CRM_MODES)}", "crm_mode")
-    crm = sd.require_crm_roles(list(p.crm_roles))
-    if (p.crm_mode == "keep" and crm) or (p.crm_mode == "add" and not crm):
-        raise _error(400, "crm_mode keep takes no CRM role; add takes at least one", "crm_mode")
+    if p.cis_role is not None:
+        sd.require_cis_role(p.cis_role)
+        await scr.resolve_cis_custom(conn, p.cis_role)        # a custom code: active, with capabilities (400)
+    await _check_booking(conn, p)
+    crm = _check_crm(p)
     cis_keep = _roles(list(p.cis_keep_roles), name="cis_keep_roles", known=sd.CIS_ROLES)
     booking_keep = _roles(list(p.booking_keep_roles), name="booking_keep_roles", known=sd.BOOKING_ROLES)
     if p.additive_only and (p.booking_mode == "clear" or p.crm_mode == "replace"):
@@ -261,6 +252,32 @@ async def check_preset(conn: Any, p: Preset) -> Preset:
         raise _error(400, f"sort_order is 0-{SORT_MAX}", "sort_order")
     return replace(p, label=label, description=description, crm_roles=crm, cis_keep_roles=cis_keep,
                    booking_keep_roles=booking_keep, archived=bool(p.archived), additive_only=bool(p.additive_only))
+
+
+async def _check_booking(conn: Any, p: Preset) -> None:
+    """booking_mode is known and a Booking role goes with "set" only: a built-in one or an active custom role."""
+    from api.services import staff_custom_roles as scr   # noqa: PLC0415
+    from api.services import staff_directory as sd   # noqa: PLC0415
+
+    if p.booking_mode not in BOOKING_MODES:
+        raise _error(400, f"booking_mode is one of {', '.join(BOOKING_MODES)}", "booking_mode")
+    if (p.booking_mode == "set") != (p.booking_role is not None):
+        raise _error(400, "A Booking role goes with booking_mode set, and only with it", "booking_mode")
+    if p.booking_role is not None:
+        sd.require_booking_role(p.booking_role)
+        await scr.check_booking_custom(conn, p.booking_role)  # a custom code: active (400), the view readable (503)
+
+
+def _check_crm(p: Preset) -> tuple[str, ...]:
+    """crm_mode is known, its roles are CRM staff roles; keep takes none and add at least one."""
+    from api.services import staff_directory as sd   # noqa: PLC0415
+
+    if p.crm_mode not in CRM_MODES:
+        raise _error(400, f"crm_mode is one of {', '.join(CRM_MODES)}", "crm_mode")
+    crm = sd.require_crm_roles(list(p.crm_roles))
+    if (p.crm_mode == "keep" and crm) or (p.crm_mode == "add" and not crm):
+        raise _error(400, "crm_mode keep takes no CRM role; add takes at least one", "crm_mode")
+    return crm
 
 
 def _args(p: Preset, actor: str) -> tuple:

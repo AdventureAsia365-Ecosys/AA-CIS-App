@@ -27,8 +27,6 @@ from api.core import identity_config, staff_identity, view_as
 from api.main import app
 from api.routers import admin, admin_platform, admin_settings
 from api.services import staff_directory as sd
-from api.services import staff_presets
-from tests.unit.aa1155_presets_seed import seed_records
 from tests.unit.aa854_cognito_staff import ISS, Directory, install_issuer
 
 POOL = "us-west-1_TESTPOOL"
@@ -55,7 +53,6 @@ class StaffDB(Directory):
         self.audit: list[dict[str, Any]] = []
         self.locked_owners = 0
         self.view_as: list[dict[str, Any]] = []     # open view-as sessions (AA-1035: closed by disable / sign-out)
-        self.presets: dict[str, dict[str, Any]] = seed_records()   # AA-1155 T14: shared.staff_role_preset (CIS 465)
 
     def add(self, *, owner: bool = False, booking: Optional[str] = None,  # type: ignore[override]
             crm: tuple[str, ...] = (), **kw: Any) -> str:
@@ -130,9 +127,6 @@ class StaffDB(Directory):
             self.sql.append(sql)
             r = self._find(args[0])
             return None if r is None else self._listed(r)
-        if sql in (staff_presets.SQL_PRESET, staff_presets.SQL_PRESET_LOCK):
-            self.sql.append(sql)
-            return self.presets.get(args[0])
         return await super().fetchrow(sql, *args)
 
     async def fetchval(self, sql: str, *args: Any) -> Any:
@@ -1197,10 +1191,8 @@ def test_roles_route_applies_the_platform_owner_preset(api, db):
 def test_roles_route_refuses_bad_crm_input(api, db):
     client, _, token = api
     uid = db.add(email=NEW_EMAIL, role="content")
-    # AA-1155 T14: a preset is a code (a malformed one is 422, an unknown one 400: shared.staff_role_preset has no row)
     for body, status in (({"crm_roles": ["boss"]}, 422), ({"crm_roles": "ops"}, 422), ({"preset": "Boss!"}, 422),
-                         ({"preset": "boss"}, 400),
-                         ({"preset": "platform_owner", "role": "admin"}, 400),
+                         ({"preset": "boss"}, 400), ({"preset": "platform_owner", "role": "admin"}, 400),  # AA-1155 T14
                          ({"preset": "pricing_team", "booking_role": "sales"}, 400),
                          ({"preset": "pricing_team"}, 409)):          # AA-1091: would replace CIS content
         resp = client.patch(f"/admin/platform/staff/{uid}/roles", headers=_h(token), json=body)
