@@ -96,6 +96,16 @@ def test_block_needs_a_pilot_record_reference():
     assert quality_settings.evidence_problem(settings_keys.MODES["t10_f9_brand_style"], "repair", "x") is None
 
 
+def test_the_settings_page_text_names_the_evidence_block_needs():
+    """CIS 468: the definition text and both guides tell the administrator what the server accepts for block."""
+    from shared import settings
+    prefix = quality_settings.F12_PILOT_EVIDENCE_PREFIX
+    d = settings.definition(F12_KEY)
+    assert prefix in d.description and "AA-788" not in d.description
+    for lang in ("en", "vi"):
+        assert prefix in settings.guide(F12_KEY)[lang]["when"], lang
+
+
 # ---------------------------------------------------------------- F14 under-length reads as length_short
 
 def test_f14_word_count_violations_read_as_length_codes():
