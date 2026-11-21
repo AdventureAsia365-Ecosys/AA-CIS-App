@@ -21,8 +21,8 @@ Migration CIS 465 ships first in its own migration-only PR (MIG-4); this code PR
   directory's self-demote and last-owner checks run on the planned roles, an additive preset refuses
   (409 `preset_would_replace`) before any write. An unknown or archived preset is 400 `preset`; a missing table is
   503 `presets_unavailable` (never a 500).
-- **Every role code checked on save and again on apply**: a preset may name a CIS or Booking custom role, which must
-  be active when saved (400) and is re-checked by the directory when applied.
+- **Every role code checked when set and again on apply**: a preset may name a CIS or Booking custom role, which must
+  be active when it is set or the preset restored (400) and is re-checked by the directory when applied.
 - **"Current" preset** in the account panel = the first active preset (sort order) whose plan changes nothing; the
   Pricing team preset is now one row among the presets, no longer a separate block behind "Show all roles".
 - **Editors on the Staff page** (`PresetEditor.tsx`, `RoleEditor.tsx`, kit only): everyone with `staff.read` reads

@@ -2608,7 +2608,10 @@ the same page's "CIS custom roles" section lets an `is_owner` user clone a built
 reviewer) into a `custom_<name>` role, tick its capabilities, relabel, archive or restore it (`GET/POST
 /admin/platform/roles/cis`, `PATCH /admin/platform/roles/cis/{code}`, `api/services/staff_role_editor.py`, the same
 rules as the Booking editor: approve-class or unknown capability 400, audited `staff.role_created` /
-`staff.role_updated`); a role an active account holds is not archived (409 `role_in_use`). Root ADR 0006 +
+`staff.role_updated`); a role an active account holds is not archived (409 `role_in_use`), nor one an active preset
+grants (409 `role_in_use_by_preset`). A preset edit re-checks a custom role only when its field changes or the preset
+is restored, so a preset whose custom role was archived since (a Booking role is archived in Booking) can still be
+relabelled or archived; applying it answers 400. Root ADR 0006 +
 amendments 0006a / 0006b are the design; tenants are separate (`cis_tenant_token`, role `tenant`).
 
 **R2 roles and tenant scope (AA-1035 slice 1, root ADR 0019 d3 / d4; CIS 362-364).** `shared.admin_role` also has
