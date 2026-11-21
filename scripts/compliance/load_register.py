@@ -23,8 +23,8 @@ File format 1 (an invented example: scripts/compliance/register.example.json):
                  "note": "..."}]}
 
 What --apply does (one transaction): upsert every control of the file (title, intent, ... and updated_at); a control in
-the table but not in the file is set inactive (never deleted: its evidence history stays readable); the mappings of
-the file's controls are replaced by the file's. A mapping to a requirement the catalogue does not have, a control id
+the table but not in the file is set inactive (never deleted: its evidence history stays readable); the whole mapping
+table is replaced by the file's (the file is the complete register, so a dropped control keeps no mapping). A mapping to a requirement the catalogue does not have, a control id
 or a text field the table would refuse, an owner that looks like a person's e-mail, or text that carries an account
 ID, an ARN or an S3 URI stops the run before anything is written. Exit 0 = done (or DRY RUN clean), 1 = refused.
 """
@@ -144,7 +144,7 @@ ON CONFLICT (control_id) DO UPDATE
 """
 SQL_DEACTIVATE = ("UPDATE compliance.control SET active = false, updated_at = now() "
                   "WHERE NOT (control_id = ANY($1::text[])) AND active")
-SQL_DELETE_MAPPINGS = "DELETE FROM compliance.requirement_mapping WHERE control_id = ANY($1::text[])"
+SQL_DELETE_MAPPINGS = "DELETE FROM compliance.requirement_mapping"
 SQL_INSERT_MAPPING = ("INSERT INTO compliance.requirement_mapping (control_id, framework, ref, coverage, note) "
                       "VALUES ($1, $2, $3, $4, $5)")
 
@@ -158,7 +158,7 @@ async def apply(conn: Any, register: dict) -> None:
                                c["frequency"], c["test_type"], json.dumps(checks), c.get("scope", "dev"),
                                bool(c.get("active", True)))
         await conn.execute(SQL_DEACTIVATE, ids)
-        await conn.execute(SQL_DELETE_MAPPINGS, ids)
+        await conn.execute(SQL_DELETE_MAPPINGS)
         for m in register["mappings"]:
             await conn.execute(SQL_INSERT_MAPPING, m["control_id"], m["framework"], m["ref"], m["coverage"],
                                m.get("note"))
