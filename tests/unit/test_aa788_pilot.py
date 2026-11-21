@@ -263,6 +263,10 @@ def test_records_of_another_detector_or_twice_do_not_pool():
     assert len(pilot.detector_sha()) == 12
 
 
+def test_the_plan_reports_the_deployed_evidence_rule():
+    assert pilot.evidence_rule_check() == {"replay_evidence": "evidence_mismatch", "pilot_reference": "accepted"}
+
+
 def test_label_template_lists_every_fire():
     r = _record("p1aaaa", 2)
     assert set(pilot.label_template(r)["labels"]) == {f["fire_id"] for f in r["fires"]}
