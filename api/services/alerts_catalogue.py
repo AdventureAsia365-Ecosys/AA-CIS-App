@@ -60,6 +60,9 @@ MAX_PAGES = 10  # technical-constant: page bound of an AWS list call (a few doze
 RUNBOOK_MARK = " Runbook: "
 CACHE_PREFIX = "admin:platform:alerts"
 CACHE_TTL_S = 300  # technical-constant: cache refresh of a read (the AWS describe calls), like /admin/overview/ops
+# The Booking / CRM registries are two cheap reads; a short cache keeps one slow or failed peer call from hiding its
+# rows for the full AWS cache window (S287 live check: the CRM call took 3.8 s once).
+PEERS_CACHE_TTL_S = 30  # technical-constant: cache refresh of the two peer registry reads
 
 _OPERATORS = {
     "GreaterThanThreshold": ">", "GreaterThanOrEqualToThreshold": ">=", "LessThanThreshold": "<",
@@ -82,16 +85,47 @@ def environment() -> str:
 
 # ── helpers (pure) ───────────────────────────────────────────────────────────────────────────────
 
+_ISSUE_PREFIX = re.compile(r"^\s*AA-\d+(?:\s*\([^)]*\))?\s*:\s*")
+_ISSUE_REF = re.compile(r"\s*\bAA-\d+\b")
+_TIDY = (
+    (re.compile(r"\(\s*,\s*"), "("),
+    (re.compile(r",\s*\)"), ")"),
+    (re.compile(r"\(\s*\)"), ""),
+    (re.compile(r",\s*,"), ","),
+    (re.compile(r",\s*\."), "."),
+    (re.compile(r"\.\s*,\s*"), ". "),
+    (re.compile(r"\s+([.,;:)])"), r"\1"),
+    (re.compile(r"\.{2,}"), "."),
+    (re.compile(r"\s{2,}"), " "),
+)
+
+
+def strip_issue_refs(text: str) -> str:
+    """The description without internal tracker references ("AA-873", "AA-939: ...", "(latency SLO, AA-969)"):
+    user-visible admin text never shows issue IDs. The Terraform descriptions keep them for engineers."""
+    raw = text or ""
+    head = _ISSUE_PREFIX.sub("", raw)
+    out = _ISSUE_REF.sub("", head)
+    for pattern, repl in _TIDY:
+        out = pattern.sub(repl, out)
+    out = out.strip()
+    # A sentence that started after a removed "AA-939: " prefix gets its capital back (not a resource name).
+    first = out.split(" ", 1)[0]
+    if head != raw and out and "-" not in first:
+        out = out[:1].upper() + out[1:]
+    return out
+
+
 def split_runbook(description: str) -> tuple[str, Optional[str]]:
     """(text, runbook URL) of an alarm / rule description ending with ' Runbook: <url>' (AA-CIS-Infra
-    alarm_runbooks.tf)."""
+    alarm_runbooks.tf); the text has its issue references removed (:func:`strip_issue_refs`)."""
     text = description or ""
     if RUNBOOK_MARK in text:
         head, _, url = text.rpartition(RUNBOOK_MARK)
         url = url.strip()
         if url.startswith("https://"):
-            return head.strip(), url
-    return text.strip(), None
+            return strip_issue_refs(head), url
+    return strip_issue_refs(text), None
 
 
 def app_from_name(name: str, env: str) -> Optional[str]:
@@ -651,7 +685,7 @@ async def build(pool: Any, redis: Any, authorization: Optional[str], *,
     now = _now()
     aws = await cache.cached_section(redis, "aws", CACHE_TTL_S, lambda: aws_section(clients), needs_cache=True,
                                      key_prefix=CACHE_PREFIX)
-    peers = await cache.cached_section(redis, "peers", CACHE_TTL_S, lambda: peers_section(authorization),
+    peers = await cache.cached_section(redis, "peers", PEERS_CACHE_TTL_S, lambda: peers_section(authorization),
                                        needs_cache=False, key_prefix=CACHE_PREFIX)
     budgets = await cache.cached_section(redis, "budgets", CACHE_TTL_S, budgets_section, needs_cache=False,
                                          key_prefix=CACHE_PREFIX)

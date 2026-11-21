@@ -101,8 +101,9 @@ def _pattern(method: str, path: str) -> str:
 def _timeout(method: str, path: str) -> float:
     if method != "GET":
         return WRITE_TIMEOUT_S
-    # /tenants and /data-coverage open one CRM transaction per agency.
-    return LIST_TIMEOUT_S if path in ("/tenants", "/data-coverage") else READ_TIMEOUT_S
+    # /tenants and /data-coverage open one CRM transaction per agency; /ops-checks reads every check's settings
+    # (S287: 3.8 s once on a cold CRM task, over the 2 s read timeout).
+    return LIST_TIMEOUT_S if path in ("/tenants", "/data-coverage", "/ops-checks") else READ_TIMEOUT_S
 
 
 def _problem(detail: str, message: str) -> dict[str, Any]:
