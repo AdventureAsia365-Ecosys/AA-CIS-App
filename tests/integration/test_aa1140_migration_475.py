@@ -1,4 +1,4 @@
-"""AA-1140 (S289, the Ecosystem status page) — CIS 476 on a real Postgres (conftest replays every migration): the
+"""AA-1140 (S289, the Ecosystem status page) — CIS 475 on a real Postgres (conftest replays every migration): the
 twenty-one cis.ops.status_* settings rows equal the compiled defaults with a complete guide, values outside the bounds
 are refused, acp_shared.ops_sample / acp_shared.ops_event take the rows the status sampler writes and refuse the shapes
 it must never write (unknown kind or state, an oversized value, an event that ends before it starts, a duplicate
@@ -19,8 +19,8 @@ from shared import ops_status_thresholds as t  # noqa: E402
 from shared import settings  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-M476 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
-                    "476_aa1140_ops_status_samples_and_thresholds.sql")
+M475 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
+                    "475_aa1140_ops_status_samples_and_thresholds.sql")
 INS_VALUE = ("INSERT INTO shared.setting_value (key, value, version, proposed_by, reason, evidence_ref) "
              "VALUES ($1, $2::jsonb, 1, 'admin:zz-a', 'zz test: a reason of at least twenty characters', NULL) "
              "RETURNING id")
@@ -50,8 +50,8 @@ async def _refused(c, sql, *args, error=asyncpg.exceptions.CheckViolationError):
 
 
 @pytest.mark.asyncio
-async def test_476_registered_and_each_row_is_the_compiled_default(conn):
-    assert await conn.fetchval("SELECT version AS ok FROM shared.schema_versions WHERE version = '476'") == "476"
+async def test_475_registered_and_each_row_is_the_compiled_default(conn):
+    assert await conn.fetchval("SELECT version AS ok FROM shared.schema_versions WHERE version = '475'") == "475"
     for key in t.ALL:
         row = await conn.fetchrow(
             "SELECT default_value::text AS d, min_value::float AS lo, max_value::float AS hi, area, scope_kind, "
@@ -118,7 +118,7 @@ async def test_cis_app_reads_inserts_updates_but_never_deletes(conn):
 
 @pytest.mark.asyncio
 async def test_rerun_changes_nothing(conn):
-    body = open(M476, encoding="utf-8").read().replace("BEGIN;", "", 1).rsplit("COMMIT;", 1)[0]
+    body = open(M475, encoding="utf-8").read().replace("BEGIN;", "", 1).rsplit("COMMIT;", 1)[0]
     before = await conn.fetchval("SELECT count(*) AS n FROM shared.setting_definition")
     await conn.execute(body)
     assert await conn.fetchval("SELECT count(*) AS n FROM shared.setting_definition") == before

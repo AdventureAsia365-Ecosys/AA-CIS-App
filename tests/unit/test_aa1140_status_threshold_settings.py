@@ -1,4 +1,4 @@
-"""AA-1140 (S289, the Ecosystem status page; CIS 476) — the twenty-one status page limits are compiled with the S285
+"""AA-1140 (S289, the Ecosystem status page; CIS 475) — the twenty-one status page limits are compiled with the S285
 advisory values as defaults, a plain label and a complete EN + VI guide, maker-checker, and the accessors of
 shared/ops_status_thresholds.py return them in the units the page uses, a critical value never on the wrong side of its
 warn value. No DB."""

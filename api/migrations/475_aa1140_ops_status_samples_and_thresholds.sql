@@ -1,4 +1,4 @@
--- Migration 476: AA-1140 (S289, the Ecosystem status page that replaces /admin/overview) — the ops sample and event
+-- Migration 475: AA-1140 (S289, the Ecosystem status page that replaces /admin/overview) — the ops sample and event
 -- tables the 5-minute status sampler writes, and the thresholds of the page as settings.
 --
 -- Why. The tech lead approved the "Ecosystem status" page on 19/11 (S285 advisory, root
@@ -55,7 +55,7 @@
 --      Each seed row carries its plain label and its EN + VI operator guide (CIS 416 rule). A signal that already has
 --      a CloudWatch alarm keeps the alarm's own limit as the authority (D2 of S287: Terraform is the only writer of
 --      alarm thresholds); these values colour the page and draw its lines.
---   5. Register 476.
+--   5. Register 475.
 --
 -- Schema. DM-1.5: both tables are CIS-private (only the CIS status page reads them), so they live in acp_shared, not in
 -- shared as the issue's working names said; acp_shared already holds the staff audit log and the docs feedback.
@@ -69,14 +69,14 @@
 --
 -- Class: CONTRACT (root ADR 0017 decision 3; no migrate directive line): besides the two new tables it INSERTs
 -- config rows into an existing table (shared.setting_definition). MIG-4: a migration-only PR, applied on Dev by Infra
--- Migration Apply when the job tables are idle (ADR 0017a), then the code PR (readiness requires 476: the sampler
+-- Migration Apply when the job tables are idle (ADR 0017a), then the code PR (readiness requires 475: the sampler
 -- writes the tables and the status endpoint reads them and the keys).
 --
 -- Behaviour on apply. None for running code: the tables are empty, no setting value row is seeded and the code on
 -- main reads neither. After the code PR the page reads the defaults until an administrator changes them.
 --
--- Number. Owner main max (473) + 1 + 2: 474 and 475 are reserved by other S289 lanes. If the owner main max + 1
--- differs at merge, renumber (git grep '476_' and '476' here, in tests/integration/test_aa1140_migration_476.py,
+-- Number. Owner main max (473) + 2: 474 is the CRM agency marker of another S289 lane, shipped in the same CIS
+-- migration batch (474-475). If the owner main max + 1 differs at merge, renumber (git grep '475_' and '475' here, in tests/integration/test_aa1140_migration_475.py,
 -- shared/settings/compiled_defaults.json, shared/ops_status_thresholds.py and docs/implementation-notes/AA-1140.md).
 --
 -- Locks. Two CREATE TABLE and their indexes (new objects); one INSERT of twenty-one rows. lock_timeout 5s.
@@ -115,14 +115,14 @@ CREATE INDEX IF NOT EXISTS ops_sample_sampled_at_idx ON acp_shared.ops_sample (s
 CREATE INDEX IF NOT EXISTS ops_sample_kind_subject_idx ON acp_shared.ops_sample (kind, subject, sampled_at DESC);
 
 COMMENT ON TABLE acp_shared.ops_sample IS
-    'AA-1140 (CIS 476): what the 5-minute status sampler (job kind ops_status_sample) saw: ECS service state, app '
+    'AA-1140 (CIS 475): what the 5-minute status sampler (job kind ops_status_sample) saw: ECS service state, app '
     'health checks, job queue backlog, database role connections and XID age, firing alarms. One row per (kind, '
     'subject, sampled_at). Read by GET /admin/overview/status (uptime strip, queue chart, role / XID tiles). Proposed '
     'retention 14 days (DM-7.1), no deletion job yet.';
 COMMENT ON COLUMN acp_shared.ops_sample.state IS
-    'AA-1140 (476): the sampler''s verdict of this row: ok, warn, degraded, down, unknown (no answer).';
+    'AA-1140 (475): the sampler''s verdict of this row: ok, warn, degraded, down, unknown (no answer).';
 COMMENT ON COLUMN acp_shared.ops_sample.value IS
-    'AA-1140 (476): the numbers of the row (counts, states, names; no account ID, no ARN, no personal data), <= 8 KiB.';
+    'AA-1140 (475): the numbers of the row (counts, states, names; no account ID, no ARN, no personal data), <= 8 KiB.';
 
 -- ── 2. Ops events ────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -158,15 +158,15 @@ CREATE INDEX IF NOT EXISTS ops_event_occurred_at_idx ON acp_shared.ops_event (oc
 CREATE INDEX IF NOT EXISTS ops_event_open_idx ON acp_shared.ops_event (kind) WHERE ended_at IS NULL;
 
 COMMENT ON TABLE acp_shared.ops_event IS
-    'AA-1140 (CIS 476): the event timeline of the Ecosystem status page: ECS deployments (deploy markers), failed '
+    'AA-1140 (CIS 475): the event timeline of the Ecosystem status page: ECS deployments (deploy markers), failed '
     'rollouts, CloudWatch alarm periods (alarm bands), services below their desired count. Written by the status '
     'sampler (job kind ops_status_sample), idempotent by dedupe_key. Proposed retention 30 days (DM-7.1), no deletion '
     'job yet.';
 COMMENT ON COLUMN acp_shared.ops_event.ended_at IS
-    'AA-1140 (476): when the event ended (rollout finished, alarm back to OK, service back at its desired count); '
+    'AA-1140 (475): when the event ended (rollout finished, alarm back to OK, service back at its desired count); '
     'NULL while it lasts.';
 COMMENT ON COLUMN acp_shared.ops_event.dedupe_key IS
-    'AA-1140 (476): deploy:<deployment id>, alarm:<alarm name>:<state change time>, service_down:<service>:<since>; '
+    'AA-1140 (475): deploy:<deployment id>, alarm:<alarm name>:<state change time>, service_down:<service>:<since>; '
     'a re-run of a sampler tick inserts nothing twice.';
 
 GRANT SELECT, INSERT, UPDATE ON acp_shared.ops_sample TO cis_app;
@@ -213,7 +213,7 @@ ON CONFLICT (key) DO NOTHING;
 -- settings-seed:end
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('476', now(), 'AA-1140: acp_shared.ops_sample, acp_shared.ops_event and the Ecosystem status thresholds (cis.ops.status_*)')
+VALUES ('475', now(), 'AA-1140: acp_shared.ops_sample, acp_shared.ops_event and the Ecosystem status thresholds (cis.ops.status_*)')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;
