@@ -10,8 +10,10 @@
 --
 -- What:
 --   1. compliance.framework: one row per framework (kind standard | law, title, jurisdiction, citation, official source
---      link, in-force date, scored, sort_order, active). Seeded with the six frameworks of 466 exactly; the EU AI Act
---      row is kind 'law' AND scored = true, so its existing score card stays (tech lead may drop the card later).
+--      link, in_force_on = the date the text entered into force, applies_from = the date its duties apply when that is
+--      later (GDPR: in force 2016-05-24, applies from 2018-05-25; NULL = from the in-force date), scored, sort_order,
+--      active). Seeded with the six frameworks of 466 exactly; the EU AI Act row is kind 'law' AND scored = true, so
+--      its existing score card stays (tech lead may drop the card later).
 --      Law rows (the Vietnam personal data law, GDPR, ...) are NOT seeded here: they come with the private register
 --      through scripts/compliance/load_register.py (format 2), because they depend on the applicability research.
 --   2. compliance.requirement: the framework CHECK is replaced by a foreign key to compliance.framework (ON DELETE
@@ -85,6 +87,7 @@ CREATE TABLE IF NOT EXISTS compliance.framework (
     citation      text,
     source_url    text,
     in_force_on   date,
+    applies_from  date,
     scored        boolean NOT NULL DEFAULT false,
     sort_order    integer NOT NULL,
     active        boolean NOT NULL DEFAULT true,
@@ -96,21 +99,28 @@ CREATE TABLE IF NOT EXISTS compliance.framework (
     CONSTRAINT framework_citation_check CHECK (citation IS NULL OR char_length(citation) <= 200),
     CONSTRAINT framework_source_url_check CHECK (source_url IS NULL
                                                  OR (source_url LIKE 'https://%' AND char_length(source_url) <= 500)),
+    CONSTRAINT framework_applies_from_check CHECK (applies_from IS NULL OR in_force_on IS NULL
+                                                   OR applies_from >= in_force_on),
     CONSTRAINT framework_sort_check CHECK (sort_order > 0)
 );
 COMMENT ON TABLE compliance.framework IS
     'AA-1174 (CIS 471): every framework of the readiness register. kind standard = scored as Evidenced %; kind law = '
     'a met / not met checklist of obligations (scored only when scored = true). Law rows come from the register loader.';
+COMMENT ON COLUMN compliance.framework.in_force_on IS
+    'AA-1174 (471): the date the text entered into force (one convention for every framework).';
+COMMENT ON COLUMN compliance.framework.applies_from IS
+    'AA-1174 (471): the date its duties apply when later than in_force_on (GDPR 2018-05-25); NULL = from in_force_on.';
 
-INSERT INTO compliance.framework (framework, kind, title, jurisdiction, citation, source_url, in_force_on, scored,
-                                  sort_order)
-VALUES ('iso27001:2022', 'standard', 'ISO/IEC 27001:2022', NULL, NULL, NULL, NULL, true, 1),
-       ('soc2:2017', 'standard', 'SOC 2 (TSC common criteria)', NULL, NULL, NULL, NULL, true, 2),
-       ('iso42001:2023', 'standard', 'ISO/IEC 42001:2023', NULL, NULL, NULL, NULL, true, 3),
-       ('owasp-top10:2021', 'standard', 'OWASP Top 10 (2021)', NULL, NULL, NULL, NULL, true, 4),
-       ('owasp-llm:2025', 'standard', 'OWASP Top 10 for LLM (2025)', NULL, NULL, NULL, NULL, true, 5),
+-- EU AI Act: in force 2024-08-01, applies from 2026-08-02 (Art. 113; some chapters earlier, deployer duties then).
+INSERT INTO compliance.framework (framework, kind, title, jurisdiction, citation, source_url, in_force_on,
+                                  applies_from, scored, sort_order)
+VALUES ('iso27001:2022', 'standard', 'ISO/IEC 27001:2022', NULL, NULL, NULL, NULL, NULL, true, 1),
+       ('soc2:2017', 'standard', 'SOC 2 (TSC common criteria)', NULL, NULL, NULL, NULL, NULL, true, 2),
+       ('iso42001:2023', 'standard', 'ISO/IEC 42001:2023', NULL, NULL, NULL, NULL, NULL, true, 3),
+       ('owasp-top10:2021', 'standard', 'OWASP Top 10 (2021)', NULL, NULL, NULL, NULL, NULL, true, 4),
+       ('owasp-llm:2025', 'standard', 'OWASP Top 10 for LLM (2025)', NULL, NULL, NULL, NULL, NULL, true, 5),
        ('eu-ai-act:2024', 'law', 'EU AI Act (deployer duties)', 'EU', 'Regulation (EU) 2024/1689',
-        'https://eur-lex.europa.eu/eli/reg/2024/1689/oj', '2024-08-01', true, 6)
+        'https://eur-lex.europa.eu/eli/reg/2024/1689/oj', '2024-08-01', '2026-08-02', true, 6)
 ON CONFLICT (framework) DO NOTHING;
 
 -- 2. compliance.requirement: FK instead of the CHECK, legal metadata ─────────────────────────────────────────────────
