@@ -47,6 +47,9 @@ const PAGES = [
   '/admin/tenant-qa/compliance',
   // AA-1042 (S270): AI gateway › Guide (the gateway page from the docs catalog plus the live tables).
   '/admin/ai-gateway?tab=guide',
+  // AA-1174 (S288): Platform › Compliance readiness, Overview and Obligations tabs (a crash here once shipped
+  // unnoticed: the post-deploy smoke's content role cannot open the page).
+  '/admin/platform/compliance', '/admin/platform/compliance?tab=obligations',
 ] as const;
 // A page whose loaded content is not a table row: its ready marker (rendered only once its data answered).
 const READY: Partial<Record<(typeof PAGES)[number], string>> = {
@@ -60,6 +63,8 @@ const READY: Partial<Record<(typeof PAGES)[number], string>> = {
   '/admin/settings': '[data-testid="admin-content-ready"]',
   '/admin/platform/ui-kit': '[data-testid="admin-content-ready"]',
   '/admin/tenant-qa/compliance': '[data-testid="admin-content-ready"]',
+  '/admin/platform/compliance': '[data-testid="compliance-banner"]',
+  '/admin/platform/compliance?tab=obligations': '[data-testid="compliance-banner"]',
 };
 // A ready marker the page also renders in its error state (Compliance: the API error string or "not available yet" in
 // the same element): the marker must also hold the loaded table or the empty text, so an error page fails the run
