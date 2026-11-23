@@ -180,10 +180,33 @@ def test_crm_counts_only():
         rows, _ = asyncio.run(compliance_crm.collect("Bearer x", 30, NOW))
     assert call.await_args.kwargs["params"] == {"days": 30}
     campaign, capture = rows
-    assert campaign["detail"] == {"violations": 0, "sent": 12, "window_days": 30, "tenants": 3, "excluded_erased": 1}
+    assert campaign["status"] == "pass"
+    assert campaign["detail"] == {"violations": 0, "sent": 12, "uncertain": None, "window_days": 30, "tenants": 3,
+                                  "excluded_erased": 1}
     assert capture["detail"]["last_date"] == "2026-11-20" and "names" not in str(rows)
     none = compliance_crm.evaluate(dict(body, last_consent_at=None), NOW)[1]
     assert none["status"] == "error"
+
+
+def test_crm_zero_marketing_sends_is_no_evidence_not_met():
+    body = {"window_days": 30, "marketing_sent": 0, "marketing_uncertain": 0, "violations": 0, "tenants": 3,
+            "excluded_erased": 0, "consents_recorded": 0, "last_consent_at": None}
+    campaign = compliance_crm.evaluate(body, NOW)[0]
+    assert campaign["status"] == "manual" and "nothing to check" in campaign["summary"]
+    st = cs.check_state("campaign_consent_enforced", campaign, {"crm_ops": NOW}, settings(), NOW)
+    assert st.state == "manual"                                    # never pass on 0 violations out of 0 sends
+    ctl = cs.control_state({"checks": [{"check_id": "campaign_consent_enforced"}]}, {st.check_id: st})
+    assert cs.obligation_state(cs.requirement_state([{"control_id": "C", "coverage": "full"}], {"C": ctl}),
+                               [ctl]) == ("not_met", False)
+
+
+def test_crm_send_uncertain_sends_are_reported():
+    body = {"window_days": 30, "marketing_sent": 5, "marketing_uncertain": 2, "violations": 1, "tenants": 1,
+            "excluded_erased": 0, "consents_recorded": 1, "last_consent_at": "2026-11-20"}
+    campaign = compliance_crm.evaluate(body, NOW)[0]
+    assert campaign["detail"]["uncertain"] == 2 and "2 possibly delivered" in campaign["summary"]
+    st = cs.check_state("campaign_consent_enforced", campaign, {"crm_ops": NOW}, settings(), NOW)
+    assert st.state == "fail"                                      # the CRM counts them as sent and as violations
 
 
 def test_live_sources_wait_for_the_minimum_interval():
@@ -246,7 +269,7 @@ def test_build_obligations():
                         "active": True},
                        {"framework": "ex-law:2025", "kind": "law", "title": "Example law", "jurisdiction": "VN",
                         "citation": "Example 1/2025", "source_url": "https://vbpl.vn/x", "in_force_on":
-                        date(2026, 1, 1), "scored": False, "active": True}],
+                        date(2025, 7, 1), "applies_from": date(2026, 1, 1), "scored": False, "active": True}],
         "requirements": [
             {"framework": "ex-law:2025", "ref": "Art.20", "section": "Law", "title": "File the transfer dossier",
              "sort_order": 1, "applicable": True, "counsel_review": True, "applies_as": "both",
@@ -274,6 +297,14 @@ def test_build_obligations():
     assert [law["framework"] for law in out["laws"]] == ["ex-law:2025"]
     assert out["laws"][0]["counts"]["met"] == 1 and out["laws"][0]["verdicts"]["applies"] == 1
     assert out["applicability"][0]["review_due"] is True and out["applicability"][0]["assessed_on"] == "2026-01-02"
+    assert (out["laws"][0]["in_force_on"], out["laws"][0]["applies_from"]) == ("2025-07-01", "2026-01-01")
+    # the root collector fails a legal check whose page is still a draft: the obligation is not met on a draft
+    draft = dict(data, latest={"legal_transfer_dossier_vn": ev("legal_transfer_dossier_vn", {
+        "overdue": 0, "drafts": 1, "doc_status": "draft"}, status="fail")})
+    res2 = cs.evaluate(draft["requirements"], draft["controls"], draft["mappings"], draft["latest"],
+                       {"root_daily": NOW}, settings(), NOW, scored=["iso27001:2022"])
+    items2 = {i["ref"]: i for i in compliance_obligations.build(draft, res2, matrix, 180, NOW)["items"]}
+    assert items2["Art.20"]["state"] == "not_met" and items2["Art.20"]["evidence"][0]["state"] == "fail"
 
 
 # ── routes ──────────────────────────────────────────────────────────────────────────────────────────────────────────

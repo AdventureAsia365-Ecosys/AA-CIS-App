@@ -64,6 +64,8 @@ def test_v2_validates_and_maps_onto_its_own_obligations():
     (lambda r: r["frameworks"][0].update(source_url="https://blog.example.com/law"), "official host"),
     (lambda r: r["frameworks"][0].update(source_url="http://vbpl.vn/x"), "official host"),
     (lambda r: r["frameworks"][0].update(scored=True), "never scored"),
+    (lambda r: r["frameworks"][0].update(applies_from="2025-12-31"), "before in_force_on"),
+    (lambda r: r["frameworks"][0].update(applies_from="soon"), "applies_from must be an ISO date"),
     (lambda r: r["frameworks"][0].update(title="A fully compliant law"), "claims compliance"),
     (lambda r: r["requirements"][0].update(framework="iso27001:2022", ref="A.5.1"), "not a law framework"),
     (lambda r: r["requirements"][0].update(title="The organisation shall file a dossier"), "normative"),
@@ -137,3 +139,49 @@ def test_vietnam_sources_are_the_gazette_or_a_legal_database():
     for url in ("https://sbv.gov.vn/documents/intro.docx", "https://sotuphap.daklak.gov.vn/intro.pdf",
                 "https://xaydungchinhsach.chinhphu.vn/news.htm", "https://chinhphu.vn/news.htm"):
         assert not lr._host_ok(url), url
+
+
+def test_entered_into_force_and_applies_from_are_kept_apart():
+    reg = v2()
+    reg["frameworks"][0].update(in_force_on="2016-05-24", applies_from="2018-05-25")   # the GDPR convention
+    assert lr.validate(reg, cat(reg), KINDS) == []
+    assert "applies_from = EXCLUDED.applies_from" in lr.SQL_UPSERT_FRAMEWORK
+
+
+@pytest.mark.parametrize("section", lr.V2_SECTIONS)
+def test_a_missing_v2_section_is_refused_not_read_as_empty(section):
+    reg = v2()
+    reg.pop(section)
+    problems = lr.validate(reg, cat(reg), KINDS)
+    assert any("missing: " + section in p for p in problems), problems
+    empty = v2()
+    empty[section] = []
+    if section == "frameworks":   # the file's own obligations then name no law of the file
+        empty["requirements"], empty["applicability"] = [], empty["applicability"][1:]
+        empty["mappings"].pop()
+    if section == "requirements":
+        empty["mappings"].pop()
+    assert lr.validate(empty, cat(empty), KINDS) == []    # an explicit [] is a decision
+
+
+def test_turning_off_many_rows_of_any_section_needs_allow_deactivate():
+    reg = v2()
+    ids = {c["control_id"] for c in reg["controls"]}
+    many = {f"ex-old{i}:2020" for i in range(lr.MAX_DEACTIVATE + 1)}
+    state = {"frameworks": many | {"ex-law:2025"},
+             "requirements": {("ex-law:2025", f"Art.{i}") for i in range(30, 30 + lr.MAX_DEACTIVATE + 1)},
+             "applicability": {("DE", "traveller", f"ex-old{i}:2020") for i in range(lr.MAX_DEACTIVATE + 1)}}
+    p = lr.plan(reg, ids, state)
+    assert p["applicability_removed"] == lr.MAX_DEACTIVATE + 1
+    refused = lr.guard(p, ids, allow=False)
+    assert len(refused) == 3 and all("--allow-deactivate" in r for r in refused)
+    assert any("law frameworks" in r for r in refused) and any("obligations" in r for r in refused)
+    assert any("applicability rows" in r for r in refused)
+    assert lr.guard(p, ids, allow=True) == []
+    few = lr.plan(reg, ids, {"frameworks": {"ex-old0:2020"}, "requirements": set(), "applicability": set()})
+    assert lr.guard(few, ids, allow=False) == []
+    six = {f"EX-OLD-{i}" for i in range(lr.MAX_DEACTIVATE + 1)}     # the format-1 controls rule, unchanged
+    controls = lr.plan({"format": 1, "controls": [], "mappings": []}, six, None)
+    assert [r.split(" (")[0] for r in lr.guard(controls, six, allow=False)] == [
+        f"{lr.MAX_DEACTIVATE + 1} active controls set inactive"]
+    assert lr.guard(controls, set(), allow=False) == []                  # already inactive: nothing turned off

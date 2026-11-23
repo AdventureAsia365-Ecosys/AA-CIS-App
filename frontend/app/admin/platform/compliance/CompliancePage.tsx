@@ -28,7 +28,7 @@ import {
 import { useChartColors } from "../../../_kit/useTheme";
 import {
   CONTROLS_PATH, OVERVIEW_PATH, REFRESH_PATH, SETTINGS_HREF, checkTone, controlTone, deltaToReference,
-  fmtPct, frameworkList, frameworkName, inFramework, isLegal, refreshCounts, safeLink, sortControls, trendSeries,
+  fmtPct, frameworkList, frameworkName, inFramework, isLegal, refreshCounts, safeLink, skipReason, sortControls, trendSeries,
   type CheckView, type ControlDetail, type ControlRow, type ControlsResp, type FrameworkInfo, type FrameworkScore,
   type Heartbeat, type IngestState, type LiveSourceState, type OverviewResp,
 } from "@/lib/compliance";
@@ -302,26 +302,29 @@ function sourceLine(source: string, s: LiveSourceState, t: CT): string {
   const name = source === "cis_db" || source === "crm_ops" ? t(`source_${source}`) as string : source;
   if (s.state === "ok") return t("refreshSource", name, s.rows ?? 0, s.new ?? 0);
   if (s.state === "recent") return t("refreshRecent", name);
-  if (s.state === "skipped") return t("refreshSkipped", name, s.reason ?? String(s.http ?? ""));
+  if (s.state === "skipped") return t("refreshSkipped", name, t(`skip_${skipReason(s.reason, s.http)}`) as string);
   return t("refreshSourceError", name);
 }
 
 /** The lines the Refresh action reports: the published file, then each of the API's own sources. */
 function refreshLines(state: IngestState, t: CT): string[] {
   const c = refreshCounts(state);
-  const head = state.state === "ok" ? t("refreshOk", c.read, c.fresh) : ingestText(state, t) ?? "";
+  const head = state.state === "ok" ? t("refreshOk", c.read, c.fresh)
+    : state.state === "skipped" ? t("refreshFileSkipped", t(`skip_${skipReason(state.reason)}`) as string)
+      : ingestText(state, t) ?? "";
   const lines = [head, ...Object.entries(state.live ?? {}).map(([source, s]) => sourceLine(source, s, t))];
   return lines.filter(Boolean);
 }
 
 function RefreshResult({ state, error, t }: { state: IngestState | null; error: string | null; t: CT }) {
   if (!state && !error) return null;
-  const ok = !error && refreshCounts(state).ok;
+  const tone = error ? "error" : refreshCounts(state).tone;
   return (
-    <div role="status" data-testid="compliance-refresh-result" style={{ ...small, display: "grid", gap: 2,
-      marginBottom: 10 }}>
-      <span><Badge tone={error ? "danger" : ok ? "success" : "warning"}>
-        {error ? t("refreshFailed") : ok ? t("refresh") : t("refreshProblems")}</Badge></span>
+    <div role="status" data-testid="compliance-refresh-result" data-tone={tone} style={{ ...small, display: "grid",
+      gap: 2, marginBottom: 10 }}>
+      <span><Badge tone={tone === "ok" ? "success" : tone === "warning" ? "warning" : "danger"}>
+        {error ? t("refreshFailed") : tone === "ok" ? t("refresh") : tone === "warning" ? t("refreshWarnings")
+          : t("refreshProblems")}</Badge></span>
       {error ? <span>{error}</span> : refreshLines(state as IngestState, t).map((l) => <span key={l}>{l}</span>)}
     </div>
   );
@@ -360,7 +363,9 @@ export default function CompliancePage() {
     mutationFn: () => apiSend<{ ingest: IngestState }>(REFRESH_PATH, { method: "POST" }),
     onSuccess: (res) => {
       const lines = refreshLines(res.ingest, t);
-      if (refreshCounts(res.ingest).ok) toast.success(lines.join(" · "));
+      const tone = refreshCounts(res.ingest).tone;
+      if (tone === "ok") toast.success(lines.join(" · "));
+      else if (tone === "warning") toast.info(`${t("refreshWarnings")}: ${lines.join(" · ")}`);   // no warning tone
       else toast.error(`${t("refreshProblems")}: ${lines.join(" · ")}`);
     },
     onError: (err) => toast.error(`${t("refreshFailed")}: ${(err as Error).message}`),

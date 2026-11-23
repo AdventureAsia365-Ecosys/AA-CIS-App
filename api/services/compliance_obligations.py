@@ -2,7 +2,8 @@
 met / not met / not yet checked checklist, and the applicability matrix (which law applies to which market and data
 segment, with the test, the threshold and a primary source per verdict). Readiness, not legal advice.
 
-Data (CIS 471): compliance.framework (kind law: citation, official source, in-force date), compliance.requirement (the
+Data (CIS 471): compliance.framework (kind law: citation, official source, the date it entered into force and,
+when later, the date its duties apply), compliance.requirement (the
 obligations of a law framework: article reference, our own short label, counsel_review, applies_as controller |
 processor | both, the official source link and our own document page), compliance.requirement_mapping onto the common
 controls, compliance.evidence (the newest row per check) and compliance.applicability. The law rows, their obligations
@@ -89,7 +90,8 @@ def build(data: dict, result: dict, applicability: list[dict], review_days: int,
         mine = [i for i in items if i["framework"] == f["framework"]]
         out_laws.append({"framework": f["framework"], "title": f["title"], "jurisdiction": f.get("jurisdiction"),
                          "citation": f.get("citation"), "source_url": f.get("source_url"),
-                         "in_force_on": _iso(f.get("in_force_on")), "scored": f["scored"],
+                         "in_force_on": _iso(f.get("in_force_on")), "applies_from": _iso(f.get("applies_from")),
+                         "scored": f["scored"],
                          "counts": cs.law_counts(mine),
                          "verdicts": verdicts.get(f["framework"], {v: 0 for v in VERDICTS})})
     return {"laws": out_laws, "items": items, "applicability": rows}

@@ -29,10 +29,14 @@ to a requirement the catalogue does not have, a control id or a text field the t
 like a person's e-mail, or text that carries an account ID, an ARN or an S3 URI stops the run before anything is
 written. Exit 0 = done (or DRY RUN clean), 1 = refused.
 
-AA-1174 (S288, CIS 471) — format 2 (format 1 is still accepted): three optional sections for the law frameworks.
+AA-1174 (S288, CIS 471) — format 2 (format 1 is still accepted): three sections for the law frameworks, each REQUIRED
+in a format-2 file (an explicit [] is a decision; a missing key is refused, never read as "replace with nothing").
 
   "frameworks":    [{"framework": "ex-law:2025", "title", "jurisdiction": "VN", "citation", "source_url",
-                     "in_force_on": "2026-01-01", "sort_order", "active"}]          law rows only (kind law, not scored)
+                     "in_force_on": "2016-05-24", "applies_from": "2018-05-25", "sort_order", "active"}]
+                                                       law rows only (kind law, not scored); in_force_on = the date the
+                                                       text entered into force, applies_from = the date its duties
+                                                       apply when later (optional)
   "requirements":  [{"framework", "ref", "section", "title", "sort_order", "counsel_review", "applies_as":
                      "controller|processor|both", "source_url", "doc_url", "applicable"}]   obligations of those laws
   "applicability": [{"market": "DE", "segment": "traveller|agency|agency_client|staff", "framework", "test",
@@ -46,8 +50,9 @@ https on an official host (``OFFICIAL_HOSTS``: legislation portals and regulator
 verdict" rule), our document links are https://github.com/ pages; data text never claims compliance ("compliant",
 "complies", "in compliance") and an obligation label is our own short wording. Mappings may point at the law
 obligations of the same file. Every applicable law obligation has a link: a ``doc_url``, or a mapping to an active
-control with a required automatic check. More than ``MAX_DEACTIVATE`` active controls set inactive by one run needs
-``--allow-deactivate`` (a register file missing most controls is a mistake, not a decision).
+control with a required automatic check. More than ``MAX_DEACTIVATE`` rows turned off by one run, in any of: active
+controls set inactive, active law frameworks set inactive, law obligations set not applicable, applicability rows
+removed, needs ``--allow-deactivate`` (a register file missing most of a section is a mistake, not a decision).
 """
 from __future__ import annotations
 
@@ -75,6 +80,7 @@ MARKET = re.compile(r"^[A-Z]{2}(-[A-Z0-9]{1,3})?$")
 SEGMENTS = ("traveller", "agency", "agency_client", "staff")
 VERDICTS = ("applies", "not_yet", "not_applicable")
 APPLIES_AS = ("controller", "processor", "both")
+V2_SECTIONS = ("frameworks", "requirements", "applicability")
 MAX_DEACTIVATE = 5   # technical-constant: a run that would set more active controls inactive needs --allow-deactivate
 # technical-constant: the official hosts a legal source link may point at (legislation portals, official journals,
 # regulators). A host and its sub-domains pass. The "primary source for every verdict" rule of AA-1174.
@@ -249,6 +255,11 @@ def _framework_problems(f: Any, db_kinds: dict[str, str]) -> list[str]:
         out.append(f"{where}: source_url must be https on an official host")
     if f.get("in_force_on") is not None and not _is_date(f["in_force_on"]):
         out.append(f"{where}: in_force_on must be an ISO date")
+    if f.get("applies_from") is not None:
+        if not _is_date(f["applies_from"]):
+            out.append(f"{where}: applies_from must be an ISO date")
+        elif _is_date(f.get("in_force_on")) and f["applies_from"] < f["in_force_on"]:
+            out.append(f"{where}: applies_from is before in_force_on (in force first, then the duties apply)")
     if f.get("scored", False) is not False:
         out.append(f"{where}: a law loaded from the register is never scored (a checklist, not a percentage)")
     if not isinstance(f.get("sort_order"), int) or f["sort_order"] < 1:
@@ -329,7 +340,11 @@ def _unique(rows: list, key, label: str) -> list[str]:
 
 def validate_v2(register: dict, db_kinds: dict[str, str]) -> tuple[list[str], set[tuple[str, str]]]:
     """Problems of the format-2 sections and the (framework, ref) pairs of the law obligations they add."""
-    fws, reqs, app = (register.get(k, []) for k in ("frameworks", "requirements", "applicability"))
+    missing = [k for k in V2_SECTIONS if k not in register]
+    if missing:
+        return [f"format 2 needs every section; missing: {', '.join(missing)} (an empty list [] replaces the section "
+                "with nothing on purpose, a missing key is refused)"], set()
+    fws, reqs, app = (register[k] for k in V2_SECTIONS)
     if not all(isinstance(x, list) for x in (fws, reqs, app)):
         return ["frameworks, requirements and applicability must be lists"], set()
     problems: list[str] = []
@@ -350,20 +365,37 @@ def validate_v2(register: dict, db_kinds: dict[str, str]) -> tuple[list[str], se
 
 
 def plan(register: dict, existing: set[str], law_state: dict | None = None) -> dict:
-    """What --apply changes. ``law_state`` = {"frameworks": law framework ids in the table (not seeded),
-    "requirements": their (framework, ref) pairs} (format 2)."""
+    """What --apply changes. ``law_state`` = {"frameworks": the ACTIVE law framework ids in the table (not seeded),
+    "requirements": their applicable (framework, ref) pairs, "applicability": the (market, segment, framework) keys of
+    the matrix} (format 2)."""
     ids = {c["control_id"] for c in register["controls"]}
     out = {"insert": sorted(ids - existing), "update": sorted(ids & existing), "deactivate": sorted(existing - ids),
            "mappings": len(register["mappings"])}
     if register.get("format") == 2:
-        law_state = law_state or {"frameworks": set(), "requirements": set()}
+        law_state = law_state or {}
         fws = {f["framework"] for f in register.get("frameworks", [])}
         reqs = {(r["framework"], r["ref"]) for r in register.get("requirements", [])}
-        out.update(frameworks_upsert=len(fws), frameworks_deactivate=sorted(set(law_state["frameworks"]) - fws),
+        app = {(a["market"], a["segment"], a["framework"]) for a in register.get("applicability", [])}
+        out.update(frameworks_upsert=len(fws),
+                   frameworks_deactivate=sorted(set(law_state.get("frameworks", ())) - fws),
                    requirements_upsert=len(reqs),
-                   requirements_not_applicable=len(set(law_state["requirements"]) - reqs),
-                   applicability=len(register.get("applicability", [])))
+                   requirements_not_applicable=len(set(law_state.get("requirements", ())) - reqs),
+                   applicability=len(app),
+                   applicability_removed=len(set(law_state.get("applicability", ())) - app))
     return out
+
+
+def guard(out: dict, active_controls: set[str], allow: bool) -> list[str]:
+    """The refusals of the turn-off guard for a plan (empty = go): more than MAX_DEACTIVATE rows turned off in one
+    section needs ``--allow-deactivate``."""
+    turned = {"active controls set inactive": len(set(out["deactivate"]) & active_controls),
+              "active law frameworks set inactive": len(out.get("frameworks_deactivate", ())),
+              "law obligations set not applicable": out.get("requirements_not_applicable", 0),
+              "applicability rows removed": out.get("applicability_removed", 0)}
+    if allow:
+        return []
+    return [f"{n} {what} (more than {MAX_DEACTIVATE}); is the file complete? Re-run with --allow-deactivate if "
+            "intended." for what, n in turned.items() if n > MAX_DEACTIVATE]
 
 
 SQL_UPSERT = """
@@ -383,13 +415,13 @@ SQL_INSERT_MAPPING = ("INSERT INTO compliance.requirement_mapping (control_id, f
 
 
 SQL_UPSERT_FRAMEWORK = """
-INSERT INTO compliance.framework (framework, kind, title, jurisdiction, citation, source_url, in_force_on, scored,
-                                  sort_order, active)
-VALUES ($1, 'law', $2, $3, $4, $5, $6::text::date, false, $7, $8)
+INSERT INTO compliance.framework (framework, kind, title, jurisdiction, citation, source_url, in_force_on,
+                                  applies_from, scored, sort_order, active)
+VALUES ($1, 'law', $2, $3, $4, $5, $6::text::date, $9::text::date, false, $7, $8)
 ON CONFLICT (framework) DO UPDATE
    SET title = EXCLUDED.title, jurisdiction = EXCLUDED.jurisdiction, citation = EXCLUDED.citation,
-       source_url = EXCLUDED.source_url, in_force_on = EXCLUDED.in_force_on, sort_order = EXCLUDED.sort_order,
-       active = EXCLUDED.active
+       source_url = EXCLUDED.source_url, in_force_on = EXCLUDED.in_force_on, applies_from = EXCLUDED.applies_from,
+       sort_order = EXCLUDED.sort_order, active = EXCLUDED.active
  WHERE compliance.framework.kind = 'law'
 """
 SQL_DEACTIVATE_FRAMEWORKS = ("UPDATE compliance.framework SET active = false WHERE kind = 'law' AND active "
@@ -421,7 +453,8 @@ async def _apply_laws(conn: Any, register: dict) -> None:
     fws = register.get("frameworks", [])
     for f in fws:
         await conn.execute(SQL_UPSERT_FRAMEWORK, f["framework"], f["title"], f.get("jurisdiction"), f.get("citation"),
-                           f.get("source_url"), f.get("in_force_on"), f["sort_order"], bool(f.get("active", True)))
+                           f.get("source_url"), f.get("in_force_on"), f["sort_order"], bool(f.get("active", True)),
+                           f.get("applies_from"))
     await conn.execute(SQL_DEACTIVATE_FRAMEWORKS, [f["framework"] for f in fws], sorted(SEEDED))
     reqs = register.get("requirements", [])
     for r in reqs:
@@ -484,8 +517,8 @@ async def main(argv: list[str]) -> int:
 
     conn = await asyncpg.connect(os.environ["DATABASE_URL"], ssl=None if args.no_ssl else "require")
     try:
-        kinds = {r["framework"]: r["kind"] for r in await conn.fetch(
-            "SELECT framework, kind FROM compliance.framework")}
+        fw_rows = await conn.fetch("SELECT framework, kind, active FROM compliance.framework")
+        kinds = {r["framework"]: r["kind"] for r in fw_rows}
         catalogue = {(r["framework"], r["ref"]) for r in await conn.fetch(
             "SELECT framework, ref FROM compliance.requirement")}
         problems = validate(register, catalogue, kinds)
@@ -495,17 +528,21 @@ async def main(argv: list[str]) -> int:
         rows = await conn.fetch("SELECT control_id, active FROM compliance.control")
         existing = {r["control_id"] for r in rows}
         active = {r["control_id"] for r in rows if r["active"]}
-        law_fws = {f for f, k in kinds.items() if k == "law" and f not in SEEDED}
+        law_all = sorted(r["framework"] for r in fw_rows if r["kind"] == "law" and r["framework"] not in SEEDED)
+        law_fws = {r["framework"] for r in fw_rows if r["kind"] == "law" and r["active"]
+                   and r["framework"] not in SEEDED}
         law_reqs = {(r["framework"], r["ref"]) for r in await conn.fetch(
             "SELECT framework, ref FROM compliance.requirement WHERE applicable AND framework = ANY($1::text[])",
-            sorted(law_fws))}
+            law_all)}
+        matrix = {(r["market"], r["segment"], r["framework"]) for r in await conn.fetch(
+            "SELECT market, segment, framework FROM compliance.applicability")}
         out = {"mode": "apply" if args.apply else "dry_run",
-               **plan(register, existing, {"frameworks": law_fws, "requirements": law_reqs})}
-        turned_off = sorted(set(out["deactivate"]) & active)
-        out["deactivate_active"] = len(turned_off)
-        if len(turned_off) > MAX_DEACTIVATE and not args.allow_deactivate:
-            out["refused"] = (f"{len(turned_off)} active controls would be set inactive (more than "
-                              f"{MAX_DEACTIVATE}); is the file complete? Re-run with --allow-deactivate if intended.")
+               **plan(register, existing, {"frameworks": law_fws, "requirements": law_reqs,
+                                           "applicability": matrix if register.get("format") == 2 else set()})}
+        out["deactivate_active"] = len(set(out["deactivate"]) & active)
+        refused = guard(out, active, args.allow_deactivate)
+        if refused:
+            out["refused"] = refused
             print(json.dumps(out, indent=1))
             return 1
         if args.apply:

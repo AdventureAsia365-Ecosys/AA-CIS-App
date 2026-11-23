@@ -248,7 +248,10 @@ export interface LawSummary {
   jurisdiction: string | null;
   citation: string | null;
   source_url: string | null;
+  /** The date the text entered into force (one convention for every law). */
   in_force_on: string | null;
+  /** The date its duties apply when later than in_force_on (GDPR: in force 2016-05-24, applies 2018-05-25). */
+  applies_from?: string | null;
   scored: boolean;
   counts: { met: number; not_met: number; not_checked: number; partly: number; counsel_review: number; total: number };
   verdicts: Record<Verdict, number>;
@@ -316,11 +319,11 @@ export function verdictTone(verdict: string | null | undefined): Tone {
   return VERDICT_TONE[verdict ?? ""] ?? "neutral";
 }
 
-/** Obligations worst first (not met, not checked, met), then by the law's own order. */
+/** Obligations per law, worst first inside a law (not met, not checked, met), then by the law's own order. */
 export function sortObligations(items: ObligationItem[]): ObligationItem[] {
   const rank: Record<string, number> = { not_met: 0, not_checked: 1, met: 2 };
-  return [...items].sort((a, b) => a.framework.localeCompare(b.framework) || a.sort_order - b.sort_order
-    || (rank[a.state] ?? 3) - (rank[b.state] ?? 3));
+  return [...items].sort((a, b) => a.framework.localeCompare(b.framework)
+    || (rank[a.state] ?? 3) - (rank[b.state] ?? 3) || a.sort_order - b.sort_order);
 }
 
 /** The laws that have a checklist (at least one obligation), in the API's order. */
@@ -370,14 +373,33 @@ export function safeSourceLink(href: string | null | undefined): string | null {
   return OFFICIAL_SOURCE_HOSTS.some((h) => host === h || host.endsWith(`.${h}`)) ? href : null;
 }
 
-/** AA-1174: the counts the Refresh action reports (published file + the API's own sources). */
+export type RefreshTone = "ok" | "warning" | "error";
+
+/** AA-1174: the counts the Refresh action reports (published file + the API's own sources) and its tone: ``ok`` only
+ * when the published file was read and every live source was collected (or kept as collected minutes ago);
+ * ``warning`` when nothing was published yet or a source was skipped (no evidence written: no Cognito session, a 401 /
+ * 403 from the CRM, a read-only view); ``error`` when the file could not be read or was refused, or a source failed. */
 export function refreshCounts(state: IngestState | null | undefined): {
-  ok: boolean; read: number; fresh: number; sources: { source: string; state: string; rows: number; fresh: number }[];
+  ok: boolean; tone: RefreshTone; read: number; fresh: number;
+  sources: { source: string; state: string; rows: number; fresh: number }[];
 } {
-  if (!state) return { ok: false, read: 0, fresh: 0, sources: [] };
+  if (!state) return { ok: false, tone: "error", read: 0, fresh: 0, sources: [] };
   const sources = Object.entries(state.live ?? {}).map(([source, s]) => ({
     source, state: s.state, rows: s.rows ?? 0, fresh: s.new ?? 0,
   }));
   const bad = state.state === "unavailable" || state.state === "invalid" || sources.some((s) => s.state === "error");
-  return { ok: !bad, read: state.rows ?? 0, fresh: state.new ?? 0, sources };
+  const warn = state.state === "missing" || state.state === "skipped" || sources.some((s) => s.state === "skipped");
+  const tone: RefreshTone = bad ? "error" : warn ? "warning" : "ok";
+  return { ok: tone === "ok", tone, read: state.rows ?? 0, fresh: state.new ?? 0, sources };
+}
+
+export type SkipReason = "cognito_session" | "unauthorized" | "forbidden" | "view_as" | "unknown";
+
+/** Why a source was skipped, from the API's reason code and the peer's HTTP status (plain message keys). */
+export function skipReason(reason: string | null | undefined, http?: number | null): SkipReason {
+  if (reason === "cognito_session_required") return "cognito_session";
+  if (reason === "view_as_read_only") return "view_as";
+  if (http === 401) return "unauthorized";
+  if (http === 403) return "forbidden";
+  return "unknown";
 }

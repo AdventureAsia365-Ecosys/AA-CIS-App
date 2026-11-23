@@ -8,7 +8,7 @@ import { test } from "node:test";
 import {
   FRAMEWORKS, checkTone, controlTone, deltaToReference, fmtPct, frameworkList, frameworkName, inFramework, isLegal,
   lawsWithItems, obligationTone, pivotApplicability, refreshCounts, safeLink, safeSourceLink, sortControls,
-  sortObligations, trendSeries, verdictTone,
+  skipReason, sortObligations, trendSeries, verdictTone,
 } from "./compliance.ts";
 import { readFileSync } from "node:fs";
 
@@ -101,6 +101,9 @@ test("obligation and verdict tones, worst first, laws with a checklist", () => {
   assert.equal(verdictTone("not_yet"), "warning");
   const it = (ref, state, sort_order) => ({ framework: "ex-law:2025", ref, state, sort_order });
   assert.deepEqual(sortObligations([it("A", "met", 2), it("B", "not_met", 1)]).map((i) => i.ref), ["B", "A"]);
+  // worst first inside a law, then the law's own order (sort_order alone would put the met Art.1 first)
+  assert.deepEqual(sortObligations([it("Art.1", "met", 1), it("Art.2", "not_checked", 2), it("Art.3", "not_met", 3),
+    it("Art.4", "not_met", 4)]).map((i) => i.ref), ["Art.3", "Art.4", "Art.2", "Art.1"]);
   const law = (framework, total) => ({ framework, counts: { total } });
   assert.deepEqual(lawsWithItems([law("a", 0), law("b", 3)]).map((l) => l.framework), ["b"]);
 });
@@ -120,11 +123,24 @@ test("legal source links open only official hosts", () => {
 
 test("the refresh result counts the published file and each live source", () => {
   const ok = refreshCounts({ state: "ok", rows: 14, new: 3, live: { cis_db: { state: "ok", rows: 2, new: 2 },
-    crm_ops: { state: "skipped", reason: "cognito_session_required", http: 401 } } });
-  assert.deepEqual([ok.ok, ok.read, ok.fresh, ok.sources.length], [true, 14, 3, 2]);
-  assert.equal(refreshCounts({ state: "ok", live: { cis_db: { state: "error" } } }).ok, false);
-  assert.equal(refreshCounts({ state: "unavailable" }).ok, false);
+    crm_ops: { state: "recent" } } });
+  assert.deepEqual([ok.ok, ok.tone, ok.read, ok.fresh, ok.sources.length], [true, "ok", 14, 3, 2]);
+  assert.equal(refreshCounts({ state: "ok", live: { cis_db: { state: "error" } } }).tone, "error");
+  assert.equal(refreshCounts({ state: "unavailable" }).tone, "error");
   assert.equal(refreshCounts(null).ok, false);
+});
+
+test("a skipped CRM collection or nothing published is a warning, never a success", () => {
+  const skipped = refreshCounts({ state: "ok", rows: 14, new: 3, live: { cis_db: { state: "ok", rows: 2, new: 2 },
+    crm_ops: { state: "skipped", reason: "cognito_session_required", http: 401 } } });
+  assert.deepEqual([skipped.ok, skipped.tone], [false, "warning"]);
+  assert.deepEqual([refreshCounts({ state: "missing" }).ok, refreshCounts({ state: "missing" }).tone],
+    [false, "warning"]);
+  assert.equal(skipReason("cognito_session_required", 401), "cognito_session");
+  assert.equal(skipReason("Unauthorized", 401), "unauthorized");
+  assert.equal(skipReason("forbidden", 403), "forbidden");
+  assert.equal(skipReason("view_as_read_only"), "view_as");
+  assert.equal(skipReason(undefined), "unknown");
 });
 
 test("no page text claims legal compliance and the page says it is not legal advice", () => {

@@ -59,7 +59,7 @@ def register() -> dict:
          "active": True}]
     reg["frameworks"] = [{"framework": "ex-law:2025", "title": "Example personal data law", "jurisdiction": "VN",
                           "citation": "Example Law 1/2025", "source_url": "https://vbpl.vn/example",
-                          "in_force_on": "2026-01-01", "sort_order": 20}]
+                          "in_force_on": "2025-07-01", "applies_from": "2026-01-01", "sort_order": 20}]
     reg["requirements"] = [
         {"framework": "ex-law:2025", "ref": "Art.30", "section": "Example law", "title": "Keep records of processing",
          "sort_order": 1, "counsel_review": False, "applies_as": "both",
@@ -99,6 +99,8 @@ async def test_obligation_states_and_unchanged_standard_scores(conn):
     assert items["Art.21"]["state"] == "not_checked" and items["Art.21"]["counsel_review"] is True
     laws = {law["framework"]: law for law in out["laws"]}
     assert laws["ex-law:2025"]["counts"]["met"] == 1 and "eu-ai-act:2024" in laws
+    assert (laws["ex-law:2025"]["in_force_on"], laws["ex-law:2025"]["applies_from"]) == ("2025-07-01", "2026-01-01")
+    assert laws["eu-ai-act:2024"]["applies_from"] == "2026-08-02"
     assert out["applicability"][0]["review_due"] is False
     after = (await compliance.overview(OneConnPool(conn), now=NOW, write=False))["frameworks"]
     strip = [(f["framework"], f["strict_pct"], f["weighted_pct"]) for f in before]

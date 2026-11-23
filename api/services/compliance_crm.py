@@ -8,7 +8,11 @@ Checks (ids stable for AA-1173):
 
   campaign_consent_enforced   fact ``violations`` = marketing messages sent in the window to a contact whose latest
                               marketing consent at send time was not a yes, or who was suppressed (CIS grades it
-                              against cis.compliance.campaign_consent_violations_max); detail adds the sends counted.
+                              against cis.compliance.campaign_consent_violations_max); detail adds the sends counted
+                              (``sent`` includes the sends held send_uncertain, which the provider may have delivered;
+                              ``uncertain`` counts them apart). No marketing send in the window -> a ``manual`` row:
+                              0 violations out of 0 sends is no evidence either way, so the obligation never reads met
+                              on it (a manual result is not met in phase 1).
   consent_capture_present     fact ``last_date`` = the newest consent decision the CRM recorded (CIS grades its age
                               against cis.compliance.consent_capture_max_age_days); none at all -> error.
 
@@ -62,15 +66,23 @@ def evaluate(body: dict, now: datetime) -> list[dict]:
     """The two evidence rows from a 200 body of the CRM route (pure)."""
     window = _int(body.get("window_days"))
     sent, violations = _int(body.get("marketing_sent")), _int(body.get("violations"))
+    uncertain = _int(body.get("marketing_uncertain"))
     tenants, excluded = _int(body.get("tenants")), _int(body.get("excluded_erased"))
     recorded, last = _int(body.get("consents_recorded")), _day(body.get("last_consent_at"))
     if sent is None or violations is None:
         campaign = _row("campaign_consent_enforced", "error", "the CRM answer has no send counts", {}, now)
     else:
-        campaign = _row("campaign_consent_enforced", "pass",
-                        f"{violations} of {sent} marketing sends in {window} days went to a contact without a yes",
-                        {"violations": violations, "sent": sent, "window_days": window, "tenants": tenants,
-                         "excluded_erased": excluded}, now)
+        detail = {"violations": violations, "sent": sent, "uncertain": uncertain, "window_days": window,
+                  "tenants": tenants, "excluded_erased": excluded}
+        if sent == 0:
+            campaign = _row("campaign_consent_enforced", "manual",
+                            f"no marketing send in {window} days: nothing to check yet, not evidence of consent",
+                            detail, now)
+        else:
+            held = f" ({uncertain} possibly delivered after a stopped run)" if uncertain else ""
+            campaign = _row("campaign_consent_enforced", "pass",
+                            f"{violations} of {sent} marketing sends{held} in {window} days went to a contact "
+                            f"without a yes", detail, now)
     if last is None:
         capture = _row("consent_capture_present", "error", "the CRM has recorded no consent decision yet",
                        {"recorded_in_window": recorded, "window_days": window}, now)

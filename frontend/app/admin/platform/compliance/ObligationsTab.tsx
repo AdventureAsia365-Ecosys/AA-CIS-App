@@ -153,6 +153,8 @@ function LawSection({ law, items, t }: { law: LawSummary; items: ObligationItem[
         <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
           {law.citation && <span>{law.citation}</span>}
           {law.in_force_on && <span>{t("inForce", formatDate(law.in_force_on))}</span>}
+          {law.applies_from && law.applies_from !== law.in_force_on
+            && <span>{t("appliesFrom", formatDate(law.applies_from))}</span>}
           <SourceLink href={law.source_url} label={t("officialText")} />
           <span>{t("lawCounts", c.met, c.not_met, c.not_checked, c.counsel_review)}</span>
         </span>

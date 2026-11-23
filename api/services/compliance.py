@@ -311,8 +311,8 @@ async def reference_scores(scored: Optional[list[str]] = None) -> dict:
 
 SQL_REQUIREMENTS = ("SELECT framework, ref, section, title, applicable, sort_order, counsel_review, applies_as, "
                     "source_url, doc_url FROM compliance.requirement ORDER BY framework, sort_order")
-SQL_FRAMEWORKS = ("SELECT framework, kind, title, jurisdiction, citation, source_url, in_force_on, scored, sort_order, "
-                  "active FROM compliance.framework ORDER BY sort_order, framework")
+SQL_FRAMEWORKS = ("SELECT framework, kind, title, jurisdiction, citation, source_url, in_force_on, applies_from, "
+                  "scored, sort_order, active FROM compliance.framework ORDER BY sort_order, framework")
 SQL_CONTROLS = ("SELECT control_id, title, intent, domain, owner_role, frequency, test_type, checks, scope, active, "
                 "updated_at FROM compliance.control ORDER BY control_id")
 SQL_MAPPINGS = "SELECT control_id, framework, ref, coverage, note FROM compliance.requirement_mapping"

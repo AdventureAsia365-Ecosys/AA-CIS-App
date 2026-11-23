@@ -3006,7 +3006,8 @@ the guide is owner tier (`ai_gateway_guide.read_asset`); the BFF decodes it like
 **Compliance readiness (AA-1170, phase 1).** Platform › Compliance `/admin/platform/compliance` (capabilities `compliance.read` / `compliance.write` in `staff_authz`, administrator only at first, a custom role may hold them; PAGE_RULES and BFF `API_READ_RULES` "platform/compliance" before the "platform" rules). Schema `compliance` (CIS 466, CIS-owned, `cis_app` DML): `requirement` (every requirement of ISO/IEC 27001:2022, SOC 2 TSC common criteria, ISO/IEC 42001:2023, OWASP Top 10 2021, OWASP Top 10 for LLM 2025 and the EU AI Act deployer articles, as identifiers with our own short labels; the standards' text is copyrighted and never stored), `control` + `requirement_mapping` (the common controls and what they cover, full / partial; **never committed**: loaded from the private register by `scripts/compliance/load_register.py`, DRY RUN by default, run by the orchestrator as `cis_app`; `scripts/compliance/register.example.json` is an invented example), `evidence` (append-only by trigger: one row per published check result) and `score_snapshot` (one row per UTC day and framework). Evidence, phase 1: the root workflow "Compliance evidence" (`tools/compliance/collect.py`, daily, about ten checks with the run's `GITHUB_TOKEN` and the root registers) uploads `docs-reader/compliance/evidence.json` with the Docs sync role; `api/services/compliance.py` reads it under the docs-reader grant when the page loads (cached 5 min; Refresh = `POST /admin/platform/compliance/refresh`, compliance.write), cleans it (no 12-digit run, no ARN, GitHub links only, 8 KiB detail) and ingests it (unique `(source, check_id, collected_at)`). Score (`api/services/compliance_score.py`, pure): Evidenced % per framework, strict (met / all requirements) and weighted (+ partial x `cis.compliance.partial_weight`); a check counts only when its newest evidence passes and is within the validity window of its source read **at score time** (`cis.compliance.validity_hours.<source>`, so a shorter setting turns evidence stale at once), its collector was heard within `cis.compliance.collector_heartbeat_hours`, and its published fact passes the setting (drill age, access review age, overdue docs). The S286 hand scores are a reference line (`cis.compliance.reference_scores`). Settings: area `compliance` (CIS 466; keys in `api/services/compliance_settings.py`). The Object Lock evidence store, the AWS / DB collectors and the read-only GitHub App are phase 2. Page `frontend/app/admin/platform/compliance/` (Overview, Controls + drawer), helpers `frontend/lib/compliance.ts`; the banner says "Readiness score (Dev environment), not a certification".
 
 **Privacy obligations (AA-1174, CIS 471).** Schema `compliance` is generic over frameworks: `framework` (every framework,
-kind `standard` or `law`, `scored`, display name, jurisdiction, citation, official source, in-force date; the six of 466
+kind `standard` or `law`, `scored`, display name, jurisdiction, citation, official source, `in_force_on` (entered into
+force) and `applies_from` (when its duties apply, if later); the six of 466
 are seeded, the EU AI Act as a scored law so its card stays; the old framework CHECKs became foreign keys) and
 `applicability` (the matrix market x data segment `traveller` / `agency` / `agency_client` / `staff` x law: the test,
 the threshold, the verdict `applies` / `not_yet` / `not_applicable`, a primary-source link, the assessment date, a
@@ -3021,17 +3022,21 @@ not yet checked (unmapped, or only controls without an automatic check), else no
 per law, source links only to official hosts `safeSourceLink`, fixed note "Readiness, not legal advice"). Law rows, their
 obligations and the matrix come from the private register through `load_register.py` format 2 (law frameworks only;
 a law no longer listed is set inactive and its obligations not applicable, never deleted; sources on an official-host
-allowlist; no "compliant" claims; a guard refuses deactivating more than 5 controls without `--allow-deactivate`).
+allowlist; no "compliant" claims; every format-2 section is required (a missing key is refused, `[]` is explicit);
+a guard refuses turning off more than 5 rows of any section without `--allow-deactivate`).
 Evidence: the root collector adds six `legal_*` checks (the `docs/legal` pages of each document, fact `overdue` against
-each page's own review cycle, plus their status) and `last_erasure_drill`; the API collects two sources itself, **only
+each page's own review cycle, plus their status; a page still in a draft status fails the check) and
+`last_erasure_drill`; the API collects two sources itself, **only
 on Refresh** (POST, never on a GET, so a read-only view-as session writes nothing) and at most every 10 minutes per
 source: `cis_db` (`api/services/compliance_db.py`: `retention_runs_recent` = oldest of the newest retention runs per
 kind, `retention_live_enabled` = oldest of the newest LIVE runs per kind, graded on its age) and `crm_ops` (`api/services/compliance_crm.py`, crm.ops.v1 1.18
-`GET /privacy-evidence` with the staff member's own token: `campaign_consent_enforced` = sends without a yes,
+`GET /privacy-evidence` with the staff member's own token: `campaign_consent_enforced` = sends without a yes (held `send_uncertain` sends count as sent; no send at all in the
+window is a `manual` row, never a pass),
 `consent_capture_present` = newest consent decision; a 401 / 403 writes no evidence row). The heartbeat applies to the
 scheduled source only. Settings: ten more `cis.compliance.*` keys (validity of the two sources, legal pages overdue,
-erasure drill age, retention run age and never-live kinds, consent capture age, campaign violations and window,
-applicability review age). Refresh evidence reports its counts (toast and a status line).
+erasure drill age, retention run age and live run age, consent capture age, campaign violations and window,
+applicability review age). Refresh evidence reports its counts (toast and a status line): success only when the file
+was read and every source collected; nothing published or a skipped source is a warning with a plain reason.
 
 **Platform apps, audit and cost (AA-884).** Router `api/routers/admin_platform_ops.py` (read only, admin-only POLICY
 entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
