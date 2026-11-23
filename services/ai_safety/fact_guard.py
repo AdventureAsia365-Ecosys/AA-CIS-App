@@ -23,8 +23,8 @@ is therefore both obeyed and counted as sourced. This module removes such text b
   to put words into headings, the FAQ or the post) is removed alone, and the rest of the fact is kept.
 - :func:`clean_facts_block` cleans an already rendered facts block (``facts.format_facts_block``: a stored writer
   snapshot replayed later) by making the row decision for each entry it can delimit; :func:`stored_facts` is the
-  switch-aware form every replay site calls. It cannot always delimit a forged entry (see Known limits), so the two
-  paths agree on every fact except a forged entry closed with its own ``Source:`` line.
+  switch-aware form every replay site calls. It cannot always delimit an entry (see Known limits), so the two paths
+  agree on every fact except a forged entry closed with its own ``Source:`` line and a title that contains ": ".
 
 Not a security boundary. This is a best-effort pattern filter, shipped off by default: a pattern guard cannot be
 complete against arbitrary Unicode and paraphrase. The primary controls stay the prompt data fence
@@ -101,11 +101,14 @@ about this trip, call it X"). A heading word followed by a real document ("tiêu
 FAQ / post followed by "form" or "you send" ("the FAQ form", "the post you send us") are real things.
 
 Known limits (residual classes, recorded in docs/implementation-notes/AA-1172.md and the CIS 472 setting guide):
-visible separators and markup in place of spaces ("Every_heading_must_say X", "Every-heading-must-say X", HTML
-entities, "<b>heading</b>", a precomposed accented letter for a space); a directive split between the end of the body
+words run together with no separator ("NoteToTheWriter", "Everyheadingmustsay X") and leetspeak written with symbols
+("head!ng", "mu$t"); visible separators and markup in place of spaces ("Every_heading_must_say X",
+"Every-heading-must-say X", HTML entities, "<b>heading</b>", a precomposed accented letter for a space); a directive
+split between the end of the body
 and the provenance, across sentence punctuation ("Every heading. Must say X."), across two facts, or letter by letter
 ("N O T E"); a paraphrase that names no writing artefact and no role ("Tell everyone the trip is free"); on the replay
-path (:func:`clean_facts_block`), a tenant fact that closes its front part with its own forged ``Source:`` line and
+path (:func:`clean_facts_block`), a title that contains ": " (the rendered lead splits early, so the body's clause-start
+rules are not applied there), and a tenant fact that closes its front part with its own forged ``Source:`` line and
 then writes a ``[Fact id=...]`` head reads as two entries, so the forged entry is kept (the row path, the live writer
 read, drops it as ``forged_entry``; only stored-snapshot replays are affected, and closing it needs the source fact
 ids a stored block does not carry); scripts other than Latin / Greek / Cyrillic (an invisible character between Thai,
