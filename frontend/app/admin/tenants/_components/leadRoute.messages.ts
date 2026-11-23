@@ -7,8 +7,9 @@ export const T360_LEAD = defineMessages(
   {
     title: "TripPlanner lead route",
     hint: "Where a traveller's \"Send to advisor\" on this agency's planner goes when the agency has no CRM add-on. "
-      + "With the CRM add-on, leads always go to its CRM.",
+      + "With the CRM add-on and its CRM agency, leads go to its CRM.",
     crmNote: "This agency has the CRM add-on: its planner leads go to its CRM. The route below applies only without it.",
+    crmNoAgency: "This agency has the CRM add-on but no CRM agency yet: its planner leads take the route below until the CRM agency is set up.",
     noTripPlanner: "This agency has no TripPlanner subscription; the route is kept for when it has one.",
     loading: "Loading…",
     loadError: "The lead route could not be loaded",
@@ -47,8 +48,9 @@ export const T360_LEAD = defineMessages(
   {
     title: "Đường nhận lead TripPlanner",
     hint: "Nơi yêu cầu \"Gửi cho tư vấn viên\" của khách trên planner của đại lý được gửi tới khi đại lý không có "
-      + "add-on CRM. Có add-on CRM thì lead luôn vào CRM.",
+      + "add-on CRM. Có add-on CRM và đại lý trong CRM thì lead vào CRM.",
     crmNote: "Đại lý này có add-on CRM: lead từ planner vào CRM. Đường dưới đây chỉ dùng khi không có CRM.",
+    crmNoAgency: "Đại lý này có add-on CRM nhưng chưa có đại lý trong CRM: lead từ planner đi theo đường dưới đây cho tới khi CRM được thiết lập.",
     noTripPlanner: "Đại lý này chưa có gói TripPlanner; đường nhận lead được giữ cho tới khi có.",
     loading: "Đang tải…",
     loadError: "Không tải được đường nhận lead",

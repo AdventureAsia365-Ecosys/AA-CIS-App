@@ -33,9 +33,9 @@ from tests.unit.aa976_m2m import OTHER_CLIENT, install_m2m
 
 CONTRACT = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "tenant.addons.v1.openapi.yaml"
 DOC = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
-# sha256 of AA-Ecosys docs/contracts/tenant.addons.v1.openapi.yaml (info.version 1.1, AA-1036 R3 + AA-1139).
+# sha256 of AA-Ecosys docs/contracts/tenant.addons.v1.openapi.yaml (info.version 1.2, AA-1036 R3 + AA-1139 + AA-1160).
 # Update the root file first, copy it here byte for byte, then set this to `sha256sum` of the root file.
-ROOT_CONTRACT_SHA256 = "b84ab4e2ad2829c877447dd3aacc0b2ba11ebdcbd7375d380fbd5d4718b13532"
+ROOT_CONTRACT_SHA256 = "a00868526125aee7ddf8e326f782dc57be29b13b7aa31ba49141d6081d538d3e"
 
 TENANT = "1036ad00-0000-4000-8000-000000000001"
 MEMBER = "1036ad00-0000-4000-8000-0000000000aa"

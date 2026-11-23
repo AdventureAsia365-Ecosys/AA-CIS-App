@@ -271,7 +271,12 @@ async def lead_route(conn, tenant_id: str) -> Optional[dict]:
     if await conn.fetchval(TENANT_SQL, tenant_id) is None:
         return None
     has_tp = bool(await conn.fetchval(HAS_TRIPPLANNER_SQL, tenant_id))
-    return {"tenant_id": tenant_id, "has_tripplanner": has_tp, **_route(await conn.fetchrow(ROUTE_SQL, tenant_id))}
+    # AA-1160: whether the CRM holds an agency for the tenant (CIS 475): with the CRM add-on but no agency, the leads
+    # take the stored route below.
+    from services.tenant_account import crm_agency  # local: keep this module's imports as they were
+
+    return {"tenant_id": tenant_id, "has_tripplanner": has_tp, **_route(await conn.fetchrow(ROUTE_SQL, tenant_id)),
+            "crm_agency": await crm_agency.has_agency(conn, tenant_id)}
 
 
 async def set_lead_route(conn, tenant_id: str, *, channel: Any, webhook_url: Any, email: Any, actor: str,
@@ -328,6 +333,7 @@ MODULE_SQL = """
     SELECT t.account_status IN ('trial', 'active', 'past_due') AS in_service,
            EXISTS (SELECT 1 FROM shared.v_tenant_entitlement_resolved r
                     WHERE r.tenant_id = t.tenant_id AND r.feature_key = 'crm.core') AS crm_core,
+           EXISTS (SELECT 1 FROM shared.tenant_crm_agency a WHERE a.tenant_id = t.tenant_id) AS crm_agency,
            (SELECT r.limit_value FROM shared.v_tenant_entitlement_resolved r
              WHERE r.tenant_id = t.tenant_id AND r.feature_key = 'tp.ai_sessions' LIMIT 1) AS ai_sessions_monthly,
            ARRAY(SELECT jsonb_build_object('domain', d.domain, 'status', d.status)
@@ -413,7 +419,9 @@ async def module_view(conn, tenant_id: str, *, planner_origin: Optional[str] = N
     route = _route(await conn.fetchrow(ROUTE_SQL, tenant_id))
     crm_core = bool(row["crm_core"])
     stored = route["lead_channel"]
-    if crm_core:
+    # AA-1160: crm only while the CRM add-on is live AND the CRM holds an agency for the tenant (CIS 475); a tenant
+    # with the add-on but no agency yet takes its own route, as TripPlanner does (catalog view crm_agency).
+    if crm_core and row["crm_agency"]:
         effective = "crm"
     elif stored == "webhook" and route["lead_webhook_url"]:
         effective = "webhook"

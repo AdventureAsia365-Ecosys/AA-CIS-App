@@ -20,6 +20,8 @@ export interface LeadRouteResp {
   lead_email: string | null;
   updated_at: string | null;
   updated_by: string | null;
+  /** AA-1160: the CRM holds an agency for the tenant (absent from an API before AA-1160: treated as true). */
+  crm_agency?: boolean;
 }
 
 export interface LeadRouteDraft { channel: LeadChannel; url: string; email: string }

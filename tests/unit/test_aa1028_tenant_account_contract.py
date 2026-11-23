@@ -33,12 +33,13 @@ from tests.unit.aa976_m2m import OTHER_CLIENT, install_m2m
 
 CONTRACT = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "tenant.entitlements.v1.openapi.yaml"
 DOC = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
-# sha256 of AA-Ecosys docs/contracts/tenant.entitlements.v1.openapi.yaml (info.version 1.10, AA-1116: the quote
+# sha256 of AA-Ecosys docs/contracts/tenant.entitlements.v1.openapi.yaml (info.version 1.11, AA-1160: crm_agency and the
+# fallback route appended to the TripPlanner catalog view; 1.10 AA-1116: the quote
 # discount appended to the Booking billing view; 1.9 the option B billing terms; 1.8 AA-1090: custom_domains appended
 # to the TripPlanner catalog view; 1.7 AA-1093: the event account.erasure_requested; 1.6 added is_synthetic to the
 # catalog view only).
 # Update the root file first, copy it here byte for byte, then set this to `sha256sum` of the root file.
-ROOT_CONTRACT_SHA256 = "d5d4213d7ff301afd2eff448637e985b0111dca97cb02df26c757736ef33462c"
+ROOT_CONTRACT_SHA256 = "311de50283e99ae0d24066ab731e88a320c88106e7d9c33cdf54c40112da5f0b"
 
 # Fixed UUIDs (AA-993: parametrize IDs must not change between pytest-xdist workers).
 TENANT = "1028a000-0000-4000-8000-000000000001"
@@ -109,10 +110,25 @@ class FakePool:
     def __init__(self, conn: FakeConn, fail: Optional[BaseException] = None) -> None:
         self.conn, self.fail, self.released = conn, fail, 0
 
-    async def acquire(self, timeout: Optional[float] = None):
-        if self.fail:
-            raise self.fail
-        return self.conn
+    def acquire(self, timeout: Optional[float] = None):
+        """asyncpg's shape: awaitable (the reader) and an async context manager (AA-1160's CRM agency marker, whose
+        write FakeConn does not answer: the marker is best effort, tests/unit/test_aa1160_crm_agency_marker.py)."""
+        pool = self
+
+        class _Acquire:
+            def __await__(self):
+                async def _conn():
+                    if pool.fail:
+                        raise pool.fail
+                    return pool.conn
+                return _conn().__await__()
+
+            async def __aenter__(self):
+                return pool.conn
+
+            async def __aexit__(self, *exc):
+                return False
+        return _Acquire()
 
     async def release(self, conn: Any) -> None:
         self.released += 1

@@ -130,3 +130,28 @@ async def test_refusals_write_nothing(conn):
     n = await conn.fetchval("SELECT count(*) AS n FROM shared.tenant_tripplanner_site "
                             "WHERE tenant_id = ANY($1::uuid[])", [no_planner, closing, tid])
     assert n == 0
+
+
+@pytest.mark.asyncio
+async def test_crm_only_with_a_crm_agency(conn):
+    """AA-1160 (CIS 475): the CRM add-on alone is not the CRM channel. Without a CRM agency (S285: crm.core, no agency,
+    leads skipped) the module says the agency's own route; once the CRM's snapshot read or the onboarding records the
+    agency (shared.tenant_crm_agency), crm."""
+    from services.tenant_account import crm_agency
+
+    tid = await _tenant(conn)
+    await conn.execute("INSERT INTO shared.tenant_subscription (tenant_id, product, plan_key, status, updated_by) "
+                       "VALUES ($1::uuid, 'crm', 'crm.core', 'active', 'test:aa1160')", tid)
+    await tp.set_agency_lead_route(conn, tid, channel="email", webhook_url=None, email="desk@fernhollow.example.com",
+                                   actor=ACTOR)
+    before = await tp.module_view(conn, tid)
+    _valid(before)
+    assert before["crm_core"] is True and before["lead_route"]["effective_channel"] == "email"
+    assert (await tp.lead_route(conn, tid))["crm_agency"] is False
+    assert await crm_agency.record(conn, tid, "crm_pull") is True
+    assert await crm_agency.record(conn, tid, "crm_pull") is False                # throttled: written once
+    assert await crm_agency.record(conn, tid, "crm_onboarding") is True           # another source: written
+    after = await tp.module_view(conn, tid)
+    assert after["lead_route"]["effective_channel"] == "crm" and after["lead_route"]["lead_channel"] == "email"
+    assert (await tp.lead_route(conn, tid))["crm_agency"] is True
+    assert await crm_agency.record(conn, str(uuid.uuid4()), "crm_pull") is False  # no such tenant: nothing written

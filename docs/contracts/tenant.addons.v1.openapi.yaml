@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: tenant.addons.v1 (AA-CIS-App → AA-Partner CRM; an agency's add-ons and its add-on requests)
-  version: "1.1"
+  version: "1.2"
   description: >-
     CIS shared is the master of the tenant account and of the agency's add-on requests (shared.tenant_addon_request,
     CIS 374; root ADR 0019 d7, AA-1036 R3): an agency asks for an add-on (CRM, Trip planner), AA staff approve or
@@ -27,10 +27,14 @@ info:
     360 editor (an https webhook URL whose host can be public, an e-mail address whose domain is not internal, the
     brand tokens only) and audits the write as the CRM member. A write needs an active Trip planner (409
     tripplanner_not_active). Usage, leads and the webhook signing key are TripPlanner's (lead.submitted.v1 1.1).
+    1.2 (AA-1160, no shape change): effective_channel is crm only while the CRM add-on is live AND the CRM holds an
+    agency for the tenant (catalog.v_tenant_tripplanner_v1 crm_agency, tenant.entitlements.v1 1.11); with the add-on
+    but no CRM agency yet the planner's leads take the stored route (webhook, email or none), and effective_channel
+    says so. crm_core keeps its meaning (the add-on is live).
   x-aa-contract: tenant.addons.v1
   x-aa-producer: AA-CIS-App
   x-aa-consumers: [AA-Partner]
-  x-aa-issues: [AA-1036, AA-1139]
+  x-aa-issues: [AA-1036, AA-1139, AA-1160]
 servers:
   - url: /tenant/v1
 security:
@@ -333,7 +337,8 @@ components:
         effective_channel:
           type: string
           enum: [crm, webhook, email, none]
-          description: Where a lead goes now (crm while the CRM add-on is live; none = the planner refuses leads).
+          description: Where a lead goes now (crm while the CRM add-on is live and the CRM holds the agency, 1.2;
+            else the stored route; none = the planner refuses leads).
         updated_at: {type: [string, "null"], format: date-time}
     TripPlannerModule:
       type: object

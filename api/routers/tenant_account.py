@@ -22,6 +22,10 @@ client joins with ``bk_tenant_pull``). 401 no / bad token, 403 another client or
 set or configuration unavailable. ``/tenant`` is neither a staff path nor ``/v1``: neither the staff middleware nor the
 tenant rate limiter touches these routes. The API Gateway route is ``/tenant/v1/{tenant_v1_proxy+}`` (AA-CIS-Infra).
 
+AA-1160: a snapshot read by the CRM client also records the tenant in ``shared.tenant_crm_agency`` (CIS 475; the CRM
+reads the snapshot only for an agency it holds), which decides whether a TripPlanner lead goes to the CRM
+(``services/tenant_account/crm_agency.py``).
+
 Caching: the snapshot carries a strong ETag over the body without ``as_of``, ``Cache-Control: private, no-cache`` and
 ``Vary: Authorization``; the feed is never cached. Errors use the contract Problem body ``{error, message}``.
 """
@@ -40,7 +44,7 @@ from fastapi.responses import JSONResponse, Response
 from api.core import m2m_auth
 from api.core.m2m_auth import M2MProblem
 from api.schemas.public_api import TenantAccountBody, TenantAccountEventPage  # AA-899: doc only
-from services.tenant_account import feed, reader
+from services.tenant_account import crm_agency, feed, reader
 from services.tenant_membership.reader import InvalidRequest, parse_tenant_id
 
 logger = structlog.get_logger()
@@ -99,6 +103,10 @@ async def get_tenant_account(tenant_id: str, request: Request,
                 found=data is not None, entitlements=len(data["entitlements"]) if data else 0)
     if data is None:
         raise M2MProblem(404, "not_found", "No tenant has this id.")
+    if caller.client_id == m2m_auth.m2m_crm_client_id():
+        # AA-1160: the CRM reads a snapshot only for an agency it holds, so this read is CIS's proof that the tenant
+        # has a CRM agency (shared.tenant_crm_agency, CIS 475). Best effort, throttled, never fails the read.
+        await crm_agency.record_quietly(_pool(request), key, "crm_pull")
     etag = f'"{_body_hash(data)}"'
     headers = {"ETag": etag, "Cache-Control": CACHE_CONTROL, "Vary": "Authorization"}
     if _matches(request.headers.get("if-none-match"), etag):

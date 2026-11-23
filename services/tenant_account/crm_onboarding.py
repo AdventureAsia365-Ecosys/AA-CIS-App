@@ -23,6 +23,8 @@ that starts the saga, with that staff member's own token (``platform_apps.relay_
 4. when step 2 created the agency: one ``account.status_changed`` event with the status unchanged (as
    ``pilot.end_pilot``), so ``crm_entitlement_pull`` projects plan, seats and features at its next slot instead of the
    hourly reconcile (the saga's own events may have reached the CRM before the agency existed: "unknown agency");
+   Once the agency exists (step 2 done), CIS records it in ``shared.tenant_crm_agency`` (AA-1160, CIS 475:
+   ``crm_agency.record_quietly``, source ``crm_onboarding``), so the tenant's TripPlanner leads may go to the CRM;
 5. one ``acp_shared.audit_log`` row ``tenant.crm_onboarded`` when anything changed (steps, ticket, CRM status codes;
    the owner address only as ``owner_invite``: sent / pending / owner_present / not_sent, never in clear or hashed:
    the audit chain is kept after an erasure).
@@ -40,7 +42,7 @@ from typing import Any, Awaitable, Callable, Optional
 import structlog
 
 from services.acp_shared.audit_log import AdminTenantAuditAction, write_audit_log
-from services.tenant_account import dev_guard
+from services.tenant_account import crm_agency, dev_guard
 
 logger = structlog.get_logger()
 
@@ -183,6 +185,8 @@ async def onboard(pool, tenant_id: str, *, owner_email: Optional[str], authoriza
     codes: dict[str, int] = {}
     created, error = await _ensure_agency(call, row, authorization, ref, steps, codes)
     if error is None:
+        # AA-1160: the agency exists now; TripPlanner leads may go to the CRM (shared.tenant_crm_agency, CIS 475).
+        await crm_agency.record_quietly(pool, tid, "crm_onboarding")
         error = await _invite(call, tid, address, authorization, ref, steps, codes)
     return await _finish(pool, row, steps, codes, created, ref, address, actor, request_key, error)
 
