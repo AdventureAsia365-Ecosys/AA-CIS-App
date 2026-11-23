@@ -1,4 +1,4 @@
-"""AA-1160 — CIS records the tenants the CRM holds an agency for (services/tenant_account/crm_agency.py, CIS 475).
+"""AA-1160 — CIS records the tenants the CRM holds an agency for (services/tenant_account/crm_agency.py, CIS 474).
 
   * ``record``: one throttled upsert, a known source only; ``record_quietly`` never raises (no pool, a failing write);
   * the tenant.entitlements.v1 snapshot read by the CRM client records ``crm_pull``; a 404 records nothing; a failing
@@ -74,14 +74,14 @@ class Pool:
         return None
 
 
-SEEN_HOURS_DEFAULT = 3  # the CIS 475 seed default (the migration PR's test_aa1160_migration_475.py checks the row)
+SEEN_HOURS_DEFAULT = 3  # the CIS 474 seed default (the migration PR's test_aa1160_migration_474.py checks the row)
 
 
 @pytest.fixture(autouse=True)
 def _env(monkeypatch):
     monkeypatch.delenv(m2m_auth.ENV_M2M_ISSUER, raising=False)
     monkeypatch.delenv(m2m_auth.ENV_M2M_CRM_CLIENT_ID, raising=False)
-    # The key's compiled default ships with the CIS 475 migration PR (MIG-4 chain: this code PR carries no seed), so
+    # The key's compiled default ships with the CIS 474 migration PR (MIG-4 chain: this code PR carries no seed), so
     # the reader is pinned to the seed default here; CI on the merge with main reads the real compiled default.
     real_get = crm_agency.settings.get
     monkeypatch.setattr(crm_agency.settings, "get", lambda key, tenant_id=None: SEEN_HOURS_DEFAULT
@@ -198,7 +198,7 @@ def test_tenant360_lead_route_answers_crm_agency(agency):
 def test_a_sighting_counts_only_inside_the_setting_window(monkeypatch):
     """A deleted or offboarded CRM agency is never read again: its row ages out after cis.tenant.crm_agency_seen_hours
     (an admin-editable setting, default 3), in both readers."""
-    assert crm_agency.seen_hours() == SEEN_HOURS_DEFAULT                    # the CIS 475 seed default
+    assert crm_agency.seen_hours() == SEEN_HOURS_DEFAULT                    # the CIS 474 seed default
     assert "a.last_seen_at > now() - make_interval(hours => $2)" in tp.MODULE_SQL
     assert "a.last_seen_at > now() - make_interval(hours => $2)" in crm_agency.EXISTS_SQL
     monkeypatch.setattr(crm_agency.settings, "get",

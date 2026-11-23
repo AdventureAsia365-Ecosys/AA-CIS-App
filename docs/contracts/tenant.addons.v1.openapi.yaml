@@ -28,7 +28,7 @@ info:
     brand tokens only) and audits the write as the CRM member. A write needs an active Trip planner (409
     tripplanner_not_active). Usage, leads and the webhook signing key are TripPlanner's (lead.submitted.v1 1.1).
     1.2 (AA-1160, no shape change): effective_channel is crm only while the CRM add-on is live AND the CRM proved the
-    tenant's agency within the setting cis.tenant.crm_agency_seen_hours (CIS 475 shared.tenant_crm_agency: the CRM's
+    tenant's agency within the setting cis.tenant.crm_agency_seen_hours (CIS 474 shared.tenant_crm_agency: the CRM's
     snapshot read of an agency it holds, at least hourly, or the CIS CRM onboarding; tenant.entitlements.v1 1.11);
     with the add-on but no live CRM agency (none yet, or deleted or offboarded in the CRM) the planner's leads take
     the stored route (webhook, email or none), and effective_channel says so. crm_core keeps its meaning (the add-on

@@ -272,7 +272,7 @@ async def lead_route(conn, tenant_id: str) -> Optional[dict]:
     if await conn.fetchval(TENANT_SQL, tenant_id) is None:
         return None
     has_tp = bool(await conn.fetchval(HAS_TRIPPLANNER_SQL, tenant_id))
-    # AA-1160: whether the CRM proved the tenant's agency lately (CIS 475, cis.tenant.crm_agency_seen_hours): with the
+    # AA-1160: whether the CRM proved the tenant's agency lately (CIS 474, cis.tenant.crm_agency_seen_hours): with the
     # CRM add-on but no live agency, the leads take the stored route below.
     return {"tenant_id": tenant_id, "has_tripplanner": has_tp, **_route(await conn.fetchrow(ROUTE_SQL, tenant_id)),
             "crm_agency": await crm_agency.has_agency(conn, tenant_id)}
@@ -419,7 +419,7 @@ async def module_view(conn, tenant_id: str, *, planner_origin: Optional[str] = N
     crm_core = bool(row["crm_core"])
     stored = route["lead_channel"]
     # AA-1160: crm only while the CRM add-on is live AND the CRM proved the tenant's agency within
-    # cis.tenant.crm_agency_seen_hours (CIS 475); with the add-on but no live agency (none yet, or deleted, offboarded)
+    # cis.tenant.crm_agency_seen_hours (CIS 474); with the add-on but no live agency (none yet, or deleted, offboarded)
     # the leads take the agency's own route, as TripPlanner does on its CRM pull beacon.
     if crm_core and row["crm_agency"]:
         effective = "crm"

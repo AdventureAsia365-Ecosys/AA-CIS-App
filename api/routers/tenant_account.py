@@ -22,7 +22,7 @@ client joins with ``bk_tenant_pull``). 401 no / bad token, 403 another client or
 set or configuration unavailable. ``/tenant`` is neither a staff path nor ``/v1``: neither the staff middleware nor the
 tenant rate limiter touches these routes. The API Gateway route is ``/tenant/v1/{tenant_v1_proxy+}`` (AA-CIS-Infra).
 
-AA-1160: a snapshot read by the CRM client also records the tenant in ``shared.tenant_crm_agency`` (CIS 475; the CRM
+AA-1160: a snapshot read by the CRM client also records the tenant in ``shared.tenant_crm_agency`` (CIS 474; the CRM
 reads the snapshot only for an agency it holds), which decides whether a TripPlanner lead goes to the CRM
 (``services/tenant_account/crm_agency.py``).
 
@@ -105,7 +105,7 @@ async def get_tenant_account(tenant_id: str, request: Request,
         raise M2MProblem(404, "not_found", "No tenant has this id.")
     if caller.client_id == m2m_auth.m2m_crm_client_id():
         # AA-1160: the CRM reads a snapshot only for an agency it holds, so this read is CIS's proof that the tenant
-        # has a CRM agency (shared.tenant_crm_agency, CIS 475). Best effort, throttled, never fails the read.
+        # has a CRM agency (shared.tenant_crm_agency, CIS 474). Best effort, throttled, never fails the read.
         await crm_agency.record_quietly(_pool(request), key, "crm_pull")
     etag = f'"{_body_hash(data)}"'
     headers = {"ETag": etag, "Cache-Control": CACHE_CONTROL, "Vary": "Authorization"}

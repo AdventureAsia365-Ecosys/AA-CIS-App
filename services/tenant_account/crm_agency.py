@@ -1,5 +1,5 @@
 """AA-1160 — when the CRM last proved it holds a tenant's agency, as CIS sees it (``shared.tenant_crm_agency``,
-CIS 475).
+CIS 474).
 
 A tenant's TripPlanner leads go to the CRM only when the CRM can take them: the CRM add-on (``crm.core``) live AND a
 live CRM agency for the tenant. A CRM agency (AA-Partner ``crm.tenant``) is made after the add-on, by the CIS CRM

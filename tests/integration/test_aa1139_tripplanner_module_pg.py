@@ -38,7 +38,7 @@ MODULE = Draft202012Validator({"$ref": "#/components/schemas/TripPlannerModule",
 
 @pytest.fixture(autouse=True)
 def _seen_hours(monkeypatch):
-    """AA-1160: module_view reads cis.tenant.crm_agency_seen_hours. Its compiled default ships with the CIS 475
+    """AA-1160: module_view reads cis.tenant.crm_agency_seen_hours. Its compiled default ships with the CIS 474
     migration PR (MIG-4 chain), so the reader is pinned to the seed default (3 hours) on a tree without it."""
     from services.tenant_account import crm_agency
     from services.tenant_account.crm_agency_settings import CRM_AGENCY_SEEN_HOURS
@@ -146,7 +146,7 @@ async def test_refusals_write_nothing(conn):
 
 @pytest.mark.asyncio
 async def test_crm_only_with_a_crm_agency(conn):
-    """AA-1160 (CIS 475): the CRM add-on alone is not the CRM channel. Without a CRM agency (S285: crm.core, no agency,
+    """AA-1160 (CIS 474): the CRM add-on alone is not the CRM channel. Without a CRM agency (S285: crm.core, no agency,
     leads skipped) the module says the agency's own route; once the CRM's snapshot read or the onboarding records the
     agency (shared.tenant_crm_agency), crm, and only while that sighting is inside cis.tenant.crm_agency_seen_hours."""
     from services.tenant_account import crm_agency

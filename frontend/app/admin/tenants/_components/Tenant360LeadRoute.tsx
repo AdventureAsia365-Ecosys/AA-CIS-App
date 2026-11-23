@@ -6,7 +6,7 @@
 // shared.tenant_tripplanner_site). "Edit" (admin: tenant.write) opens a kit Drawer that PUTs the channel and its
 // targets; the API refuses a webhook URL that is not https or names a private / internal host (422 with the field),
 // and the refusal is shown under that field. A tenant with the CRM add-on gets its leads in the CRM once the CRM
-// holds an agency for it (AA-1160, CIS 475: the response's crm_agency), else the stored route; the section says which. Kit only (Section, Drawer, Field, Select, Input, Badge,
+// holds an agency for it (AA-1160, CIS 474: the response's crm_agency), else the stored route; the section says which. Kit only (Section, Drawer, Field, Select, Input, Badge,
 // Toast).
 
 import { useMemo, useState } from "react";

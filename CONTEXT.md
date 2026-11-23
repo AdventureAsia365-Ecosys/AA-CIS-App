@@ -3522,7 +3522,7 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   `PUT .../appearance`; every studio role reads, only the owner writes through the tenant role middleware, audited as
   `membership:<id>`; no view-as access). That is where the e-mail / webhook route takes effect (`effective_channel`
   is `crm` while `crm.core` is live and, since AA-1160, the CRM proved the tenant's agency lately).
-  **CRM agency marker (AA-1160, CIS 475, contract tenant.entitlements.v1 1.11 / tenant.addons.v1 1.2;
+  **CRM agency marker (AA-1160, CIS 474, contract tenant.entitlements.v1 1.11 / tenant.addons.v1 1.2;
   `docs/implementation-notes/AA-1160.md`):** `shared.tenant_crm_agency` records when the CRM last proved a tenant's
   agency (its M2M read of the tenant.entitlements.v1 snapshot, which it makes only for an agency it holds, at least
   hourly; the CRM onboarding finding or creating the agency; `services/tenant_account/crm_agency.py`, throttled, best
