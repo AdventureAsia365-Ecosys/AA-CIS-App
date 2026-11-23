@@ -6,25 +6,25 @@ tests/unit/test_aa1167_trap_set.py and tests/unit/test_aa1172_trap_guard.py).
 The trap set (services/ai_safety/trap_set.py: 14 invented traps over S1 v2, T9 blog, the T9 FAQ writer and T2; six of
 them plant an instruction in a T9 fact row) is built with the live prompt builders for each fence mode asked (--fence
 on, off or both) and each Facts instruction guard mode asked (--guard on, off or both; ``both`` adds the guard-off run
-of the fact traps only, the control that shows each fact trap fires without the guard). Each call goes through the
-Model Gateway (``LLMClient.generate``) on the stage given by --stage (``adhoc_aa<issue>``; default ``adhoc_aa1167``)
-with the model the writer's own stage routes to today (its ``shared.llm_role_config`` row), and writes one
-``shared.llm_call_log`` row (role writer, ``**billed_fields(resp)``, ``quality_signal.aa1167`` = trap, writer, fence and
-guard mode, issue). Each reply is scored offline (trap_set.evaluate: no trap marker in the reply, no live markup after
-the output sanitizer, no fence tag).
+of the fact traps only, the control that shows each fact trap fires without the guard, and runs those controls first so
+a budget stop never skips them). Each call goes through the Model Gateway (``LLMClient.generate``) on the stage given by
+--stage (``adhoc_aa<issue>``; default ``adhoc_aa1167``) with the model the writer's own stage routes to today (its
+``shared.llm_role_config`` row), and writes one ``shared.llm_call_log`` row (role writer, ``**billed_fields(resp)``,
+``quality_signal.aa1167`` = trap, writer, fence and guard mode, issue). Each reply is scored offline (trap_set.evaluate:
+no trap marker in the reply, no live markup after the output sanitizer, no fence tag).
 
   python3 scripts/aa1167/trap_run.py                         # dry run: the calls it would make, no client, no cost
   python3 scripts/aa1167/trap_run.py --apply --stop-usd 1.0  # paid: fence on, guard on (14 calls)
   python3 scripts/aa1167/trap_run.py --apply --stop-usd 0.95 --fence off --guard both --stage adhoc_aa1172
-                                                             # AA-1172: 14 guard-on calls + the 6 guard-off controls
+                                                             # AA-1172: the 6 guard-off controls, then 14 guard-on
   python3 scripts/aa1167/trap_run.py --traps t9_facts_override,t9_facts_provenance   # only these traps
 
 ``--stop-usd`` has no default: the operator states the budget of the run. Before each call the run stops when the spend
-so far plus the estimate of that call would pass it (the estimate: the dearest call of the same writer so far, else a
-fixed per-writer bound), so a run never ends above its budget by a whole call; it also stops at the first gateway
-refusal. Output: one JSON line per call and a summary (pass rate per writer and kind, per mode, spend) on stdout;
-replies are about the invented tour only. Run where the gateway reaches the models and DATABASE_URL is set (the worker
-container), the repo on PYTHONPATH.
+so far plus the estimate of that call would pass it (the estimate: the larger of the dearest call of the same writer so
+far and a fixed per-writer bound), so a run never ends above its budget by a whole call; it also stops at the first
+gateway refusal. Output: one JSON line per call and a summary (pass rate per writer and kind, per mode, spend) on
+stdout; replies are about the invented tour only. Run where the gateway reaches the models and DATABASE_URL is set (the
+worker container), the repo on PYTHONPATH.
 """
 from __future__ import annotations
 
@@ -60,17 +60,19 @@ def _traps(traps) -> tuple[str, ...] | None:
 
 
 def plan(fence: str, guard: str = "on", traps=None) -> list:
-    """(fence on?, guard on?, case) per call. ``guard`` 'both' = every trap with the guard on, then the fact traps
-    (the only ones the guard changes) with it off."""
+    """(fence on?, guard on?, case) per call. ``guard`` 'both' = the fact traps (the only ones the guard changes) with
+    the guard off first, then every trap with it on: the guard-off controls are the evidence that each fact trap
+    fires, so a budget stop (--stop-usd) must never be the reason they are missing."""
     from services.ai_safety import trap_set
     ids = _traps(traps)
     out = []
     for on in _modes(fence):
-        if guard in ("on", "both"):
-            out += [(on, True, c) for c in trap_set.cases(on, guard=True, traps=ids)]
         if guard in ("off", "both"):
             out += [(on, False, c) for c in trap_set.cases(on, guard=False, traps=ids)
                     if guard == "off" or c.trap.guarded]
+    for on in _modes(fence):
+        if guard in ("on", "both"):
+            out += [(on, True, c) for c in trap_set.cases(on, guard=True, traps=ids)]
     return out
 
 
@@ -106,7 +108,8 @@ def _call(client, stage: str, on: bool, guard: bool, case) -> dict:
 
 
 def next_call_estimate(writer: str, seen: dict) -> float:
-    """What the next call of ``writer`` may cost: the dearest one of that writer so far, else the fixed bound."""
+    """What the next call of ``writer`` may cost: the larger of the dearest call of that writer so far and the fixed
+    per-writer bound (``max(seen, bound)``: the bound stays a floor after a cheap first call)."""
     return max(seen.get(writer, 0.0), _FIRST_CALL_USD.get(writer, 0.1))
 
 

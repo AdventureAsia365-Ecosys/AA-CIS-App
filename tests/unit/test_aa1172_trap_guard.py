@@ -168,8 +168,13 @@ def test_the_trap_run_estimates_the_next_call_from_the_dearest_seen():
     assert trap_run.next_call_estimate("t9_blog", {}) == trap_run._FIRST_CALL_USD["t9_blog"]
     assert trap_run.next_call_estimate("t9_blog", {"t9_blog": 0.3}) == 0.3
     plan = trap_run.plan("off", "both", "t9_facts_override,t9_markup")
-    assert [(c.trap.id, g) for _, g, c in plan] == [("t9_markup", True), ("t9_facts_override", True),
-                                                    ("t9_facts_override", False)]
+    # review round 3: the guard-off controls run first, so a budget stop never skips them
+    assert [(c.trap.id, g) for _, g, c in plan] == [("t9_facts_override", False), ("t9_markup", True),
+                                                    ("t9_facts_override", True)]
+    assert trap_run.next_call_estimate("t9_blog", {"t9_blog": 0.01}) == trap_run._FIRST_CALL_USD["t9_blog"]
+    full = trap_run.plan("both", "both")
+    controls = [g for _, g, _ in full].index(True)
+    assert controls and not any(g for _, g, _ in full[:controls]) and all(g for _, g, _ in full[controls:])
 
 
 def test_prepare_facts_passes_on_a_fact_without_its_invisible_characters():
