@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql, 469_aa1171_ops_thresholds_and_recipient_topic.sql, 471_aa1174_compliance_obligations.sql, 472_aa1172_fact_instruction_guard.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql, 469_aa1171_ops_thresholds_and_recipient_topic.sql, 471_aa1174_compliance_obligations.sql, 472_aa1172_fact_instruction_guard.sql, 475_aa1160_tenant_crm_agency_marker.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -12702,6 +12702,42 @@
      "lower": "Cả những câu chỉ na ná nhau cũng bị xoá; ít bài bị giữ hơn, nhưng có thể mất một câu người đọc cần.",
      "when": "Đổi khi bước kiểm tra lặp vẫn giữ lại nhiều bài vì một câu nói hai lần (hạ xuống một chút), hoặc khi người duyệt thấy bài bị mất câu (nâng lên). Mỗi lần đổi phải kèm lần replay làm bằng chứng.",
      "example": "Với mặc định 0,9: câu sau bị xoá khi 90 % số từ khớp với câu trước theo đúng thứ tự."
+    }
+   }
+  },
+  {
+   "key": "cis.tenant.crm_agency_seen_hours",
+   "app": "cis",
+   "area": "tenant",
+   "label": "CRM agency counts as live for (hours after the CRM last proved it)",
+   "description": "The agency module (tenant.addons.v1 effective_channel) and the Tenant 360 lead route say the Trip planner's leads go to the CRM only while the CRM add-on is live AND the CRM proved the tenant's CRM agency within this many hours (shared.tenant_crm_agency.last_seen_at, CIS 475: the CRM read the account snapshot of an agency it holds, which its entitlement feed does on each account event and hourly for every agency, or the CIS CRM onboarding found or created the agency). Past it, CIS shows the agency's own route (webhook, e-mail or none). TripPlanner routes each lead on its own CRM pull beacon, not on this value. Read by services/tenant_account/crm_agency.py.",
+   "value_type": "int",
+   "unit": "hours",
+   "min_value": 2,
+   "max_value": 168,
+   "allowed_values": null,
+   "default_value": 3,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How long after the CRM last showed that it holds a tenant's agency the agency app and Tenant 360 still say that the planner's leads go to the CRM. The CRM re-reads every agency it holds at least once an hour, so a live agency stays inside the window; a deleted or offboarded agency drops out of it.",
+     "raise": "A short CRM outage never makes the agency app say the leads take the agency's own route, but a deleted CRM agency keeps showing the CRM route longer.",
+     "lower": "A CRM agency that was deleted or offboarded stops showing the CRM route sooner; below two hourly CRM passes a slow CRM pass can make the label flicker.",
+     "when": "Raise it when the CRM's hourly pass is slowed down for a long time; lower it only if staff need the label to follow a deleted CRM agency faster.",
+     "example": "With the default of 3 hours, an agency deleted in the CRM at 09:00 (last seen 08:40) shows its own route from 11:40."
+    },
+    "vi": {
+     "what": "Bao lâu sau lần cuối CRM chứng minh nó giữ đại lý của một tenant thì app đại lý và Tenant 360 vẫn ghi lead của planner đi vào CRM. CRM đọc lại mọi đại lý nó giữ ít nhất mỗi giờ một lần, nên đại lý còn hoạt động luôn nằm trong khung; đại lý đã xoá hoặc offboard sẽ rơi ra ngoài.",
+     "raise": "CRM gián đoạn ngắn không làm app đại lý ghi lead đi đường riêng của đại lý, nhưng đại lý CRM đã xoá vẫn hiện đường CRM lâu hơn.",
+     "lower": "Đại lý CRM đã xoá hoặc offboard thôi hiện đường CRM sớm hơn; dưới hai lượt đọc hằng giờ của CRM thì một lượt chậm có thể làm nhãn nhấp nháy.",
+     "when": "Tăng khi lượt đọc hằng giờ của CRM bị chậm lâu; chỉ giảm khi nhân viên cần nhãn theo kịp đại lý CRM đã xoá.",
+     "example": "Với mặc định 3 giờ, đại lý bị xoá trong CRM lúc 09:00 (thấy lần cuối 08:40) hiện đường riêng từ 11:40."
     }
    }
   },

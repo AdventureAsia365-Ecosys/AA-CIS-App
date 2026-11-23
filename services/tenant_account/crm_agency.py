@@ -1,9 +1,11 @@
-"""AA-1160 — the tenants the CRM holds an agency for, as CIS sees it (``shared.tenant_crm_agency``, CIS 475).
+"""AA-1160 — when the CRM last proved it holds a tenant's agency, as CIS sees it (``shared.tenant_crm_agency``, CIS 475).
 
-A tenant's TripPlanner leads go to the CRM only when the CRM can take them: the CRM add-on (``crm.core``) live AND a CRM
-agency for the tenant. A CRM agency (AA-Partner ``crm.tenant``) is made after the add-on, by the CIS CRM onboarding
-(``crm_onboarding.onboard``) or the CRM's own console, and may never be; CIS reads no CRM table (root ADR 0008a). So CIS
-records what the CRM itself proves:
+A tenant's TripPlanner leads go to the CRM only when the CRM can take them: the CRM add-on (``crm.core``) live AND a live
+CRM agency for the tenant. A CRM agency (AA-Partner ``crm.tenant``) is made after the add-on, by the CIS CRM onboarding
+(``crm_onboarding.onboard``) or the CRM's own console, and may never be; it may also be locked, offboarded or deleted
+later. TripPlanner routes each lead on its own liveness signal, the CRM lead pull beacon. CIS reads no CRM table (root
+ADR 0008a), so for its own display (the agency module's ``effective_channel``, Tenant 360) it records what the CRM
+itself proves:
 
 * ``crm_pull``: the CRM read the tenant.entitlements.v1 snapshot (``GET /tenant/v1/tenants/{id}/account``) with its M2M
   client. ``crm_entitlement_pull`` reads it only for an agency it holds (active or locked), on every account event that
@@ -11,16 +13,21 @@ records what the CRM itself proves:
 * ``crm_onboarding``: the CIS onboarding found the agency (CRM ``GET /tenants/{id}`` 200) or created it.
 
 :func:`record` upserts one row; a sighting within :data:`REFRESH_AFTER_S` of the stored one writes nothing (a write
-throttle for a GET the CRM repeats, not a policy value). Readers: ``catalog.v_tenant_tripplanner_v1.crm_agency``
-(TripPlanner) and :func:`services.tenant_account.tripplanner_site.module_view` (``effective_channel``). The row goes
-with the tenant (AA-839 erasure inventory, FK cascade). Best effort: a failed write is logged and never fails the
-caller's request.
+throttle for a GET the CRM repeats, not a policy value). A row counts only while ``last_seen_at`` is younger than
+``cis.tenant.crm_agency_seen_hours`` (:func:`seen_hours`, Platform › Settings, default 3): the CRM re-reads every agency
+it holds at least hourly, so a deleted or offboarded agency, never read again, ages out. Readers: :func:`has_agency`
+(Tenant 360) and :func:`services.tenant_account.tripplanner_site.module_view` (``effective_channel``, with
+:data:`LIVE_SQL`). The row goes with the tenant (AA-839 erasure inventory, FK cascade). Best effort: a failed write is
+logged and never fails the caller's request.
 """
 from __future__ import annotations
 
 from typing import Any
 
 import structlog
+
+from shared import settings
+from services.tenant_account.crm_agency_settings import CRM_AGENCY_SEEN_HOURS
 
 logger = structlog.get_logger()
 
@@ -35,7 +42,15 @@ UPSERT_SQL = """
      WHERE shared.tenant_crm_agency.last_seen_at < now() - make_interval(secs => $3)
         OR shared.tenant_crm_agency.source IS DISTINCT FROM EXCLUDED.source
 """
-EXISTS_SQL = "SELECT EXISTS (SELECT 1 FROM shared.tenant_crm_agency WHERE tenant_id = $1::uuid) AS ok"
+# The live-sighting test, for a query whose tenant is ``t`` and whose window in hours is parameter ``${n}``.
+LIVE_SQL = ("EXISTS (SELECT 1 FROM shared.tenant_crm_agency a WHERE a.tenant_id = t.tenant_id "
+            "AND a.last_seen_at > now() - make_interval(hours => ${n}))")
+EXISTS_SQL = ("SELECT " + LIVE_SQL.format(n=2) + " AS ok FROM shared.tenants t WHERE t.tenant_id = $1::uuid")
+
+
+def seen_hours() -> int:
+    """How many hours a CRM sighting counts (cis.tenant.crm_agency_seen_hours, Platform › Settings)."""
+    return int(settings.get(CRM_AGENCY_SEEN_HOURS))
 
 
 async def record(conn: Any, tenant_id: str, source: str) -> bool:
@@ -65,5 +80,5 @@ async def record_quietly(pool: Any, tenant_id: str, source: str) -> bool:
 
 
 async def has_agency(conn: Any, tenant_id: str) -> bool:
-    """True when CIS has seen a CRM agency for the tenant."""
-    return bool(await conn.fetchval(EXISTS_SQL, str(tenant_id)))
+    """True when the CRM proved the tenant's agency within :func:`seen_hours` (False for no such tenant)."""
+    return bool(await conn.fetchval(EXISTS_SQL, str(tenant_id), seen_hours()))

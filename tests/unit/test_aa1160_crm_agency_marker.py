@@ -3,9 +3,10 @@
   * ``record``: one throttled upsert, a known source only; ``record_quietly`` never raises (no pool, a failing write);
   * the tenant.entitlements.v1 snapshot read by the CRM client records ``crm_pull``; a 404 records nothing; a failing
     marker write never fails the read;
-  * the agency app's Trip planner module (``module_view``) says crm only with the add-on AND a CRM agency, else the
-    agency's own route (S285 live gap: crm.core without an agency showed "Now: CRM" and its leads were skipped);
-  * Tenant 360's lead route answers ``crm_agency``.
+  * the agency app's Trip planner module (``module_view``) says crm only with the add-on AND a CRM agency the CRM proved
+    within cis.tenant.crm_agency_seen_hours, else the agency's own route (S285 live gap: crm.core without an agency
+    showed "Now: CRM" and its leads were skipped; a deleted agency must age out, not stay crm forever);
+  * Tenant 360's lead route answers ``crm_agency`` under the same window.
 Invented names only.
 """
 from __future__ import annotations
@@ -146,9 +147,11 @@ def test_a_failing_marker_never_fails_the_read():
 class ModuleConn:
     def __init__(self, *, crm_core: bool, crm_agency_: bool, channel: str = "email") -> None:
         self.crm_core, self.agency, self.channel = crm_core, crm_agency_, channel
+        self.args: dict[str, tuple] = {}
 
     async def fetchrow(self, sql: str, *args: Any):
         if sql == tp.MODULE_SQL:
+            self.args["module"] = args
             return {"in_service": True, "crm_core": self.crm_core, "crm_agency": self.agency,
                     "ai_sessions_monthly": None, "domains": []}
         if sql == tp.ROUTE_SQL:
@@ -161,6 +164,7 @@ class ModuleConn:
 
     async def fetchval(self, sql: str, *args: Any):
         if sql == crm_agency.EXISTS_SQL:
+            self.args["exists"] = args
             return self.agency
         return "active" if sql == tp.TENANT_SQL else False
 
@@ -180,3 +184,17 @@ def test_module_effective_channel_needs_a_crm_agency(crm_core, agency, channel, 
 def test_tenant360_lead_route_answers_crm_agency(agency):
     out = asyncio.run(tp.lead_route(ModuleConn(crm_core=True, crm_agency_=agency), TENANT))
     assert out["crm_agency"] is agency and out["lead_channel"] == "email"
+
+
+def test_a_sighting_counts_only_inside_the_setting_window(monkeypatch):
+    """A deleted or offboarded CRM agency is never read again: its row ages out after cis.tenant.crm_agency_seen_hours
+    (an admin-editable setting, default 3), in both readers."""
+    assert crm_agency.seen_hours() == 3                                     # the compiled default (CIS 475 seed)
+    assert "a.last_seen_at > now() - make_interval(hours => $2)" in tp.MODULE_SQL
+    assert "a.last_seen_at > now() - make_interval(hours => $2)" in crm_agency.EXISTS_SQL
+    monkeypatch.setattr(crm_agency.settings, "get",
+                        lambda key, tenant_id=None: 7 if key == "cis.tenant.crm_agency_seen_hours" else None)
+    conn = ModuleConn(crm_core=True, crm_agency_=False)
+    asyncio.run(tp.module_view(conn, TENANT))
+    asyncio.run(tp.lead_route(conn, TENANT))
+    assert conn.args["module"] == (TENANT, 7) and conn.args["exists"] == (TENANT, 7)

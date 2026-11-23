@@ -43,6 +43,7 @@ import urllib.parse
 from typing import Any, Optional
 
 from services.acp_shared.audit_log import AdminTenantAuditAction, write_audit_log
+from services.tenant_account import crm_agency
 
 LEAD_ROUTE_CHANGED = AdminTenantAuditAction.TRIPPLANNER_LEAD_ROUTE_CHANGED
 CHANNELS = ("none", "webhook", "email")
@@ -271,10 +272,8 @@ async def lead_route(conn, tenant_id: str) -> Optional[dict]:
     if await conn.fetchval(TENANT_SQL, tenant_id) is None:
         return None
     has_tp = bool(await conn.fetchval(HAS_TRIPPLANNER_SQL, tenant_id))
-    # AA-1160: whether the CRM holds an agency for the tenant (CIS 475): with the CRM add-on but no agency, the leads
-    # take the stored route below.
-    from services.tenant_account import crm_agency  # local: keep this module's imports as they were
-
+    # AA-1160: whether the CRM proved the tenant's agency lately (CIS 475, cis.tenant.crm_agency_seen_hours): with the
+    # CRM add-on but no live agency, the leads take the stored route below.
     return {"tenant_id": tenant_id, "has_tripplanner": has_tp, **_route(await conn.fetchrow(ROUTE_SQL, tenant_id)),
             "crm_agency": await crm_agency.has_agency(conn, tenant_id)}
 
@@ -333,7 +332,7 @@ MODULE_SQL = """
     SELECT t.account_status IN ('trial', 'active', 'past_due') AS in_service,
            EXISTS (SELECT 1 FROM shared.v_tenant_entitlement_resolved r
                     WHERE r.tenant_id = t.tenant_id AND r.feature_key = 'crm.core') AS crm_core,
-           EXISTS (SELECT 1 FROM shared.tenant_crm_agency a WHERE a.tenant_id = t.tenant_id) AS crm_agency,
+           {crm_agency} AS crm_agency,
            (SELECT r.limit_value FROM shared.v_tenant_entitlement_resolved r
              WHERE r.tenant_id = t.tenant_id AND r.feature_key = 'tp.ai_sessions' LIMIT 1) AS ai_sessions_monthly,
            ARRAY(SELECT jsonb_build_object('domain', d.domain, 'status', d.status)
@@ -342,7 +341,7 @@ MODULE_SQL = """
                   ORDER BY d.domain) AS domains
       FROM shared.tenants t
      WHERE t.tenant_id = $1::uuid
-"""
+""".replace("{crm_agency}", crm_agency.LIVE_SQL.format(n=2))   # $2 = crm_agency.seen_hours() (AA-1160)
 
 
 def validate_appearance(theme: Any, locale: Any) -> tuple[dict, str]:
@@ -412,15 +411,16 @@ async def module_view(conn, tenant_id: str, *, planner_origin: Optional[str] = N
     tenant. ``active`` false (no live Trip planner subscription) still answers the rest, so the page can say why."""
     from services.tenant_account import planner_site  # local: planner_site reads the environment at call time
 
-    row = await conn.fetchrow(MODULE_SQL, tenant_id)
+    row = await conn.fetchrow(MODULE_SQL, tenant_id, crm_agency.seen_hours())
     if row is None:
         return None
     active = bool(await conn.fetchval(ACTIVE_TP_SQL, tenant_id))
     route = _route(await conn.fetchrow(ROUTE_SQL, tenant_id))
     crm_core = bool(row["crm_core"])
     stored = route["lead_channel"]
-    # AA-1160: crm only while the CRM add-on is live AND the CRM holds an agency for the tenant (CIS 475); a tenant
-    # with the add-on but no agency yet takes its own route, as TripPlanner does (catalog view crm_agency).
+    # AA-1160: crm only while the CRM add-on is live AND the CRM proved the tenant's agency within
+    # cis.tenant.crm_agency_seen_hours (CIS 475); with the add-on but no live agency (none yet, or deleted, offboarded)
+    # the leads take the agency's own route, as TripPlanner does on its CRM pull beacon.
     if crm_core and row["crm_agency"]:
         effective = "crm"
     elif stored == "webhook" and route["lead_webhook_url"]:

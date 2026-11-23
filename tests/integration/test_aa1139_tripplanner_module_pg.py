@@ -136,7 +136,7 @@ async def test_refusals_write_nothing(conn):
 async def test_crm_only_with_a_crm_agency(conn):
     """AA-1160 (CIS 475): the CRM add-on alone is not the CRM channel. Without a CRM agency (S285: crm.core, no agency,
     leads skipped) the module says the agency's own route; once the CRM's snapshot read or the onboarding records the
-    agency (shared.tenant_crm_agency), crm."""
+    agency (shared.tenant_crm_agency), crm, and only while that sighting is inside cis.tenant.crm_agency_seen_hours."""
     from services.tenant_account import crm_agency
 
     tid = await _tenant(conn)
@@ -155,3 +155,13 @@ async def test_crm_only_with_a_crm_agency(conn):
     assert after["lead_route"]["effective_channel"] == "crm" and after["lead_route"]["lead_channel"] == "email"
     assert (await tp.lead_route(conn, tid))["crm_agency"] is True
     assert await crm_agency.record(conn, str(uuid.uuid4()), "crm_pull") is False  # no such tenant: nothing written
+    # The agency is deleted / offboarded in the CRM: never read again, so its sighting ages out of the window
+    # (cis.tenant.crm_agency_seen_hours, default 3) and the module says the agency's own route again.
+    await conn.execute("UPDATE shared.tenant_crm_agency SET first_seen_at = now() - interval '4 hours', "
+                       "last_seen_at = now() - interval '4 hours' WHERE tenant_id = $1::uuid", tid)
+    gone = await tp.module_view(conn, tid)
+    assert gone["lead_route"]["effective_channel"] == "email"
+    assert (await tp.lead_route(conn, tid))["crm_agency"] is False
+    # The CRM reads its snapshot again (an agency restored or re-created): crm once more.
+    assert await crm_agency.record(conn, tid, "crm_pull") is True
+    assert (await tp.module_view(conn, tid))["lead_route"]["effective_channel"] == "crm"

@@ -3521,14 +3521,15 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   own tenant token (`api/routers/v1_account_tripplanner.py`: `GET /v1/account/tripplanner`, `PUT .../lead-route`,
   `PUT .../appearance`; every studio role reads, only the owner writes through the tenant role middleware, audited as
   `membership:<id>`; no view-as access). That is where the e-mail / webhook route takes effect (`effective_channel`
-  is `crm` while `crm.core` is live and, since AA-1160, the CRM holds an agency for the tenant).
+  is `crm` while `crm.core` is live and, since AA-1160, the CRM proved the tenant's agency lately).
   **CRM agency marker (AA-1160, CIS 475, contract tenant.entitlements.v1 1.11 / tenant.addons.v1 1.2;
-  `docs/implementation-notes/AA-1160.md`):** `shared.tenant_crm_agency` records the tenants the CRM holds an agency for,
-  from what the CRM proves (its M2M read of the tenant.entitlements.v1 snapshot, which it makes only for an agency it
-  holds; the CRM onboarding finding or creating the agency; `services/tenant_account/crm_agency.py`, throttled, best
-  effort). The TripPlanner view appends `crm_agency` and the fallback route (`fallback_channel` + target); TripPlanner
-  sends leads to the CRM only with it (or a fresh CRM pull), else to the fallback, and Tenant 360's lead route says
-  which.
+  `docs/implementation-notes/AA-1160.md`):** `shared.tenant_crm_agency` records when the CRM last proved a tenant's
+  agency (its M2M read of the tenant.entitlements.v1 snapshot, which it makes only for an agency it holds, at least
+  hourly; the CRM onboarding finding or creating the agency; `services/tenant_account/crm_agency.py`, throttled, best
+  effort). A sighting counts only inside the setting `cis.tenant.crm_agency_seen_hours` (default 3), so a deleted or
+  offboarded agency ages out; the agency module's `effective_channel` and Tenant 360's lead route read it. The
+  TripPlanner view appends only the fallback route (`fallback_channel` + target): TripPlanner routes each lead on its
+  own CRM pull beacon (crm while the CRM lists the tenant, else the fallback).
   **R8 own domains (AA-1090, CIS 428 + 429, contract tenant.entitlements.v1 1.8; `docs/implementation-notes/AA-1090.md`):**
   `shared.tenant_tripplanner_domain` (one row per custom host of a tenant site; status pending / validating / attaching
   / active / removing / failed; no RLS, rule a allowlist) is edited on Tenant 360 › Subscription › TripPlanner own

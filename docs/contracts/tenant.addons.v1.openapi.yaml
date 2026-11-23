@@ -27,10 +27,12 @@ info:
     360 editor (an https webhook URL whose host can be public, an e-mail address whose domain is not internal, the
     brand tokens only) and audits the write as the CRM member. A write needs an active Trip planner (409
     tripplanner_not_active). Usage, leads and the webhook signing key are TripPlanner's (lead.submitted.v1 1.1).
-    1.2 (AA-1160, no shape change): effective_channel is crm only while the CRM add-on is live AND the CRM holds an
-    agency for the tenant (catalog.v_tenant_tripplanner_v1 crm_agency, tenant.entitlements.v1 1.11); with the add-on
-    but no CRM agency yet the planner's leads take the stored route (webhook, email or none), and effective_channel
-    says so. crm_core keeps its meaning (the add-on is live).
+    1.2 (AA-1160, no shape change): effective_channel is crm only while the CRM add-on is live AND the CRM proved the
+    tenant's agency within the setting cis.tenant.crm_agency_seen_hours (CIS 475 shared.tenant_crm_agency: the CRM's
+    snapshot read of an agency it holds, at least hourly, or the CIS CRM onboarding; tenant.entitlements.v1 1.11);
+    with the add-on but no live CRM agency (none yet, or deleted or offboarded in the CRM) the planner's leads take
+    the stored route (webhook, email or none), and effective_channel says so. crm_core keeps its meaning (the add-on
+    is live).
   x-aa-contract: tenant.addons.v1
   x-aa-producer: AA-CIS-App
   x-aa-consumers: [AA-Partner]
@@ -337,8 +339,8 @@ components:
         effective_channel:
           type: string
           enum: [crm, webhook, email, none]
-          description: Where a lead goes now (crm while the CRM add-on is live and the CRM holds the agency, 1.2;
-            else the stored route; none = the planner refuses leads).
+          description: Where a lead goes now (crm while the CRM add-on is live and the CRM proved the agency lately,
+            1.2; else the stored route; none = the planner refuses leads).
         updated_at: {type: [string, "null"], format: date-time}
     TripPlannerModule:
       type: object
