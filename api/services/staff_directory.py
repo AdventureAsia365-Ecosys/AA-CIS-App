@@ -92,8 +92,8 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from api.core import e2e_staff, identity_config, staff_identity, staff_roles, view_as
 from api.services import staff_custom_roles as scr, staff_invite   # AA-1155: custom roles, business-owner marker
-# The Staff page's presets are data since AA-1155 T14 (CIS 465, api/services/staff_presets.py); the retired Booking
-# roles (AA-1150) stay a code rule, re-exported for the callers.
+from api.services import staff_e2e_owner as e2e_owner   # AA-1176 (A10h D5): the E2E owner's Staff page limits
+# Presets are data since AA-1155 T14 (CIS 465); the retired Booking roles (AA-1150) stay a code rule, re-exported.
 from api.services import staff_presets
 from api.services.staff_presets import RETIRED_BOOKING_ROLES  # noqa: F401
 from services.acp_shared.audit_log import write_audit_log
@@ -157,9 +157,9 @@ _E2E_TEST_STAFF_ROLES = MappingProxyType({
     E2E_CIS_CS_TEST_STAFF_EMAIL: E2E_CIS_CS_TEST_STAFF_ROLE,
     e2e_staff.E2E_CIS_CONTENT_LEAD_TEST_STAFF_EMAIL: e2e_staff.E2E_CIS_CONTENT_LEAD_TEST_STAFF_ROLE,
     e2e_staff.E2E_CUSTOM_MAKER_TEST_STAFF_EMAIL: scr.E2E_ANY_CUSTOM_ROLE,
+    e2e_staff.E2E_OWNER_TEST_STAFF_EMAIL: e2e_staff.E2E_OWNER_TEST_STAFF_ROLE,   # AA-1176 A10h (+ Booking admin)
 })
-# The E2E addresses that may exist only on Dev (every entry of e2e_staff.DEV_ONLY_E2E_STAFF_ROLES).
-_DEV_ONLY_E2E_EMAILS = frozenset(e2e_staff.DEV_ONLY_E2E_STAFF_ROLES)
+_DEV_ONLY_E2E_EMAILS = frozenset(e2e_staff.DEV_ONLY_E2E_ADDRESSES)   # the E2E addresses that may exist only on Dev
 # The name each E2E address goes by in the directory's refusals.
 _E2E_ACCOUNT_NAMES = MappingProxyType({
     E2E_TEST_STAFF_EMAIL: "E2E test account",
@@ -167,6 +167,7 @@ _E2E_ACCOUNT_NAMES = MappingProxyType({
     E2E_CIS_CS_TEST_STAFF_EMAIL: "E2E customer success account",
     e2e_staff.E2E_CIS_CONTENT_LEAD_TEST_STAFF_EMAIL: "E2E content lead account",
     e2e_staff.E2E_CUSTOM_MAKER_TEST_STAFF_EMAIL: "E2E custom-role maker account",
+    e2e_staff.E2E_OWNER_TEST_STAFF_EMAIL: "E2E owner account",
 })
 
 # The break-glass account (ADR 0006 decision 11; S242 plan D1). Never written from the UI.
@@ -528,7 +529,7 @@ async def _run_steps(result: WriteResult, steps: list[Step], deadline_s: Optiona
 # ── SQL (shared.admin_users / shared.staff_app_grant, migration 247) ─────────────────────────────
 
 SQL_ACTOR = (
-    "SELECT id::text AS id, is_active, is_owner, role::text AS role FROM shared.admin_users WHERE id = $1::uuid"
+    "SELECT id::text AS id, is_active, is_owner, role::text AS role, email FROM shared.admin_users WHERE id = $1::uuid"
 )
 SQL_TARGET = (
     "SELECT id::text AS id, username, role::text AS role, email, display_name, is_active, is_owner, custom_role, "
@@ -544,7 +545,7 @@ SQL_GRANT = (
 SQL_LOCK_OWNERS = "SELECT id FROM shared.admin_users WHERE is_owner ORDER BY id FOR UPDATE"
 SQL_OTHER_ACTIVE_OWNERS = (
     "SELECT count(*) FROM shared.admin_users "
-    "WHERE is_owner AND is_active AND role = 'admin' AND id <> $1::uuid"
+    "WHERE is_owner AND is_active AND role = 'admin' AND id <> $1::uuid " + e2e_owner.NOT_E2E_OWNER_SQL
 )
 SQL_USERNAME_TAKEN = "SELECT 1 FROM shared.admin_users WHERE username = $1"
 SQL_INSERT = (
@@ -590,24 +591,27 @@ def _crm_unavailable() -> StaffDirectoryError:
                                     "migration 330) is not applied on this server", "crm_unavailable")
 
 
-async def _require_owner(conn: Any, actor_id: str) -> None:
+async def _require_owner(conn: Any, actor_id: str) -> Any:
     """Lock every owner row (always first, in id order, so concurrent writes never deadlock and two owners can not
     remove each other at the same time), then re-read the actor: active, owner and CIS admin, or 403. The role is
     re-read because the route policy took it from the access token's groups, which keep ``cis-admin`` for up to
-    15 minutes after another owner demoted this one."""
+    15 minutes after another owner demoted this one. Returns the actor row (AA-1176: the A10h E2E owner, Dev only)."""
     await conn.fetch(SQL_LOCK_OWNERS)
     row = await conn.fetchrow(SQL_ACTOR, actor_id)
     if row is None or not row["is_active"] or not row["is_owner"] or row["role"] != "admin":
         raise StaffDirectoryError(403, "Only a platform owner can change staff accounts", "not_owner")
+    e2e_owner.check_actor(row)
+    return row
 
 
-async def _load_target(conn: Any, staff_id: str) -> Any:
+async def _load_target(conn: Any, staff_id: str, actor: Any = None) -> Any:
     row = await conn.fetchrow(SQL_TARGET, staff_id)
     if row is None:
         raise StaffDirectoryError(404, "Staff account not found", "not_found")
     if is_breakglass(row["username"], row["email"]):
         raise StaffDirectoryError(403, "The break-glass account is managed only by its runbook, not here",
                                   "breakglass")
+    e2e_owner.refuse_target(actor, row)   # AA-1176 (A10h D5)
     return row
 
 
@@ -824,8 +828,8 @@ async def change_roles(pool: Any, cognito: CognitoDirectory, *, actor_id: str, s
 
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await _require_owner(conn, actor_id)
-            target = await _load_target(conn, staff_id)
+            actor = await _require_owner(conn, actor_id)
+            target = await _load_target(conn, staff_id, actor)
             staff_id = target["id"]
             old_role = scr.cis_code(target)   # AA-1155: the custom role code of a custom holder
             old_booking = await conn.fetchval(SQL_GRANT, staff_id, APP_BOOKING)
@@ -907,8 +911,8 @@ async def disable_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, 
     member's open view-as sessions end in the same transaction (AA-1035, ``view_as.close_open_sessions``)."""
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await _require_owner(conn, actor_id)
-            target = await _load_target(conn, staff_id)
+            actor = await _require_owner(conn, actor_id)
+            target = await _load_target(conn, staff_id, actor)
             staff_id = target["id"]
             if staff_id == actor_id:
                 raise StaffDirectoryError(400, "You cannot disable yourself", "self_disable")
@@ -939,8 +943,8 @@ async def enable_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, s
     """``is_active = true``, then AdminEnableUser."""
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await _require_owner(conn, actor_id)
-            target = await _load_target(conn, staff_id)
+            actor = await _require_owner(conn, actor_id)
+            target = await _load_target(conn, staff_id, actor)
             staff_id = target["id"]
             require_dev_only_e2e_environment(target["email"])
             if not target["is_active"]:
@@ -962,8 +966,8 @@ async def sign_out_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str,
     end in the same transaction (AA-1035, ``view_as.close_open_sessions``)."""
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await _require_owner(conn, actor_id)
-            target = await _load_target(conn, staff_id)
+            actor = await _require_owner(conn, actor_id)
+            target = await _load_target(conn, staff_id, actor)
             staff_id = target["id"]
             require_dev_only_e2e_environment(target["email"])   # a sign-out re-enables
             reenabled = not target["is_active"]
@@ -990,8 +994,8 @@ async def resend_invite(pool: Any, *, actor_id: str, staff_id: str) -> WriteResu
     check and the enqueue run in one transaction on the locked row, so two clicks at once queue one job."""
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await _require_owner(conn, actor_id)
-            target = await _load_target(conn, staff_id)
+            actor = await _require_owner(conn, actor_id)
+            target = await _load_target(conn, staff_id, actor)
             staff_id = target["id"]
             if not target["is_active"]:
                 raise StaffDirectoryError(409, "This account is disabled; enable it before sending an invitation",
@@ -1026,8 +1030,8 @@ async def sync_staff(pool: Any, cognito: CognitoDirectory, *, actor_id: str, sta
     active row's Sync then removes its group with the other unwanted ones."""
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await _require_owner(conn, actor_id)
-            target = await _load_target(conn, staff_id)
+            actor = await _require_owner(conn, actor_id)
+            target = await _load_target(conn, staff_id, actor)
             staff_id = target["id"]
             booking = await conn.fetchval(SQL_GRANT, staff_id, APP_BOOKING)
             if booking in RETIRED_BOOKING_ROLES:

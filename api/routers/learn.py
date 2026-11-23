@@ -138,7 +138,9 @@ async def learner_ctx(store: Any, principal: Principal) -> ac.Ctx:
     if staff is None:
         logger.info("learn_refused", reason="not_a_learner", client_id=principal.client_id)
         raise ac.Problem(403, "not_a_learner", "This account is not an active staff member.")
-    is_test = e2e_staff.is_dev_only_e2e_staff(staff.get("email")) or e2e_staff.is_dev_only_e2e_staff(principal.email)
+    # AA-1176: the A10h E2E owner is a test learner too (Dev only), though its CIS session is not read-only.
+    is_test = (e2e_staff.is_dev_only_e2e_address(staff.get("email"))
+               or e2e_staff.is_dev_only_e2e_address(principal.email))
     if is_test and not e2e_staff.dev_only_e2e_environment():
         raise ac.Problem(403, "forbidden", "This test account is not allowed here.")
     learner = await store.upsert_learner(principal.iss, principal.sub, staff["admin_id"], staff.get("display_name"),

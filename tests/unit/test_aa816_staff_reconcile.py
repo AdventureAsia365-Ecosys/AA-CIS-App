@@ -407,8 +407,8 @@ def test_known_e2e_addresses_match_the_directory_and_the_a10b_module():
     assert sr.KNOWN_E2E_STAFF[E2E_REV].directory_role == staff_directory.E2E_TEST_STAFF_ROLE
     assert sr.KNOWN_E2E_STAFF[E2E_CIS_ADMIN].directory_role == staff_directory.E2E_CIS_ADMIN_TEST_STAFF_ROLE
     assert set(sr.KNOWN_E2E_STAFF) - {e2e_staff.E2E_BOOKING_PRICING_CHECKER_TEST_STAFF_EMAIL} == {E2E_REV,
-        E2E_BOOKING, E2E_CRM_STAFF, E2E_BK_STAFF, E2E_BK_MAKER, E2E_BK_CHECKER, *e2e_staff.DEV_ONLY_E2E_STAFF_ROLES}
-    assert {e.clause for e in sr.KNOWN_E2E_STAFF.values()} - {f"ADR 0006a A10{x}" for x in ("e-2", "f", "g")} == {
+        E2E_BOOKING, E2E_CRM_STAFF, E2E_BK_STAFF, E2E_BK_MAKER, E2E_BK_CHECKER, *e2e_staff.DEV_ONLY_E2E_ADDRESSES}
+    assert {e.clause for e in sr.KNOWN_E2E_STAFF.values()} - {f"ADR 0006a A10{x}" for x in ("e-2", "f", "g", "h")} == {
         "ADR 0006a A10", "ADR 0006a A10a", "ADR 0006a A10b", "ADR 0006a A10c", "ADR 0006a A10d", "ADR 0006a A10e"}
     # A10e (AA-1087): exactly one Booking group each, never in the CIS directory (AA-CIS-Infra workforce.py).
     for email, group in A10E_GROUPS.items():

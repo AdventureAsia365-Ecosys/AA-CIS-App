@@ -12,7 +12,10 @@ Rule (:func:`check`), after :func:`api.core.staff_identity.resolve_staff`:
 - only an **administrator** session is checked: the ``admin`` role (group ``cis-admin``) or a staff member with the
   owner flag (``shared.admin_users.is_owner``). Every other CIS role is left as it is;
 - never checked: the capped Preview session (viewer, never an owner) and the Dev-only read-only E2E identities
-  (``e2e_read_only``; they cannot exist outside Dev and never write beyond their allow-list, root ADR 0006a A10b/A10d);
+  (``e2e_read_only``; they cannot exist outside Dev and never write beyond their allow-list, root ADR 0006a A10b/A10d),
+  and the Dev-only E2E owner (``e2e_owner``, root ADR 0006a A10h, AA-1176): it is refused outside Dev, and its e-mail
+  code can be read only by the MFA admin IAM role (AA-CIS-Infra e2e_mailbox.tf, prefix inbound-admin/), which stands in
+  for the authenticator code;
 - MFA is satisfied when ``amr`` holds ``otp`` (TOTP from an authenticator app, :data:`MFA_AMR`);
 - not satisfied and the switch ``cis.platform.admin_mfa_required`` is **on** -> :class:`StaffAuthError` 403
   ``mfa_required`` (the BFF sends the person back to the sign-in page with a message);
@@ -73,8 +76,9 @@ def mfa_used(amr: tuple[str, ...]) -> bool:
 
 
 def is_admin_session(identity: StaffIdentity) -> bool:
-    """An administrator session the check applies to (never the Preview viewer or a Dev-only E2E identity)."""
-    if identity.preview or identity.e2e_read_only:
+    """An administrator session the check applies to (never the Preview viewer, a Dev-only read-only E2E identity or
+    the Dev-only E2E owner)."""
+    if identity.preview or identity.e2e_read_only or getattr(identity, "e2e_owner", False):
         return False
     return identity.role in ADMIN_ROLES or identity.is_owner
 

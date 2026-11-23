@@ -920,7 +920,7 @@ async def put_tenant_assignment(
         if staff["role"] not in ASSIGNABLE_ROLES:   # AA-1035 slice 2: an assignment would give this role nothing
             raise HTTPException(status_code=409, detail=(
                 "Only Administrator, Customer Success or Support staff can be assigned to a tenant."))
-        if (e2e_staff.is_dev_only_e2e_staff(staff.get("email"))
+        if (e2e_staff.is_dev_only_e2e_address(staff.get("email"))   # AA-1176: the A10h E2E owner too
                 and not await e2e_staff.is_synthetic_tenant(conn, tenant_id)):
             logger.warning("tenant_assignment_e2e_refused", tenant_id=str(tenant_id),
                            admin_user_id=str(admin_user_id), reason="tenant_not_synthetic")

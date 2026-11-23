@@ -2806,6 +2806,21 @@ every write is 403 `e2e_read_only`. Its book holds synthetic tenants only: `PUT 
 answers 409 for any Dev-only E2E row (A10b, A10d) on a tenant that is not synthetic. `/auth/verify-admin` returns
 `customer_success`. Codes in `inbound-admin/` (MFA admin reads only). Removed with A10 / A10a / A10b / A10c.
 
+**Dev-only E2E owner (A10h, AA-1176 S288, root ADR 0006a A10h; CIS 473).** The agent's administrator identity "like the
+tech lead" for owner-only live checks (staff view-as, Platform › Compliance › Refresh, Staff › Add, Booking sale
+exceptions on synthetic plans; Playwright `admin-evidence/owner-live.spec.ts`, `E2EOWNER=1`, never CI).
+`e2e-owner@e2e-mail.lumiguides.it.com`, groups exactly `cis-admin` + `booking-admin`, directory row `admin` without a
+custom role, owner marker set by the AA-CIS-Infra run-script `aa1176_e2e_owner_row`, never the business owner (CIS 473
+CHECK). It is **not read-only**: not in `e2e_staff.DEV_ONLY_E2E_STAFF_ROLES`; the identity carries `e2e_owner` and keeps
+`is_owner`. `resolve_staff` refuses it outside `ENVIRONMENT` exactly `dev` (403 `e2e_not_allowed_here`) and refuses any
+other row / token shape (403 `e2e_owner_scope`). `staff_mfa.is_admin_session` exempts it (its code is readable only by
+the MFA admin role). On the Staff page it never changes an owner, the business owner or itself (403 `e2e_owner_scope`),
+never sets the business-owner marker, never counts as "another active owner"; it never approves a tenant erasure
+(`e2e_tenant_writes.refuse_any_e2e`). The reconcile lists it as a known E2E identity (A10h). Removal: only Staff ›
+Disable removes it at once (row inactive, Cognito disable, global sign-out): Booking and the CRM trust the token's
+groups, so a database-only change leaves it working there. The Infra run-script's REMOVE mode is cleanup after Disable
+(it refuses an active row); full removal with the A10 family (root ADR 0006a A10h).
+
 **Sign-in (ADR 0006 Phase 1, live on Dev).** Staff sign in with an email one-time code on Cognito WORKFORCE
 (pool `us-west-1_bCcFvbSOS`) through managed login on our own domain `https://staff-auth.lumiguides.it.com`
 (AA-branded; the prefix `amazoncognito.com` domain tripped a Safe Browsing false positive). `/login` shows

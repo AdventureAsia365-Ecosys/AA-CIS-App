@@ -57,6 +57,27 @@ environment guard, same read-only cap, but **no write allow-list at all**: every
 ``e2e_read_only``, including the A10b allow-listed routes (sentence apply, studio invitations, view-as), and it gets no
 ``docs.owner_read``. Its tenant book holds synthetic tenants only (api/routers/admin_tenant360.put_tenant_assignment).
 
+A10h (AA-1176, S288, root ADR 0006a A10h): the Dev-only E2E owner, :data:`E2E_OWNER_TEST_STAFF_EMAIL`, the
+administrator the orchestrating agent signs in as for live checks that only an owner can run (tech lead decision S288:
+"an admin like me"). Unlike every identity above it is **not read-only**: it is NOT in
+:data:`DEV_ONLY_E2E_STAFF_ROLES`, carries ``e2e_owner`` instead of ``e2e_read_only`` and keeps the directory row's
+``is_owner``. What holds it:
+
+- exact scope: groups exactly :data:`E2E_OWNER_GROUPS` (cis-admin + booking-admin, the tech lead's set without the CRM
+  platform group), the directory row role ``admin`` without a custom role, never the business owner (CIS 473 CHECK,
+  :mod:`api.services.staff_custom_roles`); any other shape of row or token is refused 403 :data:`E2E_OWNER_SCOPE`
+  (api/core/staff_identity.resolve_staff);
+- Dev only: refused 403 :data:`E2E_NOT_ALLOWED_HERE` wherever ``ENVIRONMENT`` is not exactly ``"dev"``
+  (:func:`dev_only_e2e_environment`), on reads too; the directory refuses to create, re-enable or sync it elsewhere;
+- the administrator MFA switch does not apply (api/core/staff_mfa.is_admin_session): its e-mail code is readable only
+  by the MFA admin role (AA-CIS-Infra e2e_mailbox.tf, prefix inbound-admin/), which is the second factor;
+- it never touches another owner, the business owner or its own row on the Staff page (403 :data:`E2E_OWNER_SCOPE`,
+  api/services/staff_directory.py), never sets or clears the business-owner marker, never approves a tenant erasure
+  (api/core/e2e_tenant_writes.refuse_any_e2e), and never counts as "another active owner" (so the last real owner stays
+  protected);
+- its audit rows name it: the directory row's display name is "E2E owner (agent, Dev only)", and the bearer log line
+  carries ``e2e_owner``.
+
 Two identity flags (api/core/staff_identity.StaffIdentity) carry this:
 
 - ``e2e_read_only``: any Dev-only E2E identity (:data:`DEV_ONLY_E2E_STAFF_ROLES`, :func:`is_dev_only_e2e_staff`).
@@ -64,6 +85,9 @@ Two identity flags (api/core/staff_identity.StaffIdentity) carry this:
 - ``e2e_allowlisted_writes``: the A10b identity only (:func:`is_e2e_cis_admin`). Every A10b exception (the write
   allow-list in the middleware and the route policy, the route-level checks of A10b-1 / A10b-2, the sentence modes,
   ``docs.owner_read``) keys on this flag, never on ``e2e_read_only``.
+
+A third flag, ``e2e_owner``, marks the A10h session (:func:`is_e2e_owner`); it is never True together with
+``e2e_read_only``.
 """
 from __future__ import annotations
 
@@ -101,6 +125,18 @@ DEV_ONLY_E2E_STAFF_ROLES: Mapping[str, str] = MappingProxyType({
     E2E_CUSTOM_MAKER_TEST_STAFF_EMAIL: E2E_CUSTOM_MAKER_TEST_STAFF_ROLE,
 })
 
+# A10h (AA-1176, S288, root ADR 0006a A10h): the Dev-only E2E owner (same address as AA-CIS-Infra workforce.py
+# E2E_OWNER_TEST_STAFF_EMAIL, AA-Booking app/auth/e2e_staff.E2E_OWNER_EMAIL, AA-Partner e2e_staff.E2E_OWNER_EMAIL
+# and the CIS 473 admin_users_email_chk). NOT in DEV_ONLY_E2E_STAFF_ROLES: that map is the read-only set.
+E2E_OWNER_TEST_STAFF_EMAIL = "e2e-owner@e2e-mail.lumiguides.it.com"
+E2E_OWNER_TEST_STAFF_ROLE = "admin"
+E2E_OWNER_BOOKING_ROLE = "admin"
+E2E_OWNER_GROUPS: frozenset[str] = frozenset({"cis-admin", "booking-admin"})
+E2E_OWNER_DISPLAY_NAME = "E2E owner (agent, Dev only)"
+
+# Every Dev-only CIS directory E2E address (the read-only set plus A10h): the environment guards only.
+DEV_ONLY_E2E_ADDRESSES: frozenset[str] = frozenset(DEV_ONLY_E2E_STAFF_ROLES) | {E2E_OWNER_TEST_STAFF_EMAIL}
+
 # The two other WORKFORCE E2E identities of root ADR 0006a, named here for the staff directory reconcile's "known E2E
 # exceptions" block (services/staff_reconcile.py, AA-816 follow-up S253). A10: the content E2E account (the staff
 # directory's own constant is api/services/staff_directory.E2E_TEST_STAFF_EMAIL; a test keeps the two equal).
@@ -130,6 +166,7 @@ E2E_BOOKING_PRICING_CHECKER_TEST_STAFF_EMAIL = "e2e-booking-pricing-checker@e2e-
 # The one Booking grant a CIS directory E2E address may hold (Dev only; every other E2E address holds none). Read-only.
 DEV_ONLY_E2E_BOOKING_ROLES: Mapping[str, str] = MappingProxyType({
     E2E_CIS_CS_TEST_STAFF_EMAIL: E2E_CIS_CS_PRICING_BOOKING_ROLE,
+    E2E_OWNER_TEST_STAFF_EMAIL: E2E_OWNER_BOOKING_ROLE,   # A10h: the Booking administrator, Dev only
 })
 
 # AA-1155: a custom role code (api/core/staff_roles.CUSTOM_CODE_RE; repeated here, this module imports nothing).
@@ -141,6 +178,8 @@ DEV_ONLY_ENVIRONMENT = "dev"
 # The 403 details (the BFF and the agent's helpers match on them).
 E2E_READ_ONLY = "e2e_read_only"
 E2E_NOT_ALLOWED_HERE = "e2e_not_allowed_here"
+# A10h: the E2E owner outside its exact scope (row / token shape) or acting on an owner, the business owner or itself.
+E2E_OWNER_SCOPE = "e2e_owner_scope"
 
 READ_METHODS: frozenset[str] = frozenset({"GET", "HEAD", "OPTIONS"})
 
@@ -226,6 +265,26 @@ def normalise(email: Any) -> str:
 def is_e2e_cis_admin(email: Any) -> bool:
     """True for the A10b address only (after trimming and lower-casing): the one identity with allow-listed writes."""
     return normalise(email) == E2E_CIS_ADMIN_TEST_STAFF_EMAIL
+
+
+def is_e2e_owner(email: Any) -> bool:
+    """A10h: True for the E2E owner address only. ASCII only, checked on the RAW value before lower-casing
+    (``str.lower()`` folds U+212A KELVIN SIGN to ``k``: the look-alike rule of the WORKFORCE trigger), then trimmed and
+    lower-cased and compared exactly (no sub-domain, no ``+tag``, no trailing dot)."""
+    return isinstance(email, str) and email.isascii() and normalise(email) == E2E_OWNER_TEST_STAFF_EMAIL
+
+
+def is_e2e_owner_like(email: Any) -> bool:
+    """True when ``email`` normalises to the A10h address, whatever its raw form (a non-ASCII look-alike included).
+    The identity resolver uses it to route such a value into the A10h checks, which then refuse a look-alike."""
+    return normalise(email) == E2E_OWNER_TEST_STAFF_EMAIL
+
+
+def is_dev_only_e2e_address(email: Any) -> bool:
+    """True for every Dev-only CIS directory E2E address, A10h included (:data:`DEV_ONLY_E2E_ADDRESSES`, after trimming
+    and lower-casing; a look-alike counts too, so it is refused rather than let through): for the environment guards
+    and the "test account" markers, never for the read-only cap."""
+    return normalise(email) in DEV_ONLY_E2E_ADDRESSES
 
 
 def is_e2e_cis_cs(email: Any) -> bool:

@@ -55,6 +55,12 @@ SYNTHETIC_PATH_TENANT = [Depends(_synthetic_path_tenant)]
 
 
 def refuse_any_e2e(request: Request, *, event: str) -> None:
-    """403 ``e2e_read_only`` for every Dev-only E2E identity (a write that is never an E2E write)."""
-    if getattr(request_staff_identity(request), "e2e_read_only", False):
+    """403 ``e2e_read_only`` for every Dev-only E2E identity (a write that is never an E2E write), the A10h E2E owner
+    included (AA-1176: only a person approves an erasure)."""
+    identity = request_staff_identity(request)
+    if getattr(identity, "e2e_read_only", False):
         raise _refused(event, "never_e2e", request)
+    if getattr(identity, "e2e_owner", False):
+        path = getattr(getattr(request, "url", None), "path", None)
+        logger.warning(event, reason="never_e2e_owner", path=path)
+        raise HTTPException(status_code=403, detail=e2e_staff.E2E_OWNER_SCOPE)

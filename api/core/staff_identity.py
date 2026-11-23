@@ -60,6 +60,14 @@ Rules
 5e. **Dev-only E2E A10f / A10g (AA-1155, root ADR 0006a A10f / A10g).** ``e2e-cis-content-lead@`` (content_lead) and
    ``e2e-custom-maker@`` (a custom role) follow 5c: refused outside ``ENVIRONMENT`` dev, else ``e2e_read_only``
    (no write allow-list).
+5f. **Dev-only E2E owner (AA-1176, S288, root ADR 0006a A10h; api/core/e2e_staff.py).** When the row or the token's
+   ``email`` is ``e2e-owner@e2e-mail.lumiguides.it.com`` (or a value that lower-cases to it): if ``ENVIRONMENT`` is not
+   exactly ``dev`` the token is refused, 403 ``e2e_not_allowed_here``; else it is refused 403 ``e2e_owner_scope``
+   unless the row AND the token are both exactly that address (ASCII), the token's groups are exactly cis-admin +
+   booking-admin, the resolved role is ``admin`` (not custom), and the row is an ``admin`` without a custom role. It
+   is NOT read-only: ``e2e_read_only`` stays False and ``is_owner`` is the row's (the preview cap still wins); the
+   identity carries ``e2e_owner = True`` (``staff_identity_e2e_owner`` logged once per cache load), which exempts it
+   from the administrator MFA switch (api/core/staff_mfa.py) and holds it to its D5 limits on the Staff page.
 6. Rows are cached for :data:`STAFF_STATE_TTL_S` keyed by ``(iss, sub)`` (misses too), like the legacy
    verify-admin cache, so a deactivation takes effect within that TTL (plus the BFF's own verify cache).
 
@@ -192,6 +200,8 @@ class StaffIdentity:
     # (api/core/staff_view_as.py StaffViewAs): role / capabilities are then the target role's (target ∩ viewer) and
     # is_owner is False. None on every other request.
     view_as: Optional[Any] = None
+    # AA-1176 A10h: the Dev-only E2E owner (e2e_staff.is_e2e_owner). Never True together with e2e_read_only.
+    e2e_owner: bool = False
 
     @property
     def is_custom(self) -> bool:
@@ -429,6 +439,7 @@ async def resolve_staff(db: Any, principal: Principal, *, touch_login: bool = Fa
         if loaded_now:
             logger.info("staff_identity_e2e_read_only", admin_id=row.admin_id, sub=principal.sub,
                         client_id=principal.client_id, allowlisted_writes=e2e_allowlisted_writes)
+    e2e_owner = _check_e2e_owner(row, principal, role, custom, loaded_now)
     preview = identity_config.is_preview_client(principal.client_id)
     final_role = PREVIEW_ROLE if preview else role
     capabilities = (custom_role.capabilities if custom_role is not None and not preview
@@ -443,9 +454,38 @@ async def resolve_staff(db: Any, principal: Principal, *, touch_login: bool = Fa
         iss=principal.iss, sub=principal.sub, client_id=principal.client_id,
         is_owner=False if preview or e2e_read_only else row.is_owner, preview=preview,
         e2e_read_only=e2e_read_only, e2e_allowlisted_writes=e2e_read_only and e2e_allowlisted_writes,
+        e2e_owner=e2e_owner and not e2e_read_only,
         capabilities=frozenset(capabilities),
         custom_label=custom_role.label if custom_role is not None and not preview else None,
     )
+
+
+def _check_e2e_owner(row: StaffRow, principal: Principal, role: Optional[str], custom: bool, loaded_now: bool) -> bool:
+    """A10h (rule 5f): False when neither the row nor the token names the E2E owner address; else refuse it outside
+    Dev (403 e2e_not_allowed_here) or outside its exact shape (403 e2e_owner_scope) and answer True."""
+    if not (e2e_staff.is_e2e_owner_like(row.email) or e2e_staff.is_e2e_owner_like(principal.email)):
+        return False
+
+    def refuse(reason: str, detail: str) -> None:
+        logger.warning("staff_identity_refused", reason=reason, admin_id=row.admin_id, sub=principal.sub,
+                       client_id=principal.client_id)
+        raise StaffAuthError(403, detail, reason)
+
+    if not e2e_staff.dev_only_e2e_environment():
+        refuse(e2e_staff.E2E_NOT_ALLOWED_HERE, e2e_staff.E2E_NOT_ALLOWED_HERE)
+    shape_ok = (
+        e2e_staff.is_e2e_owner(row.email) and e2e_staff.is_e2e_owner(principal.email)
+        and frozenset(principal.groups or ()) == e2e_staff.E2E_OWNER_GROUPS
+        and role == e2e_staff.E2E_OWNER_TEST_STAFF_ROLE and not custom
+        and row.db_role == e2e_staff.E2E_OWNER_TEST_STAFF_ROLE and row.custom_role is None
+        and not e2e_staff.is_dev_only_e2e_staff(row.email) and not e2e_staff.is_dev_only_e2e_staff(principal.email)
+    )
+    if not shape_ok:
+        refuse(e2e_staff.E2E_OWNER_SCOPE, e2e_staff.E2E_OWNER_SCOPE)
+    if loaded_now:
+        logger.info("staff_identity_e2e_owner", admin_id=row.admin_id, sub=principal.sub,
+                    client_id=principal.client_id, is_owner=row.is_owner)
+    return True
 
 
 async def authenticate(db: Any, token: str, *, touch_login: bool = False) -> StaffIdentity:

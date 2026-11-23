@@ -171,6 +171,7 @@ class StaffBearerMiddleware:
         logger.info("staff_bearer_verified", admin_id=identity.admin_id, role=identity.role,
                     client_id=identity.client_id, method=method, path=path,
                     **({"e2e_read_only": True} if identity.e2e_read_only else {}),
+                    **({"e2e_owner": True} if identity.e2e_owner else {}),
                     **({"view_as": view.session_id, "viewer_role": view.viewer_role} if view else {}))
         state = dict(scope.get("state") or {})
         state["staff_identity"] = identity
