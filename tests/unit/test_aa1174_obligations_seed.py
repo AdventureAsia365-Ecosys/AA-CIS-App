@@ -37,7 +37,10 @@ def test_the_ten_settings_are_named_and_compiled():
         assert r["approval"] == ("single" if key == keys.APPLICABILITY_REVIEW_MAX_AGE_DAYS else "maker_checker"), key
     assert rows[keys.LEGAL_DOCS_OVERDUE_MAX]["default_value"] == 0
     assert rows[keys.CAMPAIGN_CONSENT_VIOLATIONS_MAX]["default_value"] == 0
-    assert rows[keys.RETENTION_NEVER_LIVE_MAX]["default_value"] == 0
+    # a live retention run must be recent, not merely have happened once (scheduled runs fall back to DRY RUN after a
+    # window change): graded as the age of the oldest newest live run
+    assert rows[keys.RETENTION_LIVE_MAX_AGE_DAYS]["default_value"] == 7
+    assert keys.FACT_LIMITS["retention_live_enabled"] == ("live_last_date", keys.RETENTION_LIVE_MAX_AGE_DAYS, "age_days")
 
 
 def test_every_privacy_check_is_graded_by_a_setting():
