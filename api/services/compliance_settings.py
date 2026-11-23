@@ -37,7 +37,7 @@ REFERENCE_SCORES = "cis.compliance.reference_scores"
 LEGAL_DOCS_OVERDUE_MAX = "cis.compliance.legal_docs_overdue_max"
 ERASURE_DRILL_MAX_AGE_DAYS = "cis.compliance.erasure_drill_max_age_days"
 RETENTION_RUN_MAX_AGE_DAYS = "cis.compliance.retention_run_max_age_days"
-RETENTION_NEVER_LIVE_MAX = "cis.compliance.retention_never_live_max"
+RETENTION_LIVE_MAX_AGE_DAYS = "cis.compliance.retention_live_max_age_days"
 CONSENT_CAPTURE_MAX_AGE_DAYS = "cis.compliance.consent_capture_max_age_days"
 CAMPAIGN_CONSENT_VIOLATIONS_MAX = "cis.compliance.campaign_consent_violations_max"
 CAMPAIGN_CONSENT_WINDOW_DAYS = "cis.compliance.campaign_consent_window_days"
@@ -59,7 +59,7 @@ FACT_LIMITS = {
     **{cid: ("overdue", LEGAL_DOCS_OVERDUE_MAX, "max") for cid in LEGAL_DOC_CHECKS},
     "last_erasure_drill": ("last_date", ERASURE_DRILL_MAX_AGE_DAYS, "age_days"),
     "retention_runs_recent": ("last_date", RETENTION_RUN_MAX_AGE_DAYS, "age_days"),
-    "retention_live_enabled": ("never_live", RETENTION_NEVER_LIVE_MAX, "max"),
+    "retention_live_enabled": ("live_last_date", RETENTION_LIVE_MAX_AGE_DAYS, "age_days"),
     "consent_capture_present": ("last_date", CONSENT_CAPTURE_MAX_AGE_DAYS, "age_days"),
     "campaign_consent_enforced": ("violations", CAMPAIGN_CONSENT_VIOLATIONS_MAX, "max"),
 }
@@ -67,6 +67,6 @@ FACT_LIMITS = {
 ALL_466 = ("cis.compliance.validity_hours.root_daily", HEARTBEAT_HOURS, PARTIAL_WEIGHT, DRILL_MAX_AGE_DAYS,
            ACCESS_REVIEW_MAX_AGE_DAYS, DOCS_OVERDUE_MAX, CI_SCAN_MAX_AGE_DAYS, REFERENCE_SCORES)
 ALL_471 = (VALIDITY_HOURS["cis_db"], VALIDITY_HOURS["crm_ops"], LEGAL_DOCS_OVERDUE_MAX, ERASURE_DRILL_MAX_AGE_DAYS,
-           RETENTION_RUN_MAX_AGE_DAYS, RETENTION_NEVER_LIVE_MAX, CONSENT_CAPTURE_MAX_AGE_DAYS,
+           RETENTION_RUN_MAX_AGE_DAYS, RETENTION_LIVE_MAX_AGE_DAYS, CONSENT_CAPTURE_MAX_AGE_DAYS,
            CAMPAIGN_CONSENT_VIOLATIONS_MAX, CAMPAIGN_CONSENT_WINDOW_DAYS, APPLICABILITY_REVIEW_MAX_AGE_DAYS)
 ALL = ALL_466 + ALL_471

@@ -1208,17 +1208,17 @@
    }
   },
   {
-   "key": "cis.compliance.retention_never_live_max",
+   "key": "cis.compliance.retention_live_max_age_days",
    "app": "cis",
    "area": "compliance",
-   "label": "Compliance: retention kinds allowed with no live run yet",
-   "description": "Platform > Compliance (AA-1174): the check retention_live_enabled passes while at most this many retention job kinds of the CIS job runner have never finished a live run (scheduled runs stay DRY RUN until a live run of the same window was approved, so a kind with only DRY RUN runs deletes nothing). Above it, the storage limitation obligations read not met.",
+   "label": "Compliance: days the newest live retention run of each kind counts",
+   "description": "Platform > Compliance (AA-1174): the check retention_live_enabled passes while every retention job kind of the CIS job runner finished a LIVE run (one that may delete rows) at most this many days ago; the oldest of those newest live runs decides, and a kind with no live run at all fails it. Scheduled runs fall back to DRY RUN after a retention window changes and stay there until a live run of the new window is approved, and a held run deletes nothing either, so recent runs alone do not prove old data goes. Older, the storage limitation obligations it backs read not met.",
    "value_type": "int",
-   "unit": "kinds",
-   "min_value": 0,
-   "max_value": 20,
+   "unit": "days",
+   "min_value": 1,
+   "max_value": 90,
    "allowed_values": null,
-   "default_value": 0,
+   "default_value": 7,
    "scope_kind": "platform",
    "impact": "medium",
    "approval": "maker_checker",
@@ -1228,18 +1228,18 @@
    "enforced": true,
    "guide": {
     "en": {
-     "what": "How many retention jobs may still be in DRY RUN only (never deleted anything) while the retention check passes.",
-     "raise": "Retention jobs that only count and never delete still count as proof that old data goes.",
-     "lower": "Every retention job must have had an approved live run for the obligation to read met.",
-     "when": "Keep 0; raise it only while a live run waits for approval, with a reason.",
-     "example": "With the default 0, one retention job that has only ever run as a DRY RUN fails the check."
+     "what": "How recent the newest live run (one that really deletes old rows) of every retention job must be for the live retention check to pass.",
+     "raise": "Retention jobs that fell back to DRY RUN, or keep being held, still count as deleting old data for longer.",
+     "lower": "A short wait for the approval of a live run after a window change turns the storage limitation obligation to not met.",
+     "when": "Keep it a few days above the time an approval of a live run usually takes; the jobs run daily.",
+     "example": "With the default 7, a kind whose last live run finished 8 days ago, followed only by DRY RUN runs, fails the check."
     },
     "vi": {
-     "what": "Bao nhiêu job dọn dữ liệu còn chỉ chạy thử (chưa từng xóa thật) mà check dọn dữ liệu vẫn đạt.",
-     "raise": "Job chỉ đếm mà không xóa vẫn được tính là bằng chứng dữ liệu cũ được xóa.",
-     "lower": "Mọi job dọn dữ liệu phải có một lượt chạy thật đã duyệt thì nghĩa vụ mới đạt.",
-     "when": "Giữ 0; chỉ tăng trong lúc chờ duyệt lượt chạy thật, có lý do.",
-     "example": "Với mặc định 0, một job dọn dữ liệu chỉ mới chạy thử làm check không đạt."
+     "what": "Lượt chạy thật (xóa thật dữ liệu cũ) mới nhất của mỗi job dọn dữ liệu phải mới tới đâu thì check dọn dữ liệu thật mới đạt.",
+     "raise": "Job dọn dữ liệu đã quay về chạy thử, hoặc liên tục bị giữ lại, vẫn được tính là đang xóa dữ liệu cũ lâu hơn.",
+     "lower": "Chỉ chờ duyệt một lượt chạy thật sau khi đổi thời hạn lưu một chút là nghĩa vụ giới hạn lưu trữ thành chưa đạt.",
+     "when": "Giữ cao hơn thời gian thường cần để duyệt một lượt chạy thật vài ngày; các job chạy hằng ngày.",
+     "example": "Với mặc định 7, một loại job có lượt chạy thật cuối cách đây 8 ngày, sau đó chỉ chạy thử, làm check không đạt."
     }
    }
   },
