@@ -63,6 +63,9 @@ WORKFORCE address, `e2e-owner@e2e-mail.lumiguides.it.com`, Dev only, groups exac
   rows (`shared.v_staff_booking_grant`).
 - Live order: CIS 473 applied → this PR + Booking + Partner deployed → Infra trigger/recipient applied → Cognito user
   (tool) → run-script dry run, flip, run → `owner-live.spec.ts`.
-- Removal: a real owner disables the row on Platform › Staff at any time (allowed; D5 never blocks a real owner). Full
+- Removal: a real owner disables the row on Platform › Staff at any time (allowed; D5 never blocks a real owner). This
+  is the only immediate removal: Disable also disables the Cognito user and signs it out, and Booking and the CRM trust
+  the token's groups, so a database-only change (the Infra run-script's REMOVE mode, which refuses an active row) is
+  cleanup after Disable, never instead of it (review finding, S288). Full
   removal with the A10 family (AA-1054): constants, guards, MFA exemption, spec, reconcile entry, the row (DRY RUN) and
   the Cognito user, a new migration restoring the 462 CHECK.

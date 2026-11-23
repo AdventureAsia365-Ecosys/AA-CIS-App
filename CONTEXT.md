@@ -2816,8 +2816,10 @@ CHECK). It is **not read-only**: not in `e2e_staff.DEV_ONLY_E2E_STAFF_ROLES`; th
 other row / token shape (403 `e2e_owner_scope`). `staff_mfa.is_admin_session` exempts it (its code is readable only by
 the MFA admin role). On the Staff page it never changes an owner, the business owner or itself (403 `e2e_owner_scope`),
 never sets the business-owner marker, never counts as "another active owner"; it never approves a tenant erasure
-(`e2e_tenant_writes.refuse_any_e2e`). The reconcile lists it as a known E2E identity (A10h). Removal: a real owner
-disables it on the Staff page at any time; full removal with the A10 family (root ADR 0006a A10h).
+(`e2e_tenant_writes.refuse_any_e2e`). The reconcile lists it as a known E2E identity (A10h). Removal: only Staff ›
+Disable removes it at once (row inactive, Cognito disable, global sign-out): Booking and the CRM trust the token's
+groups, so a database-only change leaves it working there. The Infra run-script's REMOVE mode is cleanup after Disable
+(it refuses an active row); full removal with the A10 family (root ADR 0006a A10h).
 
 **Sign-in (ADR 0006 Phase 1, live on Dev).** Staff sign in with an email one-time code on Cognito WORKFORCE
 (pool `us-west-1_bCcFvbSOS`) through managed login on our own domain `https://staff-auth.lumiguides.it.com`
