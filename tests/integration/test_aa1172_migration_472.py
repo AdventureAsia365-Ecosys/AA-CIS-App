@@ -1,5 +1,5 @@
 """AA-1172 — CIS 472: the Facts Entry instruction guard switch cis.llm.fact_instruction_guard (conftest replays every
-migration). Registered; the setting row equals the compiled default the reader serves (bool, on), platform scope,
+migration). Registered; the setting row equals the compiled default the reader serves (bool, off), platform scope,
 maker_checker, enforced, a label and a complete guide; a re-run changes nothing. Runs in a transaction that is rolled
 back."""
 import json
@@ -46,7 +46,7 @@ async def test_472_registered_and_the_setting_row_is_the_compiled_default(conn):
         "FROM shared.setting_definition WHERE key = $1", fg.KEY)
     assert row is not None
     d = settings.definition(fg.KEY)
-    assert json.loads(row["d"]) is d.default_value is fg.DEFAULT is True
+    assert json.loads(row["d"]) is d.default_value is fg.DEFAULT is False
     assert (row["value_type"], row["area"], row["scope_kind"], row["impact"], row["approval"]) == (
         "bool", "ai", "platform", "high", "maker_checker")
     assert row["evidence_required"] is False and row["env_override"] is None and row["enforced"] is True
