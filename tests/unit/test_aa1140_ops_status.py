@@ -315,6 +315,28 @@ def test_spend_by_connection_and_caps():
     assert caps["crm"]["level"] == "none" and caps["booking"]["spent_usd"] is None
 
 
+@pytest.mark.asyncio
+async def test_ai_section_keeps_the_cap_list_apart_from_the_range_spend(monkeypatch):
+    """The range's spend per app must not overwrite today's cap list: the verdict iterates ``apps`` as rows."""
+    from api.services import platform_apps
+
+    r = _rng()
+    pool = MagicMock()
+    pool.fetch = AsyncMock(side_effect=[
+        [{"app": "cis", "spent": 4.5}],
+        [{"app": "cis", "cap_usd": 5.0}],
+        [{"hour": r.start, "provider": "anthropic", "account": None, "app": "cis", "cost": 1.0, "requests": 2,
+          "failed": 0}],
+    ])
+    monkeypatch.setattr(platform_apps, "crm_llm_usage", AsyncMock(return_value={"status": "ok", "cost_usd": 0.5}))
+    out = await sections.ai(pool, r, NOW, None)
+    data = out["data"]
+    assert isinstance(data["apps"], list) and {a["app"] for a in data["apps"]} == set(sections.APPS)
+    assert data["range_by_app"] == {"cis": 1.0} and data["connections"][0]["key"] == "anthropic"
+    items = verdict.ai_items(data["apps"])
+    assert [i["id"] for i in items] == ["ai-cis"] and items[0]["severity"] == "sev3"
+
+
 def test_cost_card_sums_ai_and_aws():
     f = {"month": "2026-11", "providers_total": {"mtd_usd": 60.0, "forecast_usd": 100.0},
          "providers": [{"budget_usd": 150.0}, {"budget_usd": None}],

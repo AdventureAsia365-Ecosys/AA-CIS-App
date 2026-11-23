@@ -452,8 +452,10 @@ async def ai(pool: Any, rng: TimeRange, now: datetime, authorization: Optional[s
     except asyncpg.exceptions.UndefinedTableError:
         hourly = []
     near = th.snapshot()["app_spend_near_pct"]["warn"]
+    by_conn = spend_by_connection(hourly, rng)
+    # "apps" is today's spend against the caps (the verdict reads it); the range's spend per app is "range_by_app"
     return ok({"day": today.isoformat(), "apps": app_caps(spent, caps, near), "near_pct": near,
-               "crm_note": crm_note, **spend_by_connection(hourly, rng)}, 300)
+               "crm_note": crm_note, "connections": by_conn["connections"], "range_by_app": by_conn["apps"]}, 300)
 
 
 # ── cost ───────────────────────────────────────────────────────────────────────────────────────────────────────
