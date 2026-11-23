@@ -29,7 +29,7 @@ def settings(**over) -> cs.ScoreSettings:
     limits = {cid: (fact, float(over.get(key, {"cis.compliance.legal_docs_overdue_max": 0,
                                                "cis.compliance.erasure_drill_max_age_days": 180,
                                                "cis.compliance.retention_run_max_age_days": 3,
-                                               "cis.compliance.retention_never_live_max": 0,
+                                               "cis.compliance.retention_live_max_age_days": 7,
                                                "cis.compliance.consent_capture_max_age_days": 90,
                                                "cis.compliance.campaign_consent_violations_max": 0}.get(key, 90))),
                     kind) for cid, (fact, key, kind) in keys.FACT_LIMITS.items()}
@@ -77,7 +77,9 @@ def test_laws_stay_out_of_the_percentage_unless_scored():
     ("last_erasure_drill", {"last_date": "2026-01-02"}, "fail"),     # older than 180 days
     ("retention_runs_recent", {"last_date": "2026-11-22"}, "pass"),
     ("retention_runs_recent", {"last_date": "2026-11-10"}, "fail"),
-    ("retention_live_enabled", {"never_live": 2}, "fail"),
+    ("retention_live_enabled", {"live_last_date": "2026-11-20"}, "pass"),
+    ("retention_live_enabled", {"live_last_date": "2026-11-10"}, "fail"),   # newest live run 13 days old
+    ("retention_live_enabled", {"never_live_kinds": []}, "error"),           # the fact is missing
     ("campaign_consent_enforced", {"violations": 0, "sent": 12}, "pass"),
     ("campaign_consent_enforced", {"violations": 1, "sent": 12}, "fail"),
 ])
@@ -108,12 +110,30 @@ def test_cis_db_retention_rows():
     runs, lives = compliance_db.evaluate(rows, NOW)
     assert runs["check_id"] == "retention_runs_recent" and runs["status"] == "pass"
     assert runs["detail"]["last_date"] == (day - timedelta(days=len(compliance_db.KINDS) - 1)).date().isoformat()
-    assert lives["detail"]["never_live"] == 1 and lives["detail"]["never_live_kinds"] == [compliance_db.KINDS[0]]
+    assert lives["status"] == "fail" and lives["detail"]["never_live_kinds"] == [compliance_db.KINDS[0]]
+    assert compliance_db.KINDS[0] in lives["summary"] and "live_last_date" not in lives["detail"]
     for r in (runs, lives):
         assert r["source"] == "cis_db" and r["link"].startswith("https://github.com/")
         assert set(r) >= {"collected_at", "collector", "collector_version", "summary"}
     runs, _ = compliance_db.evaluate(rows[1:], NOW)                  # one kind never ran
     assert runs["status"] == "error" and compliance_db.KINDS[0] in runs["summary"]
+
+
+def test_cis_db_a_live_run_long_ago_then_dry_runs_only_fails():
+    """One approved live run, then a retention window changed: every scheduled run since is a DRY RUN (decide_mode),
+    so nothing is deleted. Recent runs and an old live run must not read as storage limitation met."""
+    last_live = NOW - timedelta(days=40)
+    recent = NOW - timedelta(hours=5)
+    rows = [_agg(k, recent, last_live, dry=30, live=0) for k in compliance_db.KINDS]
+    runs, lives = compliance_db.evaluate(rows, NOW)
+    assert runs["status"] == "pass"                                   # the schedule runs ...
+    assert lives["status"] == "pass" and lives["detail"]["live_last_date"] == last_live.date().isoformat()
+    s = settings()
+    assert cs.check_state("retention_runs_recent", runs, {"cis_db": NOW}, s, NOW).state == "pass"
+    assert cs.check_state("retention_live_enabled", lives, {"cis_db": NOW}, s, NOW).state == "fail"   # ... deletes nothing
+    fresh = [_agg(k, recent, NOW - timedelta(days=2), dry=0, live=30) for k in compliance_db.KINDS]
+    _, ok = compliance_db.evaluate(fresh, NOW)
+    assert cs.check_state("retention_live_enabled", ok, {"cis_db": NOW}, s, NOW).state == "pass"
 
 
 def test_cis_db_live_baseline_matches_the_job_runner():
@@ -302,9 +322,9 @@ def test_view_as_get_writes_nothing():
 def test_heartbeat_applies_to_scheduled_sources_only():
     s = cs.ScoreSettings(validity_hours={"root_daily": 72, "cis_db": 72}, heartbeat_hours=36, partial_weight=0.5,
                          heartbeat_sources=frozenset({"root_daily"}))
-    old = ev("retention_live_enabled", {"never_live": 0}, source="cis_db", hours_ago=48)
+    old = ev("retention_live_enabled", {"live_last_date": "2026-11-22"}, source="cis_db", hours_ago=48)
     assert cs.check_state("retention_live_enabled", old, {"cis_db": old["collected_at"]}, s, NOW).state == "pass"
-    stale = ev("retention_live_enabled", {"never_live": 0}, source="cis_db", hours_ago=80)
+    stale = ev("retention_live_enabled", {"live_last_date": "2026-11-22"}, source="cis_db", hours_ago=80)
     assert cs.check_state("retention_live_enabled", stale, {"cis_db": stale["collected_at"]}, s, NOW).state == "stale"
     root = ev("legal_ropa_reviewed", {"overdue": 0}, hours_ago=48)
     assert cs.check_state("legal_ropa_reviewed", root, {"root_daily": root["collected_at"]}, s, NOW).state == "error"

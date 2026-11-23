@@ -136,7 +136,7 @@ async def test_cis_db_reads_the_retention_runs(conn):
             kind, json.dumps(result))
     rows = {r["check_id"]: r for r in await compliance_db.collect(OneConnPool(conn), NOW)}
     assert rows["retention_runs_recent"]["status"] == "pass" and rows["retention_runs_recent"]["detail"]["last_date"]
-    assert rows["retention_live_enabled"]["detail"]["never_live"] == 2
+    assert rows["retention_live_enabled"]["status"] == "fail"
     assert rows["retention_live_enabled"]["detail"]["never_live_kinds"] == sorted(compliance_db.KINDS[:2])
     new = await compliance.ingest(OneConnPool(conn), list(rows.values()), 72)
     assert new == 2

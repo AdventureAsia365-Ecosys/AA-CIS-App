@@ -3026,7 +3026,7 @@ Evidence: the root collector adds six `legal_*` checks (the `docs/legal` pages o
 each page's own review cycle, plus their status) and `last_erasure_drill`; the API collects two sources itself, **only
 on Refresh** (POST, never on a GET, so a read-only view-as session writes nothing) and at most every 10 minutes per
 source: `cis_db` (`api/services/compliance_db.py`: `retention_runs_recent` = oldest of the newest retention runs per
-kind, `retention_live_enabled` = kinds never run live) and `crm_ops` (`api/services/compliance_crm.py`, crm.ops.v1 1.18
+kind, `retention_live_enabled` = oldest of the newest LIVE runs per kind, graded on its age) and `crm_ops` (`api/services/compliance_crm.py`, crm.ops.v1 1.18
 `GET /privacy-evidence` with the staff member's own token: `campaign_consent_enforced` = sends without a yes,
 `consent_capture_present` = newest consent decision; a 401 / 403 writes no evidence row). The heartbeat applies to the
 scheduled source only. Settings: ten more `cis.compliance.*` keys (validity of the two sources, legal pages overdue,

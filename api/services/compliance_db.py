@@ -10,12 +10,14 @@ Checks (ids stay stable: AA-1173 moves the collection into a worker job without 
                            ``last_date`` = the OLDEST of the newest succeeded runs (CIS grades its age against
                            cis.compliance.retention_run_max_age_days: a schedule that stopped is not evidence). A kind
                            with no succeeded run at all makes the check an error that names it.
-  retention_live_enabled   fact ``never_live`` = the kinds with no succeeded LIVE run in the job table (scheduled runs
-                           stay DRY RUN until a live run of the same windows was approved,
-                           services/jobs/retention_job.py decide_mode, and a DRY RUN deletes nothing). A
-                           manual_override run does not count, as in the job runner's own live baseline; CIS grades it
-                           against cis.compliance.retention_never_live_max. The DRY RUN share of the last 30 days is in
-                           detail.
+  retention_live_enabled   fact ``live_last_date`` = the OLDEST of the newest succeeded LIVE runs, one per kind (CIS
+                           grades its age against cis.compliance.retention_live_max_age_days). Recency, not existence:
+                           scheduled runs stay DRY RUN until a live run of the same windows was approved and fall back
+                           to DRY RUN for good after any window change (services/jobs/retention_job.py decide_mode); a
+                           DRY RUN or a held run deletes nothing, so only a recent live run proves old data goes. A kind
+                           with no live run at all makes the row ``fail`` and names it. A manual_override run does not
+                           count, as in the job runner's own live baseline. The DRY RUN and live/held counts of the
+                           last 30 days are in detail.
 
 detail holds kind names, counts and dates only (no job payload, no personal data); the link is the root retention and
 erasure run log on GitHub. Read as cis_app (the role of the API; shared.job is its own table). A database error gives
@@ -79,7 +81,9 @@ def evaluate(rows: list[dict], now: datetime) -> list[dict]:
     dates = {k: by_kind[k]["last_run"].date().isoformat() for k in KINDS
              if k in by_kind and by_kind[k]["last_run"] is not None}
     never_ran = sorted(set(KINDS) - set(dates))
-    never_live = sorted(k for k in KINDS if k not in by_kind or by_kind[k]["last_live"] is None)
+    live_dates = {k: by_kind[k]["last_live"].date().isoformat() for k in KINDS
+                  if k in by_kind and by_kind[k]["last_live"] is not None}
+    never_live = sorted(set(KINDS) - set(live_dates))
     dry = {k: int(by_kind[k]["dry_runs"] or 0) for k in KINDS if k in by_kind}
     live = {k: int(by_kind[k]["live_or_held"] or 0) for k in KINDS if k in by_kind}
     detail = {"kinds": len(KINDS), "last_run": dates, f"dry_runs_{DRY_RUN_WINDOW_DAYS}d": dry,
@@ -92,10 +96,18 @@ def evaluate(rows: list[dict], now: datetime) -> list[dict]:
         runs = _row("retention_runs_recent", "pass",
                     f"{len(dates)}/{len(KINDS)} retention kinds ran; oldest newest run {oldest}",
                     dict(detail, last_date=oldest), now)
-    lives = _row("retention_live_enabled", "pass",
-                 f"{len(KINDS) - len(never_live)}/{len(KINDS)} retention kinds have had a live run"
-                 + (f"; DRY RUN only: {', '.join(never_live)}" if never_live else ""),
-                 {"kinds": len(KINDS), "never_live": len(never_live), "never_live_kinds": never_live}, now)
+    live_detail = {"kinds": len(KINDS), "last_live": live_dates, "never_live_kinds": never_live,
+                   f"dry_runs_{DRY_RUN_WINDOW_DAYS}d": dry, f"live_or_held_{DRY_RUN_WINDOW_DAYS}d": live}
+    if never_live:
+        # a kind that never deleted anything for real: no date to grade, so the row fails on its own
+        lives = _row("retention_live_enabled", "fail",
+                     f"{len(never_live)} retention kind(s) never had a live run (DRY RUN only): "
+                     + ", ".join(never_live), live_detail, now)
+    else:
+        oldest_live = min(live_dates.values())
+        lives = _row("retention_live_enabled", "pass",
+                     f"{len(live_dates)}/{len(KINDS)} retention kinds had a live run; oldest newest live run "
+                     f"{oldest_live}", dict(live_detail, live_last_date=oldest_live), now)
     return [runs, lives]
 
 

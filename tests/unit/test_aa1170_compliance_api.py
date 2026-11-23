@@ -159,7 +159,7 @@ def test_score_settings_read_the_compliance_keys():
               # AA-1174 (CIS 471)
               "cis.compliance.validity_hours.cis_db": 72, "cis.compliance.validity_hours.crm_ops": 48,
               "cis.compliance.legal_docs_overdue_max": 0, "cis.compliance.erasure_drill_max_age_days": 180,
-              "cis.compliance.retention_run_max_age_days": 3, "cis.compliance.retention_never_live_max": 0,
+              "cis.compliance.retention_run_max_age_days": 3, "cis.compliance.retention_live_max_age_days": 7,
               "cis.compliance.consent_capture_max_age_days": 90,
               "cis.compliance.campaign_consent_violations_max": 0}
 
