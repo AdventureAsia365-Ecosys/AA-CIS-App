@@ -278,7 +278,12 @@ async def list_view_as_sessions(
     caller = _caller(principal, request)
     staff_filter = None if _sees_every_session(caller, request) else _require_staff_id(request)
     pool = request.app.state.pool
+    own = staff_id_of(request)
     async with pool.acquire() as conn:
+        if own is not None:
+            # AA-1157: the member's own role sessions that ran out without an end (the cookie is gone) end here, with
+            # their staff.view_as_ended rows; the BFF's sign-out reads this list first.
+            await staff_view_as.close_expired_own(conn, own)
         try:
             rows = await conn.fetch(LIST_SQL, staff_filter, tenant_id, open_only, limit)
         except asyncpg.UndefinedTableError as exc:

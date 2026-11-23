@@ -46,8 +46,8 @@ import { proxyPath } from "@/lib/bffPath";
 import { streamUpstream } from "@/lib/proxyResponse";
 import { base64Search, decodeDocsAsset, isDocsAssetRead } from "@/lib/docsAsset";
 import { isViewAsStartPath } from "@/lib/viewAs";
-import { isStaffViewAsStartPath, isViewEnded } from "@/lib/staffViewAs";
-import { clearStaffViewCookies } from "@/lib/staffViewCookies";
+import { isStaffViewAsStartPath } from "@/lib/staffViewAs";
+import { answerStaffUpstream } from "@/lib/staffViewCookies";
 
 const API_URL = process.env.API_URL ?? "https://api-cis.lumiguides.it.com";
 const ADMIN_SECRET = process.env.ADMIN_SECRET ?? "";
@@ -136,7 +136,7 @@ async function handler(
     const res = await fetch(url, { method: req.method, headers: outHeaders, body });
     // S241 — stream the body through (lib/proxyResponse.ts: same status, Content-Type only); AA-1157: a 409 of a view
     // is read to see whether the API ended it.
-    return await answerUpstream(res, !!auth.viewAs);
+    return await answerStaffUpstream(res, !!auth.viewAs);
   } catch {
     return NextResponse.json({ detail: "Upstream connection error" }, { status: 502 });
   }
@@ -154,17 +154,6 @@ function viewStartRefusal(pathStr: string): NextResponse | null {
       { status: 403 });
   }
   return null;
-}
-
-/** The upstream answer for the page. AA-1157: inside a view, a 409 staff_view_as_ended (expired, rights changed)
- *  also clears the view cookies; everything else streams through unchanged. */
-async function answerUpstream(res: Response, viewing: boolean): Promise<NextResponse> {
-  if (res.status !== 409 || !viewing) return streamUpstream(res);
-  const text = await res.text();
-  let parsed: unknown = null;
-  try { parsed = JSON.parse(text); } catch { /* not JSON */ }
-  const out = new NextResponse(text, { status: 409, headers: { "Content-Type": "application/json" } });
-  return isViewEnded(409, parsed) ? clearStaffViewCookies(out) : out;
 }
 
 export const GET    = handler;

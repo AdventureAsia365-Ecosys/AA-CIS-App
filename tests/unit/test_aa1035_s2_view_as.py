@@ -36,7 +36,7 @@ from fastapi import HTTPException
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
-from api.core import e2e_staff, staff_authz, view_as
+from api.core import e2e_staff, staff_authz, staff_view_as, view_as
 from api.core import tenant_scope as ts
 from api.middleware import tenant_role
 from api.middleware.view_as import ViewAsGateMiddleware
@@ -122,8 +122,8 @@ class FakeDb:
         self.sql.append(sql)
         if sql == va.END_OTHERS_SQL:
             return [dict(r) for r in self.others]
-        if sql == va.LIST_SQL:
-            return [self._session_row()]
+        if sql in (va.LIST_SQL, staff_view_as.CLOSE_EXPIRED_OWN_SQL):   # AA-1157: no expired role session here
+            return [self._session_row()] if sql == va.LIST_SQL else []
         raise AssertionError(f"unexpected fetch {sql}")
 
     def _session_row(self, **over: Any) -> dict:
@@ -1016,7 +1016,7 @@ def test_list_of_a_book_role_is_filtered_to_its_own_sessions(world):
     db.fetch = spy
     client.get("/admin/view-as/sessions", headers=_h("support"))
     client.get("/admin/view-as/sessions", headers=_h("admin"))
-    assert calls[0][0] == STAFF and calls[1][0] is None
+    assert [c[0] for c in calls if len(c) == 4] == [STAFF, None]   # the LIST_SQL calls (not the AA-1157 closer)
 
 
 def test_every_new_staff_route_x_every_role_matches_the_matrix():

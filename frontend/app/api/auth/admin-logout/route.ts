@@ -26,7 +26,8 @@
 // clears the view-as cookie (its own /api/view-as path). Best effort and bounded (VIEW_AS_END_TIMEOUT_MS): a failure
 // never blocks the sign-out; an open session then ends at its next request or its expiry (at most 60 minutes).
 // AA-1157: the owner's "view as a lower role" session ends the same way (its own cookie names it) and both of its
-// cookies are cleared.
+// cookies are cleared; reading the session list also ends the member's role views that ran out without an end (their
+// cookie gone), each with its end row (api/core/staff_view_as.close_expired_own).
 import { NextRequest, NextResponse } from "next/server";
 import { adminVerifyCache, requireAdmin, staffCredentialHeaders } from "@/lib/auth-server";
 import {

@@ -2736,7 +2736,8 @@ open (no revocation is recorded); starts take a per-member advisory lock. `GET /
 `view_as`. Back = `POST /admin/view-as/sessions/{id}/end` as the owner (the session read / end serve both kinds,
 `kind` and `view_role`; the session list stays tenant sessions only); sign-out and staff disable close it too
 (`view_as.close_open_sessions`, one ended row of the session's own kind), and so does the owner's read of the session
-once it expired (the banner's check at 0 minutes; the token cookie outlives the view by 5 minutes for that read only). The BFF (`lib/auth-server.ts requireAdmin`)
+once it expired (the banner's check at 0 minutes; the token cookie outlives the view by 5 minutes for that read only)
+or the member's session list (sign-out reads it first, so a view whose cookie is gone still gets its end row). The BFF (`lib/auth-server.ts requireAdmin`)
 refuses writes during the view, checks rules and pages (`proxy.ts`) with the view role (claimed capabilities ∩
 verified, only from a Cognito admin session) and the shell shows `StaffViewAsBanner` (role, read-only, time left,
 Back); the Cognito cookies are never touched. Data scoped to assignments (customer_success / support books) follows the

@@ -66,6 +66,8 @@ class FakeDb:
         self.custom_error = False          # the custom-role read fails (a transient database error)
         self.one_rows: list[dict] = []     # successive answers of ONE_SQL (the session read)
         self.executed: list[str] = []      # every execute() SQL, in order (with fetch markers)
+        self.expired_own: list[dict] = []  # own role sessions past expiry without an end (CLOSE_EXPIRED_OWN_SQL)
+        self.expired_args: list[tuple] = []
 
     def acquire(self):
         db = self
@@ -111,6 +113,12 @@ class FakeDb:
             return [dict(r) for r in self.others]
         if sql == view_as.CLOSE_STAFF_SESSIONS_SQL:
             return [dict(r) for r in self.others]
+        if sql == staff_view_as.CLOSE_EXPIRED_OWN_SQL:
+            self.expired_args.append(args)
+            rows, self.expired_own = self.expired_own, []
+            return rows
+        if sql == va.LIST_SQL:
+            return []
         raise AssertionError(f"unexpected fetch {sql}")
 
     async def execute(self, sql: str, *args: Any) -> str:
@@ -513,6 +521,30 @@ def test_the_owner_reading_an_expired_role_session_closes_it_with_its_end_row(wo
     assert r.json()["end_reason"] == "expired" and r.json()["open"] is False
     ended = _actions(db, StaffViewAsAuditAction.ENDED)
     assert len(ended) == 1 and ended[0]["details"]["cause"] == "expired" and ended[0]["actor"] == f"admin:{OWNER}"
+
+
+def test_the_session_list_closes_the_members_expired_role_sessions(world):
+    """A view whose cookie is gone (left to time out): the member's session list, which the BFF's sign-out reads
+    first, ends it with its end row; a second read finds nothing more to close."""
+    client, db, *_ = world
+    gone = "88888888-8888-4888-8888-888888888888"
+    db.expired_own = [{"session_id": gone, "view_role": "content"}]
+    headers = {"Authorization": f"Bearer {FAKE_TOKEN}"}
+    assert client.get("/admin/view-as/sessions?open_only=true", headers=headers).status_code == 200
+    assert client.get("/admin/view-as/sessions?open_only=true", headers=headers).status_code == 200
+    assert db.expired_args == [(OWNER,), (OWNER,)]
+    (ended,) = _actions(db, StaffViewAsAuditAction.ENDED)
+    assert ended["resource_id"] == gone and ended["details"]["cause"] == "expired" and ended["actor"] == f"admin:{OWNER}"
+    assert ended["tenant_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_closing_expired_sessions_is_best_effort():
+    class Broken(FakeDb):
+        async def fetch(self, sql: str, *args: Any) -> list:
+            raise ConnectionError("database hiccup")
+
+    assert await staff_view_as.close_expired_own(Broken(), OWNER) == []
 
 
 def test_reading_an_open_or_ended_session_writes_nothing(world):

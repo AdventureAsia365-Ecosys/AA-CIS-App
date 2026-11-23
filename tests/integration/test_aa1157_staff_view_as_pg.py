@@ -215,3 +215,21 @@ async def test_two_concurrent_starts_leave_one_open_session(world):
         "SELECT session_id::text AS sid FROM shared.staff_view_as_session "
         "WHERE admin_user_id = $1::uuid AND ended_at IS NULL", owner)
     assert len(open_rows) == 1 and open_rows[0]["sid"] in (a["session_id"], b["session_id"])
+
+
+@pytest.mark.asyncio
+async def test_the_session_list_closes_an_expired_role_view_whose_cookie_is_gone(world):
+    """The BFF's sign-out reads the member's session list first: an expired role view without an end (its cookie long
+    gone) ends there with one staff.view_as_ended row; the list itself still shows tenant sessions only."""
+    client, pool, owner, _ = world
+    sid = await pool.fetchval(
+        "INSERT INTO shared.staff_view_as_session (admin_user_id, view_role, reason, started_at, expires_at) "
+        "VALUES ($1::uuid, 'content', $2, now() - interval '90 minutes', now() - interval '30 minutes') "
+        "RETURNING session_id::text", owner, REASON)
+    listed = await client.get("/admin/view-as/sessions?open_only=true", headers=_owner())
+    assert listed.status_code == 200 and all(s["session_id"] != sid for s in listed.json()["sessions"])
+    assert await pool.fetchval("SELECT end_reason FROM shared.staff_view_as_session WHERE session_id = $1::uuid",
+                               sid) == "expired"
+    await client.get("/admin/view-as/sessions", headers=_owner())
+    (ended,) = await _audit(pool, "staff.view_as_ended", sid)
+    assert ended["details"]["cause"] == "expired" and ended["actor"] == f"admin:{owner}"

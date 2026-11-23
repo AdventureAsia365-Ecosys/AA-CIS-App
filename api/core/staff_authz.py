@@ -15,8 +15,8 @@ Pieces
 
 Principal
 ---------
-- secret + x-admin-role -> staff principal with that role (header trust of the main secret, ADR 0006 phase 1);
-  secret, no x-admin-role -> machine, only on MACHINE_ROUTES; a role header that is not a staff role -> 403.
+- secret + x-admin-role -> staff principal with that role (header trust: whoever holds the main secret can claim any
+  role, ADR 0006 phase 1); secret, no x-admin-role -> machine, only on MACHINE_ROUTES; a non-staff role header -> 403.
 - AA-816 C9 (api/core/staff_credential.py): a verified Cognito Bearer needs no secret (role from its groups); the
   Preview credential is always the viewer. AA-1157: a view-as-a-role request runs as the target role, never writes.
 

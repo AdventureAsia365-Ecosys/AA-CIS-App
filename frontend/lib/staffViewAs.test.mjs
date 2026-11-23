@@ -145,6 +145,15 @@ test("requireAdmin refuses writes inside a view and swaps the role for reads; th
   assert.equal(STAFF_VIEW_AS_HEADER, "x-staff-view-as");
 });
 
+test("every staff proxy that forwards the view clears the view cookies on a 409 staff_view_as_ended", () => {
+  for (const file of ["app/api/admin/[...path]/route.ts", "app/api/tenant/[...path]/route.ts",
+    "app/api/pipeline/[...path]/route.ts"]) {
+    assert.match(read(file), /return await answerStaffUpstream\(res, !!auth\.viewAs\);/, file);
+  }
+  const cookies = read("lib/staffViewCookies.ts");
+  assert.match(cookies, /return isViewEnded\(409, parsed\) \? clearStaffViewCookies\(out\) : out;/);
+});
+
 test("the generic proxy refuses the start; the start route keeps the token httpOnly and never answers it", () => {
   const proxy = read("app/api/admin/[...path]/route.ts");
   assert.match(proxy, /isStaffViewAsStartPath\(pathStr\)/);

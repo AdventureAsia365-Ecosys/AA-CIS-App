@@ -30,9 +30,11 @@ How it works
    middleware does not keep the token for such a request (api/services/platform_apps.relay_authorization answers None,
    the relay answers "unavailable").
 5. Ending: ``POST /admin/view-as/sessions/{id}/end`` (the BFF's Back button, sent WITHOUT the view-as header), a new
-   start, sign-out / staff disable (:func:`api.core.view_as.close_open_sessions`), the per-request check, or the
+   start, sign-out / staff disable (:func:`api.core.view_as.close_open_sessions`), the per-request check, the
    owner's next read of the session once it expired (``GET /admin/view-as/sessions/{id}``: the banner's check at 0
-   minutes, through the BFF whose token cookie outlives the view by a short grace). Every end writes one
+   minutes, through the BFF whose token cookie outlives the view by a short grace), or the member's session list
+   (:func:`close_expired_own`: the BFF's sign-out reads it first, so a view whose cookie is gone still gets its end
+   row at sign-out). Every end writes one
    ``staff.view_as_ended`` row for a role session (``tenant.view_as_ended`` for a tenant one). Starts take a
    per-member advisory lock, so two tabs never leave two open sessions.
 
@@ -291,6 +293,34 @@ async def close(conn: Any, *, session_id: str, staff_id: str, view_role: str, ca
         logger.warning("staff_view_as_close_failed", error=repr(e)[:300], session_id=session_id, cause=cause)
         return None
     return row["end_reason"]
+
+
+# The member's own role sessions past their expiry that have no end yet (a view left to time out, its cookie gone).
+CLOSE_EXPIRED_OWN_SQL = (
+    "UPDATE shared.staff_view_as_session SET ended_at = greatest(now(), started_at), end_reason = 'expired' "
+    "WHERE admin_user_id = $1::uuid AND view_role IS NOT NULL AND ended_at IS NULL AND expires_at <= now() "
+    "RETURNING session_id::text AS session_id, view_role"
+)
+
+
+async def close_expired_own(conn: Any, staff_id: str) -> list[str]:
+    """End the member's own role sessions that are past their expiry but not ended yet ('expired', one
+    staff.view_as_ended row each, actor the member) and answer their ids. Called by the member's session list (the
+    BFF's sign-out reads it first), so a view left to time out gets its end row even when its cookie is gone. Cheap:
+    one UPDATE that matches nothing in the usual case. Best effort: a failure is logged and nothing is closed."""
+    from services.acp_shared.audit_log import write_audit_log
+
+    try:
+        async with conn.transaction():
+            rows = [dict(r) for r in await conn.fetch(CLOSE_EXPIRED_OWN_SQL, staff_id)]
+            for r in rows:   # every UPDATE first, then the audit rows (the audit chain trigger's lock)
+                await write_audit_log(conn, **view_as.ended_audit(
+                    tenant_id=None, session_id=r["session_id"], actor=f"admin:{staff_id}", end_reason="expired",
+                    cause="expired", session_staff=staff_id, view_role=r["view_role"]))
+    except Exception as e:  # noqa: BLE001 - best effort; the next start or sign-out closes them
+        logger.warning("staff_view_as_close_expired_failed", error=repr(e)[:300])
+        return []
+    return [r["session_id"] for r in rows]
 
 
 def _refuse_ended(reason: str) -> StaffViewAsRefused:
