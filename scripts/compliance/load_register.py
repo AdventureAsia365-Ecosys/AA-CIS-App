@@ -82,8 +82,12 @@ OFFICIAL_HOSTS = ("eur-lex.europa.eu", "edpb.europa.eu", "commission.europa.eu",
                   "legislation.gov.au", "oaic.gov.au", "acma.gov.au", "leginfo.legislature.ca.gov", "cppa.ca.gov",
                   "oag.ca.gov", "law.lis.virginia.gov", "uscode.house.gov", "ecfr.gov", "ftc.gov",
                   "gesetze-im-internet.de", "legifrance.gouv.fr", "cnil.fr", "wetten.overheid.nl",
-                  "autoriteitpersoonsgegevens.nl", "vbpl.vn", "gov.vn", "chinhphu.vn", "quochoi.vn",
-                  "pcisecuritystandards.org")   # gov.vn: every Vietnamese government domain (ministries, provinces)
+                  "autoriteitpersoonsgegevens.nl",
+                  # Vietnam: the legal document databases and the official gazette only, not every government domain
+                  # (a ministry's or a province's introduction document of a law is a secondary source, not its text)
+                  "vbpl.vn", "vbpl.moj.gov.vn", "congbao.chinhphu.vn", "congbaocdn.chinhphu.vn",
+                  "vanban.chinhphu.vn", "datafiles.chinhphu.vn", "quochoi.vn",
+                  "pcisecuritystandards.org")
 CLAIM = re.compile(r"\b(compliant|complies|in compliance)\b", re.I)
 NORMATIVE = re.compile(r"\b(shall|the organi[sz]ation)\b", re.I)
 FORBIDDEN = (

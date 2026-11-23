@@ -126,7 +126,7 @@ export const COMPLIANCE = defineMessages(
     lawCounts: (met: number, notMet: number, notChecked: number, counsel: number) =>
       `${met} met · ${notMet} not met · ${notChecked} not yet checked · ${counsel} flagged for counsel`,
     inForce: (d: string) => `In force since ${d}`,
-    officialText: "Official text",
+    officialText: "Official source",
     filterLaw: "Law",
     allLaws: "All laws",
     colRef: "Ref",
@@ -267,7 +267,7 @@ export const COMPLIANCE = defineMessages(
     lawCounts: (met: number, notMet: number, notChecked: number, counsel: number) =>
       `${met} đạt · ${notMet} chưa đạt · ${notChecked} chưa kiểm · ${counsel} cần luật sư`,
     inForce: (d: string) => `Hiệu lực từ ${d}`,
-    officialText: "Văn bản chính thức",
+    officialText: "Nguồn chính thức",
     filterLaw: "Luật",
     allLaws: "Mọi luật",
     colRef: "Điều",

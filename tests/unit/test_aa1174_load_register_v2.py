@@ -125,5 +125,15 @@ def test_official_hosts_accept_sub_domains_only():
     assert lr._host_ok("https://eur-lex.europa.eu/eli/reg/2016/679/oj")
     assert not lr._host_ok("https://eur-lex.europa.eu.attacker.example/x")
     assert not lr._host_ok("https://notvbpl.vn/x")
-    assert lr._host_ok("https://vbpl.moj.gov.vn/TW/x.doc") and lr._host_ok("https://sbv.gov.vn/x")
+    assert lr._host_ok("https://vbpl.moj.gov.vn/TW/x.doc") and lr._host_ok("https://congbao.chinhphu.vn/van-ban/x.htm")
     assert not lr._host_ok("https://gov.vn.example.com/x")
+
+
+def test_vietnam_sources_are_the_gazette_or_a_legal_database():
+    """A ministry's or a province's introduction document of a law is a secondary source; the page labels every law
+    link "Official source", so only the legal document databases and the official gazette pass for Vietnam."""
+    assert lr._host_ok("https://datafiles.chinhphu.vn/cpp/files/vbpq/2025/01/luat60.pdf")
+    assert lr._host_ok("https://vanban.chinhphu.vn/?pageid=27160&docid=1") and lr._host_ok("https://vbpl.vn/x")
+    for url in ("https://sbv.gov.vn/documents/intro.docx", "https://sotuphap.daklak.gov.vn/intro.pdf",
+                "https://xaydungchinhsach.chinhphu.vn/news.htm", "https://chinhphu.vn/news.htm"):
+        assert not lr._host_ok(url), url
