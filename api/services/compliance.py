@@ -88,6 +88,7 @@ class ComplianceMissing(Exception):
 
 _cache: dict[str, Any] = {"at": 0.0, "state": None}
 _lock = asyncio.Lock()
+_live_lock = asyncio.Lock()   # one live collection at a time per process (the interval check reads the table)
 
 
 def reset_cache() -> None:
@@ -207,8 +208,19 @@ async def sync(pool: Any, refresh: bool = False, client_factory: Optional[Callab
                now: Optional[datetime] = None, authorization: Optional[str] = None, collect_live: bool = False) -> dict:
     """Read the published file (cached per process) and ingest it. Never raises for storage or format: the answer
     says what happened (state ok | missing | unavailable | invalid), the page shows it. ``collect_live`` (the Refresh
-    action only) also collects the cis_db and crm_ops sources (``live`` in the answer); ``authorization`` is the staff
-    member's relay token for the CRM."""
+    action only) also collects the cis_db and crm_ops sources (``live`` in the answer) on every call, cache hit or not:
+    LIVE_MIN_INTERVAL_S bounds that write rate, so a Refresh pressed right after a page load still collects.
+    ``authorization`` is the staff member's relay token for the CRM. The cached state never carries ``live``."""
+    state = await _sync_published(pool, refresh, client_factory, now)
+    if not collect_live:
+        return state
+    async with _live_lock:
+        live = await collect_live_sources(pool, authorization, now or datetime.now(timezone.utc))
+    return {**state, "live": live}
+
+
+async def _sync_published(pool: Any, refresh: bool, client_factory: Optional[Callable[[], Any]],
+                          now: Optional[datetime]) -> dict:
     max_age = docs_reader.MIN_REFRESH_S if refresh else docs_reader.CACHE_TTL_S
     if _cache["state"] is not None and time.monotonic() - _cache["at"] < max_age:
         return _cache["state"]
@@ -233,8 +245,6 @@ async def sync(pool: Any, refresh: bool = False, client_factory: Optional[Callab
                 source = rows[0]["source"] if rows else None
                 hours = await _validity_hours(source) if source else None
                 state.update(state="ok", rows=len(rows), new=await ingest(pool, rows, hours), dropped=dropped)
-        if collect_live:
-            state["live"] = await collect_live_sources(pool, authorization, now)
         _cache["state"], _cache["at"] = state, time.monotonic()
         return state
 

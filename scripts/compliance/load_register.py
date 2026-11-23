@@ -45,7 +45,8 @@ lists is set applicable = false (never deleted: mappings and evidence history st
 https on an official host (``OFFICIAL_HOSTS``: legislation portals and regulators; the "primary source for every
 verdict" rule), our document links are https://github.com/ pages; data text never claims compliance ("compliant",
 "complies", "in compliance") and an obligation label is our own short wording. Mappings may point at the law
-obligations of the same file. More than ``MAX_DEACTIVATE`` active controls set inactive by one run needs
+obligations of the same file. Every applicable law obligation has a link: a ``doc_url``, or a mapping to an active
+control with a required automatic check. More than ``MAX_DEACTIVATE`` active controls set inactive by one run needs
 ``--allow-deactivate`` (a register file missing most controls is a mistake, not a decision).
 """
 from __future__ import annotations
@@ -188,7 +189,23 @@ def validate(register: Any, catalogue: set[tuple[str, str]], db_kinds: dict[str,
         problems += _mapping_problems(m, ids, catalogue, set(kinds)) + ([f"mapping {key}: listed twice"]
                                                                        if key in seen else [])
         seen.add(key)
+    if register["format"] == 2:
+        problems += _link_problems(register)
     return problems
+
+
+def _link_problems(register: dict) -> list[str]:
+    """Every applicable law obligation must reach the page with a link: a doc_url, or a mapping to an active control
+    of the file with a required automatic check (its evidence row links). Otherwise the Obligations tab would show the
+    item with "no automatic check" and nothing to open."""
+    checked = {c.get("control_id") for c in register["controls"] if isinstance(c, dict) and c.get("active", True)
+               and any(isinstance(k, dict) and k.get("required") for k in (c.get("checks") or []))}
+    backed = {(m.get("framework"), m.get("ref")) for m in register["mappings"]
+              if isinstance(m, dict) and m.get("control_id") in checked}
+    return [f"requirement {(r.get('framework'), r.get('ref'))}: no doc_url and no mapped control with a required "
+            "automatic check (the page would show it without any link)"
+            for r in register.get("requirements", []) if isinstance(r, dict) and r.get("applicable", True) is True
+            and not r.get("doc_url") and (r.get("framework"), r.get("ref")) not in backed]
 
 
 def _host_ok(url: Any, github_only: bool = False) -> bool:

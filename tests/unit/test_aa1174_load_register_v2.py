@@ -92,6 +92,27 @@ def test_a_bad_v2_register_is_refused(mutate, needle):
     assert any(needle in p for p in problems), problems
 
 
+def test_every_law_obligation_reaches_the_page_with_a_link():
+    """No doc_url is fine while a mapped active control has a required automatic check (its evidence row links); with
+    only manual controls (or none), or a not-applicable item aside, a missing doc_url is refused."""
+    reg = v2()
+    reg["requirements"][0]["doc_url"] = None
+    reg["controls"][0]["checks"] = [{"check_id": "repo_rulesets", "required": True}]
+    reg["controls"][0]["active"] = True
+    assert lr.validate(reg, cat(reg), KINDS) == []
+    for mutate in (lambda r: r["controls"][0].update(checks=[]),
+                   lambda r: r["controls"][0].update(checks=[{"check_id": "repo_rulesets", "required": False}]),
+                   lambda r: r["controls"][0].update(active=False),
+                   lambda r: r["mappings"].pop()):
+        bad = copy.deepcopy(reg)
+        mutate(bad)
+        assert any("no doc_url" in p for p in lr.validate(bad, cat(reg), KINDS))
+    aside = copy.deepcopy(reg)
+    aside["controls"][0]["checks"] = []
+    aside["requirements"][0]["applicable"] = False
+    assert lr.validate(aside, cat(reg), KINDS) == []
+
+
 def test_law_sections_need_format_2_and_unknown_formats_are_refused():
     reg = v2()
     reg["format"] = 1

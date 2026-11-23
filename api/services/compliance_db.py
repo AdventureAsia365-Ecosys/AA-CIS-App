@@ -12,7 +12,8 @@ Checks (ids stay stable: AA-1173 moves the collection into a worker job without 
                            with no succeeded run at all makes the check an error that names it.
   retention_live_enabled   fact ``never_live`` = the kinds with no succeeded LIVE run in the job table (scheduled runs
                            stay DRY RUN until a live run of the same windows was approved,
-                           services/jobs/retention_job.py decide_mode, and a DRY RUN deletes nothing); CIS grades it
+                           services/jobs/retention_job.py decide_mode, and a DRY RUN deletes nothing). A
+                           manual_override run does not count, as in the job runner's own live baseline; CIS grades it
                            against cis.compliance.retention_never_live_max. The DRY RUN share of the last 30 days is in
                            detail.
 
@@ -39,19 +40,23 @@ KINDS = tuple(SPECS)
 DRY_RUN_WINDOW_DAYS = 30   # technical-constant: the DRY RUN share shown in detail (display only, never graded)
 _SHA = re.compile(r"^[0-9a-f]{7,40}$")
 
-SQL_RETENTION = """
+# A manual_override run (an admin proof run with an explicit cutoff, Dev only) is not a live baseline for the job runner
+# (services/jobs/retention_job.py _LAST_LIVE_SQL leaves it out, so scheduled runs stay DRY RUN after it): the same
+# filter here, so the page never counts as "live" what the runner itself does not accept.
+NOT_OVERRIDE = "coalesce(result ->> 'trigger', 'manual') <> 'manual_override'"
+SQL_RETENTION = f"""
 SELECT kind,
        max(finished_at) FILTER (WHERE status = 'succeeded')                                AS last_run,
-       max(finished_at) FILTER (WHERE status = 'succeeded' AND result ->> 'mode' = 'live')  AS last_live,
+       max(finished_at) FILTER (WHERE status = 'succeeded' AND result ->> 'mode' = 'live'
+                                  AND {NOT_OVERRIDE})                                      AS last_live,
        count(*) FILTER (WHERE status = 'succeeded' AND finished_at > now() - make_interval(days => $2)
                           AND result ->> 'mode' = 'dry_run')                                AS dry_runs,
        count(*) FILTER (WHERE status = 'succeeded' AND finished_at > now() - make_interval(days => $2)
-                          AND result ->> 'mode' IN ('live', 'held'))                        AS live_or_held
+                          AND result ->> 'mode' IN ('live', 'held') AND {NOT_OVERRIDE})     AS live_or_held
   FROM shared.job
  WHERE kind = ANY($1::text[])
  GROUP BY kind
 """
-
 
 def _version() -> str | None:
     try:

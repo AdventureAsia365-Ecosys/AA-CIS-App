@@ -65,7 +65,8 @@ def register() -> dict:
          "sort_order": 1, "counsel_review": False, "applies_as": "both",
          "doc_url": "https://github.com/ExampleOrg/repo/blob/master/docs/legal/register.md"},
         {"framework": "ex-law:2025", "ref": "Art.21", "section": "Example law", "title": "Assess processing impact",
-         "sort_order": 2, "counsel_review": True, "applies_as": "controller"}]
+         "sort_order": 2, "counsel_review": True, "applies_as": "controller",
+         "doc_url": "https://github.com/ExampleOrg/repo/blob/master/docs/legal/register.md#impact"}]
     reg["applicability"] = [{"market": "VN", "segment": "staff", "framework": "ex-law:2025",
                              "test": "Processes staff data in Vietnam", "verdict": "applies",
                              "source_url": "https://vbpl.vn/example", "source_title": "Example Law 1/2025",
@@ -124,14 +125,18 @@ async def test_law_dropped_from_the_file_is_deactivated_not_deleted(conn):
 @pytest.mark.asyncio
 async def test_cis_db_reads_the_retention_runs(conn):
     await conn.execute("DELETE FROM shared.job WHERE kind = ANY($1::text[])", list(compliance_db.KINDS))
+    # kind 0: DRY RUN only; kind 1: its only live run is a Dev manual_override (the job runner does not take it as a
+    # live baseline, so it must count as never live); the others: an approved scheduled live run.
+    results = [{"mode": "dry_run", "trigger": "schedule"}, {"mode": "live", "trigger": "manual_override"}]
     for i, kind in enumerate(compliance_db.KINDS):
-        mode = "live" if i else "dry_run"
+        result = results[i] if i < len(results) else {"mode": "live", "trigger": "schedule"}
         await conn.execute(
             "INSERT INTO shared.job (kind, status, payload, result, created_at, finished_at) "
             "VALUES ($1, 'succeeded', '{}'::jsonb, $2::jsonb, now() - interval '1 day', now() - interval '1 day')",
-            kind, json.dumps({"mode": mode}))
+            kind, json.dumps(result))
     rows = {r["check_id"]: r for r in await compliance_db.collect(OneConnPool(conn), NOW)}
     assert rows["retention_runs_recent"]["status"] == "pass" and rows["retention_runs_recent"]["detail"]["last_date"]
-    assert rows["retention_live_enabled"]["detail"]["never_live"] == 1
+    assert rows["retention_live_enabled"]["detail"]["never_live"] == 2
+    assert rows["retention_live_enabled"]["detail"]["never_live_kinds"] == sorted(compliance_db.KINDS[:2])
     new = await compliance.ingest(OneConnPool(conn), list(rows.values()), 72)
     assert new == 2

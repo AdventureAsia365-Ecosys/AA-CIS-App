@@ -116,6 +116,15 @@ def test_cis_db_retention_rows():
     assert runs["status"] == "error" and compliance_db.KINDS[0] in runs["summary"]
 
 
+def test_cis_db_live_baseline_matches_the_job_runner():
+    """A manual_override live run is not a live baseline for the retention job runner; the evidence query must leave
+    it out the same way (last_live and the live count), or the page would count a Dev proof run as retention on."""
+    from services.jobs import retention_job
+
+    assert compliance_db.NOT_OVERRIDE in retention_job._LAST_LIVE_SQL
+    assert compliance_db.SQL_RETENTION.count(compliance_db.NOT_OVERRIDE) == 2
+
+
 def test_cis_db_error_is_a_row_not_an_exception():
     class Broken:
         def acquire(self):
@@ -174,6 +183,38 @@ def test_live_sources_wait_for_the_minimum_interval():
     with patch.object(compliance_db, "collect", AsyncMock()) as db:
         out = asyncio.run(compliance.collect_live_sources(Pool(), None, NOW))
     assert out["cis_db"]["state"] == "recent" and out["crm_ops"]["state"] == "recent" and db.await_count == 0
+
+
+def test_refresh_right_after_a_page_load_still_collects_live_sources():
+    """A GET fills the process cache; a Refresh pressed inside the 30 s refresh window must still collect cis_db and
+    crm_ops (the cache bounds the file read only), and the cached state must not carry the live answer."""
+    class Conn:
+        async def fetchval(self, sql, source):
+            return None
+
+    class Pool:
+        def acquire(self):
+            class Ctx:
+                async def __aenter__(self_inner):
+                    return Conn()
+
+                async def __aexit__(self_inner, *a):
+                    return False
+            return Ctx()
+    compliance.reset_cache()
+    db = AsyncMock(return_value=[])
+    crm = AsyncMock(return_value=([], {"http": 401}))
+    with patch.object(compliance, "_read_published", lambda factory: None), \
+            patch.object(compliance_db, "collect", db), patch.object(compliance_crm, "collect", crm), \
+            patch.object(compliance.settings, "aget", AsyncMock(return_value=30)):
+        page = asyncio.run(compliance.sync(Pool(), now=NOW))
+        refreshed = asyncio.run(compliance.sync(Pool(), refresh=True, now=NOW, collect_live=True))
+        again = asyncio.run(compliance.sync(Pool(), now=NOW))
+    compliance.reset_cache()
+    assert page["state"] == "missing" and "live" not in page
+    assert set(refreshed["live"]) == {"cis_db", "crm_ops"} and db.await_count == 1 and crm.await_count == 1
+    assert refreshed["live"]["crm_ops"] == {"state": "skipped", "http": 401}
+    assert "live" not in again and again is page
 
 
 # ── the Obligations answer ──────────────────────────────────────────────────────────────────────────────────────────
