@@ -46,7 +46,7 @@ jsonschema>=4.18,<5  # AA-976: catalog.http.v1 contract conformance test (docs/c
 moto[s3,dynamodb,sqs,lambda]==5.0.3
 
 # Observability
-sentry-sdk[fastapi]>=1.40.0
+sentry-sdk[fastapi]==2.75.0  # 3.0.0 (23/11/2026) breaks the logging integration the tests and shared/sentry_init.py use; upgrade on purpose
 langfuse==2.26.0
 
 # NLP — AA-789 tier 1 seed alignment (services/acp_content_writing/seed_align). Loaded lazily, only when a
