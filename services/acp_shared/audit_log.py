@@ -210,6 +210,16 @@ class AdminTenantAuditAction:
     SUBSCRIPTION_TERMS_SET = "tenant.subscription_terms_set"
 
 
+class StaffViewAsAuditAction:
+    """AA-1157 (root ADR 0019 d5 as amended) — an owner started / ended a read-only "view as a lower staff role"
+    session (api/core/staff_view_as.py). No tenant (tenant_id NULL), resource ``staff_view_as_session`` / the session
+    id. The start's details hold the viewer's role, the target role and the target role's FULL capability list; the
+    end's the end reason and cause. Never the reason text (it stays in shared.staff_view_as_session). The refused
+    writes of a session are the usual ``staff.request`` rows (status 403, ``details.view_as``)."""
+    STARTED = "staff.view_as_started"
+    ENDED = "staff.view_as_ended"
+
+
 async def write_audit_log(
     conn, *, tenant_id: Optional[str], actor: str, action: str,
     resource_type: str, resource_id: str, details: Optional[dict[str, Any]] = None,

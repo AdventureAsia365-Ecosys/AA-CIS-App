@@ -1919,6 +1919,10 @@
     "capability": "spend.read",
     "module": "api.routers.admin_usage_explorer"
   },
+  "POST /admin/view-as/roles": {
+    "capability": "staff.view_as_role",
+    "module": "api.routers.admin_view_as"
+  },
   "POST /admin/view-as/sessions/{session_id}/end": {
     "capability": "tenant.view_as",
     "module": "api.routers.admin_view_as"

@@ -9,6 +9,7 @@
 import { useSyncExternalStore } from "react";
 import { registerSessionCapabilities } from "@/lib/rbac";
 import { CAPS_COOKIE, ROLE_NAME_COOKIE } from "@/lib/staffSession";
+import { STAFF_VIEW_DISPLAY_COOKIE, parseDisplayCookie } from "@/lib/staffViewAs";
 
 export interface AdminIdentity {
   role: string;
@@ -16,6 +17,8 @@ export interface AdminIdentity {
   userName: string;
   /** AA-1155: the name of a custom role (cis_role_name), "" for a built-in role. */
   roleName: string;
+  /** AA-1157: the owner is viewing as this role (read-only; the cis_view display hint), else false. */
+  viewing: boolean;
 }
 
 function readCookie(name: string): string {
@@ -29,6 +32,15 @@ function readCookie(name: string): string {
 }
 
 function readIdentity(): AdminIdentity {
+  // AA-1157: inside the owner's "view as a lower role" session the nav, the pollers and can() follow the view role
+  // (display hint only; the BFF and the API decide every call with the verified session and the httpOnly token).
+  const view = parseDisplayCookie(readCookie(STAFF_VIEW_DISPLAY_COOKIE));
+  if (view) {
+    registerSessionCapabilities(view.role, view.caps);
+    const rawUser = readCookie("cis_user");
+    return { role: view.role, isAdmin: view.role === "admin", userName: rawUser ? decodeURIComponent(rawUser) : "Admin",
+      roleName: view.label, viewing: true };
+  }
   const role = readCookie("cis_role");
   const rawName = readCookie("cis_user");
   const userName = rawName
@@ -41,14 +53,15 @@ function readIdentity(): AdminIdentity {
   const caps = decodeURIComponent(readCookie(CAPS_COOKIE)).split(",").filter(Boolean);
   if (role) registerSessionCapabilities(role, caps);
   const rawRoleName = readCookie(ROLE_NAME_COOKIE);
-  return { role, isAdmin: role === "admin", userName, roleName: rawRoleName ? decodeURIComponent(rawRoleName) : "" };
+  return { role, isAdmin: role === "admin", userName, roleName: rawRoleName ? decodeURIComponent(rawRoleName) : "",
+    viewing: false };
 }
 
 // The cookie value is read fresh each snapshot; it only changes on login/logout (a navigation),
 // so there is no live subscription to maintain beyond the no-op below.
 const EMPTY = () => () => {};
 
-const SERVER: AdminIdentity = { role: "", isAdmin: false, userName: "Content", roleName: "" };
+const SERVER: AdminIdentity = { role: "", isAdmin: false, userName: "Content", roleName: "", viewing: false };
 
 // Cache the client snapshot so useSyncExternalStore gets a stable reference between renders
 // (it compares by identity; a fresh object each call would loop).

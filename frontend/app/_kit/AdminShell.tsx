@@ -15,6 +15,8 @@
 //
 // AA-1127 C3: the shell also renders the kit ReadOnlyProvider with the API's read-only hint for this session
 // (useSessionAccess, GET /admin/session), so a page hides its run / save / paid buttons with useReadOnly() / WriteOnly.
+// AA-1157: inside an owner's "view as a lower role" session the hint is read-only too (reason view_as) and the
+// StaffViewAsBanner sits above the page.
 
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
@@ -26,6 +28,7 @@ import { ReadOnlyProvider } from "./core/ReadOnly";
 import { I18nProvider } from "./core/useI18n";
 import { langStore } from "./i18n";
 import { useSessionAccess } from "./useSessionAccess";
+import { StaffViewAsBanner } from "./StaffViewAsBanner";
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
   const { readOnly } = useSessionAccess();
@@ -40,6 +43,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
           sidebarId="admin-sidebar-drawer"
           sidebar={(c) => <Sidebar drawerOpen={c.drawerOpen} onNavigate={c.closeDrawer} />}
           topbar={(c) => <Topbar onOpenSearch={c.openPalette} onOpenMenu={c.openDrawer} />}
+          banner={() => <StaffViewAsBanner />}
           bottomNav={(c) => <BottomNav onOpenMore={c.openDrawer} />}
           palette={(c) => <CommandPalette open={c.paletteOpen} onClose={c.closePalette} />}
         >

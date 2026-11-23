@@ -65,7 +65,8 @@ async def test_466_registered_with_the_five_tables(conn):
     rows = await conn.fetch(
         "SELECT c.relname AS t, c.relrowsecurity AS rls FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
         "WHERE n.nspname = 'compliance' AND c.relkind = 'r'")
-    assert {r["t"] for r in rows} == set(TABLES)
+    # AA-1174 (CIS 471) adds framework and applicability (tests/integration/test_aa1174_migration_471.py)
+    assert {r["t"] for r in rows} >= set(TABLES)
     assert not any(r["rls"] for r in rows)                                  # platform data, no tenant column
     pks = {r["t"]: list(r["cols"]) for r in await conn.fetch(
         "SELECT c.conrelid::regclass::text AS t, array_agg(a.attname::text ORDER BY k.ord) AS cols "
@@ -106,7 +107,8 @@ async def test_catalogue_is_seeded(conn):
         "SELECT framework, count(*) AS n FROM compliance.requirement WHERE applicable GROUP BY 1")}
     assert rows == {"iso27001:2022": 123, "soc2:2017": 33, "iso42001:2023": 70, "owasp-top10:2021": 10,
                     "owasp-llm:2025": 10, "eu-ai-act:2024": 7}
-    await _refused(conn, asyncpg.CheckViolationError,
+    # an unknown framework: refused by the CHECK of 466, by the foreign key to compliance.framework since CIS 471
+    await _refused(conn, (asyncpg.CheckViolationError, asyncpg.ForeignKeyViolationError),
                    "INSERT INTO compliance.requirement (framework, ref, section, title, sort_order) "
                    "VALUES ('nist:2024', 'X.1', 'Invented', 'Invented row', 1)")
 

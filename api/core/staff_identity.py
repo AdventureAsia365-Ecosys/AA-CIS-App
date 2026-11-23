@@ -188,6 +188,10 @@ class StaffIdentity:
     # role (never the built-in base role of the row).
     capabilities: frozenset[str] = frozenset()
     custom_label: Optional[str] = None
+    # AA-1157: set when this request runs inside an owner's read-only "view as a lower role" session
+    # (api/core/staff_view_as.py StaffViewAs): role / capabilities are then the target role's (target ∩ viewer) and
+    # is_owner is False. None on every other request.
+    view_as: Optional[Any] = None
 
     @property
     def is_custom(self) -> bool:

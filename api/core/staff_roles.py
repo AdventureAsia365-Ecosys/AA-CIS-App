@@ -157,9 +157,16 @@ def request_custom_perms(role: Optional[str]) -> frozenset[str]:
 
 def role_perms(role: Optional[str]) -> frozenset[str]:
     """The one role lookup (staff_authz.has_perm / has_any_perm, tenant scope): ROLE_PERMS of a built-in role, or the
-    verified custom role of this request; nothing otherwise."""
+    verified custom role of this request; nothing otherwise. AA-1157: the role of a view-as request reads the swapped
+    identity's capabilities."""
     from api.core.staff_authz import ROLE_PERMS
+    from api.core.staff_identity import current_staff
+    from api.core.staff_view_as import effective_perms, session_of
 
+    identity = current_staff.get()
+    if session_of(identity, role) is not None:
+        # AA-1157: inside a "view as a lower role" session, the swapped identity's capabilities (target ∩ viewer).
+        return effective_perms(identity)
     return ROLE_PERMS.get(role or "") or request_custom_perms(role)
 
 

@@ -22,6 +22,13 @@ export interface RolesCatalogue {
   booking: { builtin: CatalogueRole[]; custom: CatalogueRole[]; custom_available: boolean };
   crm: { groups: CatalogueRole[] };
   tripplanner: { staff_roles: boolean };
+  /** AA-1157: may this session start a read-only "view as" on a CIS role (an owner on a Cognito admin session)? */
+  can_view_as?: boolean;
+}
+
+/** AA-1157: a CIS row the owner may view as (a built-in role or an active custom role; the API re-checks downward). */
+export function canViewAsRow(row: MatrixRow): boolean {
+  return row.app === "cis" && (row.kind === "builtin" || row.kind === "custom") && !row.archived;
 }
 
 export const ROLES_PATH = "/api/admin/platform/roles";

@@ -37,7 +37,7 @@ import { refuseCrossSiteWrite } from "@/lib/crossSiteGuard";
 import { requireAdmin, secretNotConfigured, staffCredentialHeaders } from "@/lib/auth-server";
 import { API_RULES, isApiDocsPath } from "@/lib/rbac";
 import { proxyPath } from "@/lib/bffPath";
-import { streamUpstream } from "@/lib/proxyResponse";
+import { answerStaffUpstream } from "@/lib/staffViewCookies";
 
 const API_URL = process.env.API_URL ?? "https://api-cis.lumiguides.it.com";
 const ADMIN_SECRET = process.env.ADMIN_SECRET ?? "";
@@ -106,8 +106,9 @@ async function handler(
 
   try {
     const res = await fetch(url, { method: req.method, headers, body });
-    // S241 — stream the body through (lib/proxyResponse.ts: same status, Content-Type only).
-    return streamUpstream(res);
+    // S241 — stream the body through (lib/proxyResponse.ts: same status, Content-Type only). AA-1157: inside a view
+    // a 409 staff_view_as_ended also clears the view cookies (lib/staffViewCookies.ts answerStaffUpstream).
+    return await answerStaffUpstream(res, !!auth.viewAs);
   } catch {
     return NextResponse.json({ detail: "Upstream connection error" }, { status: 502 });
   }

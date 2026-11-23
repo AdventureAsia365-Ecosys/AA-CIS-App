@@ -34,6 +34,10 @@
 // read-only tenant bearer token; this proxy streams bodies back to the page, so it refuses that path for every
 // method and role (lib/viewAs.ts isViewAsStartPath). Only app/api/view-as/route.ts starts a session, and it keeps
 // the token in an httpOnly cookie.
+//
+// AA-1157: the same for the owner's "view as a lower role" start (lib/staffViewAs.ts isStaffViewAsStartPath). Inside
+// such a view requireAdmin refuses every write (403 view_as_read_only) and the view token rides along
+// (staffCredentialHeaders); an upstream 409 staff_view_as_ended clears the view cookies.
 import { NextRequest, NextResponse } from "next/server";
 import { refuseCrossSiteWrite } from "@/lib/crossSiteGuard";
 import { requireAdmin, secretNotConfigured, staffCredentialHeaders } from "@/lib/auth-server";
@@ -42,6 +46,8 @@ import { proxyPath } from "@/lib/bffPath";
 import { streamUpstream } from "@/lib/proxyResponse";
 import { base64Search, decodeDocsAsset, isDocsAssetRead } from "@/lib/docsAsset";
 import { isViewAsStartPath } from "@/lib/viewAs";
+import { isStaffViewAsStartPath } from "@/lib/staffViewAs";
+import { answerStaffUpstream } from "@/lib/staffViewCookies";
 
 const API_URL = process.env.API_URL ?? "https://api-cis.lumiguides.it.com";
 const ADMIN_SECRET = process.env.ADMIN_SECRET ?? "";
@@ -66,11 +72,9 @@ async function handler(
   if (upstreamPath === null) {
     return NextResponse.json({ detail: "Invalid path" }, { status: 400 });
   }
-  // AA-1035 (S268) — the view-as token must never reach the page: start a view through /api/view-as only.
-  if (isViewAsStartPath(pathStr)) {
-    return NextResponse.json({ detail: "view_as_bff_only", message: "Start a view-as session from Tenant 360." },
-      { status: 403 });
-  }
+  // AA-1035 (S268) / AA-1157 — a view-as token must never reach the page: start a view through its own BFF only.
+  const startRefused = viewStartRefusal(pathStr);
+  if (startRefused) return startRefused;
   // AA-577 follow-up — a few paths (the OpenAPI schema) are admin-only even for reads.
   const session = { role: auth.role, capabilities: auth.capabilities };   // AA-1155: decided by capabilities
   if (!canReadAdminPath(session, pathStr)) {
@@ -130,11 +134,26 @@ async function handler(
 
   try {
     const res = await fetch(url, { method: req.method, headers: outHeaders, body });
-    // S241 — stream the body through (lib/proxyResponse.ts: same status, Content-Type only).
-    return streamUpstream(res);
+    // S241 — stream the body through (lib/proxyResponse.ts: same status, Content-Type only); AA-1157: a 409 of a view
+    // is read to see whether the API ended it.
+    return await answerStaffUpstream(res, !!auth.viewAs);
   } catch {
     return NextResponse.json({ detail: "Upstream connection error" }, { status: 502 });
   }
+}
+
+/** The start of a view-as session (tenant or staff role) is refused here for every method and role (the token would
+ *  reach the page): 403 view_as_bff_only, else null. */
+function viewStartRefusal(pathStr: string): NextResponse | null {
+  if (isViewAsStartPath(pathStr)) {
+    return NextResponse.json({ detail: "view_as_bff_only", message: "Start a view-as session from Tenant 360." },
+      { status: 403 });
+  }
+  if (isStaffViewAsStartPath(pathStr)) {
+    return NextResponse.json({ detail: "view_as_bff_only", message: "Start a view from Roles & permissions." },
+      { status: 403 });
+  }
+  return null;
 }
 
 export const GET    = handler;

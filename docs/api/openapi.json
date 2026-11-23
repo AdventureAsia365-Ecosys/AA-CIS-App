@@ -10868,6 +10868,37 @@
         "title": "RewriteRequest",
         "type": "object"
       },
+      "RoleStartBody": {
+        "additionalProperties": false,
+        "properties": {
+          "minutes": {
+            "default": 30,
+            "maximum": 60.0,
+            "minimum": 5.0,
+            "title": "Minutes",
+            "type": "integer"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          },
+          "role": {
+            "maxLength": 63,
+            "minLength": 2,
+            "pattern": "^[a-z][a-z0-9_]{1,62}$",
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "reason"
+        ],
+        "title": "RoleStartBody",
+        "type": "object"
+      },
       "RollbackBody": {
         "additionalProperties": false,
         "properties": {
@@ -11527,7 +11558,8 @@
               {
                 "enum": [
                   "role",
-                  "e2e"
+                  "e2e",
+                  "view_as"
                 ],
                 "type": "string"
               },
@@ -54986,6 +55018,80 @@
         "summary": "Delete one of the caller's explorer views",
         "tags": [
           "admin-usage-explorer"
+        ]
+      }
+    },
+    "/admin/view-as/roles": {
+      "post": {
+        "description": "staff_policy already required staff.view_as_role (an owner on a verified Cognito session holding the admin\nrole). Then: only the staff BFF may start one (``x-view-as-client: bff``, the token never reaches a page); the\ntarget is a built-in CIS role or an active CIS custom role (404 ``view_as_unknown_role``); it is downward, i.e. its\nread rights are a subset of the caller's (403 ``view_as_not_downward``, naming no capability); the caller's row\nis re-read in the transaction (still active and an owner). The caller's other open sessions (either kind) end, one\n``shared.staff_view_as_session`` row is written (no tenant, ``view_role``) and one ``staff.view_as_started`` row\nwith the target role's full capability list. Answers the signed token to the BFF only.",
+        "operationId": "start_role_view_admin_view_as_roles_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoleStartBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Owner only: start a read-only view as a lower staff role (at most 60 minutes, logged)",
+        "tags": [
+          "admin-view-as"
         ]
       }
     },
