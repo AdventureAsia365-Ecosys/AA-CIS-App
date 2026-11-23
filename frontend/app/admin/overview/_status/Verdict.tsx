@@ -1,22 +1,21 @@
 "use client";
 // app/admin/overview/_status/Verdict.tsx — AA-1140: the one verdict at the top ("All systems normal" / "N things need
-// you" / unknown when the main sources did not answer) and the Needs attention list with its severity / status
+// you" / a neutral partial line when a core source did not answer / unknown when the main sources did not answer) and the Needs attention list with its severity / status
 // filters, sort and the resolved items of the range. The verdict and its rows come from the API (ops_status/verdict.py).
 
 import Link from "next/link";
 import { Badge, K, Section, TONE, useFormat, type Tone } from "../../../_kit";
 import {
   APP_LABEL, ITEM_STATES, SEVERITIES, countBy, filterAttention, levelTone, parseSort, severityRank, sortRows,
-  withSort, type AttentionItem, type Verdict as V, type View,
+  verdictHeadline, withSort, type AttentionItem, type Verdict as V, type View,
 } from "@/lib/opsStatus";
 import { ChipFilter, SortSelect, rowWrap, small, sortOptions, useST, type ST } from "./ui";
 
 const SORT_DEFAULT = "severity:desc";
 
 function headline(v: V, t: ST): { text: string; tone: Tone } {
-  if (v.status === "attention") return { text: t("needYou", v.open), tone: "danger" };
-  if (v.status === "unknown") return { text: t("verdictUnknown"), tone: "neutral" };
-  return { text: t("allNormal"), tone: "success" };
+  const h = verdictHeadline(v);
+  return { text: h.key === "needYou" ? t("needYou", v.open) : t(h.key), tone: h.tone as Tone };
 }
 
 function gateText(gate: V["chips"]["deploy_gate"], t: ST): string {

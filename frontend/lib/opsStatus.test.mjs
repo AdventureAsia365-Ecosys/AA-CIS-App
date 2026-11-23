@@ -10,7 +10,7 @@ import {
   latest, levelTone, localToIso, nextSort, onlyHidden, parseHidden, parseSort, parseView, peak, queueSeries,
   runtimeMatches, sectionDown, shortSha, shownSeries, signalSeries, sortRows, statusQuery, toggleHidden,
   unmeasuredApps, viewParams, yTop, fmtMs, fmtPct, ageMinutes, tableSorting, sortingParam, withSort,
-  previousRequests, deltaPct,
+  previousRequests, deltaPct, verdictHeadline,
 } from "./opsStatus.ts";
 
 const FRONTEND = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -210,4 +210,13 @@ test("the old overview content lives on its pages: Data coverage (pipeline, cont
   const tn = read("app/admin/tenants/page.tsx");
   assert.match(tn, /<TenantActivity \/>/);
   assert.match(read("app/admin/tenants/TenantActivity.tsx"), /quota_outliers/);
+});
+
+test("verdict headline: green only when ok and nothing missing; partial and unknown are neutral", () => {
+  assert.deepEqual(verdictHeadline({ status: "ok", unknown: [] }), { key: "allNormal", tone: "success" });
+  assert.deepEqual(verdictHeadline({ status: "partial", unknown: ["signals"] }), { key: "verdictPartial", tone: "neutral" });
+  assert.deepEqual(verdictHeadline({ status: "ok", unknown: ["runtimes"] }), { key: "verdictPartial", tone: "neutral" });
+  assert.deepEqual(verdictHeadline({ status: "unknown", unknown: ["signals", "runtimes"] }),
+    { key: "verdictUnknown", tone: "neutral" });
+  assert.deepEqual(verdictHeadline({ status: "attention", unknown: ["ai"] }), { key: "needYou", tone: "danger" });
 });

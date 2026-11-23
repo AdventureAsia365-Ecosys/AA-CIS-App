@@ -37,7 +37,7 @@ test.describe('AA-1140 — Ecosystem status', { tag: '@staff' }, () => {
       const resp = await statusResp;
       expect(resp.status(), await resp.text().catch(() => '')).toBe(200);
       const body = await resp.json();
-      expect(['ok', 'attention', 'unknown']).toContain(body.verdict.status);
+      expect(['ok', 'attention', 'partial', 'unknown']).toContain(body.verdict.status);
       expect(typeof body.thresholds.error_rate_pct.warn).toBe('number');
       for (const s of SECTIONS) expect(STATES, `section ${s}`).toContain(body.sections[s]?.status);
       expect(body.sources.map((r: { section: string }) => r.section).sort()).toEqual([...SECTIONS].sort());

@@ -43,7 +43,7 @@ export interface AttentionItem {
   status: string; source: string; links: { label: string; href: string }[];
 }
 export interface Verdict {
-  status: "ok" | "attention" | "unknown"; open: number; attention: AttentionItem[]; unknown: string[];
+  status: "ok" | "attention" | "partial" | "unknown"; open: number; attention: AttentionItem[]; unknown: string[];
   resolved: { id: string; app: string | null; text: string; t: string; t2: string | null }[];
   chips: { alarms_firing: number; open_alerts: number; deploy_gate: "open" | "closed" | null;
     deploy_gate_blocked_by: string[] };
@@ -320,6 +320,16 @@ export function levelTone(level: string | null | undefined): ToneName {
 }
 
 /** A section that did not answer, or answered "not measured": the page shows its reason, never a number. */
+/** The verdict headline: green "All systems normal" only when the API says ok AND no source is missing; a partial
+ * answer (nothing open, a core source did not answer) is neutral, never green. */
+export function verdictHeadline(v: Pick<Verdict, "status" | "unknown">):
+  { key: "needYou" | "verdictUnknown" | "verdictPartial" | "allNormal"; tone: ToneName } {
+  if (v.status === "attention") return { key: "needYou", tone: "danger" };
+  if (v.status === "unknown") return { key: "verdictUnknown", tone: "neutral" };
+  if (v.status !== "ok" || v.unknown.length > 0) return { key: "verdictPartial", tone: "neutral" };
+  return { key: "allNormal", tone: "success" };
+}
+
 export function sectionDown(s: Section<unknown> | null | undefined): boolean {
   return !s || s.status !== "ok";
 }
