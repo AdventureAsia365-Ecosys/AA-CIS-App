@@ -15,7 +15,8 @@ Row: ``actor`` ``admin:<admin_users.id>`` from the verified Cognito identity (de
 else ``staff:unknown`` when only a role header came, else ``machine``; ``actor_type`` staff / machine;
 ``action`` ``staff.request`` / ``machine.request``; ``resource_type`` ``http_route``; ``resource_id`` the concrete
 path (≤ 512 chars); ``route`` the FastAPI route template (None when nothing matched); ``http_method``; ``status``;
-``details`` {auth, role, query_keys}. Never the body, never query values, never a header value besides the role.
+``details`` {auth, role, query_keys; AA-1157: view_as + viewer_role inside a view-as-a-role session}.
+Never the body, never query values, never a header value besides the role.
 
 The insert runs after the response has been sent and is bounded by ``WRITE_TIMEOUT_S``; any failure is logged as
 ``staff_audit_write_failed`` and never changes or fails the response. The hash-chain trigger (CIS 248) serializes
@@ -100,8 +101,17 @@ def build_row(scope: Scope, status: int) -> dict:
         "action": STAFF_ACTION if actor_type == "staff" else MACHINE_ACTION,
         "resource_type": RESOURCE_TYPE, "resource_id": scope.get("path", "")[:MAX_RESOURCE_ID],
         "http_method": scope.get("method", "").upper(), "route": route if isinstance(route, str) else None,
-        "status": status, "details": {"auth": auth, "role": role, "query_keys": keys},
+        "status": status, "details": {"auth": auth, "role": role, "query_keys": keys, **_view_as(scope)},
     }
+
+
+def _view_as(scope: Scope) -> dict:
+    """AA-1157: ``{"view_as": <session id>, "viewer_role": ...}`` for a request of an owner's "view as a lower role"
+    session (its role above is then the view role), else nothing."""
+    state = scope.get("state")
+    view = state.get("staff_view_as") if isinstance(state, dict) else None
+    sid = getattr(view, "session_id", None)
+    return {"view_as": sid, "viewer_role": getattr(view, "viewer_role", None)} if sid else {}
 
 
 def _pool(scope: Scope) -> Any:

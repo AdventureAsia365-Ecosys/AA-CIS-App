@@ -2715,6 +2715,28 @@ sets, and the generic `/api/admin/[...path]` proxy refuses the start path (`lib/
 admin BFF (`frontend/app/api/view-as/*`) keeps the token in the httpOnly cookie `aa_view_as` (path `/api/view-as`) and
 forwards only the allowed reads of the signed-in member's role (`VIEW_AS_ROUTE_ROLES`, the mirror of `ROUTE_CAPS`); Tenant 360 › "View as partner" opens
 `/admin/tenants/view-as` (banner: tenant, time left, reason, End view; tabs over the partner's reads).
+*View as a lower staff role* (AA-1157, root ADR 0019 d5 as amended; CIS 470): an owner (`is_owner` on a Cognito session
+holding the admin role: capability `staff.view_as_role` in `OWNER_PERMS`; the business owner marker alone does not
+qualify) starts `POST /admin/view-as/roles` (`{role, reason 3-500, minutes 5-60}`, BFF only) on a built-in CIS role or
+an active CIS custom role whose read surface (`api/core/staff_view_as.read_surface`: the GET POLICY routes, the unlisted
+GETs, the read capabilities) is a subset of the owner's (403 `view_as_not_downward`). It ends the owner's other open
+sessions (either kind), writes a `shared.staff_view_as_session` row with `tenant_id` NULL and `view_role`, one
+`staff.view_as_started` audit row with the target role's FULL capability list, and answers a signed token (aud
+`cis-staff-view-as`, never a tenant token) that the staff BFF keeps in the httpOnly cookie `aa_staff_view_as` (path `/`)
+and forwards as `x-staff-view-as` on staff API calls. `StaffBearerMiddleware` resolves it after the Cognito check
+(`staff_view_as.resolve`: own token, open row, still owner + admin, role still usable and downward; else 409
+`staff_view_as_ended` and the session ends with one `staff.view_as_ended` row): the request then runs as the view role
+(capabilities target ∩ viewer, `is_owner` False, no relay token: the crm.ops.v1 relays answer "unavailable"). Every
+non-GET/HEAD/OPTIONS request is refused 403 `view_as_read_only` by `api/middleware/staff_view_as.py` before any route
+(inside the staff audit middleware: a `staff.request` row with `details.view_as`) and again by `denial_reason`; the
+header on a non-Cognito request is 403 `staff_view_as_needs_cognito`. `GET /admin/session` says `read_only` /
+`view_as`. Back = `POST /admin/view-as/sessions/{id}/end` as the owner (the session read / end serve both kinds,
+`kind` and `view_role`; the session list stays tenant sessions only); sign-out and staff disable close it too
+(`view_as.close_open_sessions`, one ended row of the session's own kind). The BFF (`lib/auth-server.ts requireAdmin`)
+refuses writes during the view, checks rules and pages (`proxy.ts`) with the view role (claimed capabilities ∩
+verified, only from a Cognito admin session) and the shell shows `StaffViewAsBanner` (role, read-only, time left,
+Back); the Cognito cookies are never touched. Data scoped to assignments (customer_success / support books) follows the
+owner's own assignments, so it may be empty.
 *Logged Lab read*: ai_ops holds `lab.tenant_text.read` (never `tenant_content.read`), which opens only the tenant-text
 GETs of `/admin/writing-memory/*` (not the Tenant 360 voice route); `api/core/lab_read_log.py LAB_TEXT_LOGGED` writes
 an audit row `lab.tenant_text_read` before each such read (503 when it cannot). *Bell*: `notifications.read` (every

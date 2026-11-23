@@ -34,6 +34,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { STAFF_ROLES, isReadMethod, isReadOnlyRole, passesApiRule, type ApiRule, type StaffRole } from "./rbac";
 import { STAFF_TOKEN_COOKIE, isCognitoToken } from "./staffSession";
+import {
+  STAFF_VIEW_AS_COOKIE, STAFF_VIEW_AS_HEADER, VIEW_AS_READ_ONLY, effectiveSession, ownStaffView,
+} from "./staffViewAs";
 
 //
 // S241 — TTLs (Vercel Fluid CPU: POST /auth/verify-admin was the top proxied
@@ -146,12 +149,28 @@ function forbidden(): NextResponse {
   return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 }
 
+/** AA-1157: the owner's own open "view as a lower role" session of this request (lib/staffViewAs.ts). `forward`: the
+ *  proxies send the token as STAFF_VIEW_AS_HEADER (false on the routes that act as the owner: end, sign-out). */
+export interface StaffViewAsAuth {
+  token: string;
+  sessionId: string;
+  role: string;
+  forward: boolean;
+}
+
 export type RequireAdminResult =
   // AA-816 (C5): `bearer` is the staff access token when the cookie holds a Cognito token (it has an
   // `iss`), else null. Proxies forward it as Authorization: Bearer (staffCredentialHeaders) so the API's
   // staff_bearer middleware takes the role and actor from the verified token instead of the headers.
-  | { ok: true; adminId: string; role: string; capabilities: string[]; bearer: string | null }
+  // AA-1157: inside an own view, role / capabilities are the view's (never wider than the verified ones).
+  | { ok: true; adminId: string; role: string; capabilities: string[]; bearer: string | null; viewAs?: StaffViewAsAuth }
   | { ok: false; response: NextResponse };
+
+/** AA-1157: requireAdmin() options. `allowDuringViewAs`: the route acts as the owner during a view (the end and the
+ *  sign-out): no write refusal, no role swap, the token is not forwarded. */
+export interface RequireAdminOptions {
+  allowDuringViewAs?: boolean;
+}
 
 // AA-656 — `rule` is the route's entry in lib/rbac.ts API_RULES. The role checked is the one inside
 // the verified JWT; the `cis_role` cookie is never consulted. A valid staff token the rule does not admit
@@ -160,11 +179,17 @@ export type RequireAdminResult =
 // decides by role, so it never admits a custom role.
 // AA-878: a read-only role (the viewer) gets 403 on every method but GET/HEAD/OPTIONS here, in the one place
 // every secret-attaching proxy goes through, so no BFF route can forward a write for it by default.
+// AA-1157: inside the owner's own "view as a lower role" session (httpOnly cookie, lib/staffViewAs.ts) every write is
+// refused 403 view_as_read_only here, before any secret or token is attached, and the rule is checked with the view
+// role (its claimed capabilities intersected with the verified ones), unless `allowDuringViewAs`.
 export async function requireAdmin(
   request: NextRequest,
   rule: ApiRule | readonly StaffRole[] = STAFF_ROLES,
+  options: RequireAdminOptions = {},
 ): Promise<RequireAdminResult> {
-  const result = await verifyStaff(request);
+  const verified = await verifyStaff(request);
+  const result = verified.ok ? withStaffView(request, verified, options) : verified;
+  if (!result.ok) return result;
   if (result.ok && !passesApiRule({ role: result.role, capabilities: result.capabilities }, rule)) {
     return { ok: false, response: forbidden() };
   }
@@ -172,6 +197,23 @@ export async function requireAdmin(
     return { ok: false, response: forbidden() };
   }
   return result;
+}
+
+type VerifiedResult = Extract<RequireAdminResult, { ok: true }>;
+
+/** AA-1157: the verified result as the request runs: the owner's own view swapped in (or a refused write). */
+function withStaffView(request: NextRequest, verified: VerifiedResult, options: RequireAdminOptions): RequireAdminResult {
+  const token = request.cookies.get(STAFF_VIEW_AS_COOKIE)?.value;
+  const view = ownStaffView(token, verified.adminId);
+  if (!token || !view) return verified;
+  const eff = effectiveSession({ ...verified, cognito: verified.bearer !== null }, view);
+  if (!eff.viewing) return verified;
+  const viewAs = { token, sessionId: view.sessionId, role: view.role, forward: !options.allowDuringViewAs };
+  if (options.allowDuringViewAs) return { ...verified, viewAs };
+  if (!isReadMethod(request.method)) {
+    return { ok: false, response: NextResponse.json({ detail: VIEW_AS_READ_ONLY }, { status: 403 }) };
+  }
+  return { ...verified, role: eff.role, capabilities: eff.capabilities, viewAs };
 }
 
 // AA-816 (C5/C9): the backend paths where the API's staff_bearer middleware reads a staff Bearer
@@ -190,21 +232,27 @@ export function isStaffApiPath(backendPath: string): boolean {
  * secret and none is configured (the proxy answers 503).
  *
  * - Cognito session on a staff API path: `Authorization: Bearer <cis_admin_token>` ONLY. The API accepts
- *   the verified principal without X-Admin-Secret, and takes role + actor from the token.
+ *   the verified principal without X-Admin-Secret, and takes role + actor from the token. AA-1157: inside the
+ *   owner's own view, plus `x-staff-view-as: <view token>`.
  * - Legacy HS256 session (the BFF can only verify one while the legacy flag is on), or a path outside the
  *   staff prefixes: `X-Admin-Secret` (on a Vercel Preview this is the Preview credential, capped at viewer
  *   by the API). No Bearer is sent off the staff paths.
  */
 export function staffCredentialHeaders(
-  auth: { bearer: string | null },
+  auth: { bearer: string | null; viewAs?: StaffViewAsAuth },
   adminSecret: string,
   backendPath: string,
 ): Record<string, string> | null {
   if (auth.bearer && isStaffApiPath(backendPath)) {
-    return { Authorization: `Bearer ${auth.bearer}` };
+    return { Authorization: `Bearer ${auth.bearer}`, ...staffViewAsHeader(auth) };
   }
   if (!adminSecret) return null;
   return { "X-Admin-Secret": adminSecret };
+}
+
+/** AA-1157: the owner's view-as token rides along on every staff path (the API runs the call as the view role). */
+function staffViewAsHeader(auth: { viewAs?: StaffViewAsAuth }): Record<string, string> {
+  return auth.viewAs?.forward ? { [STAFF_VIEW_AS_HEADER]: auth.viewAs.token } : {};
 }
 
 export function secretNotConfigured(): NextResponse {

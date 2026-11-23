@@ -23,6 +23,14 @@ tracking and every route below see the verified identity, never the client's.
   any tenant that is not synthetic). ``/auth/verify-admin`` is not a staff path, so sign-in still works.
   **A10d** (AA-1035, S270): the Dev-only E2E customer_success identity also carries ``e2e_read_only`` but not
   ``e2e_allowlisted_writes``, so the allow-list never applies to it: every write is refused 403 ``e2e_read_only``.
+- **AA-1157 view as a lower role**: a verified Cognito request that carries ``x-staff-view-as`` (the owner's signed
+  view-as token, forwarded by the staff BFF) runs as the target role once ``api/core/staff_view_as.resolve`` accepts
+  it (``x-admin-role`` = the view role, capabilities = target ∩ viewer, ``is_owner`` False); the session goes to
+  ``scope["state"]["staff_view_as"]`` and the access token is NOT kept (no relay to another app with the owner's
+  token). A refused header answers its status (403 not own, 409 ``staff_view_as_ended``) before the route. The header
+  on any non-Cognito request (main secret, Preview credential, legacy token) is refused 403
+  ``staff_view_as_needs_cognito``. The header is never passed to the routes. Writes of a view are refused by
+  ``api/middleware/staff_view_as.py`` (inside the staff audit middleware, so the refusal is logged).
 - **Any other Bearer** (legacy HS256 staff or tenant JWT without ``iss``, a JWT from another issuer such as a
   future EXTERNAL ``cis-portal`` token or the CIS-minted Booking RS256 token, or not a JWT) and **no Bearer**:
   passed through untouched; the route's own guard decides (``/admin/brand-identity`` and ``/admin/atoms`` take
@@ -48,14 +56,16 @@ import structlog
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from api.core import e2e_staff, staff_credential, staff_identity
+from api.core import e2e_staff, staff_credential, staff_identity, staff_view_as
 from api.core.staff_authz import STAFF_PATH_PREFIXES, _is_valid_secret, main_secrets
 
 logger = structlog.get_logger()
 
-_DROPPED = frozenset({b"authorization", b"x-admin-role", b"x-admin-user-id"})
+_DROPPED = frozenset({b"authorization", b"x-admin-role", b"x-admin-user-id", staff_view_as.HEADER_BYTES})
 # AA-941: scope["state"] key holding the verified Cognito access token (see __call__).
 STAFF_ACCESS_TOKEN = "staff_access_token"
+# AA-1157: scope["state"] key holding the open "view as a lower role" session (api/core/staff_view_as.StaffViewAs).
+STAFF_VIEW_AS = "staff_view_as"
 _ROLE = b"x-admin-role"
 
 
@@ -113,7 +123,16 @@ class StaffBearerMiddleware:
             return
         headers = list(scope.get("headers") or [])
         token = _bearer(headers)
+        view_header = _header(headers, staff_view_as.HEADER_BYTES)
         if token is None or staff_identity.token_kind(token) != staff_identity.AUTH_COGNITO:
+            if view_header is not None:
+                # AA-1157: a view-as session runs only on a verified Cognito session (never the main secret, the
+                # Preview credential or a legacy token, which could otherwise claim any role).
+                logger.warning("staff_bearer_refused", status=403, reason=staff_view_as.NEEDS_COGNITO_DETAIL,
+                               method=scope.get("method", ""), path=scope.get("path", ""))
+                await JSONResponse({"detail": staff_view_as.NEEDS_COGNITO_DETAIL}, status_code=403)(
+                    scope, receive, send)
+                return
             if await _is_preview_credential(headers):
                 await self._preview(scope, receive, send, headers)
                 return
@@ -137,15 +156,32 @@ class StaffBearerMiddleware:
             await JSONResponse({"detail": e2e_staff.E2E_READ_ONLY}, status_code=403)(scope, receive, send)
             return
 
+        view: staff_view_as.StaffViewAs | None = None
+        if view_header is not None:
+            # AA-1157: the owner's read-only "view as a lower role" session; the request runs as the target role.
+            try:
+                identity, view = await staff_view_as.resolve(_pool(scope), identity, view_header)
+            except staff_view_as.StaffViewAsRefused as exc:
+                logger.warning("staff_bearer_refused", status=exc.status, reason=f"view_as:{exc.reason}",
+                               method=method, path=path, admin_id=identity.admin_id)
+                await JSONResponse({"detail": exc.detail}, status_code=exc.status)(scope, receive, send)
+                return
+
         logger.info("staff_bearer_verified", admin_id=identity.admin_id, role=identity.role,
                     client_id=identity.client_id, method=method, path=path,
-                    **({"e2e_read_only": True} if identity.e2e_read_only else {}))
+                    **({"e2e_read_only": True} if identity.e2e_read_only else {}),
+                    **({"view_as": view.session_id, "viewer_role": view.viewer_role} if view else {}))
         state = dict(scope.get("state") or {})
         state["staff_identity"] = identity
-        # AA-941: the verified access token itself, for the routes that relay the staff member's own token to another
-        # app (crm.ops.v1: api/services/platform_apps.relay_authorization). The Authorization header is dropped
-        # below, so without this those relays never had a token (AA-936 jobs card). Never logged.
-        state[STAFF_ACCESS_TOKEN] = token
+        if view is not None:
+            # AA-1157: no relay token in a view (platform_apps.relay_authorization answers None, the CRM relays answer
+            # "unavailable"): a lower role's page never calls another app with the owner's own token.
+            state[STAFF_VIEW_AS] = view
+        else:
+            # AA-941: the verified access token itself, for the routes that relay the staff member's own token to
+            # another app (crm.ops.v1: api/services/platform_apps.relay_authorization). The Authorization header is
+            # dropped below, so without this those relays never had a token (AA-936 jobs card). Never logged.
+            state[STAFF_ACCESS_TOKEN] = token
         inner = dict(scope, headers=_rewritten(headers, identity), state=state)
         reset = staff_identity.current_staff.set(identity)
         try:
