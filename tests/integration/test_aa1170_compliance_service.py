@@ -116,7 +116,8 @@ async def test_overview_scores_snapshots_and_attention(conn):
     scan = attention["ci_image_scan_sbom"]
     assert scan["state"] == "fail" and "EX-VUL-01" in scan["controls"]
     assert attention["last_access_review"]["state"] == "fail"           # older than the 100-day setting
-    assert out["heartbeat"][0]["source"] == "root_daily" and out["heartbeat"][0]["ok"] is True
+    root_hb = next(h for h in out["heartbeat"] if h["source"] == "root_daily")
+    assert root_hb["ok"] is True
     snap = await conn.fetchval("SELECT count(*) FROM compliance.score_snapshot WHERE snapshot_date = $1", NOW.date())
     assert snap == len(cs.FRAMEWORKS)
     again = await compliance.overview(pool, now=NOW)                    # upsert, not a second row
