@@ -5,8 +5,8 @@
 // GET /api/admin/tenants/{id}/tripplanner-site/lead-route: the stored route (CIS 390 columns of
 // shared.tenant_tripplanner_site). "Edit" (admin: tenant.write) opens a kit Drawer that PUTs the channel and its
 // targets; the API refuses a webhook URL that is not https or names a private / internal host (422 with the field),
-// and the refusal is shown under that field. A tenant with the CRM add-on always gets its leads in the CRM (the
-// catalog view resolves the channel), so the section says so. Kit only (Section, Drawer, Field, Select, Input, Badge,
+// and the refusal is shown under that field. A tenant with the CRM add-on gets its leads in the CRM once the CRM
+// holds an agency for it (AA-1160, CIS 474: the response's crm_agency), else the stored route; the section says which. Kit only (Section, Drawer, Field, Select, Input, Badge,
 // Toast).
 
 import { useMemo, useState } from "react";
@@ -101,6 +101,11 @@ function LeadRouteDrawer({ data, onClose }: { data: LeadRouteResp; onClose: () =
   );
 }
 
+/** AA-1160: with the CRM add-on, the note says whether the CRM holds the agency yet (an older API: as before). */
+function crmNoteKey(data: LeadRouteResp): Msg {
+  return data.crm_agency === false ? "crmNoAgency" : "crmNote";
+}
+
 /** The TripPlanner lead route section of the Subscription tab (mounted inside its ToastProvider). */
 export function Tenant360LeadRoute({ tenantId, crmCore, canEdit }: {
   tenantId: string; crmCore: boolean; canEdit: boolean;
@@ -131,7 +136,8 @@ export function Tenant360LeadRoute({ tenantId, crmCore, canEdit }: {
         onRetry={() => void q.refetch()} />}
       {data && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
-          {crmCore && <p style={{ ...small, color: K.amber }}>{t("crmNote")}</p>}
+          {crmCore && <p style={{ ...small, color: K.amber }} data-testid="lead-route-crm-note">
+            {t(crmNoteKey(data))}</p>}
           {!data.has_tripplanner && <p style={small}>{t("noTripPlanner")}</p>}
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 13, minWidth: 0 }}>
             <span style={{ color: K.muted }}>{t("current")}</span>

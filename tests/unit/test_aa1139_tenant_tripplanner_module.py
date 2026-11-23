@@ -110,8 +110,8 @@ def _valid(name: str, body: Any) -> None:
 
 # ── the contract ─────────────────────────────────────────────────────────────
 
-def test_contract_is_1_1_and_the_models_are_its_schemas():
-    assert DOC["info"]["version"] == "1.1"
+def test_contract_is_1_2_and_the_models_are_its_schemas():
+    assert DOC["info"]["version"] == "1.2"   # AA-1160: effective_channel needs a CRM agency (no shape change)
     schemas = DOC["components"]["schemas"]
     assert set(tenant_addons.TripPlannerModule.model_fields) == set(schemas["TripPlannerModule"]["required"])
     assert set(tenant_addons.TenantLeadRouteIn.model_fields) == set(schemas["TripPlannerLeadRouteIn"]["properties"])

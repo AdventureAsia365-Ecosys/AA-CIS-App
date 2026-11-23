@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: tenant.entitlements.v1 (AA-CIS-App → AA-Partner CRM, AA-Booking, TripPlanner; tenant account and entitlements)
-  version: "1.10"
+  version: "1.11"
   description: >-
     CIS shared is the master of the tenant account: lifecycle status, data region, product subscriptions and the
     entitlements they give (root ADR 0019 d1, d2). This contract tells the other apps, per tenant, which feature keys
@@ -123,10 +123,21 @@ info:
     and on each Tenant 360 billing write. Booking takes the share off the line it prices (same currency, agreed price
     and seat rules as 1.9) and drafts it as a discount line; a pilot with bill_free stays unbilled. Readers name their
     columns; a reader that knows only the 1.9 columns keeps its rows. No personal data.
+    1.11 (AA-1160, additive; no HTTP shape change; CIS 474): catalog.v_tenant_tripplanner_v1 appends fallback_channel
+    (webhook | email | none: the agency's own lead route as if it had no CRM add-on, the 1.5 rule without its crm
+    branch) and fallback_webhook_url / fallback_email (the fallback's target only, else null). lead_channel keeps its
+    1.5 meaning (crm while crm_core). TripPlanner sends a lead to the CRM only while the CRM listed the tenant within
+    its beacon window (lead.submitted.v1: the CRM lists only an agency it can serve), else to the fallback: crm.core
+    without a live CRM agency (none yet, locked, offboarded or deleted) no longer routes leads to a CRM that skips
+    them. Side effect of GET /tenants/{tenant_id}/account for the CRM client: one throttled write of CIS's own CRM
+    agency marker (shared.tenant_crm_agency: the CRM reads the snapshot only for an agency it holds; never a refusal,
+    a failed write is logged), which CIS counts only within the setting cis.tenant.crm_agency_seen_hours for its own
+    display (tenant.addons.v1 1.2). Readers name their columns; a reader that knows only the 1.10 columns keeps its
+    rows. No personal data.
   x-aa-contract: tenant.entitlements.v1
   x-aa-producer: AA-CIS-App
   x-aa-consumers: [AA-Partner, AA-Booking, AA-TripPlanner-Web]
-  x-aa-issues: [AA-1028, AA-1037, AA-1038, AA-1093, AA-1116]
+  x-aa-issues: [AA-1028, AA-1037, AA-1038, AA-1093, AA-1116, AA-1160]
 servers:
   - url: /tenant/v1
 security:
