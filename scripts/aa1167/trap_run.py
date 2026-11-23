@@ -3,7 +3,7 @@
 and mode; nothing else. Written for the tech lead's session; CI never runs it (the offline half is
 tests/unit/test_aa1167_trap_set.py and tests/unit/test_aa1172_trap_guard.py).
 
-The trap set (services/ai_safety/trap_set.py: 13 invented traps over S1 v2, T9 blog, the T9 FAQ writer and T2; five of
+The trap set (services/ai_safety/trap_set.py: 14 invented traps over S1 v2, T9 blog, the T9 FAQ writer and T2; six of
 them plant an instruction in a T9 fact row) is built with the live prompt builders for each fence mode asked (--fence
 on, off or both) and each Facts instruction guard mode asked (--guard on, off or both; ``both`` adds the guard-off run
 of the fact traps only, the control that shows each fact trap fires without the guard). Each call goes through the
@@ -14,9 +14,9 @@ guard mode, issue). Each reply is scored offline (trap_set.evaluate: no trap mar
 the output sanitizer, no fence tag).
 
   python3 scripts/aa1167/trap_run.py                         # dry run: the calls it would make, no client, no cost
-  python3 scripts/aa1167/trap_run.py --apply --stop-usd 1.0  # paid: fence on, guard on (13 calls)
+  python3 scripts/aa1167/trap_run.py --apply --stop-usd 1.0  # paid: fence on, guard on (14 calls)
   python3 scripts/aa1167/trap_run.py --apply --stop-usd 0.95 --fence off --guard both --stage adhoc_aa1172
-                                                             # AA-1172: 13 guard-on calls + the 5 guard-off controls
+                                                             # AA-1172: 14 guard-on calls + the 6 guard-off controls
   python3 scripts/aa1167/trap_run.py --traps t9_facts_override,t9_facts_provenance   # only these traps
 
 ``--stop-usd`` has no default: the operator states the budget of the run. Before each call the run stops when the spend

@@ -39,11 +39,11 @@ def test_the_fence_break_trap_cannot_close_the_fence():
 
 def test_the_trap_run_sends_at_most_the_trap_set():
     from scripts.aa1167 import trap_run
-    assert len(trap_run.plan("on")) == len(trap_set.TRAPS) <= 13
+    assert len(trap_run.plan("on")) == len(trap_set.TRAPS) <= 14
     assert len(trap_run.plan("both")) == 2 * len(trap_set.TRAPS)
     # AA-1172: --guard both adds only the guard-off control of the fact traps
     guarded = [t for t in trap_set.TRAPS if t.guarded]
-    assert len(guarded) == 5
+    assert len(guarded) == 6
     assert len(trap_run.plan("off", "both")) == len(trap_set.TRAPS) + len(guarded)
     assert len(trap_run.plan("off", "off")) == len(trap_set.TRAPS)
     assert trap_run.STAGE == "adhoc_aa1167"

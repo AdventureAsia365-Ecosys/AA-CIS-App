@@ -98,8 +98,9 @@ async def fetch_facts_for_writing(tenant_id: UUID, pool, country: str | None = N
 
 def guard_facts(rows: list[dict], *, tenant_id: str | None = None) -> tuple[list[dict], list[dict]]:
     """AA-1172: (rows cleaned by the Facts instruction guard, rows it dropped whole tagged `_excluded_reason`
-    'fact_instruction'). A row with no match is passed on as the same dict; nothing is changed in place. Each drop or
-    partial clean is logged with the fact id, scope and rule ids, never the text."""
+    'fact_instruction'). A row with no match is passed on as the same dict (or a copy without invisible format
+    characters, review round 2); nothing is changed in place. Each drop or partial clean is logged with the fact id,
+    scope and rule ids, never the text."""
     from services.ai_safety import fact_guard
 
     kept: list[dict] = []
@@ -107,7 +108,7 @@ def guard_facts(rows: list[dict], *, tenant_id: str | None = None) -> tuple[list
     for f in rows:
         cleaned, rules = fact_guard.clean_fact(f)
         if not rules:
-            kept.append(f)
+            kept.append(cleaned)
             continue
         logger.warning("facts_instruction_lines_dropped", fact_id=str(f.get("fact_id")), scope=f.get("scope"),
                        tenant_id=tenant_id, whole=cleaned is None, rules=rules)
