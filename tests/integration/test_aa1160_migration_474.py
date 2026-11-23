@@ -1,11 +1,11 @@
-"""AA-1160 (S289) — migration 475: shared.tenant_crm_agency (when the CRM last proved a tenant's agency, as CIS sees
+"""AA-1160 (S289) — migration 474: shared.tenant_crm_agency (when the CRM last proved a tenant's agency, as CIS sees
 it), its sighting window setting cis.tenant.crm_agency_seen_hours, and catalog.v_tenant_tripplanner_v1 appends the
 agency's fallback route (contract tenant.entitlements.v1 1.11).
 
-475's Part B is the catalog recipe and needs 357 + 377 (438 replaces the billing view too), 379 + 390 + 429 + 438, all
-skipped by the replay (the replay runs 475's Part A only: the table). This module builds on the 245 / 246 module
-fixtures (Dev after 244 + 245, db_migrator), applies 357, 377, 379, 390, 429, 438 and 475 as db_migrator (errors NOT
-swallowed), 475 twice, and undoes them at teardown (DROP VIEW; the table and the setting row stay, the replay made
+474's Part B is the catalog recipe and needs 357 + 377 (438 replaces the billing view too), 379 + 390 + 429 + 438, all
+skipped by the replay (the replay runs 474's Part A only: the table). This module builds on the 245 / 246 module
+fixtures (Dev after 244 + 245, db_migrator), applies 357, 377, 379, 390, 429, 438 and 474 as db_migrator (errors NOT
+swallowed), 474 twice, and undoes them at teardown (DROP VIEW; the table and the setting row stay, the replay made
 them).
 
   * the view's exact columns (438's first, then the three appended), owner catalog_owner, security_barrier,
@@ -37,7 +37,7 @@ from test_aa860_migration_245 import rds_like_245  # noqa: E402,F401  (module fi
 from test_aa860_migration_246 import db_migrator_login  # noqa: E402,F401  (module fixture: db_migrator, 246)
 
 HERE = os.path.dirname(__file__)
-M475 = os.path.join(HERE, "..", "..", "api", "migrations", "475_aa1160_tenant_crm_agency_marker.sql")
+M474 = os.path.join(HERE, "..", "..", "api", "migrations", "474_aa1160_tenant_crm_agency_marker.sql")
 TP = "catalog.v_tenant_tripplanner_v1"
 MARKER = "shared.tenant_crm_agency"
 COLUMNS = t438.TP_COLUMNS + ", fallback_channel text, fallback_webhook_url text, fallback_email text"
@@ -47,20 +47,20 @@ TP_ROUTE_SQL = (f"SELECT tenant_id, slug, name, kind, served, in_service, crm_co
                 f"WHERE tenant_id = %s")
 
 
-def undo_475(a):
-    a.execute("DELETE FROM shared.schema_versions WHERE version = '475'")
+def undo_474(a):
+    a.execute("DELETE FROM shared.schema_versions WHERE version = '474'")
     # The appended view columns go with 379's undo (DROP VIEW); the table and the setting row stay (the replay's
     # Part A made them).
 
 
 @pytest.fixture(scope="module", autouse=True)
-def applied_475(db_migrator_login):  # noqa: F811
+def applied_474(db_migrator_login):  # noqa: F811
     admin = t245._connect()
     admin.autocommit = True
     a = admin.cursor()
 
     def undo():
-        undo_475(a)
+        undo_474(a)
         t438.undo_438(a)
         t429.undo_429(a)
         t390.undo_390(a)
@@ -70,8 +70,8 @@ def applied_475(db_migrator_login):  # noqa: F811
 
     try:
         undo()
-        for path in (t357.M357, t377.M377, t379.M379, t390.M390, t429.M429, t438.M438, M475, M475):
-            t323._apply(path)                                 # 475 twice: idempotent re-run
+        for path in (t357.M357, t377.M377, t379.M379, t390.M390, t429.M429, t438.M438, M474, M474):
+            t323._apply(path)                                 # 474 twice: idempotent re-run
         yield
     finally:
         undo()
@@ -107,7 +107,7 @@ def _route(cur, tid):
 
 
 def test_registered_once(cur):
-    cur.execute("SELECT count(*) AS n FROM shared.schema_versions WHERE version = '475'")
+    cur.execute("SELECT count(*) AS n FROM shared.schema_versions WHERE version = '474'")
     assert cur.fetchone()[0] == 1
 
 

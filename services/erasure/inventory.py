@@ -134,7 +134,7 @@ TENANT_TABLES: tuple[TenantTable, ...] = (
     # CloudFront alias of a host live in AWS: remove the hosts on Tenant 360 (the tripplanner_custom_domain job deletes
     # both) before an erasure apply; an alias left without its row is detached by the job's next run.
     _d("shared.tenant_tripplanner_domain", "the tenant's custom TripPlanner hosts and their certificate state"),
-    # AA-1160 (475): the marker that the CRM holds an agency for the tenant; FK cascade as the backstop.
+    # AA-1160 (474): the marker that the CRM holds an agency for the tenant; FK cascade as the backstop.
     _d("shared.tenant_crm_agency", "the marker that the CRM holds an agency for the tenant"),
     # S279 thresholds L1 (407): the tenant's own setting values (per-tenant overrides of the settings registry). The
     # trigger allows deleting a tenant row (never a platform row); FK cascade from shared.tenants as the backstop.

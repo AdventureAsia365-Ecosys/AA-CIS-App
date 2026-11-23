@@ -1,4 +1,4 @@
--- Migration 475: AA-1160 (S289, the S285 live check of the agency app's Trip planner module) — CIS records when the
+-- Migration 474: AA-1160 (S289, the S285 live check of the agency app's Trip planner module) — CIS records when the
 -- CRM last proved a tenant's CRM agency (the table shared.tenant_crm_agency and its sighting window setting), and
 -- catalog.v_tenant_tripplanner_v1 appends the agency's own fallback route (contract tenant.entitlements.v1 1.11;
 -- columns are only appended).
@@ -49,7 +49,7 @@
 --      lead_channel keeps its 390 meaning (crm while crm.core is live). TripPlanner (AA-1160 code) sends a lead to the
 --      CRM only while the CRM pulled the tenant lately (its beacon), else to the fallback, and re-routes the tenant's
 --      pending CRM leads once to that fallback. The view does not read shared.tenant_crm_agency.
---   4. Register 475.
+--   4. Register 474.
 --
 -- Behaviour on apply. An empty table and a setting at its default: nothing reads either before the CIS code PR. The
 -- fallback columns equal 390's lead_webhook_url / lead_email for every tenant whose lead_channel is not crm, and
@@ -69,11 +69,11 @@
 -- Recipe. Part A as cis_owner. Part B: GRANT CREATE ON SCHEMA catalog TO catalog_owner; SET LOCAL ROLE catalog_owner;
 -- the view DDL; SET LOCAL ROLE cis_owner; REVOKE CREATE. DB Migrate runs the file as cis_owner (login db_migrator).
 -- Never RESET ROLE, no SECURITY DEFINER, no role DDL, no dynamic SQL. The conftest replay runs Part A only
--- (tests/integration/_replay_parts.py); tests/integration/test_aa1160_migration_475.py applies 357, 377, 379, 390,
+-- (tests/integration/_replay_parts.py); tests/integration/test_aa1160_migration_474.py applies 357, 377, 379, 390,
 -- 428's grants, 429, 438 and this file the DB Migrate way and undoes them.
 --
--- Number. Owner main max (473) + 2: 474 is reserved by another S289 lane. If the owner main max + 1 differs at merge,
--- renumber (git grep '475_' and '475' here, in tests/integration/test_aa1160_migration_475.py,
+-- Number. Owner main max (473) + 1 (renumbered from 475 in the S289 review fix pass). If the owner main max + 1 differs
+-- at merge, renumber (git grep '474_' and '474' here, in tests/integration/test_aa1160_migration_474.py,
 -- tests/integration/_replay_parts.py, shared/settings/compiled_defaults.json, crm_agency_settings.py and
 -- docs/implementation-notes/AA-1160.md).
 --
@@ -88,16 +88,16 @@
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '1min';
-SELECT set_config('aa.actor', 'migration:475', true);
+SELECT set_config('aa.actor', 'migration:474', true);
 
 -- ── Preconditions (as the file's role: cis_owner on Dev) ─────────────────────────────────────────────────────────
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM shared.schema_versions WHERE version = '438') THEN
-        RAISE EXCEPTION 'migration 475: apply 438 (the 438 body of catalog.v_tenant_tripplanner_v1) first';
+        RAISE EXCEPTION 'migration 474: apply 438 (the 438 body of catalog.v_tenant_tripplanner_v1) first';
     END IF;
     IF (SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = 'catalog') <> 'cis_owner' THEN
-        RAISE EXCEPTION 'migration 475: schema catalog is not owned by cis_owner (apply 245 first)';
+        RAISE EXCEPTION 'migration 474: schema catalog is not owned by cis_owner (apply 245 first)';
     END IF;
 END $$;
 
@@ -115,13 +115,13 @@ CREATE TABLE IF NOT EXISTS shared.tenant_crm_agency (
 );
 
 COMMENT ON TABLE shared.tenant_crm_agency IS
-    'AA-1160 (CIS 475): when the CRM (AA-Partner) last proved it holds an agency for the tenant: the CRM read the '
+    'AA-1160 (CIS 474): when the CRM (AA-Partner) last proved it holds an agency for the tenant: the CRM read the '
     'tenant.entitlements.v1 snapshot with its M2M client (it reads it only for an agency it holds, hourly for each), '
     'or the CIS CRM onboarding found or created the agency. A row counts only while last_seen_at is inside the setting '
     'cis.tenant.crm_agency_seen_hours (services/tenant_account/crm_agency.py): the agency module''s effective_channel '
     'and Tenant 360. TripPlanner routes on its own CRM pull beacon. No personal data.';
 COMMENT ON COLUMN shared.tenant_crm_agency.source IS
-    'AA-1160 (475): the latest sighting: crm_pull (CRM snapshot read) or crm_onboarding (CIS onboarding).';
+    'AA-1160 (474): the latest sighting: crm_pull (CRM snapshot read) or crm_onboarding (CIS onboarding).';
 
 REVOKE ALL ON shared.tenant_crm_agency FROM PUBLIC, cis_app, aa_app_user;
 GRANT SELECT, INSERT, UPDATE, DELETE ON shared.tenant_crm_agency TO cis_app;
@@ -131,17 +131,17 @@ DECLARE
     t constant text := 'shared.tenant_crm_agency';
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_class WHERE oid = t::regclass AND relrowsecurity) THEN
-        RAISE EXCEPTION 'migration 475: % has row-level security on (the 244 guard keeps the shared RLS set fixed)', t;
+        RAISE EXCEPTION 'migration 474: % has row-level security on (the 244 guard keeps the shared RLS set fixed)', t;
     END IF;
     IF NOT pg_catalog.has_table_privilege('cis_app', t, 'SELECT, INSERT, UPDATE, DELETE')
        OR pg_catalog.has_table_privilege('aa_app_user', t, 'SELECT')
        OR pg_catalog.has_table_privilege('public', t, 'SELECT') THEN
-        RAISE EXCEPTION 'migration 475: grants on % are not as designed', t;
+        RAISE EXCEPTION 'migration 474: grants on % are not as designed', t;
     END IF;
     BEGIN
         INSERT INTO shared.tenant_crm_agency (tenant_id, source)
         VALUES ('00000000-0000-0000-0000-000000000000'::uuid, 'crm_guess');
-        RAISE EXCEPTION 'migration 475: the source CHECK let an unknown source through';
+        RAISE EXCEPTION 'migration 474: the source CHECK let an unknown source through';
     EXCEPTION
         WHEN check_violation THEN NULL;
     END;
@@ -156,7 +156,7 @@ SELECT s.key, s.app, s.area, s.label, s.description, s.value_type, s.unit, s.min
        s.guide
   FROM jsonb_to_recordset($seed$
 [
-{"key": "cis.tenant.crm_agency_seen_hours", "app": "cis", "area": "tenant", "label": "CRM agency counts as live for (hours after the CRM last proved it)", "description": "The agency module (tenant.addons.v1 effective_channel) and the Tenant 360 lead route say the Trip planner's leads go to the CRM only while the CRM add-on is live AND the CRM proved the tenant's CRM agency within this many hours (shared.tenant_crm_agency.last_seen_at, CIS 475: the CRM read the account snapshot of an agency it holds, which its entitlement feed does on each account event and hourly for every agency, or the CIS CRM onboarding found or created the agency). Past it, CIS shows the agency's own route (webhook, e-mail or none). TripPlanner routes each lead on its own CRM pull beacon, not on this value. Read by services/tenant_account/crm_agency.py.", "value_type": "int", "unit": "hours", "min_value": 2, "max_value": 168, "allowed_values": null, "default_value": 3, "scope_kind": "platform", "impact": "low", "approval": "maker_checker", "evidence_required": false, "env_override": null, "cache_s": 60, "enforced": true, "guide": {"en": {"what": "How long after the CRM last showed that it holds a tenant's agency the agency app and Tenant 360 still say that the planner's leads go to the CRM. The CRM re-reads every agency it holds at least once an hour, so a live agency stays inside the window; a deleted or offboarded agency drops out of it.", "raise": "A short CRM outage never makes the agency app say the leads take the agency's own route, but a deleted CRM agency keeps showing the CRM route longer.", "lower": "A CRM agency that was deleted or offboarded stops showing the CRM route sooner; below two hourly CRM passes a slow CRM pass can make the label flicker.", "when": "Raise it when the CRM's hourly pass is slowed down for a long time; lower it only if staff need the label to follow a deleted CRM agency faster.", "example": "With the default of 3 hours, an agency deleted in the CRM at 09:00 (last seen 08:40) shows its own route from 11:40."}, "vi": {"what": "Bao lâu sau lần cuối CRM chứng minh nó giữ đại lý của một tenant thì app đại lý và Tenant 360 vẫn ghi lead của planner đi vào CRM. CRM đọc lại mọi đại lý nó giữ ít nhất mỗi giờ một lần, nên đại lý còn hoạt động luôn nằm trong khung; đại lý đã xoá hoặc offboard sẽ rơi ra ngoài.", "raise": "CRM gián đoạn ngắn không làm app đại lý ghi lead đi đường riêng của đại lý, nhưng đại lý CRM đã xoá vẫn hiện đường CRM lâu hơn.", "lower": "Đại lý CRM đã xoá hoặc offboard thôi hiện đường CRM sớm hơn; dưới hai lượt đọc hằng giờ của CRM thì một lượt chậm có thể làm nhãn nhấp nháy.", "when": "Tăng khi lượt đọc hằng giờ của CRM bị chậm lâu; chỉ giảm khi nhân viên cần nhãn theo kịp đại lý CRM đã xoá.", "example": "Với mặc định 3 giờ, đại lý bị xoá trong CRM lúc 09:00 (thấy lần cuối 08:40) hiện đường riêng từ 11:40."}}}
+{"key": "cis.tenant.crm_agency_seen_hours", "app": "cis", "area": "tenant", "label": "CRM agency counts as live for (hours after the CRM last proved it)", "description": "The agency module (tenant.addons.v1 effective_channel) and the Tenant 360 lead route say the Trip planner's leads go to the CRM only while the CRM add-on is live AND the CRM proved the tenant's CRM agency within this many hours (shared.tenant_crm_agency.last_seen_at, CIS 474: the CRM read the account snapshot of an agency it holds, which its entitlement feed does on each account event and hourly for every agency, or the CIS CRM onboarding found or created the agency). Past it, CIS shows the agency's own route (webhook, e-mail or none). TripPlanner routes each lead on its own CRM pull beacon, not on this value. Read by services/tenant_account/crm_agency.py.", "value_type": "int", "unit": "hours", "min_value": 2, "max_value": 168, "allowed_values": null, "default_value": 3, "scope_kind": "platform", "impact": "low", "approval": "maker_checker", "evidence_required": false, "env_override": null, "cache_s": 60, "enforced": true, "guide": {"en": {"what": "How long after the CRM last showed that it holds a tenant's agency the agency app and Tenant 360 still say that the planner's leads go to the CRM. The CRM re-reads every agency it holds at least once an hour, so a live agency stays inside the window; a deleted or offboarded agency drops out of it.", "raise": "A short CRM outage never makes the agency app say the leads take the agency's own route, but a deleted CRM agency keeps showing the CRM route longer.", "lower": "A CRM agency that was deleted or offboarded stops showing the CRM route sooner; below two hourly CRM passes a slow CRM pass can make the label flicker.", "when": "Raise it when the CRM's hourly pass is slowed down for a long time; lower it only if staff need the label to follow a deleted CRM agency faster.", "example": "With the default of 3 hours, an agency deleted in the CRM at 09:00 (last seen 08:40) shows its own route from 11:40."}, "vi": {"what": "Bao lâu sau lần cuối CRM chứng minh nó giữ đại lý của một tenant thì app đại lý và Tenant 360 vẫn ghi lead của planner đi vào CRM. CRM đọc lại mọi đại lý nó giữ ít nhất mỗi giờ một lần, nên đại lý còn hoạt động luôn nằm trong khung; đại lý đã xoá hoặc offboard sẽ rơi ra ngoài.", "raise": "CRM gián đoạn ngắn không làm app đại lý ghi lead đi đường riêng của đại lý, nhưng đại lý CRM đã xoá vẫn hiện đường CRM lâu hơn.", "lower": "Đại lý CRM đã xoá hoặc offboard thôi hiện đường CRM sớm hơn; dưới hai lượt đọc hằng giờ của CRM thì một lượt chậm có thể làm nhãn nhấp nháy.", "when": "Tăng khi lượt đọc hằng giờ của CRM bị chậm lâu; chỉ giảm khi nhân viên cần nhãn theo kịp đại lý CRM đã xoá.", "example": "Với mặc định 3 giờ, đại lý bị xoá trong CRM lúc 09:00 (thấy lần cuối 08:40) hiện đường riêng từ 11:40."}}}
 ]
 $seed$::jsonb) AS s (key text, app text, area text, label text, description text, value_type text, unit text,
                       min_value numeric, max_value numeric, allowed_values jsonb, default_value jsonb, scope_kind text,
@@ -168,7 +168,7 @@ ON CONFLICT (key) DO NOTHING;
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM shared.setting_definition WHERE key IN ('cis.tenant.crm_agency_seen_hours')) THEN
-        RAISE EXCEPTION 'migration 475: the setting cis.tenant.crm_agency_seen_hours is not seeded';
+        RAISE EXCEPTION 'migration 474: the setting cis.tenant.crm_agency_seen_hours is not seeded';
     END IF;
 END $$;
 
@@ -201,7 +201,7 @@ SELECT t.tenant_id,
               ORDER BY d.domain) AS custom_domains,
        (SELECT r.limit_value FROM shared.v_tenant_entitlement_resolved r
          WHERE r.tenant_id = t.tenant_id AND r.feature_key = 'tp.ai_sessions')::integer AS ai_sessions_monthly,
-       -- 475: the agency's own route as if it had no CRM add-on
+       -- 474: the agency's own route as if it had no CRM add-on
        fallback.channel AS fallback_channel,
        CASE WHEN fallback.channel = 'webhook' THEN site.lead_webhook_url END AS fallback_webhook_url,
        CASE WHEN fallback.channel = 'email' THEN site.lead_email END AS fallback_email
@@ -224,13 +224,13 @@ SELECT t.tenant_id,
                 WHERE s.tenant_id = t.tenant_id AND s.product = 'tripplanner');
 
 COMMENT ON VIEW catalog.v_tenant_tripplanner_v1 IS
-    'AA-1038 R5 slices 2-3, AA-1090 R8, AA-1116, AA-1160 (379, 390, 429, 438, 475; contract tenant.entitlements.v1 '
+    'AA-1038 R5 slices 2-3, AA-1090 R8, AA-1116, AA-1160 (379, 390, 429, 438, 474; contract tenant.entitlements.v1 '
     '1.11, root ADR 0019 d10, d11, b4): one row per tenant with a TripPlanner subscription (kind internal excluded) for '
     'the /{slug} site: the slug, the trading name (brand label), kind, the lifecycle status, in_service (trial, active, '
     'past_due), served (in service and tp.hosted live: answer /{slug} only then), tp_launcher, tp_branding (BO-8 badge), '
     'theme (kit token name -> #rrggbb) and locale; 390: crm_core and the resolved lead route with its target (crm while '
     'crm.core is live); 429: custom_domains, the active custom hosts of the site (served only when served is true); '
-    '438: ai_sessions_monthly (resolved tp.ai_sessions, NULL = no limit); 475: the fallback route (fallback_channel '
+    '438: ai_sessions_monthly (resolved tp.ai_sessions, NULL = no limit); 474: the fallback route (fallback_channel '
     'webhook / email / none with its target: the route without the CRM add-on). TripPlanner sends a lead to the CRM '
     'only while the CRM pulled the tenant lately (its beacon), else to the fallback. A bound tenant reads AA master '
     'catalogue rows only. TripPlanner only. Contract v1: columns are only appended.';
@@ -240,7 +240,7 @@ GRANT SELECT ON catalog.v_tenant_tripplanner_v1 TO tripplanner;
 -- ── Closing check as catalog_owner: the view answers ─────────────────────────────────────────────────────────────
 DO $$
 BEGIN
-    RAISE NOTICE 'migration 475: as catalog_owner, % TripPlanner tenant(s), % with a stored fallback route',
+    RAISE NOTICE 'migration 474: as catalog_owner, % TripPlanner tenant(s), % with a stored fallback route',
         (SELECT count(*) FROM catalog.v_tenant_tripplanner_v1),
         (SELECT count(*) FROM catalog.v_tenant_tripplanner_v1 WHERE fallback_channel <> 'none');
 END $$;
@@ -257,27 +257,27 @@ DECLARE
     cols text;
 BEGIN
     IF (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid = v::regclass) <> 'catalog_owner' THEN
-        RAISE EXCEPTION 'migration 475: % is not catalog_owner''s', v;
+        RAISE EXCEPTION 'migration 474: % is not catalog_owner''s', v;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_class WHERE oid = v::regclass AND 'security_barrier=true' = ANY(reloptions)) THEN
-        RAISE EXCEPTION 'migration 475: % is not security_barrier', v;
+        RAISE EXCEPTION 'migration 474: % is not security_barrier', v;
     END IF;
     IF NOT pg_catalog.has_table_privilege('tripplanner', v, 'SELECT') THEN
-        RAISE EXCEPTION 'migration 475: tripplanner cannot read %', v;
+        RAISE EXCEPTION 'migration 474: tripplanner cannot read %', v;
     END IF;
     FOREACH r IN ARRAY ARRAY['booking', 'aa_app_user', 'cis_app', 'crm_app'] LOOP
         IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = r)
            AND pg_catalog.has_table_privilege(r, v, 'SELECT') THEN
-            RAISE EXCEPTION 'migration 475: % can read % (tripplanner only)', r, v;
+            RAISE EXCEPTION 'migration 474: % can read % (tripplanner only)', r, v;
         END IF;
     END LOOP;
     IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'tripplanner')
        AND pg_catalog.has_table_privilege('tripplanner', t, 'SELECT') THEN
-        RAISE EXCEPTION 'migration 475: tripplanner can read % (only through the view)', t;
+        RAISE EXCEPTION 'migration 474: tripplanner can read % (only through the view)', t;
     END IF;
     IF pg_catalog.has_column_privilege('catalog_owner', t, 'tenant_id', 'SELECT')
        OR pg_catalog.has_table_privilege('catalog_owner', t, 'SELECT, INSERT, UPDATE, DELETE') THEN
-        RAISE EXCEPTION 'migration 475: catalog_owner holds a privilege on % (the view does not read it)', t;
+        RAISE EXCEPTION 'migration 474: catalog_owner holds a privilege on % (the view does not read it)', t;
     END IF;
     SELECT string_agg(a.attname || ' ' || format_type(a.atttypid, a.atttypmod), ', ' ORDER BY a.attnum) INTO cols
       FROM pg_attribute a WHERE a.attrelid = v::regclass AND a.attnum > 0 AND NOT a.attisdropped;
@@ -286,15 +286,15 @@ BEGIN
                              'theme jsonb, locale text, crm_core boolean, lead_channel text, lead_webhook_url text, '
                              'lead_email text, custom_domains text[], ai_sessions_monthly integer, '
                              'fallback_channel text, fallback_webhook_url text, fallback_email text' THEN
-        RAISE EXCEPTION 'migration 475: % columns are %', v, cols;
+        RAISE EXCEPTION 'migration 474: % columns are %', v, cols;
     END IF;
     IF pg_catalog.has_schema_privilege('catalog_owner', 'catalog', 'CREATE') THEN
-        RAISE EXCEPTION 'migration 475: catalog_owner still has CREATE on schema catalog';
+        RAISE EXCEPTION 'migration 474: catalog_owner still has CREATE on schema catalog';
     END IF;
 END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('475', now(), 'AA-1160: shared.tenant_crm_agency (CRM agency marker), cis.tenant.crm_agency_seen_hours and '
+VALUES ('474', now(), 'AA-1160: shared.tenant_crm_agency (CRM agency marker), cis.tenant.crm_agency_seen_hours and '
                       'catalog.v_tenant_tripplanner_v1 fallback route columns')
 ON CONFLICT (version) DO NOTHING;
 
