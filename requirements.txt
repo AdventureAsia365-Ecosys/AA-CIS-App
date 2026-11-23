@@ -68,5 +68,5 @@ psycopg[binary]>=3.1.0
 sqlalchemy>=2.0.29
 PyJWT[crypto]==2.15.1  # same pin as AA-Booking; ADR 0006 §8 verifier (api/core/identity_verifier.py)
 bcrypt>=4.1.0
-redis[asyncio]>=5.0.0
+redis[asyncio]==8.1.0  # 8.2.0 (23/11/2026) breaks fakeredis 2.35.1 in the integration tests; upgrade on purpose
 python-multipart>=0.0.9
