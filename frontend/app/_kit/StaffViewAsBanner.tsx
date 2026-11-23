@@ -2,8 +2,8 @@
 // app/_kit/StaffViewAsBanner.tsx — AA-1157: the banner of the owner's read-only "view as a lower role" session,
 // rendered by the admin shell above every page while the display hint cookie (cis_view) is set. It names the role,
 // says read-only, counts down, and "Back" ends the view (DELETE /api/view-as/roles, as the owner) and returns to Roles
-// & permissions with the same sign-in. It re-checks the view every 60 s (GET /api/view-as/roles) and reloads when the
-// API ended it (expired, rights changed). A CIS-local file (never _kit/core): the kit core stays app-neutral.
+// & permissions with the same sign-in. It re-checks the view every 60 s and once when the countdown reaches 0 (GET
+// /api/view-as/roles; at expiry that read closes the session with its end row) and reloads when the view is over. A CIS-local file (never _kit/core): the kit core stays app-neutral.
 
 import { useCallback, useEffect, useState } from "react";
 import { Eye } from "lucide-react";
@@ -22,6 +22,16 @@ function readDisplay(): StaffViewDisplay | null {
   return parseDisplayCookie(raw ? raw.slice(STAFF_VIEW_DISPLAY_COOKIE.length + 1) : null);
 }
 
+/** Re-read the view (GET /api/view-as/roles) and reload the page once it is over. */
+async function checkView(): Promise<void> {
+  try {
+    const r = await fetch(STAFF_VIEW_AS_API, { cache: "no-store" });
+    if (!r.ok) return;
+    const body = (await r.json()) as { active?: boolean };
+    if (body.active === false) window.location.reload();
+  } catch { /* keep the banner; the next check tries again */ }
+}
+
 export function StaffViewAsBanner() {
   const t = useT(STAFF_VIEW_AS);
   const [view, setView] = useState<StaffViewDisplay | null>(null);
@@ -36,17 +46,14 @@ export function StaffViewAsBanner() {
 
   useEffect(() => {
     if (!view) return;
-    const check = async () => {
-      try {
-        const r = await fetch(STAFF_VIEW_AS_API, { cache: "no-store" });
-        if (!r.ok) return;
-        const body = (await r.json()) as { active?: boolean };
-        if (body.active === false) window.location.reload();
-      } catch { /* keep the banner; the next check tries again */ }
-    };
-    const poll = setInterval(check, POLL_MS);
+    const poll = setInterval(checkView, POLL_MS);
     return () => clearInterval(poll);
   }, [view]);
+
+  const over = view !== null && secondsLeft(view.until, now) <= 0;
+  useEffect(() => {
+    if (over) void checkView();
+  }, [over]);
 
   const back = useCallback(async () => {
     setBusy(true);

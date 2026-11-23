@@ -16,18 +16,25 @@ How it works
 2. The staff BFF forwards the token on every staff API call in header :data:`HEADER`. The staff bearer middleware
    (api/middleware/staff_bearer.py), after it verified the Cognito token, calls :func:`resolve`: the token must be
    valid and the viewer's own, the session row open, the viewer still an owner and admin, the target role still
-   usable and still downward. Then the request runs as the target role: ``x-admin-role`` = the view role,
+   usable and still downward (a custom role that cannot be read right now answers 503 and leaves the session open).
+   Then the request runs as the target role: ``x-admin-role`` = the view role,
    capabilities = target ∩ viewer, ``is_owner`` False, ``view_as`` set on the identity. Otherwise the session is ended
    for good (``staff.view_as_ended`` row, cause) and the request answers 409 :data:`ENDED_DETAIL`.
-3. Every non-GET/HEAD/OPTIONS request of such a session is refused 403 ``view_as_read_only`` before any route code
-   (api/middleware/staff_view_as.py, inside the staff audit middleware so the refusal is logged as a ``staff.request``
-   row with ``details.view_as``), and again by ``staff_authz.denial_reason`` (defence in depth).
+3. Every non-GET/HEAD/OPTIONS request of such a session is refused 403 ``view_as_read_only``. In the normal browser
+   flow the staff BFF refuses it first and never forwards it (lib/auth-server.ts; its trace is one structured log
+   line ``staff_view_as_write_refused`` in the admin web's log, no API row). A write that reaches the API with the
+   header anyway is refused before any route code (api/middleware/staff_view_as.py, inside the staff audit middleware,
+   so it is logged as a ``staff.request`` row with status 403 and ``details.view_as``), and again by
+   ``staff_authz.denial_reason`` (defence in depth).
 4. The relays that send the staff member's own token to another app (crm.ops.v1) never run during a view: the bearer
    middleware does not keep the token for such a request (api/services/platform_apps.relay_authorization answers None,
    the relay answers "unavailable").
 5. Ending: ``POST /admin/view-as/sessions/{id}/end`` (the BFF's Back button, sent WITHOUT the view-as header), a new
-   start, sign-out / staff disable (:func:`api.core.view_as.close_open_sessions`), or the per-request check. Every
-   end writes one ``staff.view_as_ended`` row for a role session (``tenant.view_as_ended`` for a tenant one).
+   start, sign-out / staff disable (:func:`api.core.view_as.close_open_sessions`), the per-request check, or the
+   owner's next read of the session once it expired (``GET /admin/view-as/sessions/{id}``: the banner's check at 0
+   minutes, through the BFF whose token cookie outlives the view by a short grace). Every end writes one
+   ``staff.view_as_ended`` row for a role session (``tenant.view_as_ended`` for a tenant one). Starts take a
+   per-member advisory lock, so two tabs never leave two open sessions.
 
 The token is not a tenant token: its ``aud`` (:data:`AUDIENCE`) makes ``api/routers/auth.verify_jwt`` (which decodes
 without an audience) refuse it, and it carries no ``role`` claim.
@@ -167,9 +174,14 @@ class TargetRole:
     custom: bool
 
 
+UNAVAILABLE_DETAIL = "Staff roles are unavailable right now; try again in a moment"
+
+
 async def target_role(conn: Any, code: Any) -> Optional[TargetRole]:
     """A built-in CIS role (``ROLE_PERMS``, the viewer included) or an active CIS custom role (state ok: known, not
-    archived, with capabilities); None otherwise."""
+    archived, with capabilities); None otherwise. A custom role that cannot be READ (a transient database error:
+    ``staff_roles.STATE_UNREADABLE``) is neither: :class:`StaffViewAsRefused` 503, so the caller refuses this request
+    without ending the session or recording a revocation that never happened."""
     from api.core.staff_authz import ROLE_PERMS
 
     if not isinstance(code, str):
@@ -179,6 +191,8 @@ async def target_role(conn: Any, code: Any) -> Optional[TargetRole]:
     if not staff_roles.is_custom_code(code):
         return None
     grant = await staff_roles.load_cis_grant(conn, code)
+    if grant.state == staff_roles.STATE_UNREADABLE:
+        raise StaffViewAsRefused(503, UNAVAILABLE_DETAIL, "role_unreadable")
     if not grant.ok or grant.role is None:
         return None
     return TargetRole(code, grant.role.label, frozenset(grant.role.capabilities), True)
@@ -327,7 +341,8 @@ async def resolve(pool: Any, identity: Any, header_value: str) -> tuple[Any, Sta
 async def _still_allowed(conn: Any, identity: Any, view_role: str,
                          viewer_caps: frozenset[str]) -> tuple[Optional[TargetRole], str]:
     """(target, "") while the viewer is still an owner and admin and the role still usable and downward; else (None,
-    the cause the session ends with)."""
+    the cause the session ends with). A role that cannot be read right now raises :class:`StaffViewAsRefused` 503
+    (:func:`target_role`): the session stays open and the next request checks again."""
     if not may_start(identity):
         return None, "owner_lost"
     target = await target_role(conn, view_role)

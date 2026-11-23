@@ -9,6 +9,8 @@
 //          proxy refuses the start path. Refused inside a view (requireAdmin: a write) and without a Cognito session.
 //   GET    → the current view of this browser ({ active: false } when none, ended or not this member's), read from
 //          CIS GET /admin/view-as/sessions/{id} AS THE OWNER (no view header: the view role may not read sessions).
+//          A view of this member past its expiry (the token cookie outlives it by STAFF_VIEW_CLOSE_GRACE_S) is read
+//          once more the same way: the API then closes it as 'expired' and writes its end row.
 //   DELETE → the "Back" button: CIS POST /admin/view-as/sessions/{id}/end as the owner (no view header), then both
 //          cookies are cleared (also when the API call fails: the session then ends at its expiry). The Cognito
 //          session cookies are never touched, so the sign-in session is the same before and after.
@@ -19,7 +21,7 @@ import { landingPage } from "@/lib/rbac";
 import { VIEW_AS_BFF_HEADER, cookieMaxAge } from "@/lib/viewAs";
 import {
   DEFAULT_ROLE_VIEW_REASON, STAFF_VIEW_AS_COOKIE, STAFF_VIEW_AS_START_PATH, STAFF_VIEW_DISPLAY_COOKIE,
-  ownStaffView, parseDisplayCookie, staffViewClaims,
+  expiredOwnStaffView, ownStaffView, parseDisplayCookie, staffViewClaims,
 } from "@/lib/staffViewAs";
 import { clearStaffViewCookies, setStaffViewCookies } from "@/lib/staffViewCookies";
 
@@ -84,20 +86,34 @@ export async function GET(req: NextRequest) {
   const { auth, headers } = await ownerHeaders(req);
   if (!auth.ok) return auth.response;
   if (!headers) return secretNotConfigured();
-  const claims = ownStaffView(req.cookies.get(STAFF_VIEW_AS_COOKIE)?.value, auth.adminId);
+  const token = req.cookies.get(STAFF_VIEW_AS_COOKIE)?.value;
   // No own view (none, ended, expired, another member's): inactive, both cookies cleared.
   const none = () => clearStaffViewCookies(NextResponse.json({ active: false }));
-  if (!claims) return none();
-  let s: { open?: boolean; kind?: string; session_id?: string; view_role?: string; expires_at?: string };
+  const claims = ownStaffView(token, auth.adminId);
+  if (!claims) {
+    const expired = expiredOwnStaffView(token, auth.adminId);
+    // the API closes it as 'expired' (end row); best effort: the next start or sign-out closes it otherwise
+    if (expired) await readSession(expired.sessionId, headers).catch(() => null);
+    return none();
+  }
+  let s: SessionRead | null;
   try {
-    const res = await fetch(`${API_URL}/admin/view-as/sessions/${claims.sessionId}`, { headers });
-    if (!res.ok) return none();
-    s = await res.json();
+    s = await readSession(claims.sessionId, headers);
   } catch {
     return NextResponse.json({ detail: "Upstream connection error" }, { status: 502 });
   }
-  if (!s.open || s.kind !== "role") return none();
+  if (!s?.open || s.kind !== "role") return none();
   return NextResponse.json(current(s, req.cookies.get(STAFF_VIEW_DISPLAY_COOKIE)?.value));
+}
+
+type SessionRead = { open?: boolean; kind?: string; session_id?: string; view_role?: string; expires_at?: string };
+
+/** CIS GET /admin/view-as/sessions/{id} as the owner: the session, or null when the API refused (404, ...). Throws on
+ *  a connection error. */
+async function readSession(sessionId: string, headers: Record<string, string>): Promise<SessionRead | null> {
+  if (!UUID_RE.test(sessionId)) return null;
+  const res = await fetch(`${API_URL}/admin/view-as/sessions/${sessionId}`, { headers, cache: "no-store" });
+  return res.ok ? ((await res.json()) as SessionRead) : null;
 }
 
 /** The page's answer for an open role session (the label comes from the display hint; the API stores no label). */

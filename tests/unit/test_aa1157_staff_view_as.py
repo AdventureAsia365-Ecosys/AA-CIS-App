@@ -63,6 +63,9 @@ class FakeDb:
         self.closed: list[tuple] = []
         self.audit: list[dict] = []
         self.custom = {"custom_content": ("Content", staff_roles.content_seed_capabilities(), False)}
+        self.custom_error = False          # the custom-role read fails (a transient database error)
+        self.one_rows: list[dict] = []     # successive answers of ONE_SQL (the session read)
+        self.executed: list[str] = []      # every execute() SQL, in order (with fetch markers)
 
     def acquire(self):
         db = self
@@ -85,6 +88,8 @@ class FakeDb:
             self.closed.append(args)
             return {"end_reason": "expired" if not self.state["open"] else args[1], "view_role": self.view_role}
         if sql == staff_roles.SQL_CIS_ROLE:
+            if self.custom_error:
+                raise ConnectionError("database hiccup")
             hit = self.custom.get(args[0])
             if hit is None:
                 return None
@@ -97,17 +102,19 @@ class FakeDb:
             self.inserted.append(args)
             return {"session_id": SESSION, "started_at": NOW, "expires_at": NOW + timedelta(minutes=args[3])}
         if sql == va.ONE_SQL:
-            return None
+            return self.one_rows.pop(0) if self.one_rows else None
         raise AssertionError(f"unexpected fetchrow {sql}")
 
     async def fetch(self, sql: str, *args: Any) -> list:
         if sql == va.END_OTHERS_SQL:
+            self.executed.append("END_OTHERS")
             return [dict(r) for r in self.others]
         if sql == view_as.CLOSE_STAFF_SESSIONS_SQL:
             return [dict(r) for r in self.others]
         raise AssertionError(f"unexpected fetch {sql}")
 
     async def execute(self, sql: str, *args: Any) -> str:
+        self.executed.append(sql)
         if "acp_shared.audit_log" in sql:
             row = {"tenant_id": args[0], "actor": args[1], "action": args[2], "resource_type": args[3],
                    "resource_id": args[4], "details": json.loads(args[5])}
@@ -255,6 +262,32 @@ async def test_a_lost_right_ends_the_session(who, cause):
     assert exc.value.status == 409
     ended = _actions(db, StaffViewAsAuditAction.ENDED)
     assert len(ended) == 1 and ended[0]["details"]["cause"] == cause and db.closed[0][1] == "revoked"
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_custom_role_answers_503_and_keeps_the_session_open():
+    """A transient read error of the custom role is not a revocation: 503, nothing closed, no ended row."""
+    db = FakeDb()
+    db.view_role = "custom_content"
+    db.custom_error = True
+    with pytest.raises(staff_view_as.StaffViewAsRefused) as exc:
+        await staff_view_as.resolve(db, _identity(), _token(view_role="custom_content"))
+    assert (exc.value.status, exc.value.reason) == (503, "role_unreadable")
+    assert not db.closed and not db.audit
+    db.custom_error = False                                     # the next request works again
+    swapped, _ = await staff_view_as.resolve(db, _identity(), _token(view_role="custom_content"))
+    assert swapped.role == "custom_content"
+
+
+@pytest.mark.asyncio
+async def test_an_archived_or_unknown_custom_role_still_ends_the_session():
+    db = FakeDb()
+    db.view_role = "custom_content"
+    db.custom["custom_content"] = ("Content", staff_roles.content_seed_capabilities(), True)
+    with pytest.raises(staff_view_as.StaffViewAsRefused) as exc:
+        await staff_view_as.resolve(db, _identity(), _token(view_role="custom_content"))
+    assert exc.value.status == 409
+    assert _actions(db, StaffViewAsAuditAction.ENDED)[0]["details"]["cause"] == "role_unavailable"
 
 
 def test_only_the_built_in_admin_role_may_start():
@@ -445,6 +478,52 @@ def test_owner_start_writes_the_row_and_the_full_capability_list(world):
     assert d["view_role"] == "content" and d["ended_sessions"] == [OLD_SESSION]
     assert "Check what this role sees" not in json.dumps(d)
     assert len(_actions(db, "tenant.view_as_ended")) == 1      # the replaced tenant session, under its own kind
+
+
+def test_the_start_takes_the_member_lock_before_ending_other_sessions(world):
+    client, db, *_ = world
+    assert _start(client).status_code == 201
+    lock = next(i for i, q in enumerate(db.executed) if q == va.START_LOCK_SQL)
+    assert lock < db.executed.index("END_OTHERS")
+
+
+def test_a_start_on_an_unreadable_custom_role_answers_503(world):
+    client, db, *_ = world
+    db.custom_error = True
+    r = _start(client, body={**BODY, "role": "custom_content"})
+    assert (r.status_code, r.json()["detail"]) == (503, staff_view_as.UNAVAILABLE_DETAIL)
+    assert not db.inserted and not [r for r in db.audit if r["action"].startswith("staff.view_as")]
+
+
+def _session_row(**over) -> dict:
+    row = {"session_id": SESSION, "admin_user_id": OWNER, "tenant_id": None, "tenant_name": None,
+           "tenant_slug": None, "staff_name": "Owner Example", "reason": "Check", "ticket_ref": None,
+           "started_at": NOW - timedelta(minutes=31), "expires_at": NOW - timedelta(minutes=1), "ended_at": None,
+           "end_reason": None, "open": False, "view_role": "content"}
+    return {**row, **over}
+
+
+def test_the_owner_reading_an_expired_role_session_closes_it_with_its_end_row(world):
+    """The banner's check at 0 minutes (through the BFF, as the owner): the end row is written then, not at the next
+    start or sign-out."""
+    client, db, *_ = world
+    db.one_rows = [_session_row(), _session_row(ended_at=NOW, end_reason="expired")]
+    r = client.get(f"/admin/view-as/sessions/{SESSION}", headers={"Authorization": f"Bearer {FAKE_TOKEN}"})
+    assert r.status_code == 200, r.text
+    assert r.json()["end_reason"] == "expired" and r.json()["open"] is False
+    ended = _actions(db, StaffViewAsAuditAction.ENDED)
+    assert len(ended) == 1 and ended[0]["details"]["cause"] == "expired" and ended[0]["actor"] == f"admin:{OWNER}"
+
+
+def test_reading_an_open_or_ended_session_writes_nothing(world):
+    client, db, *_ = world
+    db.one_rows = [_session_row(open=True, expires_at=NOW + timedelta(minutes=5))]
+    assert client.get(f"/admin/view-as/sessions/{SESSION}",
+                      headers={"Authorization": f"Bearer {FAKE_TOKEN}"}).status_code == 200
+    db.one_rows = [_session_row(ended_at=NOW, end_reason="ended")]
+    assert client.get(f"/admin/view-as/sessions/{SESSION}",
+                      headers={"Authorization": f"Bearer {FAKE_TOKEN}"}).status_code == 200
+    assert not db.closed and not db.audit
 
 
 def test_custom_role_start(world):

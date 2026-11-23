@@ -7,7 +7,9 @@ staff role".
   row and the token stops working (409);
 - a new start ends the caller's open sessions of either kind, each with its own kind's ended row; the tenant session
   list never shows a role session;
-- signing out / disabling the member closes its role session with one staff.view_as_ended row.
+- signing out / disabling the member closes its role session with one staff.view_as_ended row;
+- the owner's read of an expired role session closes it with one staff.view_as_ended row (cause expired); two
+  concurrent starts (two tabs) leave exactly one open session (the per-member advisory lock).
 
 The Cognito verification is stubbed (staff_identity.authenticate returns the owner's identity for a fixed token); the
 rest (bearer middleware, view-as resolve, gate, audit middleware, routes, SQL, triggers) is the real code on the
@@ -184,3 +186,32 @@ async def test_the_guard_keeps_a_role_row(world):
     body = await _start(client)
     with pytest.raises(asyncpg.RestrictViolationError):
         await pool.execute("DELETE FROM shared.staff_view_as_session WHERE session_id = $1::uuid", body["session_id"])
+
+
+@pytest.mark.asyncio
+async def test_the_owner_reading_an_expired_view_closes_it_with_its_end_row(world):
+    """A view left to time out: the banner's last check (the owner's session read, through the BFF) writes the end row,
+    exactly once."""
+    client, pool, owner, _ = world
+    sid = await pool.fetchval(
+        "INSERT INTO shared.staff_view_as_session (admin_user_id, view_role, reason, started_at, expires_at) "
+        "VALUES ($1::uuid, 'content', $2, now() - interval '20 minutes', now() - interval '5 minutes') "
+        "RETURNING session_id::text", owner, REASON)
+    one = await client.get(f"/admin/view-as/sessions/{sid}", headers=_owner())
+    assert one.status_code == 200 and one.json()["open"] is False and one.json()["end_reason"] == "expired"
+    again = await client.get(f"/admin/view-as/sessions/{sid}", headers=_owner())
+    assert again.json()["end_reason"] == "expired"
+    (ended,) = await _audit(pool, "staff.view_as_ended", sid)
+    assert ended["details"]["cause"] == "expired" and ended["actor"] == f"admin:{owner}"
+
+
+@pytest.mark.asyncio
+async def test_two_concurrent_starts_leave_one_open_session(world):
+    import asyncio
+
+    client, pool, owner, _ = world
+    a, b = await asyncio.gather(_start(client, role="content"), _start(client, role="custom_content"))
+    open_rows = await pool.fetch(
+        "SELECT session_id::text AS sid FROM shared.staff_view_as_session "
+        "WHERE admin_user_id = $1::uuid AND ended_at IS NULL", owner)
+    assert len(open_rows) == 1 and open_rows[0]["sid"] in (a["session_id"], b["session_id"])

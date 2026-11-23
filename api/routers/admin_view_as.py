@@ -61,6 +61,9 @@ TENANT_SQL = (
     "FROM shared.tenants WHERE tenant_id = $1"
 )
 STAFF_STATE_SQL = "SELECT is_active, role::text AS role FROM shared.admin_users WHERE id = $1::uuid"
+# AA-1157: a start takes a per-member transaction lock first, so two concurrent starts (two tabs) cannot both end the
+# other sessions and both insert: the second waits, then ends the first one's row.
+START_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtext('staff_view_as:' || $1::text))"
 # The caller's other open sessions end when a new one starts (an expired one as 'expired'); each gets its own
 # tenant.view_as_ended row (cause 'replaced').
 END_OTHERS_SQL = (
@@ -231,6 +234,7 @@ async def start_view_as(
                            staff_id=staff_id, role=role, db_role=staff["role"])
             raise HTTPException(status_code=409, detail=view_as.ROLE_MISMATCH_MESSAGE)
         try:
+            await conn.execute(START_LOCK_SQL, staff_id)   # one start at a time per member (two tabs)
             closed = await conn.fetch(END_OTHERS_SQL, staff_id)
             row = await conn.fetchrow(INSERT_SQL, staff_id, tenant_id, body.reason, body.ticket_ref, body.minutes)
         except asyncpg.UndefinedTableError as exc:
@@ -305,7 +309,22 @@ async def get_view_as_session(
     pool = request.app.state.pool
     async with pool.acquire() as conn:
         row = await _visible_session(conn, request, caller, session_id)
+        if _expired_own_role_session(row, staff_id_of(request)):
+            # AA-1157: the owner's next read of an expired role session (the banner's check, the BFF's view read)
+            # closes it as 'expired' with its staff.view_as_ended row, so a view left to time out still gets its end
+            # row without waiting for the next start or sign-out. Only the member's own row; nothing else changes.
+            await staff_view_as.close(conn, session_id=row["session_id"], staff_id=row["admin_user_id"],
+                                      view_role=row["view_role"], cause="expired",
+                                      actor=f"admin:{row['admin_user_id']}")
+            row = await conn.fetchrow(ONE_SQL, session_id)
     return session_view(row)
+
+
+def _expired_own_role_session(row: Any, staff_id: Optional[str]) -> bool:
+    """Is ``row`` the caller's own role session, past its expiry but not yet ended?"""
+    expires = row["expires_at"]
+    return bool(row.get("view_role") and staff_id is not None and row["admin_user_id"] == staff_id
+                and row["ended_at"] is None and not row["open"] and isinstance(expires, datetime))
 
 
 @router.post("/view-as/sessions/{session_id}/end", summary="End a view-as session (own: ended; admin: revoked)")
@@ -376,7 +395,10 @@ async def start_role_view(
     viewer_caps = frozenset(identity.capabilities)
     pool = request.app.state.pool
     async with pool.acquire() as conn, conn.transaction():
-        target = await staff_view_as.target_role(conn, body.role)
+        try:
+            target = await staff_view_as.target_role(conn, body.role)
+        except staff_view_as.StaffViewAsRefused as exc:   # the custom role cannot be read right now
+            raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
         if target is None:
             raise HTTPException(status_code=404, detail=staff_view_as.UNKNOWN_ROLE_DETAIL)
         ok, missing = staff_view_as.downward(viewer_caps, target.capabilities)
@@ -389,6 +411,7 @@ async def start_role_view(
             logger.warning("staff_view_as_start_refused", reason="owner_row")
             raise HTTPException(status_code=403, detail=VIEW_AS_ROLE_NEEDS_OWNER)
         try:
+            await conn.execute(START_LOCK_SQL, staff_id)   # one start at a time per member (two tabs)
             closed = await conn.fetch(END_OTHERS_SQL, staff_id)
             row = await conn.fetchrow(INSERT_ROLE_SQL, staff_id, target.code, body.reason, body.minutes)
         except (asyncpg.UndefinedTableError, asyncpg.UndefinedColumnError) as exc:

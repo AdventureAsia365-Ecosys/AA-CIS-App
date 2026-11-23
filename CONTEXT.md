@@ -2727,12 +2727,16 @@ and forwards as `x-staff-view-as` on staff API calls. `StaffBearerMiddleware` re
 (`staff_view_as.resolve`: own token, open row, still owner + admin, role still usable and downward; else 409
 `staff_view_as_ended` and the session ends with one `staff.view_as_ended` row): the request then runs as the view role
 (capabilities target ∩ viewer, `is_owner` False, no relay token: the crm.ops.v1 relays answer "unavailable"). Every
-non-GET/HEAD/OPTIONS request is refused 403 `view_as_read_only` by `api/middleware/staff_view_as.py` before any route
-(inside the staff audit middleware: a `staff.request` row with `details.view_as`) and again by `denial_reason`; the
-header on a non-Cognito request is 403 `staff_view_as_needs_cognito`. `GET /admin/session` says `read_only` /
+non-GET/HEAD/OPTIONS request is refused 403 `view_as_read_only`: in the browser flow by the staff BFF first (never
+forwarded; one structured log line `staff_view_as_write_refused` in the admin web's log, no API row), and for a write
+that reaches the API by `api/middleware/staff_view_as.py` before any route (inside the staff audit middleware: a
+`staff.request` row with `details.view_as`) and again by `denial_reason`; the header on a non-Cognito request is 403
+`staff_view_as_needs_cognito`. A custom target role that cannot be read right now answers 503 and leaves the session
+open (no revocation is recorded); starts take a per-member advisory lock. `GET /admin/session` says `read_only` /
 `view_as`. Back = `POST /admin/view-as/sessions/{id}/end` as the owner (the session read / end serve both kinds,
 `kind` and `view_role`; the session list stays tenant sessions only); sign-out and staff disable close it too
-(`view_as.close_open_sessions`, one ended row of the session's own kind). The BFF (`lib/auth-server.ts requireAdmin`)
+(`view_as.close_open_sessions`, one ended row of the session's own kind), and so does the owner's read of the session
+once it expired (the banner's check at 0 minutes; the token cookie outlives the view by 5 minutes for that read only). The BFF (`lib/auth-server.ts requireAdmin`)
 refuses writes during the view, checks rules and pages (`proxy.ts`) with the view role (claimed capabilities ∩
 verified, only from a Cognito admin session) and the shell shows `StaffViewAsBanner` (role, read-only, time left,
 Back); the Cognito cookies are never touched. Data scoped to assignments (customer_success / support books) follows the

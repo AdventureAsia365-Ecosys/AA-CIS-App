@@ -35,7 +35,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { STAFF_ROLES, isReadMethod, isReadOnlyRole, passesApiRule, type ApiRule, type StaffRole } from "./rbac";
 import { STAFF_TOKEN_COOKIE, isCognitoToken } from "./staffSession";
 import {
-  STAFF_VIEW_AS_COOKIE, STAFF_VIEW_AS_HEADER, VIEW_AS_READ_ONLY, ownStaffView, staffViewStep,
+  STAFF_VIEW_AS_COOKIE, STAFF_VIEW_AS_HEADER, VIEW_AS_READ_ONLY, ownStaffView, refusedWriteLog, staffViewStep,
 } from "./staffViewAs";
 
 //
@@ -180,7 +180,8 @@ export interface RequireAdminOptions {
 // AA-878: a read-only role (the viewer) gets 403 on every method but GET/HEAD/OPTIONS here, in the one place
 // every secret-attaching proxy goes through, so no BFF route can forward a write for it by default.
 // AA-1157: inside the owner's own "view as a lower role" session (httpOnly cookie, lib/staffViewAs.ts) every write is
-// refused 403 view_as_read_only here, before any secret or token is attached, and the rule is checked with the view
+// refused 403 view_as_read_only here, before any secret or token is attached (one structured log line
+// "staff_view_as_write_refused" per refusal: it never reaches the API, so the API writes no staff.request row), and the rule is checked with the view
 // role (its claimed capabilities intersected with the verified ones), unless `allowDuringViewAs`.
 export async function requireAdmin(
   request: NextRequest,
@@ -211,6 +212,9 @@ function withStaffView(request: NextRequest, verified: VerifiedResult, options: 
     !!options.allowDuringViewAs);
   if (step.kind === "none" || !token || !view) return verified;
   if (step.kind === "refuse") {
+    // The refusal never reaches the API (no staff.request row): this structured line is its trace.
+    console.warn(refusedWriteLog("cis", { ...view, staffId: verified.adminId }, request.method,
+      request.nextUrl.pathname));
     return { ok: false, response: NextResponse.json({ detail: VIEW_AS_READ_ONLY }, { status: 403 }) };
   }
   const viewAs = { token, sessionId: view.sessionId, role: view.role, forward: step.kind !== "owner" };

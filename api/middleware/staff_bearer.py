@@ -30,7 +30,8 @@ tracking and every route below see the verified identity, never the client's.
   token). A refused header answers its status (403 not own, 409 ``staff_view_as_ended``) before the route. The header
   on any non-Cognito request (main secret, Preview credential, legacy token) is refused 403
   ``staff_view_as_needs_cognito``. The header is never passed to the routes. Writes of a view are refused by
-  ``api/middleware/staff_view_as.py`` (inside the staff audit middleware, so the refusal is logged).
+  ``api/middleware/staff_view_as.py`` (inside the staff audit middleware, so a write that reaches the API is logged;
+  the staff BFF refuses writes first and logs them itself).
 - **Any other Bearer** (legacy HS256 staff or tenant JWT without ``iss``, a JWT from another issuer such as a
   future EXTERNAL ``cis-portal`` token or the CIS-minted Booking RS256 token, or not a JWT) and **no Bearer**:
   passed through untouched; the route's own guard decides (``/admin/brand-identity`` and ``/admin/atoms`` take

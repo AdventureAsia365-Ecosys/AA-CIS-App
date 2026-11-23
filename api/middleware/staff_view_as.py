@@ -5,7 +5,9 @@ Pure ASGI middleware, registered in ``api/main.py`` before ``StaffAuditMiddlewar
 (``scope["state"]["staff_view_as"]``, api/core/staff_view_as.py), every method other than GET / HEAD / OPTIONS is
 answered 403 ``{"detail": "view_as_read_only"}`` before any route code runs, whatever the path (every route, also the
 ones added later: the check knows no route). The staff audit middleware around it writes its usual ``staff.request``
-row for the refusal (status 403, ``details.view_as`` = the session). ``staff_authz.denial_reason`` refuses the same
+row for the refusal (status 403, ``details.view_as`` = the session). In the normal browser flow the staff BFF refuses
+the write before it gets here (lib/auth-server.ts, one ``staff_view_as_write_refused`` log line): this gate is the
+API's own check for a write that reaches it anyway. ``staff_authz.denial_reason`` refuses the same
 writes again (defence in depth for a route reached any other way).
 """
 from __future__ import annotations

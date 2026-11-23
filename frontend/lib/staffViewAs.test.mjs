@@ -7,8 +7,8 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  STAFF_VIEW_AS_HEADER, displayCookieValue, effectiveSession, isStaffViewAsStartPath, isViewEnded, ownStaffView,
-  parseDisplayCookie, staffViewClaims, staffViewStep,
+  STAFF_VIEW_AS_HEADER, STAFF_VIEW_CLOSE_GRACE_S, displayCookieValue, effectiveSession, expiredOwnStaffView,
+  isStaffViewAsStartPath, isViewEnded, ownStaffView, parseDisplayCookie, refusedWriteLog, staffViewClaims, staffViewStep,
 } from "./staffViewAs.ts";
 
 const FRONTEND = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -100,6 +100,34 @@ test("display cookie round trip; an expired one is gone", () => {
   assert.equal(parseDisplayCookie("%7Bbroken"), null);
 });
 
+test("expired own view: only the signed-in member's and only past its expiry (never honoured)", () => {
+  const past = Math.floor(Date.now() / 1000) - 30;
+  const expired = token({ typ: "staff_view_as", aud: "cis-staff-view-as", svs: SID, stf: ME, vrl: "content", vcp: [],
+    exp: past });
+  assert.equal(expiredOwnStaffView(expired, ME)?.sessionId, SID);
+  assert.equal(ownStaffView(expired, ME), null);
+  assert.equal(expiredOwnStaffView(good, ME), null);                    // still running: not "expired"
+  assert.equal(expiredOwnStaffView(expired, "22222222-2222-4222-8222-222222222222"), null);
+  assert.equal(expiredOwnStaffView(expired, null), null);
+  assert.ok(STAFF_VIEW_CLOSE_GRACE_S > 0 && STAFF_VIEW_CLOSE_GRACE_S <= 600);
+});
+
+test("a refused write leaves one structured log line: session, role, method, path; no query string", () => {
+  const line = refusedWriteLog("cis", { sessionId: SID, role: "content", staffId: ME }, "post",
+    "/api/admin/platform/roles?x=secret value");
+  assert.equal(line, `[view-as] staff_view_as_write_refused app=cis session=${SID} staff=${ME} view_role=content `
+    + "method=POST path=/api/admin/platform/roles");
+  assert.doesNotMatch(refusedWriteLog("cis", { sessionId: SID, role: "content", staffId: ME }, "DELETE", "/a b\nc"),
+    /\s(b|c)\b|\n/);
+});
+
+test("the view read closes an expired own view through the API before answering inactive", () => {
+  const route = read("app/api/view-as/roles/route.ts");
+  assert.match(route, /const expired = expiredOwnStaffView\(token, auth\.adminId\);\s*\/\/[^\n]*\n[^\n]*\n?\s*if \(expired\) await readSession\(expired\.sessionId, headers\)/);
+  const banner = read("app/_kit/StaffViewAsBanner.tsx");
+  assert.match(banner, /if \(over\) void checkView\(\)/);
+});
+
 test("an ended view is the 409 staff_view_as_ended only", () => {
   assert.equal(isViewEnded(409, { detail: "staff_view_as_ended" }), true);
   assert.equal(isViewEnded(409, { detail: "other" }), false);
@@ -109,7 +137,7 @@ test("an ended view is the 409 staff_view_as_ended only", () => {
 test("requireAdmin refuses writes inside a view and swaps the role for reads; the token rides on staff paths only", () => {
   const src = read("lib/auth-server.ts");
   assert.match(src, /staffViewStep\(isReadMethod\(request\.method\)/);
-  assert.match(src, /if \(step\.kind === "refuse"\) \{\s*return \{ ok: false, response: NextResponse\.json\(\{ detail: VIEW_AS_READ_ONLY \}/);
+  assert.match(src, /if \(step\.kind === "refuse"\) \{[^}]*console\.warn\(refusedWriteLog\("cis"[\s\S]*?return \{ ok: false, response: NextResponse\.json\(\{ detail: VIEW_AS_READ_ONLY \}/);
   assert.match(src, /allowDuringViewAs/);
   assert.match(src, /if \(auth\.bearer && isStaffApiPath\(backendPath\)\) \{\s*return \{ Authorization: `Bearer \$\{auth\.bearer\}`, \.\.\.staffViewAsHeader\(auth\) \};/);
   assert.match(src, /auth\.viewAs\?\.forward \? \{ \[STAFF_VIEW_AS_HEADER\]: auth\.viewAs\.token \} : \{\}/);
@@ -123,7 +151,9 @@ test("the generic proxy refuses the start; the start route keeps the token httpO
   assert.match(start, /const \{ token, \.\.\.session \} = data;/);
   assert.doesNotMatch(start, /NextResponse\.json\(\{[^}]*\btoken\b/);
   const cookies = read("lib/staffViewCookies.ts");
-  assert.match(cookies, /STAFF_VIEW_AS_COOKIE, token, \{ httpOnly: true/);
+  assert.match(cookies, /STAFF_VIEW_AS_COOKIE, token,\s*\{ httpOnly: true/);
+  // the token cookie outlives the view by the grace (the banner's last check closes it); the hint ends on time
+  assert.match(cookies, /maxAge: maxAge \+ STAFF_VIEW_CLOSE_GRACE_S \}/);
   // the end and the session read act as the owner: no view header
   assert.match(start, /allowDuringViewAs: true/);
 });

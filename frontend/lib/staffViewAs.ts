@@ -75,6 +75,30 @@ export function ownStaffView(
   return c;
 }
 
+/** The claims of `token` when it is a view of the signed-in member `adminId` that is PAST its expiry, else null. The
+ *  token cookie outlives the view by STAFF_VIEW_CLOSE_GRACE_S so the banner's last check can still name the session:
+ *  the BFF then reads it as the owner and the API closes it as 'expired' (its end row). Never honoured as a view. */
+export function expiredOwnStaffView(
+  token: string | undefined | null, adminId: string | undefined | null, nowMs: number = Date.now(),
+): StaffViewClaims | null {
+  const c = staffViewClaims(token);
+  if (!c || !adminId || c.staffId !== adminId || c.exp * 1000 > nowMs) return null;
+  return c;
+}
+
+/** How long the httpOnly token cookie outlives the view (seconds; the display cookie ends with the view). */
+export const STAFF_VIEW_CLOSE_GRACE_S = 300;
+
+/** The log line of a write the BFF refused inside a view (structured, one line, no body, no query string): the
+ *  refusal never reaches the API, so this line is its trace (the API's own gate logs a write that reaches it). */
+export function refusedWriteLog(
+  app: string, view: { sessionId: string; role: string; staffId: string }, method: string, path: string,
+): string {
+  const clean = path.split("?")[0].replace(/[^\w\-./\[\]]/g, "_").slice(0, 200);
+  return `[view-as] staff_view_as_write_refused app=${app} session=${view.sessionId} staff=${view.staffId} `
+    + `view_role=${view.role} method=${method.toUpperCase()} path=${clean}`;
+}
+
 /** The session a request is checked with: the verified one, or inside an own view started from a verified admin
  *  Cognito session, the view role with its claimed capabilities intersected with the verified ones (never wider). */
 export function effectiveSession(
