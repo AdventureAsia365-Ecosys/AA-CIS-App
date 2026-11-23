@@ -35,7 +35,7 @@
 import { useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { ExternalLink, History, Pencil, SlidersHorizontal } from "lucide-react";
 import { useSearchParams } from "next/navigation";
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Badge, Button, DateText, ErrorState, K, LoadingScreen, PageFrame, PageHeader, Section, Tabs, mono, useT, type ColumnDef,
   type Tone,
@@ -46,7 +46,8 @@ import { useAdminIdentity } from "../../../_kit/useAdminIdentity";
 import { BOOKING_ADMIN_URL } from "@/lib/apps";
 import {
   APPS, badgesOf, boundsText, formatValue, lastChangeState, loadProblem, openProposal, registryPath, scheduledOf,
-  hasScopeChoice, valuesInForce, type BadgeKey, type RegistryResp, type SettingApp, type SettingItem, type ValueOf,
+  hasScopeChoice, nextScheduleDelay, valuesInForce, type BadgeKey, type RegistryResp, type SettingApp,
+  type SettingItem, type ValueOf,
 } from "@/lib/settingsRegistry";
 import { SETTINGS } from "./messages";
 import { ActorName, SettingCell } from "./SettingGuide";
@@ -236,6 +237,16 @@ function AppSettings({ app, initialArea, initialQuery }: { app: SettingApp; init
     void qc.invalidateQueries({ queryKey: ["settings-registry", app] });
     void qc.invalidateQueries({ queryKey: ["settings-history"] });
   };
+  // a scheduled change comes into force while the page is open: reload the list at that moment (S288 follow-up)
+  useEffect(() => {
+    const wait = nextScheduleDelay(items);
+    if (wait === null) return;
+    const timer = setTimeout(() => {
+      void qc.invalidateQueries({ queryKey: ["settings-registry", app] });
+      void qc.invalidateQueries({ queryKey: ["settings-history"] });
+    }, wait);
+    return () => clearTimeout(timer);
+  }, [items, qc, app]);
   const actions = useCallback((s: SettingItem) => (
     <ActionsCell item={s} canWrite={canWrite} onChange={() => setEditing(s)} onHistory={() => setViewing(s)} />
   ), [canWrite]);

@@ -12,7 +12,7 @@ import {
   formatValue, groupByArea, guideFor, historyPath, nowExample, parseDraft, parseNumber, proposalBody, proposalPath,
   registryPath, valuesInForce, withValue, PLATFORM_SCOPE, historyTenant, scopeOptions, scopeReady, scopeTarget,
   scopeTenant, searchSettings, tenantScoped, matchesInArea, searchAreaCounts, searchAreaPicked, approvedVersion,
-  scheduledOf, openProposal, tenantProposals,
+  scheduledOf, openProposal, tenantProposals, nextScheduleDelay,
   canApplyAtOnce, lastChangeState, isScheduled, loadProblem, effectiveInPast, localMinute, PROBLEM_IDS, agencyScoped,
   agencyNames, effectiveShown, agencyFeatureSwitch, hasScopeChoice, initialScope, platformSwitchWarning, agencyOptions,
   agenciesPath, allAgencies, AGENCIES_API,
@@ -372,6 +372,27 @@ test("scheduled changes: the list's own, else (CRM) the approved last change dat
   assert.equal(lastChangeState(row({ effective_from: "2026-11-20T00:00:00Z" }), NOW), "scheduled");
   assert.equal(lastChangeState(row(), NOW), null);
   assert.equal(isScheduled(row({ effective_from: "2026-11-20T00:00:00Z" }), NOW), true);
+});
+
+test("a scheduled change whose time has come shows as in force, and the page reloads at that moment", () => {
+  // S288 follow-up: the list was loaded while the change was ahead; the page stayed open past its effective time
+  const sched = [{ tenant_id: null, value: 40, version: 2, effective_from: "2026-11-20T00:00:00Z" }];
+  const it = item(INT, { scheduled: sched, last_change: row({ effective_from: "2026-11-20T00:00:00Z" }) });
+  const later = new Date("2026-11-20T00:00:05Z");
+  assert.equal(scheduledOf(it, null, NOW).length, 1);
+  assert.equal(scheduledOf(it, null, later).length, 0);
+  assert.ok(!badgesOf(it, later).includes("scheduled"));
+  assert.equal(lastChangeState(it.last_change, later), null);
+  assert.equal(isScheduled(it.last_change, later), false);
+  const wait = nextScheduleDelay([it], NOW);
+  assert.equal(wait, new Date("2026-11-20T00:00:00Z").getTime() - NOW.getTime() + 1000);
+  assert.equal(nextScheduleDelay([it], later), null);
+  assert.equal(nextScheduleDelay([item(INT)], NOW), null);
+  const far = item(INT, { scheduled: [{ ...sched[0], effective_from: "2027-11-20T00:00:00Z" }] });
+  assert.equal(nextScheduleDelay([far], NOW), 2_147_483_647);
+  // the CRM relay (no scheduled list): the approved last change dated ahead
+  const crm = item(INT, { last_change: row({ effective_from: "2026-11-20T00:00:00Z" }) });
+  assert.equal(nextScheduleDelay([crm, far], NOW), wait);
 });
 
 test("open proposals by scope; tenant proposals listed for review", () => {

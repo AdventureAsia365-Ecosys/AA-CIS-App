@@ -5527,6 +5527,19 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   draft sentence, section or meta) stays outside the fence. Judges, filters and extractors (brand audit, F9 / brand
   fit, FAQ filter and answer fit, seed adjudication, source facts, place cards) are not fenced yet. The trap set
   (`services/ai_safety/trap_set.py`, paid run `scripts/aa1167/trap_run.py`) measures the writers before it is turned on.
+  **AA-1172 (OWASP LLM01, Facts Entries):** the fence alone did not stop an instruction planted in a fact, because a
+  fact is quoted as "real, verifiable source material" and also feeds the grounding corpus. The Facts instruction guard
+  (`services/ai_safety/fact_guard.py`) drops every sentence of a fact that is written to the writer (a chat role line,
+  a note to the writer, a request to ignore the rules, a request to put words into headings / the FAQ / the post;
+  English and Vietnamese, matched after Unicode normalisation) at the one read choke point
+  `facts.prepare_facts` (called by `fetch_facts_for_writing`, so T9 and T2 both get clean facts); a fact whose title or
+  source line is such a sentence, or whose body is left empty, is left out and recorded in the FactSheet with reason
+  `fact_instruction`. Stored writer snapshots replayed later (ground-truth review, writing-memory eval and replay,
+  sentence repair) read the cleaned block through `fact_guard.stored_facts`. Switch: `cis.llm.fact_instruction_guard`
+  (CIS 472, default on; a fact with no match reaches the writer byte for byte). The patterns are security invariants.
+  The trap set has five T9 fact traps (body, inline role line, polite request, title, source line) built through the
+  live `prepare_facts` + `format_facts_block`; `trap_run.py --guard both --stage adhoc_aa<issue>` adds the guard-off
+  control. Not built yet: a post-write check that refuses names absent from the source (the planned second layer).
 
 ## Ownership / frequency / cross-tenant table (AA-540)
 

@@ -45,10 +45,10 @@ import re
 from collections import Counter, defaultdict
 from typing import Any, Iterable, Optional
 
+from services.ai_safety import fact_guard
 from services.ground_truth import claims as cl
 from services.ground_truth import panel as pn
-from services.ground_truth import policy
-from services.ground_truth import store
+from services.ground_truth import policy, store
 from services.ground_truth.set_list import list_sets  # S282: moved; re-exported (the router calls rv.list_sets)
 
 ANSWERS = {"correct": "ok", "wrong": "violation", "unsure": "unsure"}
@@ -601,7 +601,7 @@ async def live_t9_context(pool, piece: dict, wi: dict) -> tuple[dict, str]:
         "atom_text": wi.get("seed") or ctx.get("atom_text") or "",
         "route_segments": ([[m.get("atom_id"), m.get("seed")] for m in moments] if moments
                            else ctx.get("route_segments")),
-        "facts_text": wi.get("facts") or "", "facts_pending": False,
+        "facts_text": fact_guard.stored_facts(wi.get("facts")), "facts_pending": False,  # AA-1172
         "brand_audience": wi.get("brand_pack") or ctx.get("brand_audience") or {},
         "brand_rubric_text": wi.get("brand_rubric") if wi.get("brand_rubric") is not None
         else ctx.get("brand_rubric_text"),
