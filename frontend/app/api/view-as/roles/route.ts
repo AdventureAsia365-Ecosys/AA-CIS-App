@@ -87,23 +87,29 @@ export async function GET(req: NextRequest) {
   if (!auth.ok) return auth.response;
   if (!headers) return secretNotConfigured();
   const token = req.cookies.get(STAFF_VIEW_AS_COOKIE)?.value;
-  // No own view (none, ended, expired, another member's): inactive, both cookies cleared.
-  const none = () => clearStaffViewCookies(NextResponse.json({ active: false }));
   const claims = ownStaffView(token, auth.adminId);
-  if (!claims) {
-    const expired = expiredOwnStaffView(token, auth.adminId);
-    // the API closes it as 'expired' (end row); best effort: the next start or sign-out closes it otherwise
-    if (expired) await readSession(expired.sessionId, headers).catch(() => null);
-    return none();
-  }
+  if (!claims) return closeExpired(token, auth.adminId, headers);
   let s: SessionRead | null;
   try {
     s = await readSession(claims.sessionId, headers);
   } catch {
     return NextResponse.json({ detail: "Upstream connection error" }, { status: 502 });
   }
-  if (!s?.open || s.kind !== "role") return none();
+  if (!s?.open || s.kind !== "role") return inactive();
   return NextResponse.json(current(s, req.cookies.get(STAFF_VIEW_DISPLAY_COOKIE)?.value));
+}
+
+/** No own view (none, ended, expired, another member's): inactive, both cookies cleared. */
+function inactive(): NextResponse {
+  return clearStaffViewCookies(NextResponse.json({ active: false }));
+}
+
+/** No running own view. An own view past its expiry is read once more as the owner first: the API closes it as
+ *  'expired' (its end row). Best effort: the next start or sign-out closes it otherwise. */
+async function closeExpired(token: string | undefined, adminId: string, headers: Record<string, string>) {
+  const expired = expiredOwnStaffView(token, adminId);
+  if (expired) await readSession(expired.sessionId, headers).catch(() => null);
+  return inactive();
 }
 
 type SessionRead = { open?: boolean; kind?: string; session_id?: string; view_role?: string; expires_at?: string };

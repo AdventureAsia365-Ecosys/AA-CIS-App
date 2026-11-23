@@ -123,7 +123,8 @@ test("a refused write leaves one structured log line: session, role, method, pat
 
 test("the view read closes an expired own view through the API before answering inactive", () => {
   const route = read("app/api/view-as/roles/route.ts");
-  assert.match(route, /const expired = expiredOwnStaffView\(token, auth\.adminId\);\s*\/\/[^\n]*\n[^\n]*\n?\s*if \(expired\) await readSession\(expired\.sessionId, headers\)/);
+  assert.match(route, /if \(!claims\) return closeExpired\(token, auth\.adminId, headers\);/);
+  assert.match(route, /const expired = expiredOwnStaffView\(token, adminId\);\s*if \(expired\) await readSession\(expired\.sessionId, headers\)/);
   const banner = read("app/_kit/StaffViewAsBanner.tsx");
   assert.match(banner, /if \(over\) void checkView\(\)/);
 });

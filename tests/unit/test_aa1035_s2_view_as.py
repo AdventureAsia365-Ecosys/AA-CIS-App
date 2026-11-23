@@ -162,7 +162,7 @@ class FakeDb:
                 raise OSError("audit store down")
             self.audit.append(args)
             return "INSERT 0 1"
-        if "shared.tenant_api_usage" in sql:
+        if "shared.tenant_api_usage" in sql or sql == va.START_LOCK_SQL:   # AA-1157: also the start's advisory lock
             return "INSERT 0 1"
         raise AssertionError(f"unexpected execute {sql}")
 
