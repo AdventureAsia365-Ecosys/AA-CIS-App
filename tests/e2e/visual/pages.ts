@@ -69,6 +69,7 @@ export const PAGES: VisualPage[] = [
   // AA-1170: Platform › Compliance, the Overview and the Controls tab
   { slug: "platform-compliance", route: "/admin/platform/compliance", path: "/admin/platform/compliance", auth: "staff" },
   { slug: "platform-compliance-controls", route: "/admin/platform/compliance", path: "/admin/platform/compliance?tab=controls", auth: "staff" },
+  { slug: "platform-compliance-obligations", route: "/admin/platform/compliance", path: "/admin/platform/compliance?tab=obligations", auth: "staff" },
   { slug: "platform-settings", route: "/admin/platform/settings", path: "/admin/platform/settings", auth: "staff" },
   // AA-1127 (S285): the search view (Area column, long TripPlanner keys) ran 58 px past a phone frame
   { slug: "platform-settings-search", route: "/admin/platform/settings", path: "/admin/platform/settings?app=tripplanner&key=tripplanner.spend", auth: "staff" },

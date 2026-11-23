@@ -38012,6 +38012,69 @@
         ]
       }
     },
+    "/admin/platform/compliance/obligations": {
+      "get": {
+        "operationId": "get_obligations_admin_platform_compliance_obligations_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Legal obligations per law (met / not met / not yet checked) and the applicability matrix; readiness, not legal advice",
+        "tags": [
+          "admin-platform-compliance"
+        ]
+      }
+    },
     "/admin/platform/compliance/refresh": {
       "post": {
         "operationId": "post_refresh_admin_platform_compliance_refresh_post",
@@ -38069,7 +38132,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Re-read the published compliance evidence file now and ingest it",
+        "summary": "Re-read the published compliance evidence file now, collect the API's own sources and ingest them",
         "tags": [
           "admin-platform-compliance"
         ]

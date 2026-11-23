@@ -59,7 +59,7 @@ def test_a_bad_register_is_refused(mutate, needle):
 
 
 def test_wrong_format_is_refused():
-    assert lr.validate({"format": 2}, set()) == ["the register file is not format 1"]
+    assert lr.validate({"format": 3}, set()) == ["the register file is not format 1 or 2"]   # AA-1174 adds format 2
 
 
 # ── public-repo guard ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -67,7 +67,10 @@ def test_wrong_format_is_refused():
 GUARDED = ("api/services/compliance.py", "api/services/compliance_score.py", "api/services/compliance_settings.py",
            "api/routers/admin_platform_compliance.py", "scripts/compliance/load_register.py",
            "scripts/compliance/register.example.json", "frontend/app/admin/platform/compliance",
-           "frontend/lib/compliance.ts", "docs/implementation-notes/AA-1170.md")
+           "frontend/lib/compliance.ts", "docs/implementation-notes/AA-1170.md",
+           # AA-1174
+           "api/services/compliance_db.py", "api/services/compliance_crm.py", "api/services/compliance_obligations.py",
+           "docs/implementation-notes/AA-1174.md")
 ACCOUNT_ID = re.compile(r"(?<![0-9A-Za-z])\d{12}(?![0-9A-Za-z])")
 NORMATIVE = re.compile(r"\b(shall|the organi[sz]ation)\b", re.I)
 
