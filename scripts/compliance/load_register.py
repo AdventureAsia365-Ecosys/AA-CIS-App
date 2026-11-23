@@ -253,6 +253,17 @@ def _framework_problems(f: Any, db_kinds: dict[str, str]) -> list[str]:
         out.append(f"{where}: jurisdiction must match {MARKET.pattern}")
     if not _host_ok(f.get("source_url")):
         out.append(f"{where}: source_url must be https on an official host")
+    out += _framework_dates(where, f)
+    if f.get("scored", False) is not False:
+        out.append(f"{where}: a law loaded from the register is never scored (a checklist, not a percentage)")
+    if not isinstance(f.get("sort_order"), int) or f["sort_order"] < 1:
+        out.append(f"{where}: sort_order must be a positive integer")
+    return out
+
+
+def _framework_dates(where: str, f: dict) -> list[str]:
+    """in_force_on = entered into force, applies_from = when the duties apply (optional, never earlier)."""
+    out = []
     if f.get("in_force_on") is not None and not _is_date(f["in_force_on"]):
         out.append(f"{where}: in_force_on must be an ISO date")
     if f.get("applies_from") is not None:
@@ -260,10 +271,6 @@ def _framework_problems(f: Any, db_kinds: dict[str, str]) -> list[str]:
             out.append(f"{where}: applies_from must be an ISO date")
         elif _is_date(f.get("in_force_on")) and f["applies_from"] < f["in_force_on"]:
             out.append(f"{where}: applies_from is before in_force_on (in force first, then the duties apply)")
-    if f.get("scored", False) is not False:
-        out.append(f"{where}: a law loaded from the register is never scored (a checklist, not a percentage)")
-    if not isinstance(f.get("sort_order"), int) or f["sort_order"] < 1:
-        out.append(f"{where}: sort_order must be a positive integer")
     return out
 
 

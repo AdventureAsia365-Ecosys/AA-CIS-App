@@ -387,10 +387,14 @@ export function refreshCounts(state: IngestState | null | undefined): {
   const sources = Object.entries(state.live ?? {}).map(([source, s]) => ({
     source, state: s.state, rows: s.rows ?? 0, fresh: s.new ?? 0,
   }));
-  const bad = state.state === "unavailable" || state.state === "invalid" || sources.some((s) => s.state === "error");
-  const warn = state.state === "missing" || state.state === "skipped" || sources.some((s) => s.state === "skipped");
-  const tone: RefreshTone = bad ? "error" : warn ? "warning" : "ok";
+  const tone = refreshTone(state.state, sources.map((s) => s.state));
   return { ok: tone === "ok", tone, read: state.rows ?? 0, fresh: state.new ?? 0, sources };
+}
+
+function refreshTone(file: string, sources: string[]): RefreshTone {
+  if (file === "unavailable" || file === "invalid" || sources.includes("error")) return "error";
+  if (file === "missing" || file === "skipped" || sources.includes("skipped")) return "warning";
+  return "ok";
 }
 
 export type SkipReason = "cognito_session" | "unauthorized" | "forbidden" | "view_as" | "unknown";
