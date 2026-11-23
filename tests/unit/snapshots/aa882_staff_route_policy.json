@@ -659,6 +659,10 @@
     "capability": "compliance.read",
     "module": "api.routers.admin_platform_compliance"
   },
+  "GET /admin/platform/compliance/obligations": {
+    "capability": "compliance.read",
+    "module": "api.routers.admin_platform_compliance"
+  },
   "GET /admin/platform/cost": {
     "capability": "spend.read",
     "module": "api.routers.admin_platform_ops"

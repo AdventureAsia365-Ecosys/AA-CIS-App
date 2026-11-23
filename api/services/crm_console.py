@@ -78,6 +78,9 @@ ALLOWED: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         # AA-1171 (crm.ops.v1 1.17): the CRM's in-app check registry with its thresholds in force, read by Platform ›
         # Alerts › Catalogue (api/services/alerts_catalogue.py).
         ("GET", r"/ops-checks"),
+        # AA-1174 (crm.ops.v1 1.18): consent capture and campaign sends to opted-in contacts, counts only, read by
+        # Platform › Compliance on Refresh evidence (api/services/compliance_crm.py).
+        ("GET", r"/privacy-evidence"),
         ("GET", r"/settings/crm(\.[a-z0-9_]+){2,}/history"),
         ("POST", r"/settings/crm(\.[a-z0-9_]+){2,}/changes"),
         ("POST", rf"/settings/changes/{_ID}/(approve|reject)"),
@@ -103,7 +106,8 @@ def _timeout(method: str, path: str) -> float:
         return WRITE_TIMEOUT_S
     # /tenants and /data-coverage open one CRM transaction per agency; /ops-checks reads every check's settings
     # (S287: 3.8 s once on a cold CRM task, over the 2 s read timeout).
-    return LIST_TIMEOUT_S if path in ("/tenants", "/data-coverage", "/ops-checks") else READ_TIMEOUT_S
+    slow = ("/tenants", "/data-coverage", "/ops-checks", "/privacy-evidence")
+    return LIST_TIMEOUT_S if path in slow else READ_TIMEOUT_S
 
 
 def _problem(detail: str, message: str) -> dict[str, Any]:

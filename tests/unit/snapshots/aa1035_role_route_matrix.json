@@ -165,6 +165,7 @@
     "GET /admin/platform/compliance",
     "GET /admin/platform/compliance/controls",
     "GET /admin/platform/compliance/controls/{control_id}",
+    "GET /admin/platform/compliance/obligations",
     "GET /admin/platform/cost",
     "GET /admin/platform/crm/agencies",
     "GET /admin/platform/crm/agencies/{tenant_id}",

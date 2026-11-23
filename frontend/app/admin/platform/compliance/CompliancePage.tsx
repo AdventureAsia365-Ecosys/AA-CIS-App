@@ -10,6 +10,11 @@
 // API (backend api/routers/admin_platform_compliance.py; BFF /api/admin/platform/compliance, compliance.read; Refresh
 // compliance.write — lib/rbac.ts): GET /, GET /controls, GET /controls/{id}, POST /refresh. Pure helpers:
 // lib/compliance.ts. Kit only. The tab lives in the URL (?tab=controls) and so does the open control (?control=<id>).
+//
+// AA-1174: a third tab, Obligations (ObligationsTab.tsx: the law checklists and the applicability matrix; GET
+// /obligations). Framework names and kinds come from the API (compliance.framework), so laws mapped to controls show
+// their names in the Controls tab and its filter. Refresh evidence reports its result: a toast and a line under the
+// header with the counts read from the published file and from the API's own sources, or the error.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ClipboardCheck, ExternalLink, RefreshCw, SlidersHorizontal } from "lucide-react";
@@ -17,16 +22,18 @@ import { useMemo } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
   Badge, Button, CHART_TOOLTIP, DataTable, Drawer, EmptyState, ErrorState, Field, K, KpiTile, PageFrame, PageHeader,
-  Section, Select, SkeletonStyle, Tabs, apiGet, apiSend, mono, useFormat, useT, useUrlFilters, type ColumnDef,
+  Section, Select, SkeletonStyle, Tabs, apiGet, apiSend, mono, useFormat, useT, useToast, useUrlFilters,
+  type ColumnDef,
 } from "../../../_kit";
 import { useChartColors } from "../../../_kit/useTheme";
 import {
-  CONTROLS_PATH, FRAMEWORKS, OVERVIEW_PATH, REFRESH_PATH, SETTINGS_HREF, checkTone, controlTone, deltaToReference,
-  fmtPct, frameworkName, inFramework, isLegal, safeLink, sortControls, trendSeries,
-  type CheckView, type ControlDetail, type ControlRow, type ControlsResp, type FrameworkScore, type Heartbeat,
-  type IngestState, type OverviewResp,
+  CONTROLS_PATH, OVERVIEW_PATH, REFRESH_PATH, SETTINGS_HREF, checkTone, controlTone, deltaToReference,
+  fmtPct, frameworkList, frameworkName, inFramework, isLegal, refreshCounts, safeLink, sortControls, trendSeries,
+  type CheckView, type ControlDetail, type ControlRow, type ControlsResp, type FrameworkInfo, type FrameworkScore,
+  type Heartbeat, type IngestState, type LiveSourceState, type OverviewResp,
 } from "@/lib/compliance";
 import { COMPLIANCE } from "./messages";
+import { ObligationsTab } from "./ObligationsTab";
 
 const KEY = ["platform-compliance"];
 const small = { fontSize: 12, color: K.muted, lineHeight: 1.45 } as const;
@@ -46,11 +53,12 @@ function stateLabel(t: CT, state: string | null | undefined): string {
 
 // ── overview ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-function FrameworkCard({ score, weight, t }: { score: FrameworkScore; weight: number; t: CT }) {
+function FrameworkCard({ score, weight, info, t }: { score: FrameworkScore; weight: number;
+  info?: FrameworkInfo[]; t: CT }) {
   const delta = deltaToReference(score);
   return (
-    <Section title={frameworkName(score.framework)} testId={`compliance-card-${score.framework}`}
-      description={isLegal(score.framework) ? t("legalNote") : undefined}>
+    <Section title={score.title ?? frameworkName(score.framework, info)} testId={`compliance-card-${score.framework}`}
+      description={(score.kind ? score.kind === "law" : isLegal(score.framework, info)) ? t("legalNote") : undefined}>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
         <KpiTile size="sm" label={t("weighted")} value={fmtPct(score.weighted_pct)} info={t("weightedTip", weight)}
           hint={delta ?? t("noReference")} hintTone={delta?.startsWith("−") ? "warning" : "neutral"} />
@@ -69,6 +77,7 @@ function Trend({ data, t }: { data: OverviewResp; t: CT }) {
     s4: "--aa-kit-amber", s5: "--aa-red", axis: "--aa-muted", grid: "--aa-border" }) as Record<string, string>;
   const rows = useMemo(() => trendSeries(data.trend), [data.trend]);
   const dates = new Set(data.trend.map((p) => p.date));
+  const series = data.frameworks.map((f) => ({ key: f.framework, name: f.title ?? frameworkName(f.framework) }));
   return (
     <Section title={t("trend")} description={data.settings_changed_on ? t("settingsChanged", data.settings_changed_on)
       : undefined}>
@@ -81,8 +90,8 @@ function Trend({ data, t }: { data: OverviewResp; t: CT }) {
               <YAxis domain={[0, 100]} width={36} tick={{ fontSize: 11, fill: c.axis }} />
               <Tooltip {...CHART_TOOLTIP} />
               <Legend wrapperStyle={{ fontSize: 11 }} />
-              {FRAMEWORKS.map((f, i) => (
-                <Line key={f.key} type="monotone" dataKey={f.key} name={f.name} stroke={c[`s${i}`]} strokeWidth={1.6}
+              {series.map((f, i) => (
+                <Line key={f.key} type="monotone" dataKey={f.key} name={f.name} stroke={c[`s${i % 6}`]} strokeWidth={1.6}
                   dot={false} connectNulls isAnimationActive={false} />
               ))}
             </LineChart>
@@ -131,10 +140,13 @@ function Collectors({ beats, ingest, t }: { beats: Heartbeat[]; ingest: IngestSt
         {beats.map((b) => (
           <div key={b.source} style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
             <span style={{ fontFamily: mono, fontSize: 12 }}>{b.source}</span>
-            <Badge tone={b.ok ? "success" : b.last_seen ? "danger" : "neutral"}>
-              {b.ok ? t("heartbeatOk", b.heartbeat_hours) : b.last_seen ? t("heartbeatLate", b.heartbeat_hours)
-                : t("heartbeatNever")}
-            </Badge>
+            {b.scheduled === false
+              ? <Badge tone={b.ok ? "success" : b.last_seen ? "warning" : "neutral"}>{t("heartbeatOnDemand",
+                b.heartbeat_hours)}</Badge>
+              : <Badge tone={b.ok ? "success" : b.last_seen ? "danger" : "neutral"}>
+                {b.ok ? t("heartbeatOk", b.heartbeat_hours) : b.last_seen ? t("heartbeatLate", b.heartbeat_hours)
+                  : t("heartbeatNever")}
+              </Badge>}
             {b.last_seen && <span style={small}>{t("lastSeen", formatDateTime(b.last_seen))}</span>}
           </div>
         ))}
@@ -159,7 +171,8 @@ function Overview({ data, t }: { data: OverviewResp; t: CT }) {
       </div>
       <div style={cards}>
         {data.frameworks.map((f) => (
-          <FrameworkCard key={f.framework} score={f} weight={data.settings.partial_weight} t={t} />
+          <FrameworkCard key={f.framework} score={f} weight={data.settings.partial_weight} info={data.framework_info}
+            t={t} />
         ))}
       </div>
       <Trend data={data} t={t} />
@@ -179,6 +192,7 @@ function Controls({ t }: { t: CT }) {
     staleTime: 60_000, retry: false });
   const rows = useMemo(() => sortControls(q.data?.controls ?? []).filter((r) => inFramework(r, framework)),
     [q.data, framework]);
+  const info = q.data?.framework_info;
   const columns: ColumnDef<ControlRow, unknown>[] = [
     { id: "id", header: t("colControl"), accessorKey: "control_id",
       cell: ({ row: { original: r } }) => <span style={{ fontFamily: mono, fontSize: 12 }}>{r.control_id}</span> },
@@ -190,7 +204,7 @@ function Controls({ t }: { t: CT }) {
     { id: "frequency", header: t("colFrequency"), accessorKey: "frequency" },
     { id: "coverage", header: t("colCoverage"),
       cell: ({ row: { original: r } }) => <span style={small}>{Object.entries(r.frameworks)
-        .map(([k, n]) => `${frameworkName(k)} ${n}`).join(" · ") || "—"}</span> },
+        .map(([k, n]) => `${frameworkName(k, info)} ${n}`).join(" · ") || "—"}</span> },
     { id: "last", header: t("colLast"), accessorKey: "last_evidence_at",
       cell: ({ row: { original: r } }) => <span style={small}>{r.last_evidence_at ? formatDateTime(r.last_evidence_at)
         : "—"}</span> },
@@ -202,7 +216,7 @@ function Controls({ t }: { t: CT }) {
         <Field label={t("filterFramework")}>
           <Select value={framework} onChange={(e) => setMany({ framework: e.target.value === "all" ? null : e.target.value })}
             options={[{ value: "all", label: t("allFrameworks") },
-              ...FRAMEWORKS.map((f) => ({ value: f.key, label: f.name }))]} />
+              ...frameworkList(info).map((f) => ({ value: f.key, label: f.name }))]} />
         </Field>
       </div>
       <DataTable<ControlRow> tableId="compliance-controls" data={rows} columns={columns}
@@ -210,12 +224,13 @@ function Controls({ t }: { t: CT }) {
         onRetry={() => void q.refetch()} searchable searchLabel={t("searchControls")} paginate={false}
         tableMinWidth={980} enableCsv csvFilename="compliance-controls.csv" emptyTitle={t("noControls")}
         onRowClick={(r) => setMany({ control: r.control_id })} />
-      <ControlDrawer id={open || null} onClose={() => setMany({ control: null })} t={t} />
+      <ControlDrawer id={open || null} onClose={() => setMany({ control: null })} info={info} t={t} />
     </div>
   );
 }
 
-function ControlDrawer({ id, onClose, t }: { id: string | null; onClose: () => void; t: CT }) {
+function ControlDrawer({ id, onClose, info, t }: { id: string | null; onClose: () => void;
+  info?: FrameworkInfo[]; t: CT }) {
   const { formatDateTime } = useFormat();
   const q = useQuery({ queryKey: [...KEY, "control", id], enabled: !!id, retry: false,
     queryFn: () => apiGet<ControlDetail>(`${CONTROLS_PATH}/${encodeURIComponent(id ?? "")}`) });
@@ -237,7 +252,7 @@ function ControlDrawer({ id, onClose, t }: { id: string | null; onClose: () => v
             <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 4 }}>
               {d.requirements.map((r) => (
                 <li key={`${r.framework}-${r.ref}`} style={small}>
-                  <span style={{ fontFamily: mono }}>{frameworkName(r.framework)} {r.ref}</span>
+                  <span style={{ fontFamily: mono }}>{frameworkName(r.framework, info)} {r.ref}</span>
                   {r.title ? ` — ${r.title}` : ""} ({r.coverage === "full" ? t("full") : t("partial")})
                   {r.state && <> <Badge tone={controlTone(r.state)}>{stateLabel(t, r.state)}</Badge></>}
                 </li>
@@ -281,17 +296,74 @@ function ControlDrawer({ id, onClose, t }: { id: string | null; onClose: () => v
   );
 }
 
+// ── refresh result ──────────────────────────────────────────────────────────────────────────────────────────────────
+
+function sourceLine(source: string, s: LiveSourceState, t: CT): string {
+  const name = source === "cis_db" || source === "crm_ops" ? t(`source_${source}`) as string : source;
+  if (s.state === "ok") return t("refreshSource", name, s.rows ?? 0, s.new ?? 0);
+  if (s.state === "recent") return t("refreshRecent", name);
+  if (s.state === "skipped") return t("refreshSkipped", name, s.reason ?? String(s.http ?? ""));
+  return t("refreshSourceError", name);
+}
+
+/** The lines the Refresh action reports: the published file, then each of the API's own sources. */
+function refreshLines(state: IngestState, t: CT): string[] {
+  const c = refreshCounts(state);
+  const head = state.state === "ok" ? t("refreshOk", c.read, c.fresh) : ingestText(state, t) ?? "";
+  const lines = [head, ...Object.entries(state.live ?? {}).map(([source, s]) => sourceLine(source, s, t))];
+  return lines.filter(Boolean);
+}
+
+function RefreshResult({ state, error, t }: { state: IngestState | null; error: string | null; t: CT }) {
+  if (!state && !error) return null;
+  const ok = !error && refreshCounts(state).ok;
+  return (
+    <div role="status" data-testid="compliance-refresh-result" style={{ ...small, display: "grid", gap: 2,
+      marginBottom: 10 }}>
+      <span><Badge tone={error ? "danger" : ok ? "success" : "warning"}>
+        {error ? t("refreshFailed") : ok ? t("refresh") : t("refreshProblems")}</Badge></span>
+      {error ? <span>{error}</span> : refreshLines(state as IngestState, t).map((l) => <span key={l}>{l}</span>)}
+    </div>
+  );
+}
+
 // ── page ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+const TABS = ["overview", "controls", "obligations"] as const;
+type TabKey = (typeof TABS)[number];
+
+function tabOf(value: string | null | undefined): TabKey {
+  return (TABS as readonly string[]).includes(value ?? "") ? value as TabKey : "overview";
+}
+
+function OverviewTab({ t }: { t: CT }) {
+  const q = useQuery({ queryKey: [...KEY, "overview"], queryFn: () => apiGet<OverviewResp>(OVERVIEW_PATH),
+    staleTime: 60_000, retry: false });
+  return (
+    <>
+      {q.error && <ErrorState message={`${t("loadError")}: ${(q.error as Error).message}`}
+        onRetry={() => void q.refetch()} />}
+      {!q.data && !q.error && <KpiTile label={t("weighted")} value={undefined} />}
+      {q.data && !q.data.frameworks.length && <EmptyState title={t("loadError")} />}
+      {q.data && <Overview data={q.data} t={t} />}
+    </>
+  );
+}
 
 export default function CompliancePage() {
   const t = useCT();
   const qc = useQueryClient();
   const { get, setMany } = useUrlFilters();
-  const tab = get("tab") === "controls" ? "controls" : "overview";
-  const q = useQuery({ queryKey: [...KEY, "overview"], queryFn: () => apiGet<OverviewResp>(OVERVIEW_PATH),
-    staleTime: 60_000, retry: false });
+  const toast = useToast();
+  const tab = tabOf(get("tab"));
   const refresh = useMutation({
     mutationFn: () => apiSend<{ ingest: IngestState }>(REFRESH_PATH, { method: "POST" }),
+    onSuccess: (res) => {
+      const lines = refreshLines(res.ingest, t);
+      if (refreshCounts(res.ingest).ok) toast.success(lines.join(" · "));
+      else toast.error(`${t("refreshProblems")}: ${lines.join(" · ")}`);
+    },
+    onError: (err) => toast.error(`${t("refreshFailed")}: ${(err as Error).message}`),
     onSettled: () => void qc.invalidateQueries({ queryKey: KEY }),
   });
   return (
@@ -309,23 +381,18 @@ export default function CompliancePage() {
           </span>
         </span>}
       />
+      <RefreshResult state={refresh.data?.ingest ?? null} error={refresh.error ? (refresh.error as Error).message : null}
+        t={t} />
       <div role="note" data-testid="compliance-banner" style={{ ...small, marginBottom: 14, display: "grid", gap: 4 }}>
         <span><Badge tone="warning">{t("banner")}</Badge></span>
         <span>{t("bannerNote")}</span>
       </div>
       <div style={grid}>
         <Tabs ariaLabel={t("title")} active={tab} testId="compliance-tabs"
-          onChange={(k) => setMany({ tab: k === "overview" ? null : k, control: null })}
-          tabs={[{ key: "overview", label: t("tabOverview") }, { key: "controls", label: t("tabControls") }]} />
-        {tab === "controls" ? <Controls t={t} /> : (
-          <>
-            {q.error && <ErrorState message={`${t("loadError")}: ${(q.error as Error).message}`}
-              onRetry={() => void q.refetch()} />}
-            {!q.data && !q.error && <KpiTile label={t("weighted")} value={undefined} />}
-            {q.data && !q.data.frameworks.length && <EmptyState title={t("loadError")} />}
-            {q.data && <Overview data={q.data} t={t} />}
-          </>
-        )}
+          onChange={(k) => setMany({ tab: k === "overview" ? null : k, control: null, law: null })}
+          tabs={[{ key: "overview", label: t("tabOverview") }, { key: "controls", label: t("tabControls") },
+            { key: "obligations", label: t("tabObligations") }]} />
+        {tab === "obligations" ? <ObligationsTab /> : tab === "controls" ? <Controls t={t} /> : <OverviewTab t={t} />}
       </div>
     </PageFrame>
   );

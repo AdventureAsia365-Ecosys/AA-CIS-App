@@ -25,7 +25,13 @@ control      no required check -> no_evidence; every required check pass -> met;
 requirement  no mapping to an active control -> unmapped; a full-coverage control met -> met; a partial-coverage
              control met or any control partial -> partial; none of those and one stale -> stale; else gap
 framework    over the applicable requirements: strict = met / n, weighted = (met + w x partial) / n, in percent with two
-             decimals; n = 0 -> 0
+             decimals; n = 0 -> 0. Only the SCORED frameworks get a percentage (compliance.framework.scored, CIS 471,
+             read by the caller and handed in; FRAMEWORKS is the default: the six of CIS 466)
+obligation   AA-1174 — a requirement of a law framework, shown as a checklist item, never a percentage:
+               met          the requirement is met (a full-coverage control met on fresh, passing evidence)
+               not_checked  no active control maps to it, or every mapped control has no automatic check (manual
+                            controls are not reviewed in phase 1): nobody has evidence either way
+               not_met      anything else (gap, stale, partial); ``partly`` marks the partial case
 """
 from __future__ import annotations
 
@@ -37,6 +43,8 @@ CHECK_STATES = ("pass", "fail", "error", "stale", "manual", "missing")
 CONTROL_STATES = ("met", "partial", "stale", "gap", "no_evidence")
 REQUIREMENT_STATES = ("met", "partial", "stale", "gap", "unmapped")
 FRAMEWORKS = ("iso27001:2022", "soc2:2017", "iso42001:2023", "owasp-top10:2021", "owasp-llm:2025", "eu-ai-act:2024")
+DEFAULT_SCORED = FRAMEWORKS     # the scored rows CIS 471 seeds; the live list is compliance.framework WHERE scored
+OBLIGATION_STATES = ("met", "not_met", "not_checked")
 
 
 @dataclass(frozen=True)
@@ -48,6 +56,9 @@ class ScoreSettings:
     # check_id -> (fact published in detail, limit, kind): kind "age_days" (an ISO date at most `limit` days old) or
     # "max" (a count at most `limit`)
     fact_limits: Mapping[str, tuple[str, float, str]] = field(default_factory=dict)
+    # AA-1174: the sources the heartbeat applies to (scheduled collectors); None = every source. A source collected
+    # on demand (cis_db, crm_ops: on Refresh) is never "silent", its rows only go stale past their validity window.
+    heartbeat_sources: Optional[frozenset] = None
 
     def as_json(self) -> dict:
         return {"validity_hours": dict(self.validity_hours), "heartbeat_hours": self.heartbeat_hours,
@@ -96,7 +107,8 @@ def check_state(check_id: str, row: Optional[Mapping[str, Any]], last_seen: Mapp
     source = row["source"]
     collected = row["collected_at"]
     seen = last_seen.get(source, collected)
-    if now - seen > timedelta(hours=s.heartbeat_hours):
+    scheduled = s.heartbeat_sources is None or source in s.heartbeat_sources
+    if scheduled and now - seen > timedelta(hours=s.heartbeat_hours):
         return CheckState(check_id, "error", f"collector {source} silent for more than {s.heartbeat_hours} h",
                           source, collected)
     hours = s.validity_hours.get(source)
@@ -171,10 +183,12 @@ def framework_score(states: Iterable[str], partial_weight: float) -> dict:
 
 def evaluate(requirements: list[Mapping[str, Any]], controls: list[Mapping[str, Any]],
              mappings: list[Mapping[str, Any]], latest: Mapping[str, Mapping[str, Any]],
-             last_seen: Mapping[str, datetime], s: ScoreSettings, now: datetime) -> dict:
+             last_seen: Mapping[str, datetime], s: ScoreSettings, now: datetime,
+             scored: Iterable[str] = DEFAULT_SCORED) -> dict:
     """Every state at once: ``checks`` (check_id -> CheckState), ``controls`` (control_id -> state of the active
     controls), ``requirements`` ((framework, ref) -> state of the applicable ones) and ``frameworks`` (framework ->
-    score). ``latest`` = check_id -> newest evidence row; ``last_seen`` = source -> newest collected_at."""
+    score, for the ``scored`` frameworks only, in that order). ``latest`` = check_id -> newest evidence row;
+    ``last_seen`` = source -> newest collected_at."""
     active = [c for c in controls if c.get("active", True)]
     wanted = {i for c in active for i in required_checks(c)} | set(latest)
     checks = {i: check_state(i, latest.get(i), last_seen, s, now) for i in sorted(wanted)}
@@ -185,9 +199,31 @@ def evaluate(requirements: list[Mapping[str, Any]], controls: list[Mapping[str, 
     reqs = {(r["framework"], r["ref"]): requirement_state(by_req.get((r["framework"], r["ref"]), []), ctl)
             for r in requirements if r.get("applicable", True)}
     frameworks = {}
-    for fw in FRAMEWORKS:
+    for fw in scored:
         frameworks[fw] = framework_score((st for (f, _), st in reqs.items() if f == fw), s.partial_weight)
     return {"checks": checks, "controls": ctl, "requirements": reqs, "frameworks": frameworks}
+
+
+def obligation_state(requirement: Optional[str], mapped_controls: Iterable[str]) -> tuple[str, bool]:
+    """(state, partly) of one law obligation: ``requirement`` = its requirement state (None when not applicable),
+    ``mapped_controls`` = the states of the ACTIVE controls mapped to it."""
+    states = list(mapped_controls)
+    if requirement == "met":
+        return "met", False
+    if requirement in (None, "unmapped") or not states or all(st == "no_evidence" for st in states):
+        return "not_checked", False
+    return "not_met", requirement == "partial"
+
+
+def law_counts(items: Iterable[Mapping[str, Any]]) -> dict:
+    """Counts of a law's checklist: met / not_met / not_checked, partly (inside not_met) and counsel flags."""
+    out = {st: 0 for st in OBLIGATION_STATES} | {"partly": 0, "counsel_review": 0, "total": 0}
+    for it in items:
+        out[it["state"]] += 1
+        out["partly"] += bool(it.get("partly"))
+        out["counsel_review"] += bool(it.get("counsel_review"))
+        out["total"] += 1
+    return out
 
 
 def settings_changed_on(snapshots: list[Mapping[str, Any]]) -> Optional[str]:
