@@ -61,6 +61,16 @@ async def enqueue_tick(pool, now: Optional[datetime] = None) -> tuple[Optional[s
     return job_id, created, key
 
 
+async def tick_part(pool, kinds: dict, now: datetime, out: dict) -> None:
+    """The ops metrics sampler's part (api/core/ops_metrics_sampler.sample_once): this bucket's run, only while the kind
+    is registered; OPS_STATUS_SAMPLER=off stops it. Field ``ops_status_sample`` when a run was created."""
+    if KIND not in kinds or not schedule_enabled():
+        return
+    job_id, created, key = await enqueue_tick(pool, now=now)
+    if created:
+        out["ops_status_sample"] = {"job_id": job_id, "key": key}
+
+
 def _bucket(payload: dict, now: datetime) -> datetime:
     raw = payload.get("bucket")
     if raw is None:

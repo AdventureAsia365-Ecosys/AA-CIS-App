@@ -503,15 +503,14 @@ def test_kind_is_registered_background_and_exempt():
 
 @pytest.mark.asyncio
 async def test_sampler_part_queues_only_while_registered(monkeypatch):
-    from api.core import ops_metrics_sampler as oms
     from services.jobs import ops_status_sample_job as job
 
     enq = AsyncMock(return_value=("jid", True, "k"))
     monkeypatch.setattr(job, "enqueue_tick", enq)
     out: dict = {}
-    await oms._ops_status_sample_part(MagicMock(), {}, NOW, out)
+    await job.tick_part(MagicMock(), {}, NOW, out)
     assert out == {} and not enq.called
-    await oms._ops_status_sample_part(MagicMock(), {"ops_status_sample": object()}, NOW, out)
+    await job.tick_part(MagicMock(), {"ops_status_sample": object()}, NOW, out)
     assert out["ops_status_sample"] == {"job_id": "jid", "key": "k"}
 
 
