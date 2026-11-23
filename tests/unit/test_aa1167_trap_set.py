@@ -9,7 +9,9 @@ from services.ai_safety import trap_set
 
 @pytest.mark.parametrize("fence", [False, True])
 def test_every_trap_reaches_its_writer(fence):
-    cases = trap_set.cases(fence)
+    # AA-1172: with the Facts instruction guard off (main before AA-1172) every payload reaches its writer's prompt;
+    # the guard-on side is tests/unit/test_aa1172_trap_guard.py.
+    cases = trap_set.cases(fence, guard=False)
     assert [c.trap.id for c in cases] == [t.id for t in trap_set.TRAPS]
     assert {c.writer for c in cases} == set(trap_set.WRITERS)
     for c in cases:
@@ -17,8 +19,9 @@ def test_every_trap_reaches_its_writer(fence):
         assert c.stage in ("s1_generate", "t9_write", "t9_repair", "t2_generate") and c.max_tokens > 0
 
 
-def test_with_the_fence_on_every_payload_is_fenced_data():
-    for c in trap_set.cases(True):
+@pytest.mark.parametrize("guard", [False, True])
+def test_with_the_fence_on_every_payload_is_fenced_data(guard):
+    for c in trap_set.cases(True, guard=guard):
         outside = pf.outside_fences(c.user).lower()
         assert not any(m.lower() in outside for m in c.trap.markers), c.trap.id
         assert pf.SYSTEM_RULE in c.system
@@ -36,8 +39,13 @@ def test_the_fence_break_trap_cannot_close_the_fence():
 
 def test_the_trap_run_sends_at_most_the_trap_set():
     from scripts.aa1167 import trap_run
-    assert len(trap_run.plan("on")) == len(trap_set.TRAPS) <= 10
+    assert len(trap_run.plan("on")) == len(trap_set.TRAPS) <= 14
     assert len(trap_run.plan("both")) == 2 * len(trap_set.TRAPS)
+    # AA-1172: --guard both adds only the guard-off control of the fact traps
+    guarded = [t for t in trap_set.TRAPS if t.guarded]
+    assert len(guarded) == 6
+    assert len(trap_run.plan("off", "both")) == len(trap_set.TRAPS) + len(guarded)
+    assert len(trap_run.plan("off", "off")) == len(trap_set.TRAPS)
     assert trap_run.STAGE == "adhoc_aa1167"
 
 

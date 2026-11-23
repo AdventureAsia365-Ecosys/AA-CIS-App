@@ -74,19 +74,64 @@ async def fetch_facts_for_writing(tenant_id: UUID, pool, country: str | None = N
     signal (DFS keyword, brand rubric) already follows.
 
     AA-1047 (Quality W1): `excluded_out`, when given, receives the picked facts the budget left out (the FactSheet
-    records them with reason `facts_budget` instead of dropping them silently). The kept list is unchanged."""
+    records them with reason `facts_budget` instead of dropping them silently). The kept list is unchanged.
+
+    AA-1172: the rows go through prepare_facts() with the Facts instruction guard
+    (services/ai_safety/fact_guard.py, setting cis.llm.fact_instruction_guard) before precedence and budget, so the T9
+    and T2 writers (and the grounding corpus built from the seed) never read a sentence written to the writer. A fact
+    the guard drops whole lands in `excluded_out` with reason `fact_instruction`."""
+    from services.ai_safety import fact_guard
+
     async with pool.acquire() as conn:
         rows = await conn.fetch(_FACTS_QUERY, tenant_id, country, list(AGENCY_FACT_KINDS))
-    picked = pick_facts([dict(r) for r in rows])
-    kept = budget_facts(picked)
+    kept, excluded = prepare_facts([dict(r) for r in rows], guard=await fact_guard.aenabled(),
+                                   tenant_id=str(tenant_id))
     if excluded_out is not None:
-        kept_ids = {id(f) for f in kept}
-        excluded_out.extend(f for f in picked if id(f) not in kept_ids)
-    if len(kept) < len(picked):
-        logger.info("t9_facts_budget_dropped", tenant_id=str(tenant_id), country=country, offered=len(picked),
-                    kept=len(kept), dropped=len(picked) - len(kept),
+        excluded_out.extend(excluded)
+    budget_dropped = sum(1 for f in excluded if not f.get("_excluded_reason"))
+    if budget_dropped:
+        logger.info("t9_facts_budget_dropped", tenant_id=str(tenant_id), country=country,
+                    offered=len(kept) + budget_dropped, kept=len(kept), dropped=budget_dropped,
                     chars=len(format_facts_block(kept)), max_chars=SEED_MAX_CHARS, max_facts=SEED_MAX_FACTS)
     return kept
+
+
+def guard_facts(rows: list[dict], *, tenant_id: str | None = None) -> tuple[list[dict], list[dict]]:
+    """AA-1172: (rows cleaned by the Facts instruction guard, rows it dropped whole tagged `_excluded_reason`
+    'fact_instruction'). A row with no match is passed on as the same dict (or a copy without invisible format
+    characters, review round 2); nothing is changed in place. Each drop or partial clean is logged with the fact id,
+    scope and rule ids, never the text."""
+    from services.ai_safety import fact_guard
+
+    kept: list[dict] = []
+    dropped: list[dict] = []
+    for f in rows:
+        cleaned, rules = fact_guard.clean_fact(f)
+        if not rules:
+            kept.append(cleaned)
+            continue
+        logger.warning("facts_instruction_lines_dropped", fact_id=str(f.get("fact_id")), scope=f.get("scope"),
+                       tenant_id=tenant_id, whole=cleaned is None, rules=rules)
+        if cleaned is None:
+            dropped.append({**f, "_excluded_reason": fact_guard.REASON})
+        else:
+            kept.append(cleaned)
+    return kept, dropped
+
+
+def prepare_facts(rows: list[dict], *, guard: bool, tenant_id: str | None = None) -> tuple[list[dict], list[dict]]:
+    """AA-1172: the pure part of the writers' facts read, shared by fetch_facts_for_writing() and the trap set
+    (services/ai_safety/trap_set.py) so the trap exercises the live path: the instruction guard (when `guard`), then
+    pick_facts() precedence, then budget_facts(). Returns (kept, excluded): excluded holds the facts the guard dropped
+    (`_excluded_reason` 'fact_instruction') and the picked facts the budget left out (no reason key = facts_budget).
+    The guard runs first, so a tenant fact dropped whole lets the platform fact on the same subject win."""
+    dropped: list[dict] = []
+    if guard:
+        rows, dropped = guard_facts(rows, tenant_id=tenant_id)
+    picked = pick_facts(rows)
+    kept = budget_facts(picked)
+    kept_ids = {id(f) for f in kept}
+    return kept, dropped + [f for f in picked if id(f) not in kept_ids]
 
 
 def _rank(fact: dict) -> tuple:
@@ -162,4 +207,4 @@ def _fact_entry(f: dict) -> str:
 
 
 __all__ = ["SEED_MAX_CHARS", "SEED_MAX_FACTS", "budget_facts", "fetch_facts_for_writing", "format_facts_block",
-           "pick_facts"]
+           "guard_facts", "pick_facts", "prepare_facts"]

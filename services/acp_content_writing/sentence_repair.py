@@ -31,8 +31,8 @@ from services.acp_content_writing.hygiene import (
 from services.acp_content_writing.quality_gates import (F9_STYLE_PROBLEM, OWNED_BY_FIX_STEP, brand_style_sentences,
                                                          expand_ledger)
 from services.acp_content_writing.f9_policy import F9_CLAIM_RE
-from services.acp_shared.citation_tags import TAG as _TAG
-from services.acp_shared.citation_tags import strip_citation_tags, trailing_tags
+from services.ai_safety.fact_guard import stored_facts
+from services.acp_shared.citation_tags import TAG as _TAG, strip_citation_tags, trailing_tags
 from services.acp_content_writing import route_table as rt
 from services.quality import repair_contract
 from services.quality import registry as qr
@@ -883,7 +883,7 @@ def check_replacement(replacement: str, grounding: str, brand_pack: Optional[dic
         ctx = hygiene.HygieneContext(seed=wi["seed"], scope=wi.get("scope"), trip_name=wi.get("trip"),
                                      trip_places=tuple(wi.get("trip_places") or ()),
                                      brand_name=pack.get("brand_name"), cta=wi.get("cta"),
-                                     audience=pack.get("customer_segment"), facts=wi.get("facts"))
+                                     audience=pack.get("customer_segment"), facts=stored_facts(wi.get("facts")))
         found = hygiene.find_issues(sentence, ctx)
         if found["scope"]:
             out.append({"gate": qr.F12_SCOPE, "violations": list(found["scope"]), "blocking": False})

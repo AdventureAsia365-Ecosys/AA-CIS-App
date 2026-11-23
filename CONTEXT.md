@@ -5587,6 +5587,31 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   draft sentence, section or meta) stays outside the fence. Judges, filters and extractors (brand audit, F9 / brand
   fit, FAQ filter and answer fit, seed adjudication, source facts, place cards) are not fenced yet. The trap set
   (`services/ai_safety/trap_set.py`, paid run `scripts/aa1167/trap_run.py`) measures the writers before it is turned on.
+  **AA-1172 (OWASP LLM01, Facts Entries):** the fence alone did not stop an instruction planted in a fact, because a
+  fact is quoted as "real, verifiable source material" and also feeds the grounding corpus. The Facts instruction guard
+  (`services/ai_safety/fact_guard.py`) checks every fact for text written to the writer (English and Vietnamese,
+  matched after Unicode normalisation; Vietnamese with its tone marks kept, so "người Việt" is never "người viết") at
+  the one read choke point `facts.prepare_facts` (called by `fetch_facts_for_writing`, so T9 and T2 both get clean
+  facts). A fact that addresses the writer (a chat role line, a note to the writer, a request to ignore the rules,
+  prompt talk), hides text (Unicode tag text, an invisible character from the default-ignorable set or a combining mark
+  between two letters, a word mixing Latin letters with look-alikes of another script, a run of variation selectors), copies the facts-list structure (a `[Fact id=]` head, a `Source:` line),
+  whose title or source line breaks a rule (or whose source line describes headings / the FAQ), whose directive is
+  split across lines or between title and body, or whose body is left empty, is left out and recorded in the FactSheet
+  with reason `fact_instruction`; a sentence that only asks to put words into headings / the FAQ / the post is removed
+  alone. Invisible characters that carry nothing (bidi controls, zero-width spaces, a soft hyphen inside a word) are
+  removed from every kept fact; the character layer lives in `services/ai_safety/fact_text.py`. Stored writer
+  snapshots replayed later (ground-truth review, writing-memory eval and replay,
+  sentence repair, and `service.grounding_from_writer_input` behind the admin sentence suggest, the admin edit checks
+  and the writing-memory fact filter) read the cleaned block through `fact_guard.stored_facts`. Switch:
+  `cis.llm.fact_instruction_guard` (CIS 472, default **off**: a best-effort pattern filter, NOT a security boundary;
+  the prompt data fence and the writer validators stay the primary controls; an administrator turns it on in
+  Platform › Settings only after a trap run; a fact with no match reaches the writer unchanged apart from invisible
+  characters). Rules match on a Latin confusable skeleton. Known residual classes: visible separators / markup in place
+  of spaces, a directive split between the body and the provenance, forged entries in replayed snapshots, scripts
+  other than Latin / Greek / Cyrillic. The patterns are security invariants.
+  The trap set has six T9 fact traps (body, inline role line, polite request, title, source line, a paraphrase) built through the
+  live `prepare_facts` + `format_facts_block`; `trap_run.py --guard both --stage adhoc_aa<issue>` adds the guard-off
+  control. Not built yet: a post-write check that refuses names absent from the source (the planned second layer).
 
 ## Ownership / frequency / cross-tenant table (AA-540)
 

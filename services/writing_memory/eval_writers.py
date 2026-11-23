@@ -23,6 +23,7 @@ import copy
 import json
 from typing import Any, Optional
 
+from services.ai_safety import fact_guard
 from services.writing_memory.eval_checks import flatten_text, tenant_fingerprint
 
 T9_WRITERS = ("t9_blog", "t9_social")
@@ -63,7 +64,7 @@ def _t9_context(inp: dict) -> dict:
                 "destination": wi.get("destination"), "writer_trip_name": wi.get("writer_trip", wi.get("trip")),
                 "atom_id": inp.get("atom_id"), "scope": wi.get("scope"),
                 "route_segments": [(m.get("atom_id"), m.get("seed")) for m in moments if isinstance(m, dict)] or None,
-                "keyword": wi.get("keyword"), "facts_text": wi.get("facts") or "",
+                "keyword": wi.get("keyword"), "facts_text": fact_guard.stored_facts(wi.get("facts")),  # AA-1172
                 "search_questions": wi.get("search_questions") or [], "lead_focus": wi.get("lead_focus"),
                 "tenant_id": inp.get("tenant_id")}
     raise WriterFailed("t9 input has no writer context")

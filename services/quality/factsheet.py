@@ -60,6 +60,7 @@ PROVENANCES = (SOURCE_RAW, HUMAN_VERIFIED, TENANT_ASSERTED, LLM_DERIVED, EXTERNA
 
 # Exclusion reasons (FactSheet.excluded[].reason).
 EXCLUDED_FACTS_BUDGET = "facts_budget"        # acp_content_writing.facts.budget_facts left the fact out of the seed
+EXCLUDED_FACT_INSTRUCTION = "fact_instruction"  # AA-1172: ai_safety.fact_guard dropped the fact (written to the writer)
 EXCLUDED_FIGURES_CAP = "figures_cap"          # s1_writer_v2.figures stops at MAX_FIGURES
 EXCLUDED_READER_BUDGET = "reader_budget"      # render_budgeted dropped the line for a reader's size cap
 
@@ -240,8 +241,17 @@ def _fact_chars(fact: dict) -> int:
 
 
 def excluded_fact_refs(facts: Sequence[dict]) -> list[dict]:
-    """The compact, JSON-safe form of facts rows the budget left out (what a T9 context carries)."""
-    return [{"fact_id": str(f.get("fact_id")), "scope": f.get("scope"), "chars": _fact_chars(f)} for f in facts]
+    """The compact, JSON-safe form of facts rows the writers' read left out (what a T9 context carries). AA-1172: a
+    row the instruction guard dropped carries ``reason`` (``fact_instruction``); a budget drop carries none (read as
+    ``facts_budget``), so contexts stored before AA-1172 read the same."""
+    out = []
+    for f in facts:
+        ref = {"fact_id": str(f.get("fact_id")), "scope": f.get("scope"), "chars": _fact_chars(f)}
+        reason = f.get("_excluded_reason") or f.get("reason")
+        if reason:
+            ref["reason"] = reason
+        out.append(ref)
+    return out
 
 
 def _trip_line_provenance(text: str) -> str:
@@ -262,7 +272,8 @@ def build_route_factsheet(*, seed: str, facts_text: Optional[str], brand_audienc
 
     ``fact_scopes`` (fact_id -> 'tenant' | 'platform') overrides the owner read from each entry's Source line.
     ``excluded_facts``: the facts rows the facts budget left out (``facts.fetch_facts_for_writing(excluded_out=)``),
-    recorded with reason ``facts_budget``. ``block_anchored``: per seed block (route moment) in order, the
+    recorded with reason ``facts_budget`` (AA-1172: or the row's own ``reason``, ``fact_instruction`` for a fact the
+    instruction guard dropped). ``block_anchored``: per seed block (route moment) in order, the
     ``anchor_check`` result of its atom; its S and L lines carry it."""
     from services.acp_content_writing.claim_rules import number_source_lines
 
@@ -284,7 +295,8 @@ def build_route_factsheet(*, seed: str, facts_text: Optional[str], brand_audienc
             anchored = anchors[sl.block - 1]
         lines.append(FactLine(id=sl.id, kind=sl.kind, text=sl.text, provenance=prov, anchored=anchored,
                               ref=sl.fact_id, block=sl.block, place=sl.place))
-    excluded = tuple({"id": f"fact:{f.get('fact_id')}", "kind": "F", "reason": EXCLUDED_FACTS_BUDGET,
+    excluded = tuple({"id": f"fact:{f.get('fact_id')}", "kind": "F",
+                      "reason": f.get("reason") or EXCLUDED_FACTS_BUDGET,
                       "scope": f.get("scope"), "chars": _fact_chars(f)} for f in excluded_facts)
     return FactSheet(builder=BUILDER_ROUTE, lines=tuple(lines), excluded=excluded, meta=dict(meta or {}), text=text)
 
@@ -445,7 +457,8 @@ def raw_source_text(tour: dict, agency: Optional[dict] = None) -> str:
 
 __all__ = [
     "ANCHOR_MIN_SHARE", "ANCHOR_MIN_WORDS", "BUILDERS", "BUILDER_ROUTE", "BUILDER_TOUR", "BUILDER_VERSION",
-    "EXCLUDED_FACTS_BUDGET", "EXCLUDED_FIGURES_CAP", "EXCLUDED_READER_BUDGET", "EXTERNAL", "FactLine", "FactSheet",
+    "EXCLUDED_FACT_INSTRUCTION", "EXCLUDED_FACTS_BUDGET", "EXCLUDED_FIGURES_CAP", "EXCLUDED_READER_BUDGET", "EXTERNAL",
+    "FactLine", "FactSheet",
     "HUMAN_VERIFIED", "LLM_DERIVED", "PROVENANCES", "SCHEMA", "SOURCE_RAW", "TENANT_ASSERTED", "anchor_check",
     "RawIndex", "build_route_factsheet", "build_tour_factsheet", "excluded_fact_refs", "raw_source_text",
     "raw_source_tour", "route_parts",

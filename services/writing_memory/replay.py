@@ -39,6 +39,7 @@ from typing import Iterable, Optional
 
 import structlog
 
+from services.ai_safety import fact_guard
 from services.writing_memory import config as cfg
 from services.writing_memory import l0
 from services.writing_memory.lint import explains
@@ -190,7 +191,7 @@ class PieceReplay:
         ctx = {"atom_text": wi.get("seed") or "",
                "route_segments": [(m.get("atom_id"), m.get("seed")) for m in wi.get("route_moments") or []
                                   if isinstance(m, dict)],
-               "facts_text": wi.get("facts") or "", "scope": wi.get("scope"),
+               "facts_text": fact_guard.stored_facts(wi.get("facts")), "scope": wi.get("scope"),  # AA-1172
                "brand_audience": wi.get("brand_pack") or {}, "brand_rubric_text": wi.get("brand_rubric") or "",
                "chosen": angle, "channel": wi.get("channel") or channel, "keyword": wi.get("keyword"),
                "cta": wi.get("cta"), "trip_name": wi.get("trip"), "destination": wi.get("destination"),

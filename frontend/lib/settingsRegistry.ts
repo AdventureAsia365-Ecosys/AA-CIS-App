@@ -463,13 +463,35 @@ export function approvedVersion(item: VersionItem, now: Date = new Date()): numb
 }
 
 /** The approved changes of one scope (null = platform) not in force yet, soonest first: the list's scheduled, else
- *  (the CRM relay) the last change when it is approved and dated ahead. Pure. */
+ *  (the CRM relay) the last change when it is approved and dated ahead. A listed change whose time has come while the
+ *  page stayed open is in force, not scheduled (S288 follow-up: it kept the "Change scheduled" badge until a reload).
+ *  Pure. */
 export function scheduledOf(item: Pick<SettingItem, "scheduled" | "last_change">, tenantId: string | null = null,
   now: Date = new Date()): ScheduledValue[] {
   const scope = (r: { tenant_id: string | null }) => (r.tenant_id ?? null) === tenantId;
-  if (item.scheduled) return item.scheduled.filter(scope);
+  if (item.scheduled) return item.scheduled.filter((r) => scope(r) && isAhead(r.effective_from, now));
   const last = item.last_change;
   return last && last.status === "approved" && isAhead(last.effective_from, now) && scope(last) ? [last] : [];
+}
+
+/** The longest browser timer (about 24.8 days); a later change is picked up by a later reload. */
+const MAX_TIMER_MS = 2_147_483_647;
+
+/** Milliseconds until the soonest scheduled change of any listed setting and scope comes into force (plus a second,
+ *  so the server already serves it), or null when none is ahead. The page reloads the list then, so the value in
+ *  force, its source and the "Last change" pill turn from scheduled to in force without a manual reload. Pure. */
+export function nextScheduleDelay(items: Pick<SettingItem, "scheduled" | "last_change">[], now: Date = new Date()):
+  number | null {
+  let soonest: number | null = null;
+  for (const it of items) {
+    const ahead = [...(it.scheduled ?? []), ...(it.last_change?.status === "approved" ? [it.last_change] : [])]
+      .filter((r) => isAhead(r.effective_from, now));
+    for (const r of ahead) {
+      const at = new Date(r.effective_from as string).getTime();
+      if (soonest === null || at < soonest) soonest = at;
+    }
+  }
+  return soonest === null ? null : Math.min(soonest - now.getTime() + 1000, MAX_TIMER_MS);
 }
 
 /** The open proposal of one scope (null = platform), if any: a second one is refused (one per key and scope). */
