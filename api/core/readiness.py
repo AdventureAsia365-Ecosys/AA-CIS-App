@@ -123,7 +123,9 @@ REQUIRED_CIS_SCHEMA = 322
 # compliance.applicability and the law columns of compliance.requirement; every compliance route fails without it).
 # 473 (AA-1176 — the Staff page accepts the A10h E2E owner address on Dev; without 473 the admin_users_email_chk refuses
 # that row, so the create would fail at the database instead of answering the directory's own rules).
-REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 395, 397, 398, 402, 408, 409, 411, 420, 428, 435, 439, 443, 454, 462, 464, 465, 466, 469, 470, 471, 473)  # noqa: E501
+# 476 (AA-1140 — the Ecosystem status sampler writes acp_shared.ops_sample / ops_event every 5 minutes and
+# GET /admin/overview/status reads them; the job fails and the runtimes, events and DB tiles are empty without it).
+REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 395, 397, 398, 402, 408, 409, 411, 420, 428, 435, 439, 443, 454, 462, 464, 465, 466, 469, 470, 471, 473, 476)  # noqa: E501
 # Versions this code needs that were registered after a higher one (reserved numbers): 297 (AA-920 WM-25) was reserved
 # in S255 and applied after 299. max() is already 299 without it, so the version reported is capped below the lowest
 # listed version that is not registered (297 missing -> 296 -> "schema_behind").

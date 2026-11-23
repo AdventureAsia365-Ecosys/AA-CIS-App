@@ -23,12 +23,13 @@ from __future__ import annotations
 import json
 
 import structlog
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from api.core.staff_authz import staff_policy
 
 from api.routers.admin import verify_admin_secret
 from api.services import platform_cost
 from api.services.ops_overview import build_ops_overview
+from api.services import ops_status
 from shared.cost_guard import PROVIDERS, day_spend
 from shared.jobs import queue
 
@@ -309,3 +310,27 @@ async def get_ops_overview(request: Request, x_admin_secret: str = Header(None))
     verify_admin_secret(x_admin_secret)
     redis = getattr(request.app.state, "redis", None)
     return await build_ops_overview(request.app.state.pool, redis)
+
+
+@router.get("/status", summary="Ecosystem status: verdict, apps, signals, runtimes, jobs, AI, cost, events (AA-1140)")
+async def get_ecosystem_status(
+    request: Request,
+    range_: str = Query("24h", alias="range", pattern="^(1h|6h|24h|7d|custom)$",
+                        description="1h, 6h, 24h, 7d or custom (then from and to)"),
+    from_: str | None = Query(None, alias="from", max_length=40, description="ISO date-time with a zone (custom)"),
+    to: str | None = Query(None, max_length=40, description="ISO date-time with a zone (custom)"),
+    compare: bool = Query(False, description="add the previous period of the same length to the signals"),
+    x_admin_secret: str = Header(None),
+):
+    """The Ecosystem status page (admin-only, ops.read). Every section carries its own ``as_of`` and degrades on its
+    own; a signal with no source yet is ``not_measured``, never green. See api/services/ops_status/__init__.py.
+    422 for a range the page cannot show (reversed, in the future, older than cis.ops.status_history_days)."""
+    verify_admin_secret(x_admin_secret)
+    from api.services.platform_apps import relay_authorization
+
+    try:
+        return await ops_status.build_status(request.app.state.pool, getattr(request.app.state, "redis", None),
+                                             range_key=range_, start=from_, end=to, compare=compare,
+                                             authorization=relay_authorization(request))
+    except ops_status.RangeError as e:
+        raise HTTPException(status_code=422, detail={"code": "bad_range", "message": str(e)}) from e

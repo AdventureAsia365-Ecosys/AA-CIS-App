@@ -33893,6 +33893,133 @@
         ]
       }
     },
+    "/admin/overview/status": {
+      "get": {
+        "description": "The Ecosystem status page (admin-only, ops.read). Every section carries its own ``as_of`` and degrades on its\nown; a signal with no source yet is ``not_measured``, never green. See api/services/ops_status/__init__.py.\n422 for a range the page cannot show (reversed, in the future, older than cis.ops.status_history_days).",
+        "operationId": "get_ecosystem_status_admin_overview_status_get",
+        "parameters": [
+          {
+            "description": "1h, 6h, 24h, 7d or custom (then from and to)",
+            "in": "query",
+            "name": "range",
+            "required": false,
+            "schema": {
+              "default": "24h",
+              "description": "1h, 6h, 24h, 7d or custom (then from and to)",
+              "pattern": "^(1h|6h|24h|7d|custom)$",
+              "title": "Range",
+              "type": "string"
+            }
+          },
+          {
+            "description": "ISO date-time with a zone (custom)",
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 40,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "ISO date-time with a zone (custom)",
+              "title": "From"
+            }
+          },
+          {
+            "description": "ISO date-time with a zone (custom)",
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 40,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "ISO date-time with a zone (custom)",
+              "title": "To"
+            }
+          },
+          {
+            "description": "add the previous period of the same length to the signals",
+            "in": "query",
+            "name": "compare",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "add the previous period of the same length to the signals",
+              "title": "Compare",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ecosystem status: verdict, apps, signals, runtimes, jobs, AI, cost, events (AA-1140)",
+        "tags": [
+          "admin-overview"
+        ]
+      }
+    },
     "/admin/photos": {
       "get": {
         "operationId": "list_photos_admin_photos_get",

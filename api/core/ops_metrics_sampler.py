@@ -94,6 +94,10 @@ The AA-832 chain (EventBridge -> ops-probe Lambda -> admin POST -> shared.job ->
   latest not_before, dry_run, apply, verify) has one live `tenant_erasure_saga` job ($0; services/jobs/
   tenant_erasure_saga_job.ensure_jobs), only while the kind is registered and CIS 408 is applied. Field
   `tenant_erasure` (the jobs created) or `tenant_erasure_error`.
+- AA-1140: each tick also queues the Ecosystem status sampler (`ops_status_sample`, $0: free ECS / CloudWatch
+  control-plane reads, health checks, DB) once per 5-minute UTC bucket (idempotency key per bucket), while the kind is
+  registered and OPS_STATUS_SAMPLER is not off. Field `ops_status_sample` (the job id, when created) or
+  `ops_status_sample_error`.
 - AA-845: every JEV_CREDIT_CHECK_EVERY_S (shared/jev_credit.py, 30 min) the loop also runs the Jev low-credit
   check (estimated TypeSafe credit below the threshold -> throttled bell + operator e-mail). It runs after the
   tick, outside sample_once, under its own PART_TIMEOUT_S, and logs its own line (`jev_credit_low_checked` /
@@ -483,6 +487,18 @@ async def _ai_usage_rollup_part(pool, kinds: dict, ts: datetime, out: dict) -> N
         out["ai_usage_rollup"] = created
 
 
+async def _ops_status_sample_part(pool, kinds: dict, ts: datetime, out: dict) -> None:
+    """AA-1140: the Ecosystem status sampler once per 5-minute UTC bucket (idempotency key; one indexed EXISTS a tick
+    after the bucket's run exists). Only while the kind is registered; OPS_STATUS_SAMPLER=off stops it."""
+    from services.jobs.ops_status_sample_job import KIND, enqueue_tick, schedule_enabled
+
+    if KIND not in kinds or not schedule_enabled():
+        return
+    job_id, created, key = await enqueue_tick(pool, now=ts)
+    if created:
+        out["ops_status_sample"] = {"job_id": job_id, "key": key}
+
+
 async def _alert_recipients_part(pool, redis, out: dict) -> None:
     from shared import alert_recipients
 
@@ -653,6 +669,9 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
         await asyncio.wait_for(_ai_usage_rollup_part(pool, kinds, ts, out), timeout=5.0)
     except Exception as e:
         out["ai_usage_rollup_error"] = _err(e)
+
+    # AA-1140: one idempotent INSERT per 5-minute bucket (the Ecosystem status sampler, $0), same short budget
+    await _guarded_part(_ops_status_sample_part(pool, kinds, ts, out), out, "ops_status_sample_error", timeout=5.0)
 
     try:
         await asyncio.wait_for(_jobs_part(pool, kinds, out), timeout=part_timeout_s)

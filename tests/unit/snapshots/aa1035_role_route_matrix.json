@@ -138,6 +138,7 @@
     "GET /admin/openapi.json",
     "GET /admin/overview",
     "GET /admin/overview/ops",
+    "GET /admin/overview/status",
     "GET /admin/photos",
     "GET /admin/photos/destinations",
     "GET /admin/photos/folders",
