@@ -1,4 +1,4 @@
-"""AA-1140 — reads of the sampler tables (CIS 476) for the Ecosystem status page: the runtimes grid with its uptime
+"""AA-1140 — reads of the sampler tables (CIS 475) for the Ecosystem status page: the runtimes grid with its uptime
 strip, the queue and database series, the event timeline. Small reads on indexed time ranges; the pure helpers
 (cells, uptime, series) are unit-tested.
 """

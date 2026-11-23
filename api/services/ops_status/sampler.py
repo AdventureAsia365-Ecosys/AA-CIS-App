@@ -1,5 +1,5 @@
 """AA-1140 — the 5-minute status sampler: what CloudWatch does not keep for us, written to ``acp_shared.ops_sample``
-and ``acp_shared.ops_event`` (CIS 476) by the job kind ``ops_status_sample`` (services/jobs/ops_status_sample_job.py).
+and ``acp_shared.ops_event`` (CIS 475) by the job kind ``ops_status_sample`` (services/jobs/ops_status_sample_job.py).
 
 One tick, each part on its own (a failing part is named in the result, the others still write):
 

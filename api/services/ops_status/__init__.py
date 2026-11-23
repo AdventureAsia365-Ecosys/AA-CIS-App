@@ -9,7 +9,7 @@ time and degrade on their own (S285 advisory phase 1-2, mockup v2 approved 19/11
 - ``apps``     one tile per app: traffic totals coloured by the page's limits, overall health (one definition,
                ``app_health``), deployed commit, readiness, the activity line;
 - ``runtimes`` ECS services and health checks with the uptime strip against the objective (the 5-minute sampler,
-               ``acp_shared.ops_sample``, CIS 476);
+               ``acp_shared.ops_sample``, CIS 475);
 - ``resources`` RDS CPU / connections / free storage, the busiest DB role, the XID age, ECS tasks;
 - ``jobs``     shared.job (live backlog + failures of the range), crm.job (crm.ops.v1), booking.job not measured yet,
                the deploy gate, top failing kinds;
@@ -19,7 +19,7 @@ time and degrade on their own (S285 advisory phase 1-2, mockup v2 approved 19/11
 - ``delivery`` main branch state per repo and the nightly guards.
 
 ``verdict`` (``verdict.decide``) turns them into one sentence and the Needs attention list; ``thresholds`` lists every
-limit with its settings key (``shared/ops_status_thresholds.py``, CIS 476) so the page draws it and links Settings;
+limit with its settings key (``shared/ops_status_thresholds.py``, CIS 475) so the page draws it and links Settings;
 ``sources`` gives each section's source, refresh time, ``as_of`` and whether it is stale (older than
 ``cis.ops.status_stale_factor`` x its refresh time). Cost: CloudWatch about 0.00025 USD per range a cache miss
 (0.0005 with compare), everything else free reads; no new AWS service, no new IAM, no new cross-app grant.

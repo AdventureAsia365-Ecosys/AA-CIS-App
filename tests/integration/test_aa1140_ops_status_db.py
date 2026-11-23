@@ -1,5 +1,5 @@
 """AA-1140 (S289) — the status sampler and GET /admin/overview/status on a real Postgres (conftest replays every
-migration, CIS 476 included): a tick writes one sample per service, health check, queue and database; a deployment and
+migration, CIS 475 included): a tick writes one sample per service, health check, queue and database; a deployment and
 a firing alarm become events, a re-run of the bucket writes nothing twice, the next tick closes the alarm and the
 completed rollout; then build_status reads them back (runtimes with the uptime strip, the event timeline, the alarm
 band, the verdict). AWS and the peer apps are fakes; invented service and alarm names only. Rows are removed by the

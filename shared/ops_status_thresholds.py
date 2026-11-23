@@ -1,4 +1,4 @@
-"""AA-1140 (S289, the Ecosystem status page; CIS 476) — the limits the status page draws and judges against, on
+"""AA-1140 (S289, the Ecosystem status page; CIS 475) — the limits the status page draws and judges against, on
 Platform › Settings (area "ops").
 
 The page (``/admin/overview``, ``GET /admin/overview/status``, ``api/services/ops_status/``) colours every app, chart,
@@ -9,7 +9,7 @@ tile and its alert never disagree; the critical value next to them is new here. 
 the alarm's own limit as the authority (S287 D2); these values only colour the page.
 
 ``shared.settings.get`` serves the last snapshot and the compiled default before the first refresh, so a read never
-blocks the endpoint and never fails. The keys equal the CIS 476 seed (tests/integration/test_aa1140_migration_476.py and
+blocks the endpoint and never fails. The keys equal the CIS 475 seed (tests/integration/test_aa1140_migration_475.py and
 the settings-lint reader check, tests/unit/test_s279_settings_lint.py).
 """
 from __future__ import annotations

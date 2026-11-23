@@ -1,6 +1,6 @@
 """AA-1140 (S289, the Ecosystem status page) — job kind ``ops_status_sample``: one tick of the status sampler
 (``api/services/ops_status/sampler.py``) per 5-minute UTC bucket, writing ``acp_shared.ops_sample`` and
-``acp_shared.ops_event`` (CIS 476). $0: ECS DescribeServices / DescribeTaskDefinition and CloudWatch DescribeAlarms are
+``acp_shared.ops_event`` (CIS 475). $0: ECS DescribeServices / DescribeTaskDefinition and CloudWatch DescribeAlarms are
 free control-plane reads of the existing read-only grant, the health checks are public URLs, the rest is DB.
 
 Payload: {"trigger": "schedule" | "manual", "bucket": "<ISO start of the 5-minute bucket>"}.
