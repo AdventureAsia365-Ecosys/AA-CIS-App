@@ -100,6 +100,24 @@ test("display cookie round trip; an expired one is gone", () => {
   assert.equal(parseDisplayCookie("%7Bbroken"), null);
 });
 
+test("display cookie: what the browser and the server read after cookies.set (raw, once and twice encoded)", () => {
+  const until = new Date(Date.now() + 60_000).toISOString();
+  const d = { role: "custom_content", label: "Content 100% team", caps: ["content.read"], until };
+  const value = displayCookieValue(d);
+  assert.equal(value, JSON.stringify(d), "plain JSON: cookies.set encodes it once on the wire");
+  const wire = encodeURIComponent(value);
+  assert.deepEqual(parseDisplayCookie(wire), d, "document.cookie holds the once-encoded wire value");
+  assert.deepEqual(parseDisplayCookie(value), d, "req.cookies on the server gives the decoded JSON");
+  assert.deepEqual(parseDisplayCookie(encodeURIComponent(wire)), d, "a cookie an older BFF wrote twice-encoded");
+  assert.equal(parseDisplayCookie(encodeURIComponent(encodeURIComponent(wire))), null, "decoding stays bounded");
+});
+
+test("the BFF hands cookies.set the plain display value, never its own encoding", () => {
+  const src = read("lib/staffViewCookies.ts");
+  assert.match(src, /res\.cookies\.set\(STAFF_VIEW_DISPLAY_COOKIE, displayCookieValue\(display\)/);
+  assert.doesNotMatch(read("lib/staffViewAs.ts"), /encodeURIComponent\(JSON\.stringify\(d\)\)/);
+});
+
 test("expired own view: only the signed-in member's and only past its expiry (never honoured)", () => {
   const past = Math.floor(Date.now() / 1000) - 30;
   const expired = token({ typ: "staff_view_as", aud: "cis-staff-view-as", svs: SID, stf: ME, vrl: "content", vcp: [],
