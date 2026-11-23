@@ -201,4 +201,5 @@ def test_admin_routes_answer_with_the_service(client, pool):
         assert client.get(BASE + "/controls/not-an-id", headers=ADMIN).status_code == 422
         r = client.post(BASE + "/refresh", headers=ADMIN)
         assert r.status_code == 200 and r.json() == {"ingest": state}
-        assert sync.await_args_list[-1].kwargs == {"refresh": True}
+        kw = sync.await_args_list[-1].kwargs
+        assert kw["refresh"] is True and kw["collect_live"] is True and "authorization" in kw

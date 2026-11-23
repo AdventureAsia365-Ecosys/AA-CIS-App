@@ -31,6 +31,16 @@ Score: api/services/compliance_score.py with the settings in force (area complia
 
 ComplianceMissing -> 404 (a control id), the published-file states are reported in the answer (`ingest`), never as an
 error of the page: the score is computed from what the table already holds.
+
+AA-1174 (S288, CIS 471). The frameworks come from compliance.framework (kind standard | law, scored, display name):
+only the scored ones get a percentage and a snapshot; the law obligations are a checklist
+(api/services/compliance_obligations.py). Two more evidence sources are collected by the API itself, ONLY on the
+Refresh action (POST, compliance.write; never on a GET, so a read-only "view as" session never writes evidence):
+``cis_db`` (api/services/compliance_db.py: the retention runs of the job runner) and ``crm_ops``
+(api/services/compliance_crm.py: consent capture and campaign sends to opted-in contacts, counts from the partner CRM
+with the staff member's own token; a 401 / 403 / no Cognito session records only the ingest state, never an evidence
+row, so a viewer without CRM access cannot turn the check red for everyone). A source is collected at most every
+LIVE_MIN_INTERVAL_S, whatever the number of processes and presses, so compliance.evidence grows by a few rows a day.
 """
 from __future__ import annotations
 
@@ -57,6 +67,11 @@ MAX_DETAIL_BYTES = 8192               # technical-constant: compliance.evidence 
 MAX_CHECKS = 200                      # technical-constant: refuse a file with more rows than the register could use
 TREND_DAYS = 90                       # technical-constant: the trend chart's window (the page, not the score)
 EVIDENCE_HISTORY = 20                 # technical-constant: evidence rows per check in the control drawer
+# A live source (cis_db, crm_ops) is collected at most every 10 minutes: the table is append-only; the validity windows
+# that grade the rows are settings, in hours.
+LIVE_MIN_INTERVAL_S = 600   # technical-constant: write-rate bound of an append-only table
+LIVE_SOURCES = ("cis_db", "crm_ops")
+SCHEDULED_SOURCES = frozenset({"root_daily"})   # the heartbeat applies to these only (a live source has no schedule)
 STATUSES = ("pass", "fail", "error", "stale", "manual")
 _SOURCE = re.compile(r"^[a-z][a-z0-9_]{1,40}$")
 _CHECK_ID = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
@@ -73,6 +88,7 @@ class ComplianceMissing(Exception):
 
 _cache: dict[str, Any] = {"at": 0.0, "state": None}
 _lock = asyncio.Lock()
+_live_lock = asyncio.Lock()   # one live collection at a time per process (the interval check reads the table)
 
 
 def reset_cache() -> None:
@@ -189,9 +205,22 @@ async def ingest(pool: Any, rows: list[dict], validity_hours: Optional[int]) -> 
 
 
 async def sync(pool: Any, refresh: bool = False, client_factory: Optional[Callable[[], Any]] = None,
-               now: Optional[datetime] = None) -> dict:
+               now: Optional[datetime] = None, authorization: Optional[str] = None, collect_live: bool = False) -> dict:
     """Read the published file (cached per process) and ingest it. Never raises for storage or format: the answer
-    says what happened (state ok | missing | unavailable | invalid), the page shows it."""
+    says what happened (state ok | missing | unavailable | invalid), the page shows it. ``collect_live`` (the Refresh
+    action only) also collects the cis_db and crm_ops sources (``live`` in the answer) on every call, cache hit or not:
+    LIVE_MIN_INTERVAL_S bounds that write rate, so a Refresh pressed right after a page load still collects.
+    ``authorization`` is the staff member's relay token for the CRM. The cached state never carries ``live``."""
+    state = await _sync_published(pool, refresh, client_factory, now)
+    if not collect_live:
+        return state
+    async with _live_lock:
+        live = await collect_live_sources(pool, authorization, now or datetime.now(timezone.utc))
+    return {**state, "live": live}
+
+
+async def _sync_published(pool: Any, refresh: bool, client_factory: Optional[Callable[[], Any]],
+                          now: Optional[datetime]) -> dict:
     max_age = docs_reader.MIN_REFRESH_S if refresh else docs_reader.CACHE_TTL_S
     if _cache["state"] is not None and time.monotonic() - _cache["at"] < max_age:
         return _cache["state"]
@@ -220,6 +249,42 @@ async def sync(pool: Any, refresh: bool = False, client_factory: Optional[Callab
         return state
 
 
+SQL_SOURCE_LAST = "SELECT max(collected_at) AS last FROM compliance.evidence WHERE source = $1"
+
+
+async def _collect_one(pool: Any, source: str, authorization: Optional[str], now: datetime) -> dict:
+    from api.services import compliance_crm, compliance_db   # noqa: PLC0415 - optional sources, imported on use
+
+    async with pool.acquire() as conn:
+        last = await conn.fetchval(SQL_SOURCE_LAST, source)
+    if last is not None and (now - last).total_seconds() < LIVE_MIN_INTERVAL_S:
+        return {"state": "recent", "last": last.isoformat()}
+    if source == "cis_db":
+        rows, info = await compliance_db.collect(pool, now), {}
+    else:
+        days = int(await settings.aget(keys.CAMPAIGN_CONSENT_WINDOW_DAYS))
+        rows, info = await compliance_crm.collect(authorization, days, now)
+    if not rows:
+        return {"state": "skipped", **info}
+    new = await ingest(pool, rows, await _validity_hours(source))
+    by_status: dict[str, int] = {}
+    for r in rows:
+        by_status[r["status"]] = by_status.get(r["status"], 0) + 1
+    return {"state": "ok", "rows": len(rows), "new": new, "by_status": by_status, **info}
+
+
+async def collect_live_sources(pool: Any, authorization: Optional[str], now: datetime) -> dict:
+    """Collect the API's own sources once (Refresh only); one failing source never stops the other."""
+    out: dict[str, dict] = {}
+    for source in LIVE_SOURCES:
+        try:
+            out[source] = await _collect_one(pool, source, authorization, now)
+        except Exception as err:   # noqa: BLE001 - reported in the answer, the page still loads
+            logger.warning("compliance_live_collect_failed", source=source, error=type(err).__name__)
+            out[source] = {"state": "error", "detail": type(err).__name__}
+    return out
+
+
 # ── settings ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
@@ -232,18 +297,22 @@ async def score_settings() -> cs.ScoreSettings:
     validity = {src: int(await settings.aget(key)) for src, key in keys.VALIDITY_HOURS.items()}
     limits = {cid: (fact, float(await settings.aget(key)), kind) for cid, (fact, key, kind) in keys.FACT_LIMITS.items()}
     return cs.ScoreSettings(validity_hours=validity, heartbeat_hours=int(await settings.aget(keys.HEARTBEAT_HOURS)),
-                            partial_weight=float(await settings.aget(keys.PARTIAL_WEIGHT)), fact_limits=limits)
+                            partial_weight=float(await settings.aget(keys.PARTIAL_WEIGHT)), fact_limits=limits,
+                            heartbeat_sources=SCHEDULED_SOURCES)
 
 
-async def reference_scores() -> dict:
+async def reference_scores(scored: Optional[list[str]] = None) -> dict:
     value = await settings.aget(keys.REFERENCE_SCORES)
-    return {k: float(v) for k, v in (value or {}).items() if k in cs.FRAMEWORKS and isinstance(v, (int, float))}
+    allowed = set(scored if scored is not None else cs.DEFAULT_SCORED)
+    return {k: float(v) for k, v in (value or {}).items() if k in allowed and isinstance(v, (int, float))}
 
 
 # ── the register ────────────────────────────────────────────────────────────────────────────────────────────────────
 
-SQL_REQUIREMENTS = ("SELECT framework, ref, section, title, applicable, sort_order FROM compliance.requirement "
-                    "ORDER BY framework, sort_order")
+SQL_REQUIREMENTS = ("SELECT framework, ref, section, title, applicable, sort_order, counsel_review, applies_as, "
+                    "source_url, doc_url FROM compliance.requirement ORDER BY framework, sort_order")
+SQL_FRAMEWORKS = ("SELECT framework, kind, title, jurisdiction, citation, source_url, in_force_on, applies_from, "
+                  "scored, sort_order, active FROM compliance.framework ORDER BY sort_order, framework")
 SQL_CONTROLS = ("SELECT control_id, title, intent, domain, owner_role, frequency, test_type, checks, scope, active, "
                 "updated_at FROM compliance.control ORDER BY control_id")
 SQL_MAPPINGS = "SELECT control_id, framework, ref, coverage, note FROM compliance.requirement_mapping"
@@ -294,6 +363,7 @@ def _row(r: Any) -> dict:
 
 async def _state(conn: Any) -> dict:
     return {
+        "frameworks": [_row(r) for r in await conn.fetch(SQL_FRAMEWORKS)],
         "requirements": [_row(r) for r in await conn.fetch(SQL_REQUIREMENTS)],
         "controls": [_row(r) for r in await conn.fetch(SQL_CONTROLS)],
         "mappings": [_row(r) for r in await conn.fetch(SQL_MAPPINGS)],
@@ -311,39 +381,58 @@ def _check_json(st: cs.CheckState) -> dict:
             "collected_at": _iso(st.collected_at), "expires_at": _iso(st.expires_at)}
 
 
+def scored_frameworks(data: dict) -> list[str]:
+    """The frameworks that get a percentage, in display order (compliance.framework scored and active)."""
+    return [f["framework"] for f in data["frameworks"] if f["scored"] and f["active"]]
+
+
+def framework_info(data: dict) -> list[dict]:
+    """Every active framework with its display name and kind, for the page (names come from the table, not the UI)."""
+    return [{"framework": f["framework"], "title": f["title"], "kind": f["kind"], "scored": f["scored"],
+             "jurisdiction": f.get("jurisdiction")} for f in data["frameworks"] if f["active"]]
+
+
 async def _evaluate(conn: Any, now: datetime) -> tuple[dict, dict, cs.ScoreSettings]:
     data = await _state(conn)
     s = await score_settings()
     last_seen = {src: v["last_seen"] for src, v in data["sources"].items()}
-    result = cs.evaluate(data["requirements"], data["controls"], data["mappings"], data["latest"], last_seen, s, now)
+    result = cs.evaluate(data["requirements"], data["controls"], data["mappings"], data["latest"], last_seen, s, now,
+                         scored=scored_frameworks(data))
     return data, result, s
 
 
 def _heartbeat(data: dict, s: cs.ScoreSettings, now: datetime) -> list[dict]:
     out = []
-    for src in sorted(set(data["sources"]) | set(s.validity_hours)):
+    scheduled = s.heartbeat_sources if s.heartbeat_sources is not None else frozenset(data["sources"])
+    for src in sorted(set(data["sources"]) | set(s.validity_hours), key=lambda x: (x not in scheduled, x)):
         seen = data["sources"].get(src, {}).get("last_seen")
         age = round((now - seen).total_seconds() / 3600, 1) if seen else None
-        out.append({"source": src, "last_seen": _iso(seen), "age_hours": age, "heartbeat_hours": s.heartbeat_hours,
-                    "ok": seen is not None and age is not None and age <= s.heartbeat_hours,
+        limit = s.heartbeat_hours if src in scheduled else s.validity_hours.get(src, s.heartbeat_hours)
+        out.append({"source": src, "last_seen": _iso(seen), "age_hours": age, "heartbeat_hours": limit,
+                    "scheduled": src in scheduled, "ok": seen is not None and age is not None and age <= limit,
                     "evidence_rows": data["sources"].get(src, {}).get("n", 0)})
     return out
 
 
-async def overview(pool: Any, now: Optional[datetime] = None, ingest_state: Optional[dict] = None) -> dict:
-    """The Overview tab: Evidenced % per framework (strict, weighted, reference), today's snapshot stored, the trend,
-    stale / failing evidence, the collectors' heartbeat and the settings in force."""
+async def overview(pool: Any, now: Optional[datetime] = None, ingest_state: Optional[dict] = None,
+                   write: bool = True) -> dict:
+    """The Overview tab: Evidenced % per scored framework (strict, weighted, reference), today's snapshot stored, the
+    trend, stale / failing evidence, the collectors' heartbeat and the settings in force. ``write`` False (a read-only
+    "view as" session) skips the snapshot upsert."""
     now = now or datetime.now(timezone.utc)
-    refs = await reference_scores()
     async with pool.acquire() as conn:
         data, result, s = await _evaluate(conn, now)
+        scored = scored_frameworks(data)
+        refs = await reference_scores(scored)
         today = now.date()
-        async with conn.transaction():
-            for fw, sc in result["frameworks"].items():
-                await conn.execute(SQL_UPSERT_SNAPSHOT, today, fw, sc["n_requirements"], sc["n_met"], sc["n_partial"],
-                                   sc["n_gap"], sc["n_stale"], sc["n_unmapped"], sc["strict_pct"], sc["weighted_pct"],
-                                   refs.get(fw), json.dumps(s.as_json(), sort_keys=True))
-        trend_rows = [_row(r) for r in await conn.fetch(SQL_TREND, today - timedelta(days=TREND_DAYS))]
+        if write:
+            async with conn.transaction():
+                for fw, sc in result["frameworks"].items():
+                    await conn.execute(SQL_UPSERT_SNAPSHOT, today, fw, sc["n_requirements"], sc["n_met"],
+                                       sc["n_partial"], sc["n_gap"], sc["n_stale"], sc["n_unmapped"], sc["strict_pct"],
+                                       sc["weighted_pct"], refs.get(fw), json.dumps(s.as_json(), sort_keys=True))
+        trend_rows = [_row(r) for r in await conn.fetch(SQL_TREND, today - timedelta(days=TREND_DAYS))
+                      if r["framework"] in scored]
     titles = {}
     for c in data["controls"]:
         for cid in cs.required_checks(c):
@@ -351,12 +440,18 @@ async def overview(pool: Any, now: Optional[datetime] = None, ingest_state: Opti
     attention = [dict(_check_json(st), controls=sorted(titles.get(cid, [])))
                  for cid, st in result["checks"].items() if st.state in ("stale", "fail", "error")]
     states = list(result["controls"].values())
-    first = [r for r in trend_rows if r["framework"] == cs.FRAMEWORKS[0]]
+    first = [r for r in trend_rows if scored and r["framework"] == scored[0]]
+    kinds = {f["framework"]: f for f in framework_info(data)}
+    laws = [f for f in data["frameworks"] if f["active"] and f["kind"] == "law"]
+    law_ids = {f["framework"] for f in laws}
+    obligations = [r for r in data["requirements"] if r["applicable"] and r["framework"] in law_ids]
     return {
         "environment": "dev",
         "generated_at": now.isoformat(),
-        "frameworks": [dict(framework=fw, reference_pct=refs.get(fw), **result["frameworks"][fw])
-                       for fw in cs.FRAMEWORKS],
+        "frameworks": [dict(framework=fw, reference_pct=refs.get(fw), title=kinds.get(fw, {}).get("title", fw),
+                            kind=kinds.get(fw, {}).get("kind", "standard"), **result["frameworks"][fw])
+                       for fw in scored],
+        "framework_info": list(kinds.values()),
         "controls": {st: states.count(st) for st in cs.CONTROL_STATES} | {"total": len(states)},
         "checks": {st: sum(1 for c in result["checks"].values() if c.state == st) for st in cs.CHECK_STATES},
         "attention": sorted(attention, key=lambda a: (a["state"], a["check_id"])),
@@ -368,7 +463,7 @@ async def overview(pool: Any, now: Optional[datetime] = None, ingest_state: Opti
         "settings": s.as_json(),
         "settings_changed_on": cs.settings_changed_on(first),
         "register": {"requirements": len(data["requirements"]), "controls": len(data["controls"]),
-                     "mappings": len(data["mappings"])},
+                     "mappings": len(data["mappings"]), "laws": len(laws), "obligations": len(obligations)},
         "ingest": ingest_state,
     }
 
@@ -399,7 +494,9 @@ async def controls(pool: Any, now: Optional[datetime] = None) -> dict:
                      "scope": c["scope"], "active": c["active"],
                      "state": result["controls"].get(c["control_id"], "inactive"),
                      "frameworks": frameworks, "checks": checks, "last_evidence_at": last})
-    return {"generated_at": now.isoformat(), "controls": rows, "frameworks": list(cs.FRAMEWORKS)}
+    info = framework_info(data)
+    return {"generated_at": now.isoformat(), "controls": rows, "frameworks": [f["framework"] for f in info],
+            "framework_info": info}
 
 
 async def control_detail(pool: Any, control_id: str, now: Optional[datetime] = None) -> dict:
