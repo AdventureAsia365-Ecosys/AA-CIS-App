@@ -40,7 +40,8 @@ OWNER = "11111111-1111-4111-8111-111111111111"
 OTHER = "22222222-2222-4222-8222-222222222222"
 SESSION = "33333333-3333-4333-8333-333333333333"
 OLD_SESSION = "44444444-4444-4444-8444-444444444444"
-NOW = datetime(2026, 11, 23, 9, 0, tzinfo=timezone.utc)
+# The real clock: signed view tokens are checked against the wall clock, so a fixed date expires the test (S288).
+NOW = datetime.now(timezone.utc).replace(second=0, microsecond=0)
 FAKE_TOKEN = "cognito-access-token-stand-in"
 
 
