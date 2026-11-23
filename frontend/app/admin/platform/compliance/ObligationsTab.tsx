@@ -80,9 +80,12 @@ function Matrix({ data, t }: { data: ObligationsResp; t: CT }) {
   ];
   return (
     <Section title={t("matrixTitle")} description={t("matrixDescription")} testId="compliance-matrix">
-      <DataTable<PivotRow> tableId="compliance-matrix" data={pivot.rows} columns={columns} getRowId={(r) => r.key}
-        paginate={false} searchable={false} tableMinWidth={260 + pivot.laws.length * 200}
-        emptyTitle={t("matrixEmpty")} />
+      {/* Its own horizontal scroller: the cells' badges and tips otherwise pan the whole page on a phone. */}
+      <div data-testid="compliance-matrix-scroll" style={{ maxWidth: "100%", overflowX: "auto", contain: "paint" }}>
+        <DataTable<PivotRow> tableId="compliance-matrix" data={pivot.rows} columns={columns} getRowId={(r) => r.key}
+          paginate={false} searchable={false} tableMinWidth={260 + pivot.laws.length * 200}
+          emptyTitle={t("matrixEmpty")} />
+      </div>
     </Section>
   );
 }
