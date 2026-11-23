@@ -28,7 +28,7 @@ INS_SAMPLE = ("INSERT INTO acp_shared.ops_sample (sampled_at, kind, subject, app
               "VALUES (now(), $1, $2, $3, $4, $5::jsonb) RETURNING sample_id")
 INS_EVENT = ("INSERT INTO acp_shared.ops_event "
              "(occurred_at, ended_at, kind, severity, app, subject, title, dedupe_key) "
-             "VALUES ($1::timestamptz, $2::timestamptz, $3, $4, $5, $6, $7, $8) RETURNING event_id")
+             "VALUES ($1::text::timestamptz, $2::text::timestamptz, $3, $4, $5, $6, $7, $8) RETURNING event_id")
 
 
 @pytest_asyncio.fixture
