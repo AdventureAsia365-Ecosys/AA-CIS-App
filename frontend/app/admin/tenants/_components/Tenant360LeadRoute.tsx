@@ -101,6 +101,11 @@ function LeadRouteDrawer({ data, onClose }: { data: LeadRouteResp; onClose: () =
   );
 }
 
+/** AA-1160: with the CRM add-on, the note says whether the CRM holds the agency yet (an older API: as before). */
+function crmNoteKey(data: LeadRouteResp): Msg {
+  return data.crm_agency === false ? "crmNoAgency" : "crmNote";
+}
+
 /** The TripPlanner lead route section of the Subscription tab (mounted inside its ToastProvider). */
 export function Tenant360LeadRoute({ tenantId, crmCore, canEdit }: {
   tenantId: string; crmCore: boolean; canEdit: boolean;
@@ -132,7 +137,7 @@ export function Tenant360LeadRoute({ tenantId, crmCore, canEdit }: {
       {data && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
           {crmCore && <p style={{ ...small, color: K.amber }} data-testid="lead-route-crm-note">
-            {t(data.crm_agency === false ? "crmNoAgency" : "crmNote")}</p>}
+            {t(crmNoteKey(data))}</p>}
           {!data.has_tripplanner && <p style={small}>{t("noTripPlanner")}</p>}
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 13, minWidth: 0 }}>
             <span style={{ color: K.muted }}>{t("current")}</span>
