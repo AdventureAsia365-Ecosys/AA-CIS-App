@@ -36,6 +36,7 @@ TP_SEED = {
     "tripplanner.spend.stage_cap_search_usd": 0,
     "tripplanner.spend.near_cap_pct": 80,              # today's SPEND_NEAR_CAP_RATIO 0.8
     "tripplanner.spend.connection_share_enforce": False,   # AA-1143 (CIS 456): log only first
+    "tripplanner.prices.agency_stale_hours": 6,        # AA-1152 (CIS 476): hide an agency's price list older than this
 }
 
 

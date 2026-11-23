@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql, 469_aa1171_ops_thresholds_and_recipient_topic.sql, 471_aa1174_compliance_obligations.sql, 472_aa1172_fact_instruction_guard.sql, 474_aa1160_tenant_crm_agency_marker.sql, 475_aa1140_ops_status_samples_and_thresholds.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql, 469_aa1171_ops_thresholds_and_recipient_topic.sql, 471_aa1174_compliance_obligations.sql, 472_aa1172_fact_instruction_guard.sql, 474_aa1160_tenant_crm_agency_marker.sql, 475_aa1140_ops_status_samples_and_thresholds.sql, 476_aa1152_tp_agency_price_stale_hours.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -14070,6 +14070,42 @@
      "lower": "Đợt lead giả bị chặn sớm hơn; đại lý rất đông khách có thể mất lead thật cuối ngày.",
      "when": "Tăng cho đại lý thật sự nhận nhiều yêu cầu như vậy (đặt riêng); giảm sau một đợt lead giả.",
      "example": "Với mặc định 200: lead thứ 201 của một đại lý trong 24 giờ bị từ chối."
+    }
+   }
+  },
+  {
+   "key": "tripplanner.prices.agency_stale_hours",
+   "app": "tripplanner",
+   "area": "prices",
+   "label": "TripPlanner: hide an agency's prices older than (hours)",
+   "description": "An agency's own \"from\" prices (published by its CRM every hour and after each change, contract tripplanner.agency_prices.v1) show on its tour page and day cards only while the last list arrived within this many hours. An older list hides every price of that agency until its CRM publishes again, so an agency whose CRM is locked, deleted or cannot reach TripPlanner never keeps showing prices from old tariffs. Read by AA-TripPlanner-Web backend/shared/agency_prices.py through catalog.v_app_settings_v1.",
+   "value_type": "int",
+   "unit": "hours",
+   "min_value": 2,
+   "max_value": 168,
+   "allowed_values": null,
+   "default_value": 6,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How old an agency's last published price list may be before TripPlanner stops showing its prices. The agency's CRM publishes the list every hour.",
+     "raise": "Higher: a short CRM outage no longer hides the prices, but a list from older tariffs or markups can stay up longer after the CRM stopped publishing.",
+     "lower": "Lower: an out-of-date list disappears sooner, but one or two missed hourly runs already hide every price of the agency until the next run.",
+     "when": "Raise it if agencies report prices that disappear during short CRM maintenance; lower it if prices must follow tariff changes more closely.",
+     "example": "With the default 6: the CRM last published at 08:00 and then stopped; the agency's prices show until 14:00 and are hidden after that, until the CRM publishes again."
+    },
+    "vi": {
+     "what": "Bảng giá đại lý công bố lần cuối được cũ tối đa bao lâu trước khi TripPlanner ngừng hiện giá của đại lý. CRM của đại lý công bố bảng giá mỗi giờ.",
+     "raise": "Cao hơn: CRM gián đoạn ngắn không làm mất giá, nhưng bảng giá tính từ biểu giá hoặc mức lời cũ có thể còn hiện lâu hơn sau khi CRM ngừng công bố.",
+     "lower": "Thấp hơn: bảng giá lỗi thời biến mất sớm hơn, nhưng chỉ cần lỡ một hai lần chạy mỗi giờ là mọi giá của đại lý bị ẩn tới lần chạy kế tiếp.",
+     "when": "Tăng nếu đại lý báo giá biến mất trong lúc bảo trì CRM ngắn; giảm nếu giá phải bám sát thay đổi biểu giá hơn.",
+     "example": "Với mặc định 6: CRM công bố lần cuối lúc 08:00 rồi ngừng; giá của đại lý hiện tới 14:00, sau đó bị ẩn cho tới khi CRM công bố lại."
     }
    }
   },
