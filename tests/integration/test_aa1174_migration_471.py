@@ -54,6 +54,10 @@ async def test_471_registered_with_the_framework_rows(conn):
     rows = {r["framework"]: r for r in await conn.fetch("SELECT * FROM compliance.framework")}
     assert {f for f, r in rows.items() if r["scored"]} >= SCORED
     assert rows["eu-ai-act:2024"]["kind"] == "law" and rows["iso27001:2022"]["kind"] == "standard"
+    # one convention: in_force_on = entered into force, applies_from = when the duties apply (later, or NULL)
+    ai = rows["eu-ai-act:2024"]
+    assert (ai["in_force_on"].isoformat(), ai["applies_from"].isoformat()) == ("2024-08-01", "2026-08-02")
+    assert rows["iso27001:2022"]["applies_from"] is None
     # every 466 requirement and snapshot names a framework row
     assert await conn.fetchval("SELECT count(*) AS n FROM compliance.requirement r "
                                "WHERE NOT EXISTS (SELECT 1 FROM compliance.framework f "
@@ -96,6 +100,11 @@ async def test_framework_and_matrix_checks(conn):
     await _refused(conn, asyncpg.CheckViolationError,
                    "INSERT INTO compliance.framework (framework, kind, title, sort_order) "
                    "VALUES ('ex:1', 'rule', 'Example', 1)")
+    await _refused(conn, asyncpg.CheckViolationError,                        # applies before it is in force
+                   "INSERT INTO compliance.framework (framework, kind, title, in_force_on, applies_from, sort_order) "
+                   "VALUES ('ex:2', 'law', 'Example', '2018-05-25', '2016-05-24', 1)")
+    await conn.execute("INSERT INTO compliance.framework (framework, kind, title, in_force_on, applies_from, "
+                       "sort_order) VALUES ('ex:3', 'law', 'Example', '2016-05-24', '2018-05-25', 1)")
     await _law(conn)
     ins = ("INSERT INTO compliance.applicability (market, segment, framework, test, verdict, source_url, source_title, "
            "assessed_on) VALUES ($1, $2, 'ex-law:2025', 'Offers services to people there', $3, $4, 'Example law', "
