@@ -11,7 +11,8 @@ write it must (staff_authz.denial_reason), whatever the page shows.
 
 ``read_only`` is true for a read-only role (staff_authz.READ_ONLY_ROLES, the viewer) and for a Dev-only E2E
 identity (``e2e_read_only``), the A10b identity included: its few allow-listed writes (e2e_staff.E2E_ALLOWED_WRITES)
-are page-specific and the pages that offer them do not read this hint. ``reason`` says which ("role" | "e2e" | null).
+are page-specific and the pages that offer them do not read this hint. ``reason`` says which ("role" | "e2e" |
+"view_as" | null); AA-1157: "view_as" for an owner's read-only "view as a lower role" session.
 
 Every staff role may call it (capability notifications.read, the shell-level read every role holds). The router is
 included without an include prefix (staff_policy reads the route template from scope["route"].path).
@@ -33,11 +34,14 @@ router = APIRouter(prefix="/admin/session", tags=["admin-session"],
 class SessionHint(BaseModel):
     role: Optional[str] = None
     read_only: bool
-    reason: Optional[Literal["role", "e2e"]] = None
+    reason: Optional[Literal["role", "e2e", "view_as"]] = None
 
 
 def session_hint(principal: StaffPrincipal) -> SessionHint:
     """The hint for one caller (pure; tests/unit/test_aa1127_session_hint.py)."""
+    if principal.view_as_session:
+        # AA-1157: an owner's "view as a lower role" session (the role is the view role): every write is refused.
+        return SessionHint(role=principal.role, read_only=True, reason="view_as")
     if principal.role in READ_ONLY_ROLES:
         return SessionHint(role=principal.role, read_only=True, reason="role")
     if principal.e2e_read_only:

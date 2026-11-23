@@ -54,7 +54,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from typing_extensions import Annotated
 
-from api.core import staff_roles
+from api.core import staff_roles, staff_view_as
 from api.core.staff_authz import STAFF_ROLES, request_staff_identity, staff_policy
 from api.routers.admin import verify_admin_secret
 from api.services import staff_custom_roles, staff_directory, staff_invite, staff_presets
@@ -352,7 +352,10 @@ async def list_roles(request: Request):
     """AA-1155 (R5.3, R5.4): generated from code (built-in roles) and the tables (custom roles); no person, no E2E
     identity. Feeds the Staff page pickers and the Roles & permissions page."""
     async with request.app.state.pool.acquire() as conn:
-        return await staff_roles.roles_catalogue(conn)
+        out = await staff_roles.roles_catalogue(conn)
+    # AA-1157: may this session start a read-only "view as" on a CIS role (an owner on a Cognito session, admin)?
+    out["can_view_as"] = staff_view_as.may_start(request_staff_identity(request))
+    return out
 
 
 @router.get("/staff-directory/health", summary="Latest staff directory reconcile report (read-only)")

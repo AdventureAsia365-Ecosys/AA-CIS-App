@@ -75,9 +75,13 @@ test("the generic admin proxy may never start a view-as session (the token stays
 test("the generic admin proxy source refuses the start path before forwarding", async () => {
   const { readFile } = await import("node:fs/promises");
   const src = await readFile(new URL("../app/api/admin/[...path]/route.ts", import.meta.url), "utf8");
-  const guard = src.indexOf("isViewAsStartPath(pathStr)");
-  assert.ok(guard > 0, "the generic proxy must call isViewAsStartPath");
-  assert.ok(guard < src.indexOf("await fetch(url"), "the refusal must come before the upstream call");
+  // The refusal lives in viewStartRefusal (it also refuses the staff role start); the handler calls it before any
+  // upstream call.
+  assert.ok(src.includes("isViewAsStartPath(pathStr)"), "the generic proxy must call isViewAsStartPath");
+  const guard = src.indexOf("viewStartRefusal(pathStr)");
+  assert.ok(guard > 0, "the handler must call viewStartRefusal");
+  const firstFetch = src.indexOf("await fetch(");
+  assert.ok(firstFetch > 0 && guard < firstFetch, "the refusal must come before the upstream call");
   const bff = await readFile(new URL("../app/api/view-as/route.ts", import.meta.url), "utf8");
   assert.ok(bff.includes('[VIEW_AS_BFF_HEADER]: "bff"'), "the view-as BFF sets the header on the start call");
   assert.ok(!src.includes("VIEW_AS_BFF_HEADER"), "the generic proxy never sets the BFF header");

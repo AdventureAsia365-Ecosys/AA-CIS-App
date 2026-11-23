@@ -58,6 +58,7 @@ import type { NextRequest } from "next/server";
 import { adminVerifyCache, verifiedStaffOf } from "./lib/auth-server";
 import { canSeePage, isStaffSubject, landingPage, pageRule, type StaffSession } from "./lib/rbac";
 import { NONCE_HEADER, contentSecurityPolicy, newNonce, sentryOrigin } from "./lib/securityHeaders";
+import { STAFF_VIEW_AS_COOKIE, effectiveSession, ownStaffView } from "./lib/staffViewAs";
 import {
   CAPS_COOKIE,
   REFRESH_PATH,
@@ -162,10 +163,15 @@ async function sessionGate(
   if (!isStaffSubject(verified)) {
     return toStaffLogin(request);
   }
-  if (!canSeePage(verified, request.nextUrl.pathname)) {
+  // AA-1157: inside the owner's own "view as a lower role" session, the pages are the view role's (never wider than
+  // the verified session: lib/staffViewAs.ts effectiveSession). The API decides every call anyway.
+  const view = ownStaffView(request.cookies.get(STAFF_VIEW_AS_COOKIE)?.value, verified.adminId);
+  const subject = effectiveSession({ role: String(verified.role ?? ""), capabilities: verified.capabilities ?? [],
+    cognito: isCognitoToken(staffToken) }, view);
+  if (!canSeePage(subject, request.nextUrl.pathname)) {
     // Real staff session, page not allowed for its capabilities → its own landing page, not /login.
     // Every role's landing page is allowed for that role (lib/rbacCaps.test.mjs 4), so this cannot loop.
-    return NextResponse.redirect(new URL(landingPage(verified), request.url));
+    return NextResponse.redirect(new URL(landingPage(subject), request.url));
   }
   return pass();
 }
@@ -176,7 +182,7 @@ async function sessionGate(
 // #1). Only the /auth/verify-admin network-failure case below keeps the
 // fail-open-in-dev / fail-closed-in-prod policy (as the tenant gate had; now portal/proxy.ts) — and only for a legacy
 // HS256 token: a Cognito token (AA-816) always fails closed.
-async function verifyAdminToken(request: NextRequest): Promise<NextResponse | StaffSession> {
+async function verifyAdminToken(request: NextRequest): Promise<NextResponse | (StaffSession & { adminId?: string })> {
   const token = request.cookies.get(STAFF_TOKEN_COOKIE)?.value;
   if (!token) {
     // AA-252: no JWT present → fail closed. The legacy ADMIN_SECRET fallback
@@ -192,7 +198,7 @@ async function verifyAdminToken(request: NextRequest): Promise<NextResponse | St
   // milliseconds earlier — under any transient backend latency this could
   // lose the race and bounce the fresh login straight back to /login.
   const cached = adminVerifyCache.get(token);
-  if (cached) return { role: cached.role, capabilities: cached.capabilities };
+  if (cached) return { role: cached.role, capabilities: cached.capabilities, adminId: cached.adminId };
 
   try {
     const res = await fetch(`${API_URL}/auth/verify-admin`, {
@@ -213,7 +219,7 @@ async function verifyAdminToken(request: NextRequest): Promise<NextResponse | St
     }
     const verified = verifiedStaffOf(await res.json());   // AA-1155: with the capability list
     adminVerifyCache.set(token, verified);
-    return { role: verified.role, capabilities: verified.capabilities };
+    return { role: verified.role, capabilities: verified.capabilities, adminId: verified.adminId };
   } catch {
     const isDev = process.env.NODE_ENV === "development";
     if (!isDev || isCognitoToken(token)) {

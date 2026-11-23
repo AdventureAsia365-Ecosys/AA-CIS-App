@@ -25,6 +25,9 @@
 // row each), BEFORE the refresh token is revoked (the revoke also invalidates the access token those calls use), and
 // clears the view-as cookie (its own /api/view-as path). Best effort and bounded (VIEW_AS_END_TIMEOUT_MS): a failure
 // never blocks the sign-out; an open session then ends at its next request or its expiry (at most 60 minutes).
+// AA-1157: the owner's "view as a lower role" session ends the same way (its own cookie names it) and both of its
+// cookies are cleared; reading the session list also ends the member's role views that ran out without an end (their
+// cookie gone), each with its end row (api/core/staff_view_as.close_expired_own).
 import { NextRequest, NextResponse } from "next/server";
 import { adminVerifyCache, requireAdmin, staffCredentialHeaders } from "@/lib/auth-server";
 import {
@@ -39,6 +42,8 @@ import { isSameOrigin } from "@/lib/sameOrigin";
 import { STAFF_TOKEN_COOKIE, isCognitoToken } from "@/lib/staffSession";
 import type { StaffRole } from "@/lib/rbac";
 import { VIEW_AS_COOKIE, VIEW_AS_COOKIE_PATH, VIEW_AS_ROLES, ownOpenSessionIds } from "@/lib/viewAs";
+import { STAFF_VIEW_AS_COOKIE, staffViewClaims } from "@/lib/staffViewAs";
+import { clearStaffViewCookies } from "@/lib/staffViewCookies";
 
 const API_URL = process.env.API_URL ?? "https://api-cis.lumiguides.it.com";
 const ADMIN_SECRET = process.env.ADMIN_SECRET ?? "";
@@ -46,7 +51,8 @@ const VIEW_AS_END_TIMEOUT_MS = 4000;
 
 /** End the signed-in member's own open view-as sessions (best effort; the number ended). */
 async function endOwnViewAsSessions(request: NextRequest): Promise<number> {
-  const auth = await requireAdmin(request, VIEW_AS_ROLES as unknown as StaffRole[]);
+  // AA-1157: as the owner even inside a "view as a lower role" session (no write refusal, no view header).
+  const auth = await requireAdmin(request, VIEW_AS_ROLES as unknown as StaffRole[], { allowDuringViewAs: true });
   if (!auth.ok) return 0;
   const credential = staffCredentialHeaders(auth, ADMIN_SECRET, "admin");
   if (!credential) return 0;
@@ -56,6 +62,9 @@ async function endOwnViewAsSessions(request: NextRequest): Promise<number> {
     const res = await fetch(`${API_URL}/admin/view-as/sessions?open_only=true`, { headers, signal });
     if (!res.ok) return 0;
     const ids = ownOpenSessionIds(await res.json(), auth.adminId);
+    // AA-1157: the member's own view-as-a-role session too (the tenant list above never holds one).
+    const view = staffViewClaims(request.cookies.get(STAFF_VIEW_AS_COOKIE)?.value);
+    if (view && view.staffId === auth.adminId) ids.push(view.sessionId);
     const ended = await Promise.all(ids.map((id) =>
       fetch(`${API_URL}/admin/view-as/sessions/${id}/end`, { method: "POST", headers, signal })
         .then((r) => r.ok, () => false)));
@@ -94,5 +103,5 @@ export async function POST(request: NextRequest) {
   clearStaffSessionCookies(response);
   response.cookies.set(VIEW_AS_COOKIE, "", { httpOnly: true, secure: process.env.NODE_ENV === "production",
     sameSite: "strict", path: VIEW_AS_COOKIE_PATH, maxAge: 0 });
-  return response;
+  return clearStaffViewCookies(response);
 }
