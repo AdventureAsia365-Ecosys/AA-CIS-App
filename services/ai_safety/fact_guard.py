@@ -461,7 +461,11 @@ def _rules(sentence: str, *, title: bool = False) -> list[str]:
     for c, t in copies:
         out.extend(r for r in _match(c, t, title=title) if r not in out)
     if _needs_spaced(sentence):
-        spaced = _match(_fold(sentence, spaced=True), _fold(sentence, accents=True, spaced=True), title=title)
+        s_cased, s_toned = _fold(sentence, spaced=True), _fold(sentence, accents=True, spaced=True)
+        spaced = _match(s_cased, s_toned, title=title)
+        s_leet = _unleet(s_cased.lower())
+        if s_leet != s_cased.lower():   # review round 6: a mark per space plus one digit for a letter
+            spaced.extend(r for r in _match(s_leet, s_toned, title=title) if r not in spaced)
         if any(r not in out for r in spaced) and "hidden_text" not in out:
             out.insert(0, "hidden_text")
         out.extend(r for r in spaced if r not in out)
