@@ -152,9 +152,10 @@ export interface StaffViewDisplay {
   until: string;
 }
 
-/** The display cookie's value (URI-encoded JSON). */
+/** The display cookie's value: plain JSON. `res.cookies.set` URI-encodes it once on the wire; encoding it here as
+ *  well made the browser hold a twice-encoded value the banner and the nav could not read (S288 live check). */
 export function displayCookieValue(d: StaffViewDisplay): string {
-  return encodeURIComponent(JSON.stringify(d));
+  return JSON.stringify(d);
 }
 
 /** The display cookie read back; null when absent, malformed or past its end (`nowMs`). */
@@ -167,13 +168,26 @@ export function parseDisplayCookie(raw: string | undefined | null, nowMs: number
   return { role: d.role, label: d.label, until: d.until, caps: d.caps.filter((c) => typeof c === "string") };
 }
 
+/** Reads the plain JSON (server: `req.cookies` already decoded it), the once-encoded wire value (`document.cookie`)
+ *  and the twice-encoded value an older BFF wrote. At most two decodes, so the work stays bounded. */
 function decodeDisplay(raw: string | undefined | null): Partial<StaffViewDisplay> | null {
-  try {
-    const d = raw ? JSON.parse(decodeURIComponent(raw)) : null;
-    return d && typeof d === "object" ? (d as Partial<StaffViewDisplay>) : null;
-  } catch {
-    return null;
+  let text = raw ?? "";
+  for (let step = 0; step < 3 && text; step++) {
+    if (text.startsWith("{")) {
+      try {
+        const d = JSON.parse(text);
+        return d && typeof d === "object" ? (d as Partial<StaffViewDisplay>) : null;
+      } catch {
+        return null;
+      }
+    }
+    try {
+      text = decodeURIComponent(text);
+    } catch {
+      return null;
+    }
   }
+  return null;
 }
 
 /** Is a 409 body from the API the end of a view-as-a-role session (the BFF then clears its cookies)? */
