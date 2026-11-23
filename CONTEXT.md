@@ -5533,16 +5533,19 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
   matched after Unicode normalisation; Vietnamese with its tone marks kept, so "người Việt" is never "người viết") at
   the one read choke point `facts.prepare_facts` (called by `fetch_facts_for_writing`, so T9 and T2 both get clean
   facts). A fact that addresses the writer (a chat role line, a note to the writer, a request to ignore the rules,
-  prompt talk, hidden Unicode tag text), whose title or source line breaks a rule, whose directive is split across
-  lines or between title and body, or whose body is left empty, is left out and recorded in the FactSheet with reason
-  `fact_instruction`; a sentence that only asks to put words into headings / the FAQ / the post is removed alone.
-  Invisible format characters (bidi controls, zero-width spaces) are removed from every kept fact. Stored writer snapshots replayed later (ground-truth review, writing-memory eval and replay,
+  prompt talk), hides text (Unicode tag text, an invisible character from the default-ignorable set between two
+  letters, a run of variation selectors), copies the facts-list structure (a `[Fact id=]` head, a `Source:` line),
+  whose title or source line breaks a rule (or whose source line describes headings / the FAQ), whose directive is
+  split across lines or between title and body, or whose body is left empty, is left out and recorded in the FactSheet
+  with reason `fact_instruction`; a sentence that only asks to put words into headings / the FAQ / the post is removed
+  alone. Invisible characters that carry nothing (bidi controls, zero-width spaces, a soft hyphen inside a word) are
+  removed from every kept fact; the character layer lives in `services/ai_safety/fact_text.py`. Stored writer
+  snapshots replayed later (ground-truth review, writing-memory eval and replay,
   sentence repair, and `service.grounding_from_writer_input` behind the admin sentence suggest, the admin edit checks
   and the writing-memory fact filter) read the cleaned block through `fact_guard.stored_facts`. Switch:
   `cis.llm.fact_instruction_guard` (CIS 472, default **off** until an adversarial review round finds nothing new,
-  S272; round 2 still found misses; an administrator turns it on in Platform › Settings; a fact with no match reaches
-  the writer unchanged apart from invisible format characters). The
-  patterns are security invariants.
+  S272; rounds 2 to 4 still found misses; an administrator turns it on in Platform › Settings; a fact with no match
+  reaches the writer unchanged apart from invisible characters). The patterns are security invariants.
   The trap set has six T9 fact traps (body, inline role line, polite request, title, source line, a paraphrase) built through the
   live `prepare_facts` + `format_facts_block`; `trap_run.py --guard both --stage adhoc_aa<issue>` adds the guard-off
   control. Not built yet: a post-write check that refuses names absent from the source (the planned second layer).
