@@ -24,6 +24,10 @@ PARTS = {
     # settings-seed block only: tripplanner.spend.connection_share_enforce, a compiled default the settings tests
     # (test_aa1096_migration_414 / 416, test_s279_migration_407) compare with (test_aa1143_migration_455_456).
     "456_": ("-- settings-seed:begin", "-- settings-seed:end"),
+    # AA-1160 (S289): 475's Part B (catalog.v_tenant_tripplanner_v1) needs 379 / 390 / 429 / 438 (skipped by the replay)
+    # and the catalog recipe. Part A: shared.tenant_crm_agency, which the CIS code writes (the CRM's snapshot read, the
+    # CRM onboarding) and the Trip planner module reads (test_aa1160_migration_475 applies the whole file).
+    "475_": ("-- ── Part A", "-- ── Part B"),
 }
 
 
