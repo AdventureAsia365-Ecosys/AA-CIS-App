@@ -123,7 +123,9 @@ REQUIRED_CIS_SCHEMA = 322
 # compliance.applicability and the law columns of compliance.requirement; every compliance route fails without it).
 # 473 (AA-1176 — the Staff page accepts the A10h E2E owner address on Dev; without 473 the admin_users_email_chk refuses
 # that row, so the create would fail at the database instead of answering the directory's own rules).
-REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 395, 397, 398, 402, 408, 409, 411, 420, 428, 435, 439, 443, 454, 462, 464, 465, 466, 469, 470, 471, 473)  # noqa: E501
+# 474 (AA-1160 — the Trip planner module and Tenant 360 read shared.tenant_crm_agency, and the CRM's snapshot read and
+# the CRM onboarding write it; every module read fails without it. The marker write is best effort, the read is not).
+REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 395, 397, 398, 402, 408, 409, 411, 420, 428, 435, 439, 443, 454, 462, 464, 465, 466, 469, 470, 471, 473, 474)  # noqa: E501
 # Versions this code needs that were registered after a higher one (reserved numbers): 297 (AA-920 WM-25) was reserved
 # in S255 and applied after 299. max() is already 299 without it, so the version reported is capped below the lowest
 # listed version that is not registered (297 missing -> 296 -> "schema_behind").
