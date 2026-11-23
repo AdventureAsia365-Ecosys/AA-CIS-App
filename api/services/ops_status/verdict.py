@@ -208,6 +208,45 @@ def _runtimes_measured(rt: Optional[dict]) -> bool:
                for r in rows)
 
 
+# (section, rows of its data, item builder); a section that did not answer is listed under ``unknown``.
+_SECTION_ITEMS = (
+    ("apps", app_items),
+    ("jobs", lambda d, th: queue_items(d["queues"], th)),
+    ("resources", lambda d, th: resource_items(d["tiles"])),
+    ("ai", lambda d, th: ai_items(d["apps"])),
+)
+
+
+def _collect(sections: dict[str, Any], th: dict, events: list[dict]) -> tuple[list[dict], list[str]]:
+    """Every attention item of the sections that answered, and the core sources that did not. Pure."""
+    items: list[dict] = alarm_items(events) + check_items(events)
+    unknown: list[str] = [] if _ok(sections.get("signals")) else ["signals"]
+    rt = sections.get("runtimes")
+    if _ok(rt):
+        items += runtime_items(rt["data"]["rows"])
+    for name, build in _SECTION_ITEMS:
+        sec = sections.get(name)
+        if _ok(sec):
+            items += build(sec["data"], th)
+        else:
+            unknown.append(name)
+    if not _runtimes_measured(rt):
+        unknown.append("runtimes")
+    dl = sections.get("delivery")
+    if _ok(dl):
+        items += delivery_items(dl["data"])
+    return items, [c for c in CORE if c in unknown]
+
+
+def overall(open_count: int, unknown: list[str]) -> str:
+    """attention when something measured is open; ok only with every core source; else partial / unknown. Pure."""
+    if open_count:
+        return "attention"
+    if not unknown:
+        return "ok"
+    return "unknown" if set(MAIN) <= set(unknown) else "partial"
+
+
 def decide(sections: dict[str, Any], th: dict, events: list[dict]) -> dict:
     """{status: ok | attention | partial | unknown, open, attention[], resolved[], chips, unknown[]}.
 
@@ -215,54 +254,16 @@ def decide(sections: dict[str, Any], th: dict, events: list[dict]) -> dict:
     (``CORE``: the CloudWatch signals, the app tiles, a fresh runtimes sample, jobs, resources, AI). With nothing
     open, a missing core source gives ``partial`` (the page shows a neutral headline naming it), both ``MAIN``
     sources missing ``unknown``. Open items always win (``attention``): what was measured and is broken is shown."""
-    items: list[dict] = []
-    unknown: list[str] = []
-    if not _ok(sections.get("signals")):
-        unknown.append("signals")
-    apps = sections.get("apps")
-    if _ok(apps):
-        items += app_items(apps["data"], th)
-    else:
-        unknown.append("apps")
-    rt = sections.get("runtimes")
-    if _ok(rt):
-        items += runtime_items(rt["data"]["rows"])
-    if not _runtimes_measured(rt):
-        unknown.append("runtimes")
-    items += alarm_items(events)
-    items += check_items(events)
-    jobs = sections.get("jobs")
-    if _ok(jobs):
-        items += queue_items(jobs["data"]["queues"], th)
-    else:
-        unknown.append("jobs")
-    res = sections.get("resources")
-    if _ok(res):
-        items += resource_items(res["data"]["tiles"])
-    else:
-        unknown.append("resources")
-    ai = sections.get("ai")
-    if _ok(ai):
-        items += ai_items(ai["data"]["apps"])
-    else:
-        unknown.append("ai")
-    dl = sections.get("delivery")
-    if _ok(dl):
-        items += delivery_items(dl["data"])
+    items, unknown = _collect(sections, th, events)
     items.sort(key=lambda i: (_SEV_RANK.get(i["severity"], 9), i["status"] != "open", i.get("since") or ""))
     open_items = [i for i in items if i["status"] == "open"]
     resolved = [{"id": e["id"], "app": e.get("app"), "text": e["text"], "t": e["t"], "t2": e.get("t2")}
                 for e in events if e.get("kind") in ("alarm", "service_down", "rollout_failed") and e.get("t2")]
+    jobs = sections.get("jobs")
     gate = (jobs or {}).get("data", {}).get("deploy_gate", {}) if _ok(jobs) else {}
     firing = sum(1 for e in events if e.get("kind") == "alarm" and e.get("open"))
-    if open_items:
-        status = "attention"
-    elif not unknown:
-        status = "ok"
-    else:
-        status = "unknown" if set(MAIN) <= set(unknown) else "partial"
-    return {"status": status, "open": len(open_items), "attention": items, "resolved": resolved[:20],
-            "unknown": unknown,
+    return {"status": overall(len(open_items), unknown), "open": len(open_items), "attention": items,
+            "resolved": resolved[:20], "unknown": unknown,
             "chips": {"alarms_firing": firing, "open_alerts": len(open_items),
                       "deploy_gate": None if not gate else ("open" if gate.get("safe_to_deploy") else "closed"),
                       "deploy_gate_blocked_by": gate.get("blocked_by") or []}}
