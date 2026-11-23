@@ -8,7 +8,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   STAFF_VIEW_AS_HEADER, displayCookieValue, effectiveSession, isStaffViewAsStartPath, isViewEnded, ownStaffView,
-  parseDisplayCookie, staffViewClaims,
+  parseDisplayCookie, staffViewClaims, staffViewStep,
 } from "./staffViewAs.ts";
 
 const FRONTEND = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -57,6 +57,31 @@ test("effective session: never wider than the verified one, only from a Cognito 
   assert.deepEqual(effectiveSession({ ...admin, capabilities: ["content.read"] }, view).capabilities, ["content.read"]);
 });
 
+test("an owner on a custom role holding staff.read is never honoured, and its writes are still refused", () => {
+  // The API refuses such a start (api/core/staff_view_as.py may_start needs the built-in admin role); a cookie that
+  // is present anyway (stale or forged) must never let a write run with the owner's own rights.
+  const view = staffViewClaims(good);
+  const customOwner = { role: "custom_ops", capabilities: ["content.read", "staff.read"], cognito: true };
+  assert.equal(effectiveSession(customOwner, view).viewing, false);
+  for (const m of ["POST", "PATCH", "PUT", "DELETE"]) {
+    assert.deepEqual(staffViewStep(false, customOwner, view, false), { kind: "refuse" }, m);
+  }
+  assert.deepEqual(staffViewStep(true, customOwner, view, false),
+    { kind: "read", role: "custom_ops", capabilities: ["content.read", "staff.read"], viewing: false });
+});
+
+test("view step: writes refused in any own view, reads swapped only from a Cognito admin, owner routes untouched", () => {
+  const view = staffViewClaims(good);
+  const admin = { role: "admin", capabilities: ["content.read", "staff.read"], cognito: true };
+  assert.deepEqual(staffViewStep(false, admin, null, false), { kind: "none" });
+  assert.deepEqual(staffViewStep(true, admin, null, false), { kind: "none" });
+  assert.deepEqual(staffViewStep(false, admin, view, false), { kind: "refuse" });
+  assert.deepEqual(staffViewStep(false, { ...admin, cognito: false }, view, false), { kind: "refuse" });
+  assert.deepEqual(staffViewStep(false, admin, view, true), { kind: "owner" });
+  assert.deepEqual(staffViewStep(true, admin, view, false),
+    { kind: "read", role: "content", capabilities: ["content.read"], viewing: true });
+});
+
 test("the start path is refused by the generic proxy in any spelling", () => {
   for (const p of ["view-as/roles", "View-As/Roles", "/view-as/roles/", "view-as/roles/x"]) {
     assert.equal(isStaffViewAsStartPath(p), true, p);
@@ -83,7 +108,8 @@ test("an ended view is the 409 staff_view_as_ended only", () => {
 
 test("requireAdmin refuses writes inside a view and swaps the role for reads; the token rides on staff paths only", () => {
   const src = read("lib/auth-server.ts");
-  assert.match(src, /if \(!isReadMethod\(request\.method\)\) \{\s*return \{ ok: false, response: NextResponse\.json\(\{ detail: VIEW_AS_READ_ONLY \}/);
+  assert.match(src, /staffViewStep\(isReadMethod\(request\.method\)/);
+  assert.match(src, /if \(step\.kind === "refuse"\) \{\s*return \{ ok: false, response: NextResponse\.json\(\{ detail: VIEW_AS_READ_ONLY \}/);
   assert.match(src, /allowDuringViewAs/);
   assert.match(src, /if \(auth\.bearer && isStaffApiPath\(backendPath\)\) \{\s*return \{ Authorization: `Bearer \$\{auth\.bearer\}`, \.\.\.staffViewAsHeader\(auth\) \};/);
   assert.match(src, /auth\.viewAs\?\.forward \? \{ \[STAFF_VIEW_AS_HEADER\]: auth\.viewAs\.token \} : \{\}/);

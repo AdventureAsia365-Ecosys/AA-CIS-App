@@ -184,14 +184,20 @@ async def target_role(conn: Any, code: Any) -> Optional[TargetRole]:
     return TargetRole(code, grant.role.label, frozenset(grant.role.capabilities), True)
 
 
+VIEW_FROM_ROLE = "admin"   # technical-constant: the one built-in role a view starts from (BFF lib/staffViewAs.ts)
+
+
 def may_start(identity: Any) -> bool:
-    """An owner on a verified Cognito session holding the admin role (staff.read), never a Preview or E2E session and
-    never inside a view already (is_owner is False there)."""
+    """An owner on a verified Cognito session holding the built-in admin role (and staff.read), never a Preview or E2E
+    session and never inside a view already (is_owner is False there). A custom role never qualifies, even one that
+    holds staff.read: the BFF honours the view cookie only on the admin role (lib/staffViewAs.ts VIEW_FROM_ROLE), so
+    both sides use the same rule."""
     from api.core.staff_authz import STAFF_READ
 
     return bool(identity is not None and getattr(identity, "auth", None) == "cognito"
                 and getattr(identity, "is_owner", False) and not getattr(identity, "preview", False)
                 and not getattr(identity, "e2e_read_only", False) and getattr(identity, "view_as", None) is None
+                and getattr(identity, "role", None) == VIEW_FROM_ROLE
                 and STAFF_READ in (getattr(identity, "capabilities", None) or ()))
 
 

@@ -246,6 +246,7 @@ async def test_an_ended_session_is_refused_without_a_new_row():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("who,cause", [(dict(is_owner=False), "owner_lost"),
                                        (dict(role="content_lead"), "owner_lost"),
+                                       (dict(role="custom_ops", caps=ROLE_PERMS["admin"]), "owner_lost"),
                                        (dict(caps=ROLE_PERMS["admin"] - {"catalog.read"}), "not_downward")])
 async def test_a_lost_right_ends_the_session(who, cause):
     db = FakeDb()
@@ -254,6 +255,17 @@ async def test_a_lost_right_ends_the_session(who, cause):
     assert exc.value.status == 409
     ended = _actions(db, StaffViewAsAuditAction.ENDED)
     assert len(ended) == 1 and ended[0]["details"]["cause"] == cause and db.closed[0][1] == "revoked"
+
+
+def test_only_the_built_in_admin_role_may_start():
+    """An owner on a custom role that holds staff.read (custom_allowed() keeps it) never starts a view: the BFF honours
+    the view cookie only on the built-in admin role, so the API must use the same rule (else the banner would say
+    read-only while every call ran with the owner's own rights)."""
+    assert staff_view_as.may_start(_identity())
+    custom = _identity(role="custom_ops", caps={staff_authz.STAFF_READ, "content.read"})
+    assert staff_authz.STAFF_READ in custom.capabilities and not staff_view_as.may_start(custom)
+    assert not staff_view_as.may_start(_identity(role="custom_ops", caps=ROLE_PERMS["admin"]))
+    assert not staff_view_as.may_start(_identity(caps=ROLE_PERMS["admin"] - {staff_authz.STAFF_READ}))
 
 
 # ── authz pieces ─────────────────────────────────────────────────────────────────────────────────────────────────

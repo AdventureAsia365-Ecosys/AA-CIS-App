@@ -88,6 +88,31 @@ export function effectiveSession(
   return { role: view.role, capabilities: view.capabilities.filter((c) => held.has(c)), viewing: true };
 }
 
+/** How a staff BFF request runs, given the signed-in member's own unexpired view (`view`, from ownStaffView):
+ *  - "none": no own view, the verified session;
+ *  - "owner": the route acts as the owner (requireAdmin allowDuringViewAs): verified rights, token not forwarded;
+ *  - "refuse": a write, 403 view_as_read_only. Fails closed: refused whether or not the view is honoured here (a
+ *    custom-role or stale cookie never lets a write through with the owner's own rights);
+ *  - "read": the effective session (the view role when honoured, else the verified one). The token is forwarded either
+ *    way, so the API ends a session it no longer honours (409) and the proxy clears the cookies. */
+export type StaffViewStep =
+  | { kind: "none" }
+  | { kind: "owner" }
+  | { kind: "refuse" }
+  | { kind: "read"; role: string; capabilities: string[]; viewing: boolean };
+
+export function staffViewStep(
+  isRead: boolean,
+  verified: { role: string; capabilities: readonly string[]; cognito: boolean },
+  view: StaffViewClaims | null,
+  allowDuringViewAs: boolean,
+): StaffViewStep {
+  if (!view) return { kind: "none" };
+  if (allowDuringViewAs) return { kind: "owner" };
+  if (!isRead) return { kind: "refuse" };
+  return { kind: "read", ...effectiveSession(verified, view) };
+}
+
 /** Is `path` (a backend /admin sub-path, no leading slash, as the generic /api/admin proxy sees it) the view-as-a-role
  *  start? The generic proxy refuses it: only app/api/view-as/roles/route.ts starts one (the token stays httpOnly). */
 export function isStaffViewAsStartPath(path: string): boolean {

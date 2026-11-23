@@ -35,7 +35,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { STAFF_ROLES, isReadMethod, isReadOnlyRole, passesApiRule, type ApiRule, type StaffRole } from "./rbac";
 import { STAFF_TOKEN_COOKIE, isCognitoToken } from "./staffSession";
 import {
-  STAFF_VIEW_AS_COOKIE, STAFF_VIEW_AS_HEADER, VIEW_AS_READ_ONLY, effectiveSession, ownStaffView,
+  STAFF_VIEW_AS_COOKIE, STAFF_VIEW_AS_HEADER, VIEW_AS_READ_ONLY, ownStaffView, staffViewStep,
 } from "./staffViewAs";
 
 //
@@ -201,19 +201,21 @@ export async function requireAdmin(
 
 type VerifiedResult = Extract<RequireAdminResult, { ok: true }>;
 
-/** AA-1157: the verified result as the request runs: the owner's own view swapped in (or a refused write). */
+/** AA-1157: the verified result as the request runs: the owner's own view swapped in, or a refused write. Fails
+ *  closed (lib/staffViewAs.ts staffViewStep): an own, unexpired view cookie refuses every write even when the view is
+ *  not honoured here; a read then keeps the verified rights and still forwards the token (the API ends the session). */
 function withStaffView(request: NextRequest, verified: VerifiedResult, options: RequireAdminOptions): RequireAdminResult {
   const token = request.cookies.get(STAFF_VIEW_AS_COOKIE)?.value;
-  const view = ownStaffView(token, verified.adminId);
-  if (!token || !view) return verified;
-  const eff = effectiveSession({ ...verified, cognito: verified.bearer !== null }, view);
-  if (!eff.viewing) return verified;
-  const viewAs = { token, sessionId: view.sessionId, role: view.role, forward: !options.allowDuringViewAs };
-  if (options.allowDuringViewAs) return { ...verified, viewAs };
-  if (!isReadMethod(request.method)) {
+  const view = token ? ownStaffView(token, verified.adminId) : null;
+  const step = staffViewStep(isReadMethod(request.method), { ...verified, cognito: verified.bearer !== null }, view,
+    !!options.allowDuringViewAs);
+  if (step.kind === "none" || !token || !view) return verified;
+  if (step.kind === "refuse") {
     return { ok: false, response: NextResponse.json({ detail: VIEW_AS_READ_ONLY }, { status: 403 }) };
   }
-  return { ...verified, role: eff.role, capabilities: eff.capabilities, viewAs };
+  const viewAs = { token, sessionId: view.sessionId, role: view.role, forward: step.kind !== "owner" };
+  if (step.kind === "owner") return { ...verified, viewAs };
+  return { ...verified, role: step.role, capabilities: step.capabilities, viewAs };
 }
 
 // AA-816 (C5/C9): the backend paths where the API's staff_bearer middleware reads a staff Bearer
