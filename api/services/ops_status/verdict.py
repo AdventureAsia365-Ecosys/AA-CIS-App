@@ -150,6 +150,10 @@ def resource_items(tiles: list[dict]) -> list[dict]:
         if lv not in LEVEL_SEV:
             continue
         lim = t.get("crit") if lv == "crit" else t.get("warn")
+        if lim is None:   # a capacity tile (ECS tasks below the desired count): no limit, the note says why
+            out.append(_item(f"res-{t['id']}", LEVEL_SEV[lv], "shared", f"{t['label']}: {t.get('note') or ''}",
+                             "", source="ECS", links=[("App health", PAGES["apps"])]))
+            continue
         word = "at or below" if t.get("dir") == "below" else "at or above"
         out.append(_item(f"res-{t['id']}", LEVEL_SEV[lv], "shared", f"{t['label']} {t.get('latest')} {t.get('unit')}, "
                          f"{word} the {'critical' if lv == 'crit' else 'warn'} limit {lim:g}",

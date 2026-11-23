@@ -408,6 +408,19 @@ def test_verdict_orders_by_severity_and_counts_open_only():
     assert all(i["links"] for i in v["attention"])
 
 
+def test_resource_items_with_and_without_a_limit():
+    tiles = [{"id": "cpu", "label": "Database CPU", "unit": "%", "latest": 93.0, "level": "crit", "warn": 70.0,
+              "crit": 90.0, "dir": "above"},
+             {"id": "ecs", "label": "ECS tasks running", "latest": 6, "level": "warn", "note": "6 of 7 desired"},
+             {"id": "free_storage", "label": "Free storage", "unit": "GiB", "latest": 12.0, "level": "warn",
+              "warn": 15.0, "crit": 10.0, "dir": "below"}]
+    items = verdict.resource_items(tiles)
+    assert [i["severity"] for i in items] == ["sev2", "sev3", "sev3"]
+    assert items[0]["title"] == "Database CPU 93.0 %, at or above the critical limit 90"
+    assert items[1]["title"] == "ECS tasks running: 6 of 7 desired"
+    assert "at or below the warn limit 15" in items[2]["title"]
+
+
 def test_verdict_unknown_when_nothing_answers():
     down = {"status": "unavailable", "reason": "error"}
     v = verdict.decide(_sections(apps=down, runtimes=down, jobs=down, resources=down, ai=down), th.snapshot(), [])
