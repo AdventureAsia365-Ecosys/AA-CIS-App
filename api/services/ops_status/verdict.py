@@ -13,9 +13,9 @@ from __future__ import annotations
 from typing import Any, Optional
 
 RUNBOOK_INCIDENT = "/admin/docs?path=docs/ops/incident-response.md"
-RUNBOOK_ROLLBACK = "/admin/docs?path=docs/ops/runbooks/README.md"
+RUNBOOK_ROLLBACK = "/admin/docs?path=docs/ops/runbooks/rollback-ecs.md"
 RUNBOOK_DB = "/admin/docs?path=docs/ops/database-operations.md"
-PAGES = {"apps": "/admin/platform/apps", "jobs": "/admin/job-runner", "alerts": "/admin/platform/alerts",
+PAGES = {"apps": "/admin/platform/apps", "jobs": "/admin/jobs", "alerts": "/admin/platform/alerts",
          "ai": "/admin/ai-gateway", "delivery": "/admin/platform/delivery", "spend": "/admin/spend",
          "settings": "/admin/platform/settings?app=cis&area=ops", "reports": "/admin/reports"}
 _SEV_RANK = {"sev1": 0, "sev2": 1, "sev3": 2}
