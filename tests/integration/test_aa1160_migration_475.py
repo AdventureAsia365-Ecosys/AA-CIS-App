@@ -1,18 +1,20 @@
-"""AA-1160 (S289) — migration 475: shared.tenant_crm_agency (the tenants the CRM holds an agency for, as CIS sees it)
-and catalog.v_tenant_tripplanner_v1 appends crm_agency and the agency's fallback route (contract tenant.entitlements.v1
-1.11).
+"""AA-1160 (S289) — migration 475: shared.tenant_crm_agency (when the CRM last proved a tenant's agency, as CIS sees
+it), its sighting window setting cis.tenant.crm_agency_seen_hours, and catalog.v_tenant_tripplanner_v1 appends the
+agency's fallback route (contract tenant.entitlements.v1 1.11).
 
 475's Part B is the catalog recipe and needs 357 + 377 (438 replaces the billing view too), 379 + 390 + 429 + 438, all
 skipped by the replay (the replay runs 475's Part A only: the table). This module builds on the 245 / 246 module
 fixtures (Dev after 244 + 245, db_migrator), applies 357, 377, 379, 390, 429, 438 and 475 as db_migrator (errors NOT
-swallowed), 475 twice, and undoes them at teardown (DROP VIEW + the column grants; the table stays, the replay made it).
+swallowed), 475 twice, and undoes them at teardown (DROP VIEW; the table and the setting row stay, the replay made
+them).
 
-  * the view's exact columns (438's first, then the four appended), owner catalog_owner, security_barrier, tripplanner
-    only; tripplanner holds nothing on the table, catalog_owner reads only its tenant_id;
+  * the view's exact columns (438's first, then the three appended), owner catalog_owner, security_barrier,
+    tripplanner only; neither tripplanner nor catalog_owner holds anything on the table (the view does not read it);
   * the table refuses an unknown source and a last sighting before the first, and goes with its tenant;
-  * as tripplanner, with TripPlanner's AA-1160 route SELECT: crm_agency follows a row of the table; lead_channel keeps
-    its 390 meaning (crm while crm.core is live) and the fallback columns carry the stored webhook / e-mail route
-    whatever crm.core says; a channel without its target falls back to none.
+  * the setting row: int hours 2-168, default 3, platform, maker-checker, enforced, with its EN + VI guide;
+  * as tripplanner, with TripPlanner's AA-1160 route SELECT: lead_channel keeps its 390 meaning (crm while crm.core is
+    live) and the fallback columns carry the stored webhook / e-mail route whatever crm.core says (a marker row
+    changes nothing); a channel without its target falls back to none.
 Invented names only.
 """
 import os
@@ -38,20 +40,17 @@ HERE = os.path.dirname(__file__)
 M475 = os.path.join(HERE, "..", "..", "api", "migrations", "475_aa1160_tenant_crm_agency_marker.sql")
 TP = "catalog.v_tenant_tripplanner_v1"
 MARKER = "shared.tenant_crm_agency"
-COLUMNS = t438.TP_COLUMNS + (", crm_agency boolean, fallback_channel text, fallback_webhook_url text, "
-                             "fallback_email text")
+COLUMNS = t438.TP_COLUMNS + ", fallback_channel text, fallback_webhook_url text, fallback_email text"
 # The route SELECT of AA-TripPlanner-Web backend/assembly/leads.py ROUTE_SQL after AA-1160 (column names, never *).
 TP_ROUTE_SQL = (f"SELECT tenant_id, slug, name, kind, served, in_service, crm_core, lead_channel, lead_webhook_url, "
-                f"lead_email, crm_agency, fallback_channel, fallback_webhook_url, fallback_email FROM {TP} "
+                f"lead_email, fallback_channel, fallback_webhook_url, fallback_email FROM {TP} "
                 f"WHERE tenant_id = %s")
 
 
 def undo_475(a):
-    a.execute("SELECT to_regclass(%s) IS NOT NULL AS ok", (MARKER,))
-    if a.fetchone()[0]:
-        a.execute(f"REVOKE SELECT (tenant_id) ON {MARKER} FROM catalog_owner")
     a.execute("DELETE FROM shared.schema_versions WHERE version = '475'")
-    # The appended view columns go with 379's undo (DROP VIEW); the table stays (the replay's Part A made it).
+    # The appended view columns go with 379's undo (DROP VIEW); the table and the setting row stay (the replay's
+    # Part A made them).
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -131,10 +130,17 @@ def test_table_grants(cur):
     cur.execute("SELECT has_table_privilege('cis_app', %s, 'SELECT, INSERT, UPDATE, DELETE') AS app, "
                 "has_table_privilege('tripplanner', %s, 'SELECT') AS tp, "
                 "has_column_privilege('catalog_owner', %s, 'tenant_id', 'SELECT') AS id_read, "
-                "has_column_privilege('catalog_owner', %s, 'source', 'SELECT') AS source_read, "
+                "has_column_privilege('catalog_owner', %s, 'last_seen_at', 'SELECT') AS seen_read, "
                 "relrowsecurity AS rls FROM pg_class WHERE oid = %s::regclass",
                 (MARKER, MARKER, MARKER, MARKER, MARKER))
-    assert cur.fetchone() == (True, False, True, False, False)
+    assert cur.fetchone() == (True, False, False, False, False)
+
+
+def test_seen_window_setting(cur):
+    cur.execute("SELECT app, area, value_type, unit, min_value::int AS lo, max_value::int AS hi, default_value, "
+                "scope_kind, approval, enforced, guide ? 'en' AND guide ? 'vi' AS guided "
+                "FROM shared.setting_definition WHERE key = 'cis.tenant.crm_agency_seen_hours'")
+    assert cur.fetchone() == ("cis", "tenant", "int", "hours", 2, 168, 3, "platform", "maker_checker", True, True)
 
 
 def test_table_checks_and_cascade(cur):
@@ -163,17 +169,18 @@ def test_tripplanner_reads_marker_and_fallback(cur):
     # 390's meaning kept: crm while crm.core is live, its targets NULL; no CRM agency yet; the stored route as fallback
     assert (row["crm_core"], row["lead_channel"], row["lead_webhook_url"], row["lead_email"]) == (
         True, "crm", None, None)
-    assert (row["crm_agency"], row["fallback_channel"], row["fallback_webhook_url"], row["fallback_email"]) == (
-        False, "webhook", "https://willowmere.example.invalid/leads", None)
+    assert (row["fallback_channel"], row["fallback_webhook_url"], row["fallback_email"]) == (
+        "webhook", "https://willowmere.example.invalid/leads", None)
+    # A CRM sighting is CIS's own display input; the view (TripPlanner's route) does not change with it.
     cur.execute(f"INSERT INTO {MARKER} (tenant_id, source) VALUES (%s, 'crm_pull')", (crm_hook,))
-    assert _route(cur, crm_hook)["crm_agency"] is True
+    assert _route(cur, crm_hook) == row
 
     mail, _ = t379._tenant(cur, "Zz Saltmarsh Holidays synthetic")
     t390._site(cur, mail, lead_channel="email", lead_email="desk@saltmarsh.example.invalid")
     row = _route(cur, mail)
     assert (row["lead_channel"], row["lead_email"], row["fallback_channel"], row["fallback_email"],
-            row["fallback_webhook_url"], row["crm_agency"]) == (
-        "email", "desk@saltmarsh.example.invalid", "email", "desk@saltmarsh.example.invalid", None, False)
+            row["fallback_webhook_url"]) == (
+        "email", "desk@saltmarsh.example.invalid", "email", "desk@saltmarsh.example.invalid", None)
 
     bare, _ = t379._tenant(cur, "Zz Thistledown Tours synthetic")
     t390._subscribe(cur, bare, "crm", "crm.core")

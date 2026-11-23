@@ -26,7 +26,8 @@ PARTS = {
     "456_": ("-- settings-seed:begin", "-- settings-seed:end"),
     # AA-1160 (S289): 475's Part B (catalog.v_tenant_tripplanner_v1) needs 379 / 390 / 429 / 438 (skipped by the replay)
     # and the catalog recipe. Part A: shared.tenant_crm_agency, which the CIS code writes (the CRM's snapshot read, the
-    # CRM onboarding) and the Trip planner module reads (test_aa1160_migration_475 applies the whole file).
+    # CRM onboarding) and the Trip planner module reads, and the seed of cis.tenant.crm_agency_seen_hours (a compiled
+    # default the settings tests compare with); test_aa1160_migration_475 applies the whole file.
     "475_": ("-- ── Part A", "-- ── Part B"),
 }
 
