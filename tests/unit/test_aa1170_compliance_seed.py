@@ -72,8 +72,9 @@ def test_the_eight_settings_are_compiled_with_the_seeded_defaults():
         keys.DOCS_OVERDUE_MAX: (0, "low", "maker_checker"),
         keys.CI_SCAN_MAX_AGE_DAYS: (8, "medium", "maker_checker"),
     }
-    assert set(keys.ALL) == set(expected) | {keys.REFERENCE_SCORES}
-    assert keys.VALIDITY_HOURS == {"root_daily": "cis.compliance.validity_hours.root_daily"}
+    # AA-1174 (CIS 471) added keys of its own (tests/unit/test_aa1174_obligations_seed.py); the 466 eight stay as seeded
+    assert set(keys.ALL_466) == set(expected) | {keys.REFERENCE_SCORES}
+    assert keys.VALIDITY_HOURS["root_daily"] == "cis.compliance.validity_hours.root_daily"
     for key, (default, impact, approval) in expected.items():
         d = settings.definition(key)
         assert (d.app, d.area, d.scope_kind, d.enforced) == ("cis", "compliance", "platform", True), key
