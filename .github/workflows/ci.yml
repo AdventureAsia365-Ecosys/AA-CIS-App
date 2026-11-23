@@ -210,7 +210,7 @@ jobs:
 
       # AA-993 (CIS-3): uv installs the same requirements faster than pip; its cache replaces setup-python's pip cache.
       - name: Set up uv
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           enable-cache: true
           # S273 (workflow_lint WL4): restore on every ref, save only on main (the nightly run on main saves it).
@@ -307,7 +307,7 @@ jobs:
           python-version: "3.12"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           enable-cache: true
           # S273 (workflow_lint WL4): restore on every ref, save only on main (the nightly run on main saves it).
@@ -448,7 +448,7 @@ jobs:
 
       # AA-993 (CIS-3): same uv install as Unit Tests, two installs in the same order as before.
       - name: Set up uv
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           enable-cache: true
           # S273 (workflow_lint WL4): restore on every ref, save only on main (the nightly run on main saves it).
