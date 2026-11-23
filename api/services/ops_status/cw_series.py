@@ -13,7 +13,9 @@ One call per range (plus one for the previous period when compare is on), metric
 - The shared database: ``AWS/RDS`` CPUUtilization (Average), DatabaseConnections (Maximum) and FreeStorageSpace
   (Minimum) of ``aa-cis-<env>-db``.
 
-About 25 metrics a call (0.01 USD per 1,000 metrics: 0.00025 USD), 50 with compare. Pure parsing, unit-tested.
+About 25 metrics a call (0.01 USD per 1,000 metrics: 0.00025 USD; GetMetricData has no free tier). The caller
+(:func:`api.services.ops_status.fetch_range`) reads a live range on a 5-minute grid and a previous period on an hourly
+grid, so a page refreshing every minute costs at most one call per 5 minutes per range. Pure parsing, unit-tested.
 """
 from __future__ import annotations
 

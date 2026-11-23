@@ -1,9 +1,9 @@
 """AA-1140 (S289) — the status sampler and GET /admin/overview/status on a real Postgres (conftest replays every
 migration, CIS 475 included): a tick writes one sample per service, health check, queue and database; a deployment and
 a firing alarm become events, a re-run of the bucket writes nothing twice, the next tick closes the alarm and the
-completed rollout; then build_status reads them back (runtimes with the uptime strip, the event timeline, the alarm
-band, the verdict). AWS and the peer apps are fakes; invented service and alarm names only. Rows are removed by the
-test's own subjects."""
+completed rollout; a failed rollout closes once a later rollout completed; then build_status reads them back
+(runtimes with the uptime strip, the event timeline, the alarm band, the verdict). AWS and the peer apps are fakes;
+invented service and alarm names only. Rows are removed by the test's own subjects."""
 import os
 import sys
 from datetime import datetime, timedelta, timezone
@@ -111,6 +111,38 @@ async def test_tick_writes_samples_and_events_and_closes_them(pool, no_peers):
         "SELECT kind, ended_at FROM acp_shared.ops_event WHERE dedupe_key LIKE '%zz1140%'")}
     assert ev["alarm"]["ended_at"] is not None and ev["deploy"]["ended_at"] is not None
     assert ev["service_down"]["ended_at"] is None
+
+
+def _ecs_deployments(deployments: list[dict]) -> MagicMock:
+    client = MagicMock()
+    client.describe_services.return_value = {"services": [
+        {"serviceName": f"aa-cis-{ENV}-api", "desiredCount": 1, "runningCount": 1, "pendingCount": 0,
+         "taskDefinition": "arn:aws:ecs:zz:task-definition/aa-cis-zz1140-api:8", "deployments": deployments}],
+        "failures": []}
+    client.describe_task_definition.return_value = {"taskDefinition": {"containerDefinitions": []}}
+    return client
+
+
+@pytest.mark.asyncio
+async def test_a_failed_rollout_closes_once_a_later_rollout_completed(pool):
+    at = _now()
+    failed = {"id": "ecs-svc/zz1140-f", "status": "PRIMARY", "rolloutState": "FAILED", "taskDefinition": "td:8",
+              "createdAt": at - timedelta(minutes=20), "updatedAt": at - timedelta(minutes=12)}
+    out: dict = {}
+    await sampler.ecs_part(pool, ENV, at, None, out, _ecs_deployments([failed]))
+    sql = "SELECT ended_at FROM acp_shared.ops_event WHERE dedupe_key = 'rollout_failed:ecs-svc/zz1140-f'"
+    assert (await pool.fetchrow(sql))["ended_at"] is None
+    # a tick later the failure is still the primary: still open
+    await sampler.ecs_part(pool, ENV, at + timedelta(minutes=5), None, out, _ecs_deployments([failed]))
+    assert (await pool.fetchrow(sql))["ended_at"] is None
+    # the rollback completed: closed, and the next tick does not reopen it
+    rollback = {"id": "ecs-svc/zz1140-r", "status": "PRIMARY", "rolloutState": "COMPLETED", "taskDefinition": "td:7",
+                "createdAt": at - timedelta(minutes=8), "updatedAt": at - timedelta(minutes=2)}
+    for m in (10, 15):
+        await sampler.ecs_part(pool, ENV, at + timedelta(minutes=m), None, out,
+                               _ecs_deployments([rollback, {**failed, "status": "ACTIVE"}]))
+    assert (await pool.fetchrow(sql))["ended_at"] == at + timedelta(minutes=10)
+    assert out["rollout_closed"] == 0
 
 
 @pytest.mark.asyncio

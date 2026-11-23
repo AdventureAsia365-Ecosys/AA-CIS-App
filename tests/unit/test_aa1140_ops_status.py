@@ -210,6 +210,48 @@ async def test_ecs_part_writes_samples_and_deploy_events(monkeypatch):
     assert out["ecs_missing"] == ["aa-booking-dev-admin"]
 
 
+def _dep(did, status, rollout, minutes_ago):
+    return {"id": did, "status": status, "rolloutState": rollout, "taskDefinition": "td:41",
+            "createdAt": NOW - timedelta(minutes=minutes_ago), "updatedAt": NOW - timedelta(minutes=minutes_ago - 2)}
+
+
+def test_failing_rollout_keys_drop_a_failure_a_later_rollout_replaced():
+    failed_primary = _svc(deployments=[_dep("ecs-svc/f1", "PRIMARY", "FAILED", 20)])
+    assert sampler.failing_rollout_keys(failed_primary) == {"rollout_failed:ecs-svc/f1"}
+    rolling_back = _svc(deployments=[_dep("ecs-svc/r2", "PRIMARY", "IN_PROGRESS", 5),
+                                     _dep("ecs-svc/f1", "ACTIVE", "FAILED", 20)])
+    assert sampler.failing_rollout_keys(rolling_back) == {"rollout_failed:ecs-svc/f1"}
+    replaced = _svc(deployments=[_dep("ecs-svc/r2", "PRIMARY", "COMPLETED", 5),
+                                 _dep("ecs-svc/f1", "ACTIVE", "FAILED", 20)])
+    assert sampler.failing_rollout_keys(replaced) == set()
+    assert sampler.failing_rollout_keys(_svc()) == set()
+
+
+@pytest.mark.asyncio
+async def test_ecs_part_closes_a_failed_rollout_once_a_later_one_completed(monkeypatch):
+    pool, _sink = _pool()
+    open_rows = {"rollout_failed": [
+        {"event_id": 1, "subject": "aa-cis-dev-api", "dedupe_key": "rollout_failed:ecs-svc/f1"},
+        {"event_id": 2, "subject": "aa-cis-dev-worker", "dedupe_key": "rollout_failed:ecs-svc/w1"},
+        {"event_id": 3, "subject": "aa-crm-dev-web", "dedupe_key": "rollout_failed:ecs-svc/c1"}]}
+    pool.fetch = AsyncMock(side_effect=lambda sql, kind: open_rows.get(kind, []))
+    described = {
+        # a rollback completed after the failure: closed
+        "aa-cis-dev-api": _svc(deployments=[_dep("ecs-svc/r2", "PRIMARY", "COMPLETED", 5),
+                                            _dep("ecs-svc/f1", "ACTIVE", "FAILED", 20)]),
+        # still the failed primary: stays open
+        "aa-cis-dev-worker": {**_svc(deployments=[_dep("ecs-svc/w1", "PRIMARY", "FAILED", 20)]),
+                              "serviceName": "aa-cis-dev-worker"},
+        # aa-crm-dev-web is not described this tick: its event is left as it is
+        "__missing__": [],
+    }
+    monkeypatch.setattr(sampler, "describe_services", lambda env, client=None: described)
+    out: dict = {}
+    await sampler.ecs_part(pool, "dev", NOW, None, out)
+    closed = [c.args[1] for c in pool.execute.await_args_list if c.args[0] == sampler.CLOSE_EVENT_SQL]
+    assert closed == [1] and out["rollout_closed"] == 1
+
+
 @pytest.mark.asyncio
 async def test_tick_never_raises_and_names_the_failed_part(monkeypatch):
     pool, _ = _pool()
@@ -379,11 +421,13 @@ def test_guard_rows_passed_failed_missing_and_not_measured():
 
 def _sections(**over):
     base = {
+        "signals": {"status": "ok", "apps": {}},
         "apps": {"status": "ok", "data": [{"app": "cis", "label": "CIS", "health": {"state": "ok"},
                                            "traffic": {"status": "ok", "requests": 100, "errors": 0,
                                                        "errors_level": "ok", "p95_level": "ok",
                                                        "client_errors_level": "ok"}}]},
-        "runtimes": {"status": "ok", "data": {"rows": []}},
+        "runtimes": {"status": "ok", "data": {"rows": [{"kind": "ecs_service", "subject": "aa-cis-dev-api",
+                                                        "app": "cis", "state": "ok"}]}},
         "jobs": {"status": "ok", "data": {"queues": [], "deploy_gate": {"safe_to_deploy": True}}},
         "resources": {"status": "ok", "data": {"tiles": []}},
         "ai": {"status": "ok", "data": {"apps": []}},
@@ -445,8 +489,91 @@ def test_resource_items_with_and_without_a_limit():
 
 def test_verdict_unknown_when_nothing_answers():
     down = {"status": "unavailable", "reason": "error"}
-    v = verdict.decide(_sections(apps=down, runtimes=down, jobs=down, resources=down, ai=down), th.snapshot(), [])
-    assert v["status"] == "unknown" and {"apps", "runtimes", "jobs"} <= set(v["unknown"])
+    v = verdict.decide(_sections(signals=down, apps=down, runtimes=down, jobs=down, resources=down, ai=down),
+                       th.snapshot(), [])
+    assert v["status"] == "unknown" and {"signals", "apps", "runtimes", "jobs"} <= set(v["unknown"])
+
+
+@pytest.mark.parametrize("missing", ["signals", "apps", "runtimes", "jobs", "resources", "ai"])
+def test_verdict_is_never_ok_while_a_core_source_did_not_answer(missing):
+    down = {"status": "unavailable", "reason": "error"}
+    v = verdict.decide(_sections(**{missing: down}), th.snapshot(), [])
+    assert v["status"] == "partial" and v["unknown"] == [missing] and v["open"] == 0
+
+
+def test_verdict_counts_runtimes_only_with_a_fresh_service_sample():
+    stale = {"status": "ok", "data": {"rows": [
+        {"kind": "ecs_service", "subject": "aa-cis-dev-api", "app": "cis", "state": "no_sample"},
+        {"kind": "lambda", "subject": "zz functions", "app": "tripplanner", "state": "not_measured"}]}}
+    v = verdict.decide(_sections(runtimes=stale), th.snapshot(), [])
+    assert v["status"] == "partial" and v["unknown"] == ["runtimes"]
+    down = {"status": "unavailable", "reason": "error"}
+    v = verdict.decide(_sections(runtimes=stale, signals=down), th.snapshot(), [])
+    assert v["status"] == "unknown"
+
+
+def test_verdict_shows_open_items_even_with_a_source_missing():
+    down = {"status": "unavailable", "reason": "error"}
+    events = [{"id": "e1", "kind": "alarm", "open": True, "severity": "sev2", "app": "cis", "text": "Alarm: zz",
+               "t": NOW.isoformat()}]
+    v = verdict.decide(_sections(signals=down), th.snapshot(), events)
+    assert v["status"] == "attention" and v["unknown"] == ["signals"]
+
+
+@pytest.mark.asyncio
+async def test_build_status_is_not_ok_before_the_first_sample_or_without_cloudwatch(monkeypatch):
+    """The production path: build_status always wraps the app tiles as ok, so the verdict must still refuse "ok"
+    when CloudWatch did not answer and the sampler has not written a row yet."""
+    from api.services import ops_status
+
+    async def fine(*a, **k):
+        return sections.ok({"queues": [], "deploy_gate": {"safe_to_deploy": True}, "tiles": [], "apps": [],
+                            "guards": [], "repos": []}, 300)
+
+    async def signals(redis, rng, *, previous=False):
+        return {"status": "unavailable", "reason": "not_permitted", "message": "zz"}
+
+    async def no_rows(pool, kinds, since):
+        return []
+
+    monkeypatch.setattr(ops_status, "_signals", signals)
+    monkeypatch.setattr(ops_status, "_cards", AsyncMock(return_value={}))
+    monkeypatch.setattr(ops_status, "_events", AsyncMock(return_value=sections.ok([], 300)))
+    monkeypatch.setattr(ops_status, "_cost", AsyncMock(return_value=sections.ok({}, 900)))
+    monkeypatch.setattr(store, "latest", no_rows)
+    monkeypatch.setattr(store, "samples", AsyncMock(return_value=[]))
+    for name in ("activity", "resources", "jobs", "ai", "delivery"):
+        monkeypatch.setattr(sections, name, fine)
+    out = await ops_status.build_status(MagicMock(), None, range_key="1h", now=NOW)
+    assert out["sections"]["apps"]["status"] == "ok"
+    assert out["sections"]["runtimes"]["status"] == "unavailable"
+    v = out["verdict"]
+    assert v["status"] == "unknown" and {"signals", "runtimes"} <= set(v["unknown"])
+
+
+@pytest.mark.asyncio
+async def test_resources_read_the_latest_samples_within_the_stale_factor(monkeypatch):
+    """The ECS tasks tile and the busiest role use the page's freshness setting, not a fixed window."""
+    seen: list = []
+    rows = [{"sampled_at": NOW - timedelta(minutes=25), "kind": "ecs_service", "subject": "aa-cis-dev-api",
+             "app": "cis", "state": "ok", "value": {"running": 1, "desired": 1}}]
+
+    async def latest(pool, kinds, since):
+        seen.append(since)
+        return [r for r in rows if r["sampled_at"] >= since]
+
+    monkeypatch.setattr(store, "latest", latest)
+    monkeypatch.setattr(store, "samples", AsyncMock(return_value=[]))
+    pool = MagicMock()
+    pool.fetchval = AsyncMock(return_value=100)
+    out = await sections.resources(pool, {"status": "unavailable"}, _rng(), NOW)
+    ecs = next(t for t in out["data"]["tiles"] if t["id"] == "ecs")
+    assert seen == [NOW - timedelta(minutes=store.SAMPLE_MINUTES * th.stale_factor())]
+    assert ecs["level"] == "none" and ecs["note"] is None   # 25 minutes old is not current (default 3 x 5 min)
+    monkeypatch.setattr(th, "stale_factor", lambda: 10.0)
+    out = await sections.resources(pool, {"status": "unavailable"}, _rng(), NOW)
+    ecs = next(t for t in out["data"]["tiles"] if t["id"] == "ecs")
+    assert seen[-1] == NOW - timedelta(minutes=50) and ecs["level"] == "ok"
 
 
 def test_freshness_marks_a_stale_section():
@@ -468,6 +595,81 @@ def test_series_view_rate_per_minute_and_error_share():
     v = ops_status.series_view(sig, r)
     assert v["apps"]["cis"]["rate_per_min"] == [2.0, None, 0.0]
     assert v["apps"]["cis"]["error_pct"] == [5.0, None, None] and v["apps"]["crm"] == {"measured": False}
+
+
+# ── CloudWatch fetch range and cache key ──────────────────────────────────────────────────────────────────────
+
+def test_live_one_hour_view_keeps_one_fetch_range_for_five_minutes():
+    from api.services import ops_status
+
+    base = datetime(2026, 11, 24, 2, 5, 0, tzinfo=timezone.utc)
+    fetches = {ops_status.fetch_range(ranges.resolve("1h", None, None, now=base + timedelta(seconds=s),
+                                                     history_days=14)) for s in range(0, 300, 30)}
+    assert len(fetches) == 1
+    f = fetches.pop()
+    assert f.end == datetime(2026, 11, 24, 2, 10, tzinfo=timezone.utc) and f.span == timedelta(hours=1)
+    assert f.step_s == 60
+    nxt = ops_status.fetch_range(ranges.resolve("1h", None, None, now=base + timedelta(minutes=5), history_days=14))
+    assert nxt.end == f.end + timedelta(minutes=5)
+    day = ranges.resolve("24h", None, None, now=base, history_days=14)
+    assert ops_status.fetch_range(day) == day   # hourly steps: already on its grid
+    custom = ranges.resolve("custom", "2026-11-23T01:00:00Z", "2026-11-23T02:00:00Z", now=base, history_days=14)
+    assert ops_status.fetch_range(custom) == custom
+
+
+def test_previous_period_is_read_on_an_hourly_grid_that_covers_it():
+    from api.services import ops_status
+
+    base = datetime(2026, 11, 24, 2, 5, 0, tzinfo=timezone.utc)
+    prevs = {ops_status.fetch_range(ranges.resolve("1h", None, None, now=base + timedelta(minutes=m),
+                                                   history_days=14).previous(), previous=True) for m in range(0, 50)}
+    assert len(prevs) == 1
+    f = prevs.pop()
+    p = ranges.resolve("1h", None, None, now=base, history_days=14).previous()
+    assert f.start <= p.start and f.end >= p.end and f.step_s == p.step_s
+    assert int(f.start.timestamp()) % 3600 == 0 and int(f.end.timestamp()) % 3600 == 0
+
+
+def test_relay_lays_the_fetch_back_on_the_page_steps():
+    from api.services import ops_status
+
+    page = TimeRange("1h", datetime(2026, 11, 24, 1, 8, tzinfo=timezone.utc),
+                     datetime(2026, 11, 24, 2, 8, tzinfo=timezone.utc), 60)
+    src = ops_status.fetch_range(page)
+    assert src.start == datetime(2026, 11, 24, 1, 10, tzinfo=timezone.utc)
+    n = len(src.buckets())
+    sig = {"status": "ok", "apps": {"cis": {"measured": True, "requests": [float(i) for i in range(n)],
+                                            "totals": {"requests": 7}}, "crm": {"measured": False}},
+           "rds": {"measured": True, "cpu_pct": [1.0] * n, "instance": "zz"}}
+    out = ops_status.relay(sig, src, page)
+    req = out["apps"]["cis"]["requests"]
+    assert len(req) == len(page.buckets()) == 60
+    assert req[:2] == [None, None] and req[2] == 0.0 and req[-1] == 57.0
+    assert out["apps"]["cis"]["totals"] == {"requests": 7} and out["apps"]["crm"] == {"measured": False}
+    assert out["rds"]["cpu_pct"][:2] == [None, None] and out["rds"]["instance"] == "zz"
+    assert ops_status.relay({"status": "unavailable"}, src, page) == {"status": "unavailable"}
+
+
+@pytest.mark.asyncio
+async def test_signals_cache_key_holds_across_one_minute_refreshes(monkeypatch):
+    from api.services import ops_status
+    from api.services.ops_overview import cache
+
+    names: list = []
+
+    async def cached(redis, name, ttl, compute, **kw):
+        names.append((name, ttl))
+        return {"status": "unavailable", "reason": "zz"}
+
+    monkeypatch.setattr(cache, "cached_section", cached)
+    base = datetime(2026, 11, 24, 2, 5, 0, tzinfo=timezone.utc)
+    for m in range(5):
+        rng = ranges.resolve("1h", None, None, now=base + timedelta(minutes=m), history_days=14)
+        await ops_status._signals(object(), rng)
+        await ops_status._signals(object(), rng.previous(), previous=True)
+    current = {n for n, ttl in names if n.startswith("signals:")}
+    prev = {(n, ttl) for n, ttl in names if n.startswith("signals_prev:")}
+    assert len(current) == 1 and len(prev) == 1 and next(iter(prev))[1] == ops_status.PREVIOUS_TTL_S
 
 
 # ── job kind and schedule ──────────────────────────────────────────────────────────────────────────────────────

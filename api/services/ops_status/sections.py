@@ -198,7 +198,7 @@ def runtime_rows(samples: list[dict], latest: list[dict], rng: TimeRange, slo: f
 
 async def runtimes(pool: Any, rng: TimeRange, now: datetime) -> dict:
     slo = th.uptime_slo_pct()
-    fresh_after = now - timedelta(minutes=store.SAMPLE_MINUTES * th.stale_factor())
+    fresh_after = store.fresh_since(now)
     kinds = ["ecs_service", "app_health"]
     rows_now = await store.latest(pool, kinds, now - timedelta(days=th.history_days()))
     in_range = await store.samples(pool, kinds, rng)
@@ -228,7 +228,7 @@ MAX_CONNECTIONS_SQL = "SELECT current_setting('max_connections')::int AS n"
 async def resources(pool: Any, series: dict, rng: TimeRange, now: datetime) -> dict:
     db_rows = await store.samples(pool, ["database", "queue"], rng)
     latest = {(r["kind"], r["subject"]): r for r in await store.latest(pool, ["database", "ecs_service"],
-                                                                         now - timedelta(minutes=30))}
+                                                                         store.fresh_since(now))}
     db_samples = [r for r in db_rows if r["kind"] == "database"]
     try:
         max_conn = int(await pool.fetchval(MAX_CONNECTIONS_SQL))

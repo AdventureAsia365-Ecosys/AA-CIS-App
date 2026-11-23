@@ -1,6 +1,6 @@
 """AA-1140 — the one verdict at the top of the Ecosystem status page and its "Needs attention" list. Pure: it reads the
 sections ``build_status`` assembled and decides nothing from a source that did not answer (a missing source is
-listed in ``unknown``, never counted as healthy).
+listed in ``unknown``, never counted as healthy: the verdict is ``ok`` only when every core source answered).
 
 Severity (S285 advisory, mockup v2): SEV1 = a runtime is down (no running task, a failing health endpoint, no live
 worker); SEV2 = a critical limit is crossed, a page-severity alarm fires, a rollout failed, a nightly probe failed;
@@ -19,6 +19,10 @@ PAGES = {"apps": "/admin/platform/apps", "jobs": "/admin/jobs", "alerts": "/admi
          "ai": "/admin/ai-gateway", "delivery": "/admin/platform/delivery", "spend": "/admin/spend",
          "settings": "/admin/platform/settings?app=cis&area=ops", "reports": "/admin/reports"}
 _SEV_RANK = {"sev1": 0, "sev2": 1, "sev3": 2}
+# The sources the verdict needs before it may say "All systems normal" (delivery is advisory and not required);
+# without both MAIN sources (app traffic from CloudWatch, the sampled services) nothing about health was measured.
+CORE = ("signals", "apps", "runtimes", "jobs", "resources", "ai")
+MAIN = ("signals", "runtimes")
 LEVEL_SEV = {"crit": "sev2", "warn": "sev3"}
 
 
@@ -194,10 +198,27 @@ def delivery_items(data: dict) -> list[dict]:
     return out
 
 
+def _runtimes_measured(rt: Optional[dict]) -> bool:
+    """The runtimes section counts only with at least one ECS service sampled recently: before the sampler's first
+    tick, or while the worker is down, every row reads no_sample and nothing about the services was measured."""
+    if not _ok(rt):
+        return False
+    rows = (rt.get("data") or {}).get("rows") or []
+    return any(r.get("kind") == "ecs_service" and r.get("state") not in ("no_sample", "not_measured", "unknown")
+               for r in rows)
+
+
 def decide(sections: dict[str, Any], th: dict, events: list[dict]) -> dict:
-    """{status: ok | attention | unknown, open, attention[], resolved[], chips, unknown[]}."""
+    """{status: ok | attention | partial | unknown, open, attention[], resolved[], chips, unknown[]}.
+
+    A signal that was not measured is never counted as healthy: ``ok`` only when every core source answered
+    (``CORE``: the CloudWatch signals, the app tiles, a fresh runtimes sample, jobs, resources, AI). With nothing
+    open, a missing core source gives ``partial`` (the page shows a neutral headline naming it), both ``MAIN``
+    sources missing ``unknown``. Open items always win (``attention``): what was measured and is broken is shown."""
     items: list[dict] = []
     unknown: list[str] = []
+    if not _ok(sections.get("signals")):
+        unknown.append("signals")
     apps = sections.get("apps")
     if _ok(apps):
         items += app_items(apps["data"], th)
@@ -206,7 +227,7 @@ def decide(sections: dict[str, Any], th: dict, events: list[dict]) -> dict:
     rt = sections.get("runtimes")
     if _ok(rt):
         items += runtime_items(rt["data"]["rows"])
-    else:
+    if not _runtimes_measured(rt):
         unknown.append("runtimes")
     items += alarm_items(events)
     items += check_items(events)
@@ -234,7 +255,12 @@ def decide(sections: dict[str, Any], th: dict, events: list[dict]) -> dict:
                 for e in events if e.get("kind") in ("alarm", "service_down", "rollout_failed") and e.get("t2")]
     gate = (jobs or {}).get("data", {}).get("deploy_gate", {}) if _ok(jobs) else {}
     firing = sum(1 for e in events if e.get("kind") == "alarm" and e.get("open"))
-    status = "attention" if open_items else ("unknown" if {"apps", "runtimes"} <= set(unknown) else "ok")
+    if open_items:
+        status = "attention"
+    elif not unknown:
+        status = "ok"
+    else:
+        status = "unknown" if set(MAIN) <= set(unknown) else "partial"
     return {"status": status, "open": len(open_items), "attention": items, "resolved": resolved[:20],
             "unknown": unknown,
             "chips": {"alarms_firing": firing, "open_alerts": len(open_items),

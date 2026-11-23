@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
 
 from api.services.ops_status.ranges import TimeRange
+from shared import ops_status_thresholds as th
 
 # Uptime cell lengths in minutes: the first that gives at most MAX_CELLS cells over the range (mockup v2).
 CELL_MINUTES = (5, 10, 15, 30, 60, 180, 360, 720, 1440)
@@ -116,6 +117,7 @@ async def events(pool: Any, rng: TimeRange) -> list[dict]:
     return [{**dict(r), "details": _json(r["details"])} for r in rows]
 
 
-def fresh_since(now: datetime, minutes: int = 3 * SAMPLE_MINUTES) -> datetime:
-    """Samples older than this are not "now" (three missed ticks)."""
-    return now.astimezone(timezone.utc) - timedelta(minutes=minutes)
+def fresh_since(now: datetime) -> datetime:
+    """Samples older than this are not "now": ``cis.ops.status_stale_factor`` x the sampler's 5-minute tick (the
+    page's one freshness setting, used by every section that reads the latest samples)."""
+    return now.astimezone(timezone.utc) - timedelta(minutes=SAMPLE_MINUTES * th.stale_factor())

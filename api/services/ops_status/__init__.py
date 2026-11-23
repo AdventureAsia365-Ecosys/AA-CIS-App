@@ -4,8 +4,9 @@
 ``build_status(pool, redis, ...)`` assembles, side by side, sections that each carry their own ``as_of`` and refresh
 time and degrade on their own (S285 advisory phase 1-2, mockup v2 approved 19/11):
 
-- ``signals``  golden-signal series (CloudWatch GetMetricData in the range's chart step, cached 5 minutes per range
-               in Redis; never without Redis: no AWS call per page view), with the previous period when ``compare``;
+- ``signals``  golden-signal series (CloudWatch GetMetricData in the range's chart step, read on a 5-minute grid and
+               cached 5 minutes in Redis, the previous period hourly; never without Redis: no AWS call per page
+               view), with the previous period when ``compare``;
 - ``apps``     one tile per app: traffic totals coloured by the page's limits, overall health (one definition,
                ``app_health``), deployed commit, readiness, the activity line;
 - ``runtimes`` ECS services and health checks with the uptime strip against the objective (the 5-minute sampler,
@@ -21,8 +22,11 @@ time and degrade on their own (S285 advisory phase 1-2, mockup v2 approved 19/11
 ``verdict`` (``verdict.decide``) turns them into one sentence and the Needs attention list; ``thresholds`` lists every
 limit with its settings key (``shared/ops_status_thresholds.py``, CIS 475) so the page draws it and links Settings;
 ``sources`` gives each section's source, refresh time, ``as_of`` and whether it is stale (older than
-``cis.ops.status_stale_factor`` x its refresh time). Cost: CloudWatch about 0.00025 USD per range a cache miss
-(0.0005 with compare), everything else free reads; no new AWS service, no new IAM, no new cross-app grant.
+``cis.ops.status_stale_factor`` x its refresh time). Cost: CloudWatch about 0.00025 USD a cache miss (about 25
+metrics); the current period misses at most once per 5 minutes per preset (``fetch_range``: a live range is read on
+a 5-minute grid, so the 1 h view does not miss on each 60 s refresh) and the previous period once an hour, so a
+view left open all day is about 288 misses, 0.07 USD a day at most (about 2 USD a month, shared by every viewer of
+the same preset); everything else free reads; no new AWS service, no new IAM, no new cross-app grant.
 """
 from __future__ import annotations
 
@@ -41,6 +45,8 @@ logger = structlog.get_logger()
 
 KEY_PREFIX = "admin:overview:status"
 SIGNALS_TTL_S = 300  # technical-constant: cache refresh of a read (Redis TTL)
+PREVIOUS_TTL_S = 3600  # technical-constant: cache life of a complete past period (Redis TTL)
+PREVIOUS_GRID_S = 3600  # technical-constant: read grid of a past period, so its cache key moves hourly
 COST_TTL_S = 900  # technical-constant: cache refresh of a read (Redis TTL)
 
 SOURCES = {
@@ -62,12 +68,67 @@ def range_of(range_key: Optional[str], start: Optional[str], end: Optional[str],
     return resolve(range_key, start, end, now=now or datetime.now(timezone.utc), history_days=th.history_days())
 
 
-async def _signals(redis: Any, rng: TimeRange) -> dict:
-    async def compute() -> dict:
-        return await asyncio.to_thread(cw_series.collect, rng)
+def _epoch_floor(t: datetime, step_s: int) -> datetime:
+    e = int(t.timestamp())
+    return datetime.fromtimestamp(e - e % step_s, tz=timezone.utc)
 
-    name = f"signals:{rng.key}:{int(rng.start.timestamp())}:{int(rng.end.timestamp())}:{rng.step_s}"
-    return await cache.cached_section(redis, name, SIGNALS_TTL_S, compute, needs_cache=True, key_prefix=KEY_PREFIX)
+
+def _epoch_ceil(t: datetime, step_s: int) -> datetime:
+    f = _epoch_floor(t, step_s)
+    return f if f == t else f + timedelta(seconds=step_s)
+
+
+def fetch_range(rng: TimeRange, *, previous: bool = False) -> TimeRange:
+    """The range actually read from CloudWatch (and the cache key) for the page's range ``rng``. Pure.
+
+    A live preset moves with the clock (the 1 h view every minute), so reading it as is would make every refresh a
+    paid cache miss. The current period is read on a grid of ``max(step, SIGNALS_TTL_S)``: its end is rounded up to
+    that grid (the same span, at most 4 steps later), so the key moves at most every 5 minutes. A previous period
+    (compare) is complete and will not change: it is read on an hourly grid, widened to cover the page's range, and
+    cached ``PREVIOUS_TTL_S``. A custom range is fixed and read as is. Same step, so every bucket of the fetch lies
+    on the page's grid (:func:`relay`)."""
+    if not rng.is_live:
+        return rng
+    if previous:
+        grid = max(rng.step_s, PREVIOUS_GRID_S)
+        return TimeRange(rng.key, _epoch_floor(rng.start, grid), _epoch_ceil(rng.end, grid), rng.step_s)
+    grid = max(rng.step_s, SIGNALS_TTL_S)
+    end = _epoch_ceil(rng.end, grid)
+    return TimeRange(rng.key, end - rng.span, end, rng.step_s)
+
+
+def relay(sig: dict, src: TimeRange, dst: TimeRange) -> dict:
+    """The series of a fetch over ``src`` laid on the page's range ``dst`` (same step): a step ``src`` does not
+    cover is None. Totals stay those of the fetch (the same span; the steps it adds lie after now). Pure."""
+    if sig.get("status") != "ok" or src == dst:
+        return sig
+    n_src = len(src.buckets())
+    index = {int(b.timestamp()): i for i, b in enumerate(src.buckets())}
+    picks = [index.get(int(b.timestamp())) for b in dst.buckets()]
+
+    def lay(values: Any) -> Any:
+        if not isinstance(values, list) or len(values) != n_src:
+            return values
+        return [None if i is None else values[i] for i in picks]
+
+    out = dict(sig)
+    out["apps"] = {app: {k: lay(v) for k, v in s.items()} for app, s in (sig.get("apps") or {}).items()}
+    if isinstance(sig.get("rds"), dict):
+        out["rds"] = {k: lay(v) for k, v in sig["rds"].items()}
+    return out
+
+
+async def _signals(redis: Any, rng: TimeRange, *, previous: bool = False) -> dict:
+    src = fetch_range(rng, previous=previous)
+
+    async def compute() -> dict:
+        return await asyncio.to_thread(cw_series.collect, src)
+
+    kind = "signals_prev" if previous else "signals"
+    name = f"{kind}:{src.key}:{int(src.start.timestamp())}:{int(src.end.timestamp())}:{src.step_s}"
+    ttl = PREVIOUS_TTL_S if previous else SIGNALS_TTL_S
+    sig = await cache.cached_section(redis, name, ttl, compute, needs_cache=True, key_prefix=KEY_PREFIX)
+    return relay(sig, src, rng)
 
 
 async def _cost(redis: Any, pool: Any, now: datetime) -> dict:
@@ -89,8 +150,8 @@ async def _cards(pool: Any, redis: Any) -> dict[str, dict]:
 
 
 async def _health(pool: Any, now: datetime) -> dict[str, dict]:
-    fresh_after = now - timedelta(minutes=store.SAMPLE_MINUTES * th.stale_factor())
-    rows = await store.latest(pool, ["app_health"], now - timedelta(days=1))
+    fresh_after = store.fresh_since(now)
+    rows = await store.latest(pool, ["app_health"], now - timedelta(days=th.history_days()))
     return {r["subject"]: {"state": r["state"] if r["sampled_at"] >= fresh_after else "no_sample",
                            "reason": r["value"].get("reason"), "sampled_at": r["sampled_at"].isoformat()}
             for r in rows}
@@ -146,7 +207,7 @@ async def build_status(pool: Any, redis: Any = None, *, range_key: Optional[str]
         return None
 
     sig, sig_prev, cards, acts, health = await asyncio.gather(
-        _signals(redis, rng), _signals(redis, prev) if prev else none(), _cards(pool, redis),
+        _signals(redis, rng), _signals(redis, prev, previous=True) if prev else none(), _cards(pool, redis),
         sections.run("activity", sections.activity(pool, rng)), _health(pool, now))
     run = sections.run
     rt, res, jobs, ai, cost, ev_src, dl = await asyncio.gather(

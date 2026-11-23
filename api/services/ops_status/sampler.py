@@ -8,7 +8,8 @@ One tick, each part on its own (a failing part is named in the result, the other
   the image tag is cached). One ``ecs_service`` sample per service (running / desired / pending, rollout, revision,
   image tag) and the events: every deployment the service lists becomes a ``deploy`` event (dedupe
   ``deploy:<deployment id>``, at its creation time; ``ended_at`` when its rollout completed), a failed rollout a
-  ``rollout_failed`` event (SEV2), a service below its desired count a ``service_down`` event until it is back.
+  ``rollout_failed`` event (SEV2) until a later rollout of the service completed or ECS no longer lists the failed
+  deployment, a service below its desired count a ``service_down`` event until it is back.
 - ``alarms``: CloudWatch DescribeAlarms (free) grouped by App tag as the overview does; one ``alarms`` sample (names,
   apps, severities) and an ``alarm`` event per firing period (dedupe ``alarm:<name>:<state change time>``), closed
   (``ended_at``) on the first tick that no longer sees it firing.
@@ -159,6 +160,27 @@ def deploy_events(app: str, role: str, name: str, svc: dict) -> list[dict]:
     return out
 
 
+def failing_rollout_keys(svc: dict) -> set[str]:
+    """The ``rollout_failed`` dedupe keys of one service that are still a problem now: a deployment the service
+    still lists as FAILED, unless a PRIMARY deployment created after it completed its rollout (a rollback or a later
+    deploy that went through). A key not returned is closed by the tick (``ecs_part``). Pure."""
+    deps = svc.get("deployments") or []
+    primary = next((d for d in deps if d.get("status") == "PRIMARY"), {})
+    primary_done = primary.get("rolloutState") == "COMPLETED"
+    primary_at = _ts(primary.get("createdAt"))
+    out = set()
+    for d in deps:
+        did = str(d.get("id") or "")
+        if not did or d.get("rolloutState") != "FAILED":
+            continue
+        created = _ts(d.get("createdAt"))
+        superseded = (primary_done and d is not primary and primary_at is not None and created is not None
+                      and primary_at > created)
+        if not superseded:
+            out.add(f"rollout_failed:{did}"[:300])
+    return out
+
+
 def alarm_firing(alarms: dict) -> list[dict]:
     """[{name, app, severity, since, description}] of every firing alarm in the fetch_alarms buckets. Pure."""
     out = []
@@ -260,12 +282,14 @@ async def write_events(pool, events: list[dict], job_id: Optional[str]) -> int:
     return len(events)
 
 
-async def _close_missing(pool, kind: str, still_open: set[str], at: datetime) -> int:
-    """Close the open events of ``kind`` whose dedupe key is not in ``still_open``."""
+async def _close_missing(pool, kind: str, still_open: set[str], at: datetime,
+                         keep_subjects: frozenset[str] = frozenset()) -> int:
+    """Close the open events of ``kind`` whose dedupe key is not in ``still_open`` (events of a subject in
+    ``keep_subjects``, one this tick could not see, stay as they are)."""
     rows = await pool.fetch(OPEN_EVENTS_SQL, kind)
     n = 0
     for r in rows:
-        if r["dedupe_key"] not in still_open:
+        if r["dedupe_key"] not in still_open and r["subject"] not in keep_subjects:
             await pool.execute(CLOSE_EVENT_SQL, r["event_id"], at)
             n += 1
     return n
@@ -277,12 +301,17 @@ async def ecs_part(pool, env: str, at: datetime, job_id: Optional[str], out: dic
     described = await asyncio.to_thread(describe_services, env, client)
     samples, events = [], []
     bad_now: dict[str, tuple[str, str]] = {}
+    failing: set[str] = set()
+    unseen: set[str] = set()
     for app, role, name in service_names(env):
         svc = described.get(name)
         value = service_sample(app, role, svc)
         samples.append((at, "ecs_service", name, app, value["state"], value))
         if svc is not None:
             events.extend(deploy_events(app, role, name, svc))
+            failing |= failing_rollout_keys(svc)
+        else:
+            unseen.add(name)
         if value["state"] in DOWN_STATES:
             bad_now[name] = (app, value["reason"])
     out["ecs_samples"] = await _write_samples(pool, samples, job_id)
@@ -299,6 +328,8 @@ async def ecs_part(pool, env: str, at: datetime, job_id: Optional[str], out: dic
     out["ecs_events"] = await write_events(pool, events, job_id)
     keep = {key for name, key in open_by_subject.items() if name in bad_now}
     out["ecs_closed"] = await _close_missing(pool, "service_down", keep, at)
+    # rollout_failed: closed once a later rollout completed or ECS no longer lists the failed deployment
+    out["rollout_closed"] = await _close_missing(pool, "rollout_failed", failing, at, frozenset(unseen))
     if described.get("__missing__"):
         out["ecs_missing"] = described["__missing__"]
 
