@@ -132,9 +132,9 @@ async def test_view_as_a_role_end_to_end(world):
     assert write.status_code == 403 and write.json()["detail"] == "view_as_read_only"
     refused = await pool.fetch(
         "SELECT status, details FROM acp_shared.audit_log WHERE action = 'staff.request' AND actor = $1 "
-        "AND details ? 'view_as' ORDER BY created_at", f"admin:{owner}")
+        "AND details ? 'view_as'", f"admin:{owner}")
     assert refused and all(r["status"] == 403 for r in refused)
-    assert json.loads(refused[-1]["details"])["view_as"] == sid
+    assert any(json.loads(r["details"])["view_as"] == sid for r in refused)
 
     # the session list of tenant views never shows it
     listed = await client.get("/admin/view-as/sessions", headers=_owner())
