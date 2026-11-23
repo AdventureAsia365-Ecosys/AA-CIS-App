@@ -16,10 +16,11 @@ import {
   type ColumnDef,
 } from "../../../_kit";
 import {
-  ROLES_PATH, cisCapabilityColumns, matchesFilter, matrixRows, rowsForApp, type MatrixRow, type RoleApp,
+  ROLES_PATH, canViewAsRow, cisCapabilityColumns, matchesFilter, matrixRows, rowsForApp, type MatrixRow, type RoleApp,
   type RolesCatalogue,
 } from "@/lib/rolesMatrix";
 import { ROLES } from "./messages";
+import { RoleViewStart } from "./RoleViewStart";
 
 const small = { fontSize: 12, color: K.muted, lineHeight: 1.5 } as const;
 
@@ -53,7 +54,9 @@ function KindBadges({ row, t }: { row: MatrixRow; t: RT }) {
   );
 }
 
-function AppTable({ app, rows, t, testId }: { app: RoleApp; rows: MatrixRow[]; t: RT; testId: string }) {
+function AppTable({ app, rows, t, testId, canViewAs = false }: {
+  app: RoleApp; rows: MatrixRow[]; t: RT; testId: string; canViewAs?: boolean;
+}) {
   const columns = useMemo<ColumnDef<MatrixRow, unknown>[]>(() => [
     { id: "role", header: t("colRole"), accessorFn: (r) => r.label,
       cell: ({ row: { original: r } }) => (
@@ -72,7 +75,14 @@ function AppTable({ app, rows, t, testId }: { app: RoleApp; rows: MatrixRow[]; t
     } as ColumnDef<MatrixRow, unknown>]),
     { id: "perms", header: t("colPermissions"), accessorFn: (r) => (r.capabilities ?? []).join(" "),
       cell: ({ row: { original: r } }) => <Permissions row={r} t={t} /> },
-  ], [app, t]);
+    // AA-1157: the owner's read-only "view as" (CIS rows only; the API re-checks owner and downward).
+    ...(canViewAs && app === "cis" ? [{
+      id: "viewAs", header: "", enableSorting: false,
+      cell: ({ row: { original: r } }: { row: { original: MatrixRow } }) => (
+        canViewAsRow(r) ? <RoleViewStart role={r.code} label={r.label} /> : null
+      ),
+    } as ColumnDef<MatrixRow, unknown>] : []),
+  ], [app, t, canViewAs]);
   return (
     <DataTable<MatrixRow> tableId={testId} data={rows} columns={columns} getRowId={(r) => r.id} searchable={false}
       paginate={false} compact tableMinWidth={720} />
@@ -105,15 +115,16 @@ function CisMatrix({ rows, t }: { rows: MatrixRow[]; t: RT }) {
 }
 
 /** One app's section: the custom-roles notices, then its table (or "nothing matches"). */
-function AppSection({ app, rows, t, title, note, customAvailable = true, noCustom = false }: {
+function AppSection({ app, rows, t, title, note, customAvailable = true, noCustom = false, canViewAs = false }: {
   app: RoleApp; rows: MatrixRow[]; t: RT; title: string; note: string; customAvailable?: boolean; noCustom?: boolean;
+  canViewAs?: boolean;
 }) {
   return (
     <Section title={title} description={note} padded={false} testId={`roles-app-${app}`}>
       {!customAvailable && <div style={{ ...small, color: K.amber, padding: "10px 20px" }} role="status">
         {t("customUnavailable")}</div>}
       {noCustom && <div style={{ ...small, padding: "10px 20px" }}>{t("noCustom")}</div>}
-      {rows.length ? <AppTable app={app} rows={rows} t={t} testId={`roles-${app}`} />
+      {rows.length ? <AppTable app={app} rows={rows} t={t} testId={`roles-${app}`} canViewAs={canViewAs} />
         : <div style={{ ...small, padding: "14px 20px" }}>{t("noMatch")}</div>}
     </Section>
   );
@@ -132,7 +143,7 @@ function Loaded({ data }: { data: RolesCatalogue }) {
           data-testid="roles-filter" />
       </div>
       <AppSection app="cis" rows={rowsForApp(shown, "cis")} t={t} title={t("appCis")} note={t("appCisNote")}
-        customAvailable={data.cis.custom_available} />
+        customAvailable={data.cis.custom_available} canViewAs={data.can_view_as === true} />
       {!query && <CisMatrix rows={all} t={t} />}
       <AppSection app="booking" rows={rowsForApp(shown, "booking")} t={t} title={t("appBooking")}
         note={t("appBookingNote")} customAvailable={data.booking.custom_available} noCustom={noBookingCustom} />

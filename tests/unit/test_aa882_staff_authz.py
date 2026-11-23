@@ -85,8 +85,9 @@ def test_role_perms_match_the_s241_matrix():
 
 
 def test_staff_write_is_owner_only():
-    assert OWNER_PERMS == {"staff.write"}
-    assert not any("staff.write" in perms for perms in ROLE_PERMS.values())
+    # AA-1157: starting a "view as a lower role" session is owner-only too
+    assert OWNER_PERMS == {"staff.write", "staff.view_as_role"}
+    assert not any(perms & OWNER_PERMS for perms in ROLE_PERMS.values())
 
 
 def test_policy_names_known_capabilities_only():
@@ -242,7 +243,9 @@ def _cognito_identity(is_owner):
 
 
 # AA-1155 T13 / T14: the CIS role editor and the people-role presets are staff-directory writes too (owners only).
-_OWNER_PREFIXES = ("/admin/platform/staff", "/admin/platform/roles/cis", "/admin/platform/presets")
+# AA-1157: and the start of a "view as a lower role" session.
+_OWNER_PREFIXES = ("/admin/platform/staff", "/admin/platform/roles/cis", "/admin/platform/presets",
+                   "/admin/view-as/roles")
 
 
 def test_owner_routes_are_the_staff_directory_writes():
@@ -253,15 +256,16 @@ def test_owner_routes_are_the_staff_directory_writes():
 def test_staff_write_needs_an_owner_on_a_cognito_session(key):
     """AA-816 C6: a legacy session (x-admin-role only) is refused even as admin; a Cognito admin who is not an
     owner is refused; a Cognito owner may write as admin only (the directory re-checks the row in its transaction)."""
-    assert denial_reason(principal_from_role("admin"), *key) == staff_authz.STAFF_WRITE_NEEDS_COGNITO
-    assert denial_reason(principal_from_role("admin", _cognito_identity(False)), *key) == \
-        staff_authz.STAFF_WRITE_NEEDS_OWNER
+    capability = POLICY[key]
+    needs_cognito, needs_owner = staff_authz.OWNER_REFUSALS[capability]
+    assert denial_reason(principal_from_role("admin"), *key) == needs_cognito
+    assert denial_reason(principal_from_role("admin", _cognito_identity(False)), *key) == needs_owner
     assert denial_reason(principal_from_role("admin", _cognito_identity(True)), *key) is None
     assert denial_reason(MACHINE, *key) is not None
     assert denial_reason(principal_from_role("tenant", _cognito_identity(True)), *key) == "Unknown staff role"
     for role in ("content",):
         assert denial_reason(principal_from_role(role, _cognito_identity(True)), *key) == \
-            f"Role '{role}' lacks the 'staff.write' permission"
+            f"Role '{role}' lacks the '{capability}' permission"
 
 
 def test_owner_flag_never_comes_from_a_non_cognito_identity():
@@ -488,6 +492,7 @@ _SECRET_BFFS = ["frontend/app/api/tenant/[...path]/route.ts", "frontend/app/api/
                 "frontend/app/api/pipeline/[...path]/route.ts", "frontend/app/api/tour-full/[id]/route.ts",
                 "frontend/app/api/tenant/pipeline/brand-identity/route.ts",
                 "frontend/app/api/view-as/route.ts",   # AA-1035 slice 2: start / read / end a view-as session
+                "frontend/app/api/view-as/roles/route.ts",   # AA-1157: start / read / end a view as a lower role
                 "frontend/app/api/auth/admin-logout/route.ts"]   # AA-1035 S268: sign-out ends own view-as sessions
 
 

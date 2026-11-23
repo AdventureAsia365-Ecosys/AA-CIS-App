@@ -8,7 +8,8 @@ export const SESSION_API = "/api/admin/session";
 export interface SessionHint {
   role: string | null;
   read_only: boolean;
-  reason: "role" | "e2e" | null;
+  /** AA-1157: "view_as" = the owner's read-only "view as a lower role" session. */
+  reason: "role" | "e2e" | "view_as" | null;
 }
 
 /** The API's answer when it has one; otherwise (pending, failed) the role cookie's own rule. */

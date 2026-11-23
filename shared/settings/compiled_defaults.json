@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql, 469_aa1171_ops_thresholds_and_recipient_topic.sql, 472_aa1172_fact_instruction_guard.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql, 469_aa1171_ops_thresholds_and_recipient_topic.sql, 471_aa1174_compliance_obligations.sql, 472_aa1172_fact_instruction_guard.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -770,6 +770,114 @@
    }
   },
   {
+   "key": "cis.compliance.applicability_review_max_age_days",
+   "app": "cis",
+   "area": "compliance",
+   "label": "Compliance: days before an applicability verdict needs a review",
+   "description": "Platform > Compliance (AA-1174): a row of the applicability matrix (which law applies to which market and data segment) assessed longer ago than this many days shows a Review due badge on the Obligations tab. Display only: it never changes an obligation state.",
+   "value_type": "int",
+   "unit": "days",
+   "min_value": 1,
+   "max_value": 730,
+   "allowed_values": null,
+   "default_value": 180,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How old a verdict of the applicability matrix may be before it is marked for review.",
+     "raise": "Verdicts are flagged for review less often; a changed law or threshold may be missed longer.",
+     "lower": "Verdicts are flagged for review more often.",
+     "when": "Keep about half a year; laws and thresholds change yearly at most.",
+     "example": "With the default 180, a verdict assessed on 23 November shows Review due from 22 May."
+    },
+    "vi": {
+     "what": "Một kết luận trong ma trận áp dụng được bao nhiêu ngày thì bị đánh dấu cần rà soát lại.",
+     "raise": "Kết luận ít bị đánh dấu rà soát hơn; luật hoặc ngưỡng thay đổi có thể bị bỏ sót lâu hơn.",
+     "lower": "Kết luận bị đánh dấu rà soát thường hơn.",
+     "when": "Giữ khoảng nửa năm; luật và ngưỡng thường đổi nhiều nhất mỗi năm một lần.",
+     "example": "Với mặc định 180, kết luận đánh giá ngày 23 tháng 11 hiện Cần rà soát từ ngày 22 tháng 5."
+    }
+   }
+  },
+  {
+   "key": "cis.compliance.campaign_consent_violations_max",
+   "app": "cis",
+   "area": "compliance",
+   "label": "Compliance: marketing sends allowed without consent",
+   "description": "Platform > Compliance (AA-1174): the check campaign_consent_enforced passes while the partner CRM counts at most this many marketing messages sent in the window (cis.compliance.campaign_consent_window_days) to a contact whose latest marketing consent at send time was not a yes, or who was on the suppression list. Counts only, across agencies.",
+   "value_type": "int",
+   "unit": "sends",
+   "min_value": 0,
+   "max_value": 1000,
+   "allowed_values": null,
+   "default_value": 0,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many marketing messages sent without a yes may be tolerated while the campaign consent check still passes.",
+     "raise": "Sends without consent are tolerated; the marketing obligations read met although the rule was broken.",
+     "lower": "Any send without consent turns the marketing obligations to not met.",
+     "when": "Keep 0: the consent gate should make a violation impossible, so one is a bug to fix.",
+     "example": "With the default 0, one message sent to a contact who had said no fails the check."
+    },
+    "vi": {
+     "what": "Bao nhiêu tin marketing gửi khi chưa có đồng ý được chấp nhận mà check đồng ý chiến dịch vẫn đạt.",
+     "raise": "Tin gửi khi chưa đồng ý được bỏ qua; nghĩa vụ marketing vẫn đạt dù luật đã bị vi phạm.",
+     "lower": "Bất kỳ tin nào gửi khi chưa đồng ý làm nghĩa vụ marketing thành chưa đạt.",
+     "when": "Giữ 0: cổng đồng ý phải chặn hết, nên có một vi phạm là lỗi cần sửa.",
+     "example": "Với mặc định 0, một tin gửi cho người đã từ chối làm check không đạt."
+    }
+   }
+  },
+  {
+   "key": "cis.compliance.campaign_consent_window_days",
+   "app": "cis",
+   "area": "compliance",
+   "label": "Compliance: days of campaign sends the consent check reads",
+   "description": "Platform > Compliance (AA-1174): how many days back the partner CRM counts marketing sends and consent decisions for the campaign consent and consent capture checks (passed to the CRM's read-only privacy evidence route, which caps it).",
+   "value_type": "int",
+   "unit": "days",
+   "min_value": 1,
+   "max_value": 365,
+   "allowed_values": null,
+   "default_value": 30,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How far back the campaign consent check looks at marketing messages sent by the partner CRM.",
+     "raise": "Older sends are checked too; the count covers more campaigns.",
+     "lower": "Only recent sends are checked; an old violation drops out of the count sooner.",
+     "when": "Keep a month; widen it after a fix to show the history is clean.",
+     "example": "With the default 30, a check on 30 November reads sends from 31 October on."
+    },
+    "vi": {
+     "what": "Check đồng ý chiến dịch xem lại các tin marketing CRM đối tác đã gửi trong bao nhiêu ngày.",
+     "raise": "Kiểm cả tin gửi cũ hơn; số đếm bao nhiều chiến dịch hơn.",
+     "lower": "Chỉ kiểm tin gửi gần đây; vi phạm cũ ra khỏi số đếm sớm hơn.",
+     "when": "Giữ một tháng; nới rộng sau khi sửa lỗi để cho thấy lịch sử sạch.",
+     "example": "Với mặc định 30, lượt kiểm ngày 30 tháng 11 đọc các tin gửi từ ngày 31 tháng 10."
+    }
+   }
+  },
+  {
    "key": "cis.compliance.ci_scan_max_age_days",
    "app": "cis",
    "area": "compliance",
@@ -842,6 +950,42 @@
    }
   },
   {
+   "key": "cis.compliance.consent_capture_max_age_days",
+   "app": "cis",
+   "area": "compliance",
+   "label": "Compliance: days since the CRM last recorded a consent decision",
+   "description": "Platform > Compliance (AA-1174): the check consent_capture_present passes while the newest consent decision the partner CRM recorded (any agency, any purpose; counts and dates only) is at most this many days old. Older, consent capture is not shown to be working and the consent obligations read not met.",
+   "value_type": "int",
+   "unit": "days",
+   "min_value": 1,
+   "max_value": 730,
+   "allowed_values": null,
+   "default_value": 90,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How recent the newest consent decision recorded in the partner CRM must be for the consent capture check to pass.",
+     "raise": "A consent form that stopped recording is noticed later.",
+     "lower": "Consent must be recorded more often (by real use or a test) to keep the obligation met.",
+     "when": "Keep a quarter while agencies are few; shorten it once agencies collect consent every week.",
+     "example": "With the default 90, a last decision recorded on 1 September counts until 30 November."
+    },
+    "vi": {
+     "what": "Quyết định đồng ý mới nhất CRM đối tác ghi nhận phải mới tới đâu thì check ghi nhận đồng ý mới đạt.",
+     "raise": "Form đồng ý ngừng ghi nhận bị phát hiện muộn hơn.",
+     "lower": "Phải có quyết định đồng ý được ghi thường hơn (dùng thật hoặc thử) để giữ nghĩa vụ đạt.",
+     "when": "Giữ một quý khi còn ít đại lý; rút ngắn khi đại lý thu đồng ý hằng tuần.",
+     "example": "Với mặc định 90, quyết định cuối ghi ngày 1 tháng 9 được tính tới ngày 30 tháng 11."
+    }
+   }
+  },
+  {
    "key": "cis.compliance.docs_overdue_max",
    "app": "cis",
    "area": "compliance",
@@ -910,6 +1054,78 @@
      "lower": "Phải diễn tập thường hơn để giữ check xanh.",
      "when": "Giữ ở một quý khi còn ở Dev; rút ngắn khi có prod.",
      "example": "Với mặc định 90, lượt diễn tập đạt ngày 1 tháng 9 được tính tới ngày 30 tháng 11."
+    }
+   }
+  },
+  {
+   "key": "cis.compliance.erasure_drill_max_age_days",
+   "app": "cis",
+   "area": "compliance",
+   "label": "Compliance: days a live erasure drill counts",
+   "description": "Platform > Compliance (AA-1174): the check last_erasure_drill passes while the newest live erasure drill in the root retention and erasure run log (docs/legal/retention-log.md, Runs) is at most this many days old. Older, the data subject request obligations it backs read not met.",
+   "value_type": "int",
+   "unit": "days",
+   "min_value": 1,
+   "max_value": 730,
+   "allowed_values": null,
+   "default_value": 180,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How recent the last live erasure drill must be for the erasure drill check to pass.",
+     "raise": "Older drills still count; the erasure procedure may have changed since it was last tried for real.",
+     "lower": "Erasure drills must be repeated more often to keep the obligation met.",
+     "when": "Keep it at about half a year while on Dev; shorten it once real travellers' data is held.",
+     "example": "With the default 180, a drill run on 31 October counts until 29 April."
+    },
+    "vi": {
+     "what": "Lượt diễn tập xóa dữ liệu thật gần nhất phải mới tới đâu thì check diễn tập xóa mới đạt.",
+     "raise": "Diễn tập cũ hơn vẫn được tính; quy trình xóa có thể đã đổi từ lần thử thật gần nhất.",
+     "lower": "Phải diễn tập xóa thường hơn để giữ nghĩa vụ đạt.",
+     "when": "Giữ khoảng nửa năm khi còn ở Dev; rút ngắn khi đã giữ dữ liệu của khách thật.",
+     "example": "Với mặc định 180, lượt diễn tập ngày 31 tháng 10 được tính tới ngày 29 tháng 4."
+    }
+   }
+  },
+  {
+   "key": "cis.compliance.legal_docs_overdue_max",
+   "app": "cis",
+   "area": "compliance",
+   "label": "Compliance: legal pages allowed past their review cycle",
+   "description": "Platform > Compliance (AA-1174): each legal document check (records of processing, data processing agreement and annexes, sub-processor list, Vietnam transfer dossier, data subject request runbook, consent capture) passes while at most this many of its pages are past their own review cycle (last_reviewed plus the page's review_every_days, the same rule as the weekly docs freshness report). A page that is missing, superseded or undated is an error, whatever this value.",
+   "value_type": "int",
+   "unit": "pages",
+   "min_value": 0,
+   "max_value": 100,
+   "allowed_values": null,
+   "default_value": 0,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many pages of one legal document may be past their own review date while its check still passes.",
+     "raise": "Out-of-date legal pages still count as proof; a stale sub-processor list or agreement is less visible.",
+     "lower": "Every legal page past its review date turns its obligation to not met.",
+     "when": "Keep 0; raise it only for a short catch-up period, with a reason.",
+     "example": "With the default 0, one annex of the processing agreement reviewed 31 days ago on a 30-day cycle fails the agreement check."
+    },
+    "vi": {
+     "what": "Bao nhiêu trang của một tài liệu pháp lý được phép quá hạn rà soát mà check của nó vẫn đạt.",
+     "raise": "Trang pháp lý cũ vẫn được tính là bằng chứng; danh sách bên xử lý phụ hoặc thỏa thuận lỗi thời khó thấy hơn.",
+     "lower": "Mỗi trang pháp lý quá hạn rà soát làm nghĩa vụ của nó thành chưa đạt.",
+     "when": "Giữ 0; chỉ tăng trong một đợt bù việc ngắn, có lý do.",
+     "example": "Với mặc định 0, một phụ lục của thỏa thuận xử lý dữ liệu rà soát cách đây 31 ngày theo chu kỳ 30 ngày làm check thỏa thuận không đạt."
     }
    }
   },
@@ -988,6 +1204,150 @@
      "lower": "Tham chiếu thấp hơn làm khoảng cách trông nhỏ hơn; nó không bao giờ đổi điểm đo được.",
      "when": "Cập nhật sau một lần chấm đầy đủ mới, ghi thư mục bản chấm làm lý do.",
      "example": "Với mặc định, ISO 27001 hiện đường tham chiếu 45,8% cạnh Evidenced %."
+    }
+   }
+  },
+  {
+   "key": "cis.compliance.retention_live_max_age_days",
+   "app": "cis",
+   "area": "compliance",
+   "label": "Compliance: days the newest live retention run of each kind counts",
+   "description": "Platform > Compliance (AA-1174): the check retention_live_enabled passes while every retention job kind of the CIS job runner finished a LIVE run (one that may delete rows) at most this many days ago; the oldest of those newest live runs decides, and a kind with no live run at all fails it. Scheduled runs fall back to DRY RUN after a retention window changes and stay there until a live run of the new window is approved, and a held run deletes nothing either, so recent runs alone do not prove old data goes. Older, the storage limitation obligations it backs read not met.",
+   "value_type": "int",
+   "unit": "days",
+   "min_value": 1,
+   "max_value": 90,
+   "allowed_values": null,
+   "default_value": 7,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How recent the newest live run (one that really deletes old rows) of every retention job must be for the live retention check to pass.",
+     "raise": "Retention jobs that fell back to DRY RUN, or keep being held, still count as deleting old data for longer.",
+     "lower": "A short wait for the approval of a live run after a window change turns the storage limitation obligation to not met.",
+     "when": "Keep it a few days above the time an approval of a live run usually takes; the jobs run daily.",
+     "example": "With the default 7, a kind whose last live run finished 8 days ago, followed only by DRY RUN runs, fails the check."
+    },
+    "vi": {
+     "what": "Lượt chạy thật (xóa thật dữ liệu cũ) mới nhất của mỗi job dọn dữ liệu phải mới tới đâu thì check dọn dữ liệu thật mới đạt.",
+     "raise": "Job dọn dữ liệu đã quay về chạy thử, hoặc liên tục bị giữ lại, vẫn được tính là đang xóa dữ liệu cũ lâu hơn.",
+     "lower": "Chỉ chờ duyệt một lượt chạy thật sau khi đổi thời hạn lưu một chút là nghĩa vụ giới hạn lưu trữ thành chưa đạt.",
+     "when": "Giữ cao hơn thời gian thường cần để duyệt một lượt chạy thật vài ngày; các job chạy hằng ngày.",
+     "example": "Với mặc định 7, một loại job có lượt chạy thật cuối cách đây 8 ngày, sau đó chỉ chạy thử, làm check không đạt."
+    }
+   }
+  },
+  {
+   "key": "cis.compliance.retention_run_max_age_days",
+   "app": "cis",
+   "area": "compliance",
+   "label": "Compliance: days the newest retention run of each kind counts",
+   "description": "Platform > Compliance (AA-1174): the check retention_runs_recent passes while every retention job kind of the CIS job runner (llm call log, tenant API usage, jobs, decision log, cost snapshots) finished a run at most this many days ago; the oldest of those newest runs decides. Older, the storage limitation obligations it backs read not met: a retention schedule that stopped is not evidence.",
+   "value_type": "int",
+   "unit": "days",
+   "min_value": 1,
+   "max_value": 90,
+   "allowed_values": null,
+   "default_value": 3,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How recent the newest run of every retention job must be for the retention check to pass.",
+     "raise": "A retention schedule that stopped is noticed later.",
+     "lower": "A single missed daily run turns the retention obligation to not met.",
+     "when": "Keep it a little above a day times the runs you accept to miss; the jobs run daily.",
+     "example": "With the default 3, a kind whose last run finished on Monday fails the check from Friday."
+    },
+    "vi": {
+     "what": "Lượt chạy mới nhất của mỗi job dọn dữ liệu phải mới tới đâu thì check dọn dữ liệu mới đạt.",
+     "raise": "Lịch dọn dữ liệu ngừng chạy bị phát hiện muộn hơn.",
+     "lower": "Chỉ lỡ một lượt chạy hằng ngày là nghĩa vụ giới hạn lưu trữ thành chưa đạt.",
+     "when": "Giữ cao hơn một ngày nhân số lượt chạy chấp nhận bị lỡ một chút; các job chạy hằng ngày.",
+     "example": "Với mặc định 3, một loại job có lượt chạy cuối xong vào thứ Hai sẽ trượt check từ thứ Sáu."
+    }
+   }
+  },
+  {
+   "key": "cis.compliance.validity_hours.cis_db",
+   "app": "cis",
+   "area": "compliance",
+   "label": "Compliance: hours a check of the CIS database stays valid",
+   "description": "Platform > Compliance (AA-1174): how many hours a result the CIS API collects from its own database (source cis_db: the retention runs of the job runner) counts after it was collected. Older evidence is stale and the privacy obligations it backs read not met. The page collects these results when an administrator presses Refresh evidence.",
+   "value_type": "int",
+   "unit": "hours",
+   "min_value": 1,
+   "max_value": 2160,
+   "allowed_values": null,
+   "default_value": 72,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How long a result the page read from the CIS database still counts as proof.",
+     "raise": "Proof stays valid longer; a retention job that stopped is noticed later.",
+     "lower": "Proof must be fresher; someone has to press Refresh evidence more often.",
+     "when": "Keep it at three days while the results are collected by hand; shorten it once a daily job collects them.",
+     "example": "With the default 72, a result collected on Monday at 09:00 stops counting on Thursday at 09:00."
+    },
+    "vi": {
+     "what": "Một kết quả trang đọc từ database CIS còn được tính là bằng chứng trong bao lâu.",
+     "raise": "Bằng chứng còn hiệu lực lâu hơn; job dọn dữ liệu ngừng chạy bị phát hiện muộn hơn.",
+     "lower": "Bằng chứng phải mới hơn; phải bấm Refresh evidence thường hơn.",
+     "when": "Giữ ba ngày khi kết quả còn được thu bằng tay; rút ngắn khi có job hằng ngày thu.",
+     "example": "Với mặc định 72, kết quả thu lúc 09:00 thứ Hai hết được tính lúc 09:00 thứ Năm."
+    }
+   }
+  },
+  {
+   "key": "cis.compliance.validity_hours.crm_ops",
+   "app": "cis",
+   "area": "compliance",
+   "label": "Compliance: hours a check of the partner CRM stays valid",
+   "description": "Platform > Compliance (AA-1174): how many hours a result the page reads from the partner CRM (source crm_ops: consent capture and campaign sends to opted-in contacts only, counts across agencies) counts after it was collected. Older evidence is stale and the marketing obligations it backs read not met.",
+   "value_type": "int",
+   "unit": "hours",
+   "min_value": 1,
+   "max_value": 2160,
+   "allowed_values": null,
+   "default_value": 72,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How long a result the page read from the partner CRM still counts as proof.",
+     "raise": "Proof stays valid longer; a campaign sent to someone without consent is noticed later.",
+     "lower": "Proof must be fresher; someone has to press Refresh evidence more often.",
+     "when": "Keep it at three days while the results are collected by hand; shorten it once a daily job collects them.",
+     "example": "With the default 72, a result collected on Monday at 09:00 stops counting on Thursday at 09:00."
+    },
+    "vi": {
+     "what": "Một kết quả trang đọc từ CRM đối tác còn được tính là bằng chứng trong bao lâu.",
+     "raise": "Bằng chứng còn hiệu lực lâu hơn; chiến dịch gửi cho người chưa đồng ý bị phát hiện muộn hơn.",
+     "lower": "Bằng chứng phải mới hơn; phải bấm Refresh evidence thường hơn.",
+     "when": "Giữ ba ngày khi kết quả còn được thu bằng tay; rút ngắn khi có job hằng ngày thu.",
+     "example": "Với mặc định 72, kết quả thu lúc 09:00 thứ Hai hết được tính lúc 09:00 thứ Năm."
     }
    }
   },

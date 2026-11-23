@@ -124,6 +124,7 @@ from api.middleware.rate_limit import rate_limit_middleware
 from api.middleware.sentry_context import sentry_context_middleware
 from api.middleware.staff_bearer import StaffBearerMiddleware  # AA-816 C3
 from api.middleware.staff_audit import StaffAuditMiddleware  # AA-884
+from api.middleware.staff_view_as import StaffViewAsGateMiddleware  # AA-1157 — a view-as-a-role session never writes
 from api.middleware.request_id import RequestIdMiddleware, unhandled_error_handler  # AA-871
 from api.middleware.security_headers import SecurityHeadersMiddleware  # AA-1111 S284
 from api.core import readiness  # AA-884 — /health git_sha, /health/ready
@@ -458,6 +459,10 @@ app.add_middleware(ViewAsGateMiddleware)
 # before StaffBearerMiddleware so it sits INSIDE it: it sees the verified Cognito identity StaffBearer puts on the
 # (copied) scope it passes down, and the route template the router writes into that scope. A request StaffBearer
 # refuses (401/403/503 on a bad Cognito token) never reaches it; those are logged as staff_bearer_refused.
+# AA-1157 — registered before StaffAuditMiddleware so it sits INSIDE it (and inside StaffBearerMiddleware, which puts
+# the owner's "view as a lower role" session on the scope): every write of such a session is answered 403
+# view_as_read_only before any route, and the audit middleware logs the refusal.
+app.add_middleware(StaffViewAsGateMiddleware)
 app.add_middleware(StaffAuditMiddleware)
 app.add_middleware(StaffBearerMiddleware)
 app.middleware("http")(sentry_context_middleware)

@@ -298,17 +298,25 @@ GATE_END_CAUSES = frozenset({"expired", "staff_inactive", "role_lost_view_as", "
 GATE_ACTOR = "system:view_as_gate"
 
 
-def ended_audit(*, tenant_id: str, session_id: str, actor: str, end_reason: str, cause: str,
-                session_staff: Optional[str], **extra: Any) -> dict:
-    """The keyword arguments of write_audit_log for one tenant.view_as_ended row: one row per closed session, under
-    that session's own resource id, whatever path ended it (the end route, a new start, the gate)."""
-    from services.acp_shared.audit_log import AdminTenantAuditAction
+def ended_audit(*, tenant_id: Optional[str], session_id: str, actor: str, end_reason: str, cause: str,
+                session_staff: Optional[str], view_role: Optional[str] = None, **extra: Any) -> dict:
+    """The keyword arguments of write_audit_log for one ended row: one row per closed session, under that session's
+    own resource id, whatever path ended it (the end route, a new start, the gate, sign-out / disable).
 
+    AA-1157: a "view as a lower role" session (``view_role`` set, no tenant) is a ``staff.view_as_ended`` row with no
+    tenant and the role in its details; a tenant session stays ``tenant.view_as_ended`` under its tenant."""
+    from services.acp_shared.audit_log import AdminTenantAuditAction, StaffViewAsAuditAction
+
+    details = {"session_id": session_id, "end_reason": end_reason, "cause": cause, "session_staff": session_staff,
+               **extra}
+    if view_role:
+        return {
+            "tenant_id": None, "actor": actor[:64], "action": StaffViewAsAuditAction.ENDED,
+            "resource_type": AUDIT_RESOURCE, "resource_id": session_id, "details": {**details, "view_role": view_role},
+        }
     return {
         "tenant_id": tenant_id, "actor": actor[:64], "action": AdminTenantAuditAction.VIEW_AS_ENDED,
-        "resource_type": AUDIT_RESOURCE, "resource_id": session_id,
-        "details": {"session_id": session_id, "end_reason": end_reason, "cause": cause,
-                    "session_staff": session_staff, **extra},
+        "resource_type": AUDIT_RESOURCE, "resource_id": session_id, "details": details,
     }
 
 
@@ -343,7 +351,7 @@ _CLOSE_ALL_SQL = (
     "end_reason = CASE WHEN expires_at <= now() THEN 'expired' ELSE $2 END "
     "WHERE {column} = $1::uuid AND ended_at IS NULL "
     "RETURNING session_id::text AS session_id, tenant_id::text AS tenant_id, admin_user_id::text AS session_staff, "
-    "end_reason"
+    "end_reason, view_role"
 )
 CLOSE_TENANT_SESSIONS_SQL = _CLOSE_ALL_SQL.format(column="tenant_id")
 CLOSE_STAFF_SESSIONS_SQL = _CLOSE_ALL_SQL.format(column="admin_user_id")
@@ -354,7 +362,8 @@ BULK_END_CAUSES = frozenset({"tenant_offboarded", "staff_disabled", "staff_signe
 async def close_open_sessions(conn: Any, *, actor: str, cause: str, tenant_id: Optional[str] = None,
                               staff_id: Optional[str] = None, end_reason: str = "revoked") -> list[dict]:
     """End every open view-as session of ``tenant_id`` (offboarding) or of ``staff_id`` (the staff member disabled or
-    signed out) in the caller's transaction, and write one ``tenant.view_as_ended`` row per closed session (cause
+    signed out; AA-1157: its "view as a lower role" sessions too, each a ``staff.view_as_ended`` row) in the caller's
+    transaction, and write one ``tenant.view_as_ended`` row per closed tenant session (cause
     ``cause``, actor ``actor``). Exactly one of the two ids. Returns the closed sessions ({session_id, tenant_id,
     session_staff, end_reason}).
 
@@ -373,10 +382,10 @@ async def close_open_sessions(conn: Any, *, actor: str, cause: str, tenant_id: O
     except asyncpg.UndefinedTableError:                 # before CIS 364: nothing to close
         logger.warning("view_as_close_all_unavailable", cause=cause)
         return []
-    for r in rows:
+    for r in rows:   # AA-1157: a staff member's sessions may be of either kind (tenant or staff role)
         await write_audit_log(conn, **ended_audit(
             tenant_id=r["tenant_id"], session_id=r["session_id"], actor=actor, end_reason=r["end_reason"],
-            cause=cause, session_staff=r["session_staff"]))
+            cause=cause, session_staff=r["session_staff"], view_role=r.get("view_role")))
     if rows:
         logger.info("view_as_sessions_closed", cause=cause, sessions=len(rows))
     return rows

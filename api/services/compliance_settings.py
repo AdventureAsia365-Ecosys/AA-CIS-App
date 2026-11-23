@@ -13,11 +13,19 @@ settings-lint reader check, tests/unit/test_s279_settings_lint.py).
   count check tolerates. ``CI_SCAN_MAX_AGE_DAYS`` grades the date of the oldest newest image scan, so a CI scan that
   stopped running fails instead of passing on an old run.
 - ``REFERENCE_SCORES``: the S286 hand-assessed score per framework, the reference line (display only).
+
+AA-1174 (S288, CIS 471) adds the privacy evidence: two sources the API collects itself (``cis_db``: the retention runs
+of the job runner; ``crm_ops``: consent capture and campaign sends to opted-in contacts, counts from the partner CRM),
+the legal document checks of the root collector (graded on pages past their own review cycle), the erasure drill age,
+and ``APPLICABILITY_REVIEW_MAX_AGE_DAYS`` (display only: when a verdict of the applicability matrix shows "Review due").
+``CAMPAIGN_CONSENT_WINDOW_DAYS`` is the window the CRM counts sends over (a query parameter the CRM caps).
 """
 from __future__ import annotations
 
 # source -> key: how many hours a result of that collector counts (phase 1: the root daily collector only)
-VALIDITY_HOURS = {"root_daily": "cis.compliance.validity_hours.root_daily"}
+VALIDITY_HOURS = {"root_daily": "cis.compliance.validity_hours.root_daily",
+                  "cis_db": "cis.compliance.validity_hours.cis_db",      # AA-1174 (471)
+                  "crm_ops": "cis.compliance.validity_hours.crm_ops"}    # AA-1174 (471)
 HEARTBEAT_HOURS = "cis.compliance.collector_heartbeat_hours"
 PARTIAL_WEIGHT = "cis.compliance.partial_weight"
 DRILL_MAX_AGE_DAYS = "cis.compliance.drill_max_age_days"
@@ -25,6 +33,20 @@ ACCESS_REVIEW_MAX_AGE_DAYS = "cis.compliance.access_review_max_age_days"
 DOCS_OVERDUE_MAX = "cis.compliance.docs_overdue_max"
 CI_SCAN_MAX_AGE_DAYS = "cis.compliance.ci_scan_max_age_days"
 REFERENCE_SCORES = "cis.compliance.reference_scores"
+# AA-1174 (CIS 471)
+LEGAL_DOCS_OVERDUE_MAX = "cis.compliance.legal_docs_overdue_max"
+ERASURE_DRILL_MAX_AGE_DAYS = "cis.compliance.erasure_drill_max_age_days"
+RETENTION_RUN_MAX_AGE_DAYS = "cis.compliance.retention_run_max_age_days"
+RETENTION_LIVE_MAX_AGE_DAYS = "cis.compliance.retention_live_max_age_days"
+CONSENT_CAPTURE_MAX_AGE_DAYS = "cis.compliance.consent_capture_max_age_days"
+CAMPAIGN_CONSENT_VIOLATIONS_MAX = "cis.compliance.campaign_consent_violations_max"
+CAMPAIGN_CONSENT_WINDOW_DAYS = "cis.compliance.campaign_consent_window_days"
+APPLICABILITY_REVIEW_MAX_AGE_DAYS = "cis.compliance.applicability_review_max_age_days"
+
+# AA-1174: the legal document checks of the root collector (tools/compliance/checks.json "legal_docs"); each publishes
+# `overdue` = its pages past their own last_reviewed + review_every_days.
+LEGAL_DOC_CHECKS = ("legal_ropa_reviewed", "legal_dpa_reviewed", "legal_subprocessors_reviewed",
+                    "legal_transfer_dossier_vn", "legal_dsar_runbook_reviewed", "legal_consent_capture_reviewed")
 
 # check_id -> (fact the collector publishes, key, kind): "age_days" = the fact is an ISO date that must be at most the
 # setting's days old at read time; "max" = the fact is a count that must be at most the setting.
@@ -33,7 +55,18 @@ FACT_LIMITS = {
     "last_access_review": ("last_date", ACCESS_REVIEW_MAX_AGE_DAYS, "age_days"),
     "docs_review_overdue": ("overdue", DOCS_OVERDUE_MAX, "max"),
     "ci_image_scan_sbom": ("last_date", CI_SCAN_MAX_AGE_DAYS, "age_days"),
+    # AA-1174 (471)
+    **{cid: ("overdue", LEGAL_DOCS_OVERDUE_MAX, "max") for cid in LEGAL_DOC_CHECKS},
+    "last_erasure_drill": ("last_date", ERASURE_DRILL_MAX_AGE_DAYS, "age_days"),
+    "retention_runs_recent": ("last_date", RETENTION_RUN_MAX_AGE_DAYS, "age_days"),
+    "retention_live_enabled": ("live_last_date", RETENTION_LIVE_MAX_AGE_DAYS, "age_days"),
+    "consent_capture_present": ("last_date", CONSENT_CAPTURE_MAX_AGE_DAYS, "age_days"),
+    "campaign_consent_enforced": ("violations", CAMPAIGN_CONSENT_VIOLATIONS_MAX, "max"),
 }
 
-ALL = (*VALIDITY_HOURS.values(), HEARTBEAT_HOURS, PARTIAL_WEIGHT, DRILL_MAX_AGE_DAYS, ACCESS_REVIEW_MAX_AGE_DAYS,
-       DOCS_OVERDUE_MAX, CI_SCAN_MAX_AGE_DAYS, REFERENCE_SCORES)
+ALL_466 = ("cis.compliance.validity_hours.root_daily", HEARTBEAT_HOURS, PARTIAL_WEIGHT, DRILL_MAX_AGE_DAYS,
+           ACCESS_REVIEW_MAX_AGE_DAYS, DOCS_OVERDUE_MAX, CI_SCAN_MAX_AGE_DAYS, REFERENCE_SCORES)
+ALL_471 = (VALIDITY_HOURS["cis_db"], VALIDITY_HOURS["crm_ops"], LEGAL_DOCS_OVERDUE_MAX, ERASURE_DRILL_MAX_AGE_DAYS,
+           RETENTION_RUN_MAX_AGE_DAYS, RETENTION_LIVE_MAX_AGE_DAYS, CONSENT_CAPTURE_MAX_AGE_DAYS,
+           CAMPAIGN_CONSENT_VIOLATIONS_MAX, CAMPAIGN_CONSENT_WINDOW_DAYS, APPLICABILITY_REVIEW_MAX_AGE_DAYS)
+ALL = ALL_466 + ALL_471
