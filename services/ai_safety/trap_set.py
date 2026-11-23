@@ -236,7 +236,8 @@ _BUILDERS = {"s1_v2": _s1_case, "t9_blog": _t9_case, "t9_faq": _t9_faq_case, "t2
 def cases(fence: bool, writers: Optional[tuple[str, ...]] = None, guard: bool = True,
           traps: Optional[tuple[str, ...]] = None) -> list[TrapCase]:
     """Every trap of the chosen writers (and trap ids) as the prompts the live builders send in that fence mode, with
-    the Facts instruction guard on (the live default) or off (AA-1172; only the fact traps change)."""
+    the Facts instruction guard on or off, pinned by the caller whatever the live setting says (AA-1172; only the fact
+    traps change)."""
     out = []
     for t in TRAPS:
         if (writers is not None and t.writer not in writers) or (traps is not None and t.id not in traps):

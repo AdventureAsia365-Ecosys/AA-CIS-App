@@ -1026,11 +1026,11 @@ async def _store_fact_sheet(pool, sheet: factsheet.FactSheet, context: dict) -> 
 
 
 def grounding_from_writer_input(writer_input: dict) -> str:
-    """AA-769 (S234) — the same grounding text, rebuilt from a stored piece's `writer_input`
-    (writer_input_snapshot() below), for the admin sentence rewrite and its checks."""
+    """AA-769: grounding rebuilt from a stored `writer_input` (admin sentence rewrite); facts cleaned as in replays."""
+    from services.ai_safety.fact_guard import stored_facts
     wi = writer_input or {}
     return grounding_text_from(
-        seed=wi.get("seed") or "", facts_text=wi.get("facts"), brand_audience=wi.get("brand_pack"),
+        seed=wi.get("seed") or "", facts_text=stored_facts(wi.get("facts")), brand_audience=wi.get("brand_pack"),
         trip_name=wi["writer_trip"] if "writer_trip" in wi else wi.get("trip"), destination=wi.get("destination"),
     )
 

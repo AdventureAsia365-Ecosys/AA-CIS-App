@@ -130,6 +130,15 @@ def test_the_replays_read_the_cleaned_snapshot(monkeypatch):
     ctx = eval_writers._t9_context({"writer_input": {"facts": stored, "seed": "s"}})
     assert "GLIM" not in ctx["facts_text"] and "Ferry tickets cost 4 coins." in ctx["facts_text"]
     assert "GLIM" not in fg.stored_facts(stored)
+    # The admin sentence suggest, the admin edit checks and the writing-memory fact filter read the grounding rebuilt
+    # from the stored snapshot: cleaned while the switch is on, as stored while it is off.
+    from services.acp_content_writing.service import grounding_from_writer_input
+    wi = {"facts": stored, "seed": "Corran market.", "trip": "Corran", "destination": "Corran"}
+    grounding = grounding_from_writer_input(wi)
+    assert "GLIM" not in grounding and "Ferry tickets cost 4 coins." in grounding
+    monkeypatch.setattr(fg, "enabled", lambda mode=None: False)
+    assert "GLIM" in grounding_from_writer_input(wi)
+    assert grounding_from_writer_input({"seed": "s", "facts": ""}) == grounding_from_writer_input({"seed": "s"})
 
 
 def test_the_trap_run_stage_is_an_adhoc_issue_stage():
