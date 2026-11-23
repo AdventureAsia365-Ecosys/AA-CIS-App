@@ -12,6 +12,9 @@
   POST /admin/supply-content/{entity_id}/unpublish                    hide it from Booking           review.act
   POST /admin/supply-content/{entity_id}/draft                        queue a new LLM draft (paid)   content.write
 
+Publishing also passes the two-person gate of tour content (AA-1151; ``cis.content.publish_two_person``, Platform ›
+Settings, off on Dev by default): with the switch on, a caller without ``content.publish`` gets 403
+``two_person_required`` and the author of a human version 403 ``same_person``; an LLM draft has no human author.
 Writes need the capability in api/core/staff_authz.py POLICY (content, reviewer and admin hold both; the viewer none,
 READ_ONLY_ROLES). Reads are open to every staff role. Publish answers 409 (photo_rights) when a photo of the version
 has no usage rights in Booking or is not copied, 409 (outdated) when the facts changed after the version was written.
@@ -26,6 +29,8 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from api.core.staff_authz import staff_policy
+from api.routers.admin_pipeline._publish import enforce_publish_gate
+from api.services import content_publish_gate as publish_gate
 from api.routers.admin import verify_admin_secret
 from services.supply_content import review
 
@@ -107,6 +112,10 @@ async def publish_supply_content(entity_id: UUID, version_id: UUID, request: Req
                                  x_admin_user_id: Optional[str] = Header(None),
                                  x_admin_role: Optional[str] = Header(None)):
     async with request.app.state.pool.acquire() as conn:
+        # AA-1151: the two-person rule of tour content applies to supply content too (no extra read while it is off).
+        if await publish_gate.switch_on(conn):
+            await enforce_publish_gate(conn, request,
+                                       editors=await review.version_editors(conn, str(entity_id), str(version_id)))
         try:
             return await review.publish(conn, str(entity_id), str(version_id),
                                         actor=_actor(x_admin_user_id, x_admin_role), note=body.note if body else None)

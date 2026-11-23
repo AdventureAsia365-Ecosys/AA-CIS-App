@@ -9,7 +9,10 @@ Rules (the DB adds its own: CIS 278 version guard, one approved version per enti
     (``photo_rights``: usage_rights off in Booking, removed, or not copied into the CIS photo store);
   - publishing supersedes the previous approved version and every other open draft of the entity;
   - reject closes one draft; unpublish hides the content from Booking (rows kept, the version stays approved);
-  - nothing here calls an LLM: ``request_draft`` queues the supply_content_draft job.
+  - nothing here calls an LLM: ``request_draft`` queues the supply_content_draft job;
+  - AA-1151: who wrote a version (:func:`version_editors`) feeds the two-person publish gate of tour content
+    (``api/services/content_publish_gate.py``, switch ``cis.content.publish_two_person``): with the switch on, the
+    person who wrote a human version never publishes it, and publishing needs ``content.publish``.
 Every write runs in one transaction with the entity row locked (FOR UPDATE).
 """
 from __future__ import annotations
@@ -287,6 +290,29 @@ async def _photo_problems(conn, entity_id: str, photos: list) -> list[str]:
         "AND booking_media_id::text = ANY($2::text[]) AND usage_rights AND active AND url_1600 IS NOT NULL",
         entity_id, ids)}
     return [i for i in ids if i not in ok]
+
+
+def editor_key(created_by: Optional[str]) -> Optional[str]:
+    """The publish gate's actor form (``admin:<admin_users.id>``) of a version's ``created_by`` (``staff:<id>``, the
+    supply routes' actor); None for a writer run or an actor without a person."""
+    if not created_by or not created_by.startswith("staff:"):
+        return None
+    person = created_by[len("staff:"):]
+    try:
+        return f"admin:{uuid.UUID(person)}"
+    except ValueError:
+        return None
+
+
+async def version_editors(conn, entity_id: str, version_id: str) -> list[str]:
+    """AA-1151: the people who wrote a version (its human author), as the publish gate names them. An ``llm`` draft
+    has no human author: the reviewer who publishes it is the second person."""
+    row = await conn.fetchrow("SELECT origin, created_by FROM shared.supply_content_version "
+                              "WHERE id = $1::uuid AND entity_id = $2::uuid", version_id, entity_id)
+    if row is None or row["origin"] != "human":
+        return []
+    key = editor_key(row["created_by"])
+    return [key] if key else []
 
 
 async def publish(conn, entity_id: str, version_id: str, *, actor: str, note: Optional[str] = None) -> dict:

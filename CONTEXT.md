@@ -2448,7 +2448,10 @@ Booking bk-023 grants the four `booking.v_supply_*` views to `cis_app`). `servic
   draft version. Never publishes.
 - Review (`review.py`, `/admin/supply-content`): an edit is a new `human` version; publish (review.act) refuses an
   inactive entity, a version written against older facts (409 `outdated`) and a photo without usage rights or copy
-  (409 `photo_rights`); reject, unpublish, regenerate (content.write). Version content is immutable in the DB (CIS
+  (409 `photo_rights`); reject, unpublish, regenerate (content.write). AA-1151: publishing passes the two-person gate
+  of tour content (`cis.content.publish_two_person`, `api/services/content_publish_gate.py`): with the switch on, a
+  caller without `content.publish` gets 403 `two_person_required` and the author of a human version 403 `same_person`
+  (an LLM draft has no human author); the Booking add-on offers (activities sold per place) take this text. Version content is immutable in the DB (CIS
   278 guard trigger). Admin UI (CIS Content › Assets › Supply content): `/admin/supply-content` (list with the
   feed board, server-side filters and paging) and `/admin/supply-content/<id>` (the page `edit_url` names: status,
   open draft with its diff and publish blockers, published version, photo rights state, Booking facts, version
