@@ -118,7 +118,7 @@ NOTES = (
     "Report only: nothing in Cognito or shared.admin_users was changed.",
 )
 KNOWN_E2E_NOTE = ("Dev: the E2E staff accounts root ADR 0006a allows (A10, A10a, A10b, A10c, A10d, A10e, A10e-2, A10f, "
-                  "A10g) "
+                  "A10g, A10h) "
                   "are listed under known_e2e_exceptions and not counted as drift, only with their exact address and "
                   "staff groups.")
 CRM_NOT_COMPARED_NOTE = ("CRM roles were not compared: the directory table for them (CIS migration 330) is not applied "
@@ -209,6 +209,13 @@ KNOWN_E2E_STAFF: "MappingProxyType[str, KnownE2E]" = MappingProxyType({
                 "session, Booking writes on synthetic records only."),
         groups=frozenset({CIS_CUSTOM_GROUP, BOOKING_CUSTOM_GROUP}),
         directory_role=e2e_staff.E2E_CUSTOM_MAKER_TEST_STAFF_ROLE),
+    # AA-1176 A10h (S288): the Dev-only E2E owner, exactly cis-admin + booking-admin, its directory row an admin with
+    # the owner marker (CIS 473) and the Booking admin grant. NOT read-only, unlike every other entry.
+    e2e_staff.E2E_OWNER_TEST_STAFF_EMAIL: KnownE2E(
+        clause="ADR 0006a A10h",
+        reason=("Dev-only E2E owner (agent live checks): an administrator with the owner marker, never the business "
+                "owner; not read-only in CIS or Booking; no CRM administrator group."),
+        groups=frozenset({"cis-admin", "booking-admin"}), directory_role=e2e_staff.E2E_OWNER_TEST_STAFF_ROLE),
 })
 
 

@@ -15,7 +15,8 @@ what custom roles add to them (api/core/staff_roles.py reads the roles):
 - A10g (``e2e-custom-maker@``, Dev only): its CIS role is a custom role based on content_lead (:func:`e2e_role_ok`).
 - The business-owner marker (``admin_users.is_business_owner``, CIS 462, one person): :func:`set_business_owner`,
   owners only (the directory's owner re-read), audited before and after (``staff.business_owner_changed``); never an
-  E2E address, never an inactive account; a second holder is 409 ``business_owner_taken`` (clear the first). No
+  E2E address, never an inactive account, never set or cleared by the A10h E2E owner (403 ``e2e_owner_scope``); a
+  second holder is 409 ``business_owner_taken`` (clear the first). No
   Cognito step: Booking reads the marker from the contract view shared.v_staff_booking_grant.
 """
 from __future__ import annotations
@@ -112,7 +113,11 @@ async def set_business_owner(pool: Any, *, actor_id: str, staff_id: str, value: 
     value = bool(value)
     async with pool.acquire() as conn:
         async with conn.transaction():
-            await sd._require_owner(conn, actor_id)
+            actor = await sd._require_owner(conn, actor_id)
+            if sd.e2e_owner.is_actor(actor):
+                # AA-1176 (A10h, D5): the Dev-only E2E owner never sets or clears the business-owner marker.
+                raise _refused(403, "The E2E owner account may not change the business owner",
+                               e2e_staff.E2E_OWNER_SCOPE)
             target = await sd._load_target(conn, staff_id)
             staff_id = target["id"]
             before = bool(target["is_business_owner"])

@@ -37,7 +37,9 @@ def test_the_constants():
         "e2e-booking-pricing-checker@e2e-mail.lumiguides.it.com")
     # The checker is never a CIS directory address.
     assert not sd.is_e2e_test_email(e2e_staff.E2E_BOOKING_PRICING_CHECKER_TEST_STAFF_EMAIL)
-    assert dict(e2e_staff.DEV_ONLY_E2E_BOOKING_ROLES) == {CS_E2E: "contracting"}
+    # AA-1176 (A10h): the E2E owner holds the Booking admin grant, Dev only.
+    assert dict(e2e_staff.DEV_ONLY_E2E_BOOKING_ROLES) == {CS_E2E: "contracting",
+                                                          e2e_staff.E2E_OWNER_TEST_STAFF_EMAIL: "admin"}
 
 
 def test_scope_accepts_contracting_for_the_cs_account_on_dev(monkeypatch):
@@ -134,10 +136,11 @@ def test_the_known_e2e_list_is_exactly_the_reviewed_one():
     assert set(sr.KNOWN_E2E_STAFF) == {E2E_REV, E2E_BOOKING, E2E_CIS_ADMIN, E2E_CRM_STAFF, CS_E2E, E2E_BK_STAFF,
                                        E2E_BK_MAKER, E2E_BK_CHECKER, PRICING_CHECKER,
                                        e2e_staff.E2E_CIS_CONTENT_LEAD_TEST_STAFF_EMAIL,   # AA-1155 A10f
-                                       e2e_staff.E2E_CUSTOM_MAKER_TEST_STAFF_EMAIL}       # AA-1155 A10g
+                                       e2e_staff.E2E_CUSTOM_MAKER_TEST_STAFF_EMAIL,       # AA-1155 A10g
+                                       e2e_staff.E2E_OWNER_TEST_STAFF_EMAIL}              # AA-1176 A10h
     assert {e.clause for e in sr.KNOWN_E2E_STAFF.values()} == {
         "ADR 0006a A10", "ADR 0006a A10a", "ADR 0006a A10b", "ADR 0006a A10c", "ADR 0006a A10d", "ADR 0006a A10e",
-        "ADR 0006a A10e-2", "ADR 0006a A10f", "ADR 0006a A10g"}
+        "ADR 0006a A10e-2", "ADR 0006a A10f", "ADR 0006a A10g", "ADR 0006a A10h"}
     # The pricing checker: booking-contracting only, never in the CIS directory. The A10d account's one other group
     # set is the Pricing team preset's; no other identity has a second group set.
     assert sr.KNOWN_E2E_STAFF[PRICING_CHECKER].groups == {"booking-contracting"}
