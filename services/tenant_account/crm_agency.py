@@ -1,10 +1,11 @@
-"""AA-1160 — when the CRM last proved it holds a tenant's agency, as CIS sees it (``shared.tenant_crm_agency``, CIS 475).
+"""AA-1160 — when the CRM last proved it holds a tenant's agency, as CIS sees it (``shared.tenant_crm_agency``,
+CIS 475).
 
-A tenant's TripPlanner leads go to the CRM only when the CRM can take them: the CRM add-on (``crm.core``) live AND a live
-CRM agency for the tenant. A CRM agency (AA-Partner ``crm.tenant``) is made after the add-on, by the CIS CRM onboarding
-(``crm_onboarding.onboard``) or the CRM's own console, and may never be; it may also be locked, offboarded or deleted
-later. TripPlanner routes each lead on its own liveness signal, the CRM lead pull beacon. CIS reads no CRM table (root
-ADR 0008a), so for its own display (the agency module's ``effective_channel``, Tenant 360) it records what the CRM
+A tenant's TripPlanner leads go to the CRM only when the CRM can take them: the CRM add-on (``crm.core``) live AND a
+live CRM agency for the tenant. A CRM agency (AA-Partner ``crm.tenant``) is made after the add-on, by the CIS CRM
+onboarding (``crm_onboarding.onboard``) or the CRM's own console, and may never be; it may also be locked, offboarded or
+deleted later. TripPlanner routes each lead on its own liveness signal, the CRM lead pull beacon. CIS reads no CRM table
+(root ADR 0008a), so for its own display (the agency module's ``effective_channel``, Tenant 360) it records what the CRM
 itself proves:
 
 * ``crm_pull``: the CRM read the tenant.entitlements.v1 snapshot (``GET /tenant/v1/tenants/{id}/account``) with its M2M

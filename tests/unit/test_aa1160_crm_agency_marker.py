@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 from api.core import m2m_auth
 from api.routers.tenant_account import router
 from services.tenant_account import crm_agency
+from services.tenant_account.crm_agency_settings import CRM_AGENCY_SEEN_HOURS
 from services.tenant_account import tripplanner_site as tp
 from tests.unit import test_aa1028_tenant_account_contract as t1028
 from tests.unit.aa976_m2m import install_m2m
@@ -73,10 +74,18 @@ class Pool:
         return None
 
 
+SEEN_HOURS_DEFAULT = 3  # the CIS 475 seed default (the migration PR's test_aa1160_migration_475.py checks the row)
+
+
 @pytest.fixture(autouse=True)
 def _env(monkeypatch):
     monkeypatch.delenv(m2m_auth.ENV_M2M_ISSUER, raising=False)
     monkeypatch.delenv(m2m_auth.ENV_M2M_CRM_CLIENT_ID, raising=False)
+    # The key's compiled default ships with the CIS 475 migration PR (MIG-4 chain: this code PR carries no seed), so
+    # the reader is pinned to the seed default here; CI on the merge with main reads the real compiled default.
+    real_get = crm_agency.settings.get
+    monkeypatch.setattr(crm_agency.settings, "get", lambda key, tenant_id=None: SEEN_HOURS_DEFAULT
+                        if key == CRM_AGENCY_SEEN_HOURS else real_get(key, tenant_id))
     yield
     m2m_auth.set_m2m_verifier(None)
 
@@ -189,7 +198,7 @@ def test_tenant360_lead_route_answers_crm_agency(agency):
 def test_a_sighting_counts_only_inside_the_setting_window(monkeypatch):
     """A deleted or offboarded CRM agency is never read again: its row ages out after cis.tenant.crm_agency_seen_hours
     (an admin-editable setting, default 3), in both readers."""
-    assert crm_agency.seen_hours() == 3                                     # the compiled default (CIS 475 seed)
+    assert crm_agency.seen_hours() == SEEN_HOURS_DEFAULT                    # the CIS 475 seed default
     assert "a.last_seen_at > now() - make_interval(hours => $2)" in tp.MODULE_SQL
     assert "a.last_seen_at > now() - make_interval(hours => $2)" in crm_agency.EXISTS_SQL
     monkeypatch.setattr(crm_agency.settings, "get",

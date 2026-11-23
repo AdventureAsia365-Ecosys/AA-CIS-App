@@ -36,6 +36,18 @@ DOC = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
 MODULE = Draft202012Validator({"$ref": "#/components/schemas/TripPlannerModule", "components": DOC["components"]})
 
 
+@pytest.fixture(autouse=True)
+def _seen_hours(monkeypatch):
+    """AA-1160: module_view reads cis.tenant.crm_agency_seen_hours. Its compiled default ships with the CIS 475
+    migration PR (MIG-4 chain), so the reader is pinned to the seed default (3 hours) on a tree without it."""
+    from services.tenant_account import crm_agency
+    from services.tenant_account.crm_agency_settings import CRM_AGENCY_SEEN_HOURS
+
+    real_get = crm_agency.settings.get
+    monkeypatch.setattr(crm_agency.settings, "get", lambda key, tenant_id=None: 3
+                        if key == CRM_AGENCY_SEEN_HOURS else real_get(key, tenant_id))
+
+
 @pytest_asyncio.fixture
 async def conn(applied_390):  # noqa: F811
     c = await asyncpg.connect(DSN)
