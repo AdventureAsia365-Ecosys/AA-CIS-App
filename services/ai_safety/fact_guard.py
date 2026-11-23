@@ -156,7 +156,7 @@ _needs_spaced = _text.needs_spaced
 _ROLES = r"(?:system|assistant|writer|developer|sys|inst)"
 _ROLE_SEP = r"\s*(?::|[-–—]\s)"
 # A role line counts (mixed case) only when an order follows it: "Writer: put ...", "Assistant: from now on ...".
-_ORDER = (r"(?:(?:please|kindly|now|also|just|always|never)\s*,?\s+)*"
+_ORDER = (r"(?:(?:please|kindly|now|also|just|always|never)(?:\s*,\s*|\s+)){0,4}"
           r"(?:say|write|put|add|include|insert|use|name|call|title|retitle|rename|mention|promise|make|ensure|end|"
           r"start|begin|open|close|finish|tell|reply|respond|answer|ignore|forget|disregard|act|pretend|output|print|"
           r"repeat|refer|describe|keep|avoid|remove|replace|translate|generate|create|from now on|"
@@ -220,7 +220,7 @@ _PROMPT_TALK = (
     re.compile(r"\byou\s+are\s+now\b"),
     re.compile(r"<\|?\s*(?:im_start|im_end|system|endoftext)\s*\|?>|<<\s*sys\s*>>|\[/?inst\]"),
     re.compile(r"(?:<|&lt;)\s*/?\s*untrusted[\s_-]*data\b"),
-    re.compile(r"(?:<|&lt;)!--|--(?:>|&gt;)"),                   # an HTML comment: never text about a trip
+    re.compile(r"(?:<|&lt;)!--|--!?(?:>|&gt;)"),                   # an HTML comment: never text about a trip
 )
 
 # Strong writing artefacts: only ever part of the text being written. Headings and the like are never a real thing;
