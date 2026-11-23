@@ -205,9 +205,13 @@ def relay_authorization(request: Any) -> Optional[str]:
     own guards see a plain staff request) and keeps the token in ``scope["state"]["staff_access_token"]``; a request
     it did not verify (legacy session, secret only) falls back to the header, which ``_cognito_bearer`` then refuses
     when it is not a Cognito token."""
-    from api.middleware.staff_bearer import STAFF_ACCESS_TOKEN
+    from api.middleware.staff_bearer import STAFF_ACCESS_TOKEN, STAFF_VIEW_AS
 
     state = request.scope.get("state")
+    if isinstance(state, dict) and state.get(STAFF_VIEW_AS) is not None:
+        # AA-1157: a "view as a lower role" request never relays the owner's own token (nor any header): the relay
+        # answers "unavailable" (cognito_session_required) and the page shows the CRM part as not available.
+        return None
     token = state.get(STAFF_ACCESS_TOKEN) if isinstance(state, dict) else None
     if isinstance(token, str) and token:
         return f"Bearer {token}"

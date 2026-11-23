@@ -1,36 +1,24 @@
 """AA-882 (S241 GĐ1 + GĐ3) — server-side staff authorization: capabilities per role, policy per route.
 
-Until now the backend only checked the shared X-Admin-Secret (held by the staff BFF) and trusted
-whatever came with it, so a reviewer or content user could change a stage's model, a spend budget
-or a Jev question by calling /api/admin/* directly: the BFF lets every staff role write by default
-(frontend/lib/rbac.ts canWriteAdminPath). This module is the backend half of the rule.
+Before it the backend only checked the shared X-Admin-Secret and trusted whatever came with it (any staff role could
+write through /api/admin/*). This module is the backend half of the rule.
 
 Pieces
 ------
-- ROLE_PERMS: staff role -> capabilities. The four roles are the shared.admin_role enum and the
-  frontend/lib/rbac.ts StaffRole union (tests/unit/test_aa882_staff_authz.py keeps them in sync).
-  A new kind of staff (ops, sales, content lead) is one more row here, later one Cognito group.
-- POLICY: (method, route template) -> the capability the route needs. Keyed by method + template,
-  not by router: six routers share the /admin prefix and mix reads every role needs (GET
-  /admin/llm-config for the S1 page) with admin-only writes (PATCH /admin/llm-config/{stage}).
-- MACHINE_ROUTES: the routes a machine caller (secret, no role header) may call — the CI deploy
-  preflight/smoke and the ops-probe Lambda scheduler. Callers that never send x-admin-role must keep
-  working, or the next deploy's preflight gets 403 and every CIS deploy is blocked.
-- staff_policy: the FastAPI dependency, attached router-level. It checks the secret itself
-  (admin.verify_admin_secret, called directly) and then the route's POLICY entry.
-  staff_policy_if_staff: the same, but only for a request carrying the valid secret — for routers whose
-  own guard also admits a tenant JWT or answers 401 (see its docstring).
+- ROLE_PERMS: staff role -> capabilities (the shared.admin_role enum and the frontend/lib/rbac.ts StaffRole union;
+  tests/unit/test_aa882_staff_authz.py keeps them in sync).
+- POLICY: (method, route template) -> the capability the route needs (keyed by method + template, not by router).
+- MACHINE_ROUTES: the routes a machine caller (secret, no role header) may call: the CI deploy preflight / smoke and
+  the ops-probe Lambda scheduler (a 403 there blocks every CIS deploy).
+- staff_policy: the router-level dependency (the secret, then the route's POLICY entry); staff_policy_if_staff: the
+  same for a request carrying a staff credential only (routers whose own guard also admits a tenant JWT).
 
-Principal (GĐ1, until the staff JWT of GĐ4)
-------------------------------------------
-- secret + x-admin-role  -> staff principal with that role. The BFF forwards the role from the
-  staff JWT it verified (/auth/verify-admin). Header trust ends with the Bearer staff JWT (GĐ4) and
-  Cognito (ADR 0006): whoever holds the secret can still claim any role until then.
-- secret, no x-admin-role -> machine principal: allowed only on MACHINE_ROUTES.
-- a role header that is not a staff role (empty, "tenant", typo) -> 403, never a machine.
-- AA-816 C9 (api/core/staff_credential.py): a verified Cognito Bearer needs no secret (role from its groups);
-  the Preview credential is always the viewer (x-admin-role rewritten by the staff bearer middleware), never
-  the machine. The main secret keeps every rule above.
+Principal
+---------
+- secret + x-admin-role -> staff principal with that role (header trust: whoever holds the main secret can claim any
+  role, ADR 0006 phase 1); secret, no x-admin-role -> machine, only on MACHINE_ROUTES; a non-staff role header -> 403.
+- AA-816 C9 (api/core/staff_credential.py): a verified Cognito Bearer needs no secret (role from its groups); the
+  Preview credential is always the viewer. AA-1157: a view-as-a-role request runs as the target role, never writes.
 
 Roles and tenant scope (AA-1035 R2 slice 1, root ADR 0019 d3 / d4)
 ------------------------------------------------------------------
@@ -39,25 +27,17 @@ Roles and tenant scope (AA-1035 R2 slice 1, root ADR 0019 d3 / d4)
   alias is gone (CIS 375). Each role is one explicit capability set below: deny by default.
 - A POLICY entry is one capability, or a tuple of capabilities of which the caller needs ANY (``any_of``), e.g. the
   Tenants directory read is tenant.read (every tenant), tenant.book.read (the caller's book) or billing.read.
-- tenant.read keeps its meaning "read every tenant": only admin holds it. customer_success and support hold
-  tenant.book.read instead, and api/core/tenant_scope.py require_tenant_scope (a dependency of every staff route with
-  a {tenant_id} path parameter, enforced by tests/unit/test_aa1035_tenant_scope_routes.py) narrows them to their
-  assigned tenants (support also the pool). tenant.book.read opens only the non-money Tenant 360 reads (details,
-  config, audit, rewrite activity, markets, members, assignments); the account-manager reads of the book (plans and
-  add-ons, subscription, usage, LLM cost, Tenant QA verdicts, the AI budget tile) need tenant.book.account.read,
-  which customer_success holds and support does not (matrix: support has "-" on plans / invoices, Tenant QA and AI
-  & spend).
-- A GET with no POLICY entry needs content.read (the content pages). Before R2 it was open to every staff role; the
-  roles that held content.read then are the roles that hold it now, so only the new roles without it are refused.
+- tenant.read ("read every tenant") is admin's only. customer_success and support hold tenant.book.read instead, and
+  api/core/tenant_scope.py require_tenant_scope (on every staff route with a {tenant_id} path parameter, enforced by
+  tests/unit/test_aa1035_tenant_scope_routes.py) narrows them to their assigned tenants (support also the pool).
+  tenant.book.read opens only the non-money Tenant 360 reads; the account-manager reads of the book (plans, usage,
+  LLM cost, Tenant QA verdicts, the AI budget tile) need tenant.book.account.read (customer_success, never support).
 
 Coverage (GĐ3)
 --------------
-Every non-GET route under /admin, /v1/pipeline, /v1/rules and /v1/social has a POLICY entry, and every
-router behind those prefixes runs staff_policy (or staff_policy_if_staff, for the routers whose own
-guard also takes a tenant JWT or answers 401): tests/unit/test_aa882_route_policy.py enforces both and
-keeps the snapshot. GETs stay open to every content.read role unless they return data that only some roles
-need (tenant accounts, money, system ops, the staff list); those are in POLICY too. A GET with no
-entry is open to every content.read role and to the machine (AA-1035).
+Every non-GET staff route has a POLICY entry and every staff router runs staff_policy (or staff_policy_if_staff):
+tests/unit/test_aa882_route_policy.py enforces both and keeps the snapshot. A GET with no entry is open to every
+content.read role and to the machine (AA-1035); a GET whose data only some roles need is in POLICY too.
 """
 from __future__ import annotations
 
@@ -93,6 +73,7 @@ SPEND_READ = "spend.read"
 SPEND_WRITE = "spend.write"                  # budgets, Jev credit ledger, Cost Explorer fetch
 STAFF_READ = "staff.read"
 STAFF_WRITE = "staff.write"                  # change a staff role / active flag: owners only
+STAFF_VIEW_AS_ROLE = "staff.view_as_role"    # AA-1157: start a read-only view as a lower role (staff_view_as.py)
 AUDIT_READ = "audit.read"
 # AA-913 — change the platform alert recipients (SNS alerts topic + ops e-mail). Admin role; the router also requires
 # a verified Cognito session for every change but the status refresh (api/routers/admin_alert_recipients.py).
@@ -223,7 +204,7 @@ READ_METHODS: frozenset[str] = frozenset({"GET", "HEAD", "OPTIONS"})
 # The caller must also hold the admin role (staff.read). A legacy password session or the machine gets 403 even
 # when the row is an owner. The staff directory writer
 # (api/services/staff_directory.py) re-reads is_owner from the DB inside its transaction before each write.
-OWNER_PERMS: frozenset[str] = frozenset({STAFF_WRITE})
+OWNER_PERMS: frozenset[str] = frozenset({STAFF_WRITE, STAFF_VIEW_AS_ROLE})   # AA-1157: same rule, OWNER_REFUSALS
 
 CAPABILITIES: frozenset[str] = frozenset().union(*ROLE_PERMS.values(), OWNER_PERMS)
 
@@ -491,6 +472,7 @@ POLICY: dict[tuple[str, str], Any] = {
     # AA-1035 R2 slice 2 (root ADR 0019 d5) — read-only "view as tenant" (admin_view_as.py, api/core/view_as.py): start
     # one (scoped: require_tenant_scope), read / end the caller's own (admin: every session; ending another's: revoke)
     ("POST", "/admin/tenants/{tenant_id}/view-as"): TENANT_VIEW_AS,
+    ("POST", "/admin/view-as/roles"): STAFF_VIEW_AS_ROLE,   # AA-1157 (read / end: the two routes below, as owner)
     ("GET", "/admin/view-as/sessions"): TENANT_VIEW_AS,
     ("GET", "/admin/view-as/sessions/{session_id}"): TENANT_VIEW_AS,
     ("POST", "/admin/view-as/sessions/{session_id}/end"): TENANT_VIEW_AS,
@@ -871,6 +853,7 @@ class StaffPrincipal:
     e2e_read_only: bool = False
     # AA-1035 A10d: the A10b identity only (api/core/e2e_staff.E2E_ALLOWED_WRITES, docs.owner_read "e2e_dev").
     e2e_allowlisted_writes: bool = False
+    view_as_session: Optional[str] = None   # AA-1157: the open view-as-a-role session (id): every write refused
 
     @property
     def is_machine(self) -> bool:
@@ -892,13 +875,19 @@ def principal_from_role(role_header: Optional[str], identity: Any = None) -> Sta
         return MACHINE
     role = role_header.strip()
     cognito = identity is not None and getattr(identity, "auth", None) == "cognito"
-    return StaffPrincipal(   # AA-1155: a custom code holds capabilities only with its verified session
-        kind="staff", role=role, perms=ROLE_PERMS.get(role) or staff_roles.verified_custom_perms(role, identity),
+    from api.core.staff_view_as import effective_perms, session_of   # AA-1157: a view runs on target ∩ viewer
+
+    session = session_of(identity, role)   # AA-1155: a custom code holds capabilities only with its verified session
+    perms = effective_perms(identity) if session else ROLE_PERMS.get(role) or staff_roles.verified_custom_perms(
+        role, identity)
+    return StaffPrincipal(
+        kind="staff", role=role, perms=perms,
         auth="cognito" if cognito else None,
         is_owner=bool(cognito and getattr(identity, "is_owner", False)),
         e2e_read_only=bool(identity is not None and getattr(identity, "e2e_read_only", False)),
         e2e_allowlisted_writes=bool(identity is not None and getattr(identity, "e2e_read_only", False)
                                     and getattr(identity, "e2e_allowlisted_writes", False)),
+        view_as_session=session,
     )
 
 
@@ -954,13 +943,8 @@ def can_read_owner_docs(principal: StaffPrincipal) -> bool:
 
 def denial_reason(principal: StaffPrincipal, method: str, route: str) -> Optional[str]:
     """None when the principal may call (method, route); otherwise the 403 detail."""
-    if principal.role in READ_ONLY_ROLES and method.upper() not in READ_METHODS:
-        return READ_ONLY_DENIED.format(role=principal.role)
-    # AA-816 A10b, defence in depth behind the bearer middleware (covers a route reached by any other path). AA-1035
-    # A10d: the allow-list is the A10b identity's alone (e2e_allowlisted_writes); any other e2e_read_only gets none.
-    if (principal.e2e_read_only and method.upper() not in READ_METHODS
-            and not (principal.e2e_allowlisted_writes and e2e_staff.is_allowed_e2e_write_route(method, route))):
-        return e2e_staff.E2E_READ_ONLY
+    if method.upper() not in READ_METHODS and (refusal := _write_refusal(principal, method, route)):
+        return refusal
     entry = POLICY.get((method, route))
     if entry is None:
         # A GET with no entry (writes all have one): open to the machine and, since AA-1035, to every role that reads
@@ -989,18 +973,34 @@ def denial_reason(principal: StaffPrincipal, method: str, route: str) -> Optiona
         # Cognito session, with the owner flag of that verified row.
         if STAFF_READ not in principal.perms:
             return f"Role '{principal.role}' lacks the '{capability}' permission"
-        if principal.auth != "cognito":
-            return STAFF_WRITE_NEEDS_COGNITO
-        if not principal.is_owner:
-            return STAFF_WRITE_NEEDS_OWNER
-        return None
+        return None if principal.auth == "cognito" and principal.is_owner else OWNER_REFUSALS[capability][
+            0 if principal.auth != "cognito" else 1]
     if capability not in principal.perms:
         return f"Role '{principal.role}' lacks the '{capability}' permission"
     return None
 
 
+def _write_refusal(principal: StaffPrincipal, method: str, route: str) -> Optional[str]:
+    """A write refused whatever its capability: a read-only role; AA-1157 a view-as session (defence in depth behind
+    api/middleware/staff_view_as.py); AA-816 A10b an E2E identity (behind the bearer middleware; AA-1035 A10d: the
+    allow-list is the A10b identity's alone, e2e_allowlisted_writes)."""
+    if principal.role in READ_ONLY_ROLES:
+        return READ_ONLY_DENIED.format(role=principal.role)
+    if principal.view_as_session:
+        return VIEW_AS_READ_ONLY
+    if principal.e2e_read_only and not (principal.e2e_allowlisted_writes
+                                        and e2e_staff.is_allowed_e2e_write_route(method, route)):
+        return e2e_staff.E2E_READ_ONLY
+    return None
+
+
 STAFF_WRITE_NEEDS_COGNITO = "Changing staff accounts needs a company sign-in (Cognito); password sessions cannot"
 STAFF_WRITE_NEEDS_OWNER = "Only a platform owner can change staff accounts"
+VIEW_AS_ROLE_NEEDS_COGNITO = "Viewing as another role needs a company sign-in (Cognito); password sessions cannot"
+VIEW_AS_ROLE_NEEDS_OWNER = "Only a platform owner can view as another role"
+OWNER_REFUSALS = {STAFF_WRITE: (STAFF_WRITE_NEEDS_COGNITO, STAFF_WRITE_NEEDS_OWNER),   # (not Cognito, not an owner)
+                  STAFF_VIEW_AS_ROLE: (VIEW_AS_ROLE_NEEDS_COGNITO, VIEW_AS_ROLE_NEEDS_OWNER)}
+VIEW_AS_READ_ONLY = "view_as_read_only"   # AA-1157: every write of a view (as the tenant view and the middleware)
 # Starts with "Role '" like the capability refusal, so the UI's staffErrorMessage() reads it the same way.
 READ_ONLY_DENIED = "Role '{role}' is read-only"
 
