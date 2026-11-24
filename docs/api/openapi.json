@@ -34014,7 +34014,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Ecosystem status: verdict, apps, signals, runtimes, jobs, AI, cost, events (AA-1140)",
+        "summary": "Ecosystem status: verdict, apps, signals, runtimes, jobs, AI, cost, events",
         "tags": [
           "admin-overview"
         ]

@@ -312,7 +312,7 @@ async def get_ops_overview(request: Request, x_admin_secret: str = Header(None))
     return await build_ops_overview(request.app.state.pool, redis)
 
 
-@router.get("/status", summary="Ecosystem status: verdict, apps, signals, runtimes, jobs, AI, cost, events (AA-1140)")
+@router.get("/status", summary="Ecosystem status: verdict, apps, signals, runtimes, jobs, AI, cost, events")
 async def get_ecosystem_status(
     request: Request,
     range_: str = Query("24h", alias="range", pattern="^(1h|6h|24h|7d|custom)$",
