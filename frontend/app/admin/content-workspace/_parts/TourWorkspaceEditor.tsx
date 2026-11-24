@@ -20,8 +20,8 @@ import {
 import TourDraftEditor from "../../_components/TourDraftEditor";
 import { can } from "@/lib/rbac";
 import {
-  CW_API, CW_PAGE, bodyOf, emptyForm, formKey, formOf, stateTone, tourHref, type FactsForm, type Options,
-  type Supplier, type TourView,
+  CW_API, CW_PAGE, bodyOf, emptyForm, formKey, formOf, noticeKeys, savedTypeLabel, stateTone, tourHref, type FactsForm,
+  type Options, type Supplier, type TourView,
 } from "@/lib/contentWorkspace";
 import { CW } from "../messages";
 import { FactsForm as FactsSections } from "./FactsForm";
@@ -138,7 +138,7 @@ function Editor({ tourId, view }: { tourId: string | null; view: TourView | null
       <Notices view={view} writer={writer} status={saver.status} />
       <Layout aside={<Aside view={view} />}>
         <EditorTabs tourId={tourId} title={title} form={form} set={set} readOnly={readOnly}
-          tourTypeLabel={view?.facts.tour_type_label} />
+          tourTypeLabel={savedTypeLabel(view)} />
         <SaveBar tourId={tourId} view={view} readOnly={readOnly} form={form} dirty={saver.dirty} status={saver.status}
           reason={reason} setReason={setReason} onCreate={() => void create()}
           onSave={(r) => void saver.save(r).then((ok) => { if (ok) setReason(""); })} />
@@ -257,10 +257,7 @@ function Notices({ view, writer, status }: { view: TourView | null; writer: bool
             {t("reload")}</Button>
         </div>
       )}
-      {view?.entry_origin === "sheet" && <div style={box}>{t("readOnlySheet")}</div>}
-      {!writer && <div style={box}>{t("readOnlyRole")}</div>}
-      {view?.reason_required && view.editable && writer && <div style={box}>{t("liveNote")}</div>}
-      {view?.facts_two_person && writer && <div style={box}>{t("factsTwoPerson")}</div>}
+      {noticeKeys(view, writer).map((key) => <div key={key} style={box}>{t(key)}</div>)}
     </>
   );
 }

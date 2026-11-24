@@ -44,7 +44,7 @@ NOT_EXITS = {
         "the hand-edit lock refusal (AA-1146): moves an approved version back to 'hitl' (no text, no publish)",
     "services/export/handler.py::_refuse_policy_review":
         "the elephant-riding policy refusal (AA-1049): moves an approved version back to 'hitl' (no text, no publish)",
-    "services/export/handler.py::_required_list_guard":
+    "services/content_workspace/store.py::export_guard":
         "the hand-made tour required-list refusal (AA-1148): moves an approved version back to 'hitl' (no text, no "
         "publish)",
     "services/validation/handler.py::process_validation":

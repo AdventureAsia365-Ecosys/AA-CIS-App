@@ -6,14 +6,15 @@
 //   4. the unlinked report URL carries its filters;
 //   5. the pages: every content reader opens them (the viewer too, read-only), the tenant desk roles do not; the
 //      editor's write controls follow content.write and "link every suggestion" content.publish;
-//   6. the tour type choices come from the options (admin data) and keep a type the tour holds that was removed.
+//   6. the tour type choices come from the options (admin data) and keep a type the tour holds that was removed;
+//   7. the notes above the editor (sheet tour, reader role, live facts, two-person read-only facts).
 // Run: npm run test:unit.
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   addItems, bodyOf, duplicateDay, emptyDay, emptyForm, formKey, formOf, missingItems, moveDay, splitItems,
-  stateTone, tourHref, tourTypeChoices, unlinkedUrl,
+  noticeKeys, savedTypeLabel, stateTone, tourHref, tourTypeChoices, unlinkedUrl,
 } from "./contentWorkspace.ts";
 import { can, canSeePage } from "./rbac.ts";
 
@@ -93,4 +94,17 @@ test("6. tour type choices are the options in force, plus the removed type a tou
   const kept = tourTypeChoices(opts, "zz_gone", "Zz gone type", "en");
   assert.deepEqual(kept.at(-1), { value: "zz_gone", label: "Zz gone type" });
   assert.equal(tourTypeChoices([], "zz_gone", null, "en")[0].label, "zz_gone");
+});
+
+test("7. the notes above the editor", () => {
+  const live = { entry_origin: "manual", reason_required: true, editable: true, facts_two_person: false,
+    facts: { tour_type_label: "Zz small group" } };
+  assert.deepEqual(noticeKeys(live, true), ["liveNote"]);
+  assert.deepEqual(noticeKeys({ ...live, editable: false, facts_two_person: true }, true), ["factsTwoPerson"]);
+  assert.deepEqual(noticeKeys(live, false), ["readOnlyRole"]);
+  assert.deepEqual(noticeKeys({ ...live, entry_origin: "sheet", reason_required: false, editable: false }, false),
+    ["readOnlySheet", "readOnlyRole"]);
+  assert.deepEqual(noticeKeys(null, true), []);
+  assert.equal(savedTypeLabel(live), "Zz small group");
+  assert.equal(savedTypeLabel(null), null);
 });

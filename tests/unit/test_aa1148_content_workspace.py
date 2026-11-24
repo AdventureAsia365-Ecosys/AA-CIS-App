@@ -327,6 +327,33 @@ def test_s1_auto_publish_files_an_incomplete_hand_made_tour_for_review():
     assert enq.call_args.kwargs["failure_summary"].startswith("This hand-made tour is not complete")
 
 
+def test_a_review_approve_of_an_incomplete_hand_made_tour_is_409_and_reopens_the_review():
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    from api.routers.admin_pipeline import _publish
+
+    conn = _Conn()
+
+    class Pool:
+        @asynccontextmanager
+        async def acquire(self):
+            yield conn
+
+    request = SimpleNamespace(headers={}, scope={})
+    with patch("services.export.handler.process_export", side_effect=store.RequiredMissingError("t-zz", "v", GAPS)):
+        with pytest.raises(HTTPException) as e:
+            asyncio.run(_publish.approve_export(Pool(), request, "r-zz", "v-zz"))
+    assert e.value.status_code == 409 and e.value.detail["code"] == "required_missing"
+    assert e.value.headers["X-Error-Code"] == "required_missing"
+    assert "review_status = 'pending'" in conn.executed[0][0] and conn.executed[0][1] == ("r-zz",)
+    with patch("services.export.handler.process_export", side_effect=_async({"catalog_id": "pt-zz"})):
+        asyncio.run(_publish.approve_export(Pool(), request, "r-zz", "v-zz"))     # published: no review write
+    assert len(conn.executed) == 1
+
+
 def test_a_live_facts_save_is_refused_while_two_person_publishing_is_on():
     row = {"entry_origin": "manual", "source_status": "active", "deleted_at": None, "master_status": "active",
            "master_deleted_at": None}

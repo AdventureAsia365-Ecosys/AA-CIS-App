@@ -150,6 +150,22 @@ export function tourTypeChoices(options: TourTypeOption[], current: string, curr
   return out;
 }
 
+/** The label a tour's type was saved with (shown when an administrator has removed the type since). */
+export const savedTypeLabel = (view: TourView | null): string | null => view?.facts.tour_type_label ?? null;
+
+export type NoticeKey = "readOnlySheet" | "readOnlyRole" | "liveNote" | "factsTwoPerson";
+
+/** The plain notes above the editor, in order: a sheet tour is read-only here, the role only reads, a published tour's
+ * facts go live on save (with a reason), or (two-person publishing on) a published tour's facts are read-only. */
+export function noticeKeys(view: TourView | null, writer: boolean): NoticeKey[] {
+  const out: NoticeKey[] = [];
+  if (view?.entry_origin === "sheet") out.push("readOnlySheet");
+  if (!writer) return [...out, "readOnlyRole"];
+  if (view?.facts_two_person) out.push("factsTwoPerson");
+  else if (view?.reason_required && view.editable) out.push("liveNote");
+  return out;
+}
+
 /** A stable text of the form, to tell whether it changed since the last save. */
 export const formKey = (form: FactsForm): string => JSON.stringify(bodyOf(form));
 

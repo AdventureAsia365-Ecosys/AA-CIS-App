@@ -92,6 +92,51 @@ async def review_publish_gate(conn: Any, request: Request, review_id: str, tenan
     await enforce_publish_gate(conn, request, editors=editors)
 
 
+_REVIEW_DISMISS_SQL = """
+    UPDATE silver_aa_internal.review_queue SET review_status = 'dismissed', reviewed_at = NOW()
+     WHERE id = $1::uuid AND review_status = 'approved'
+"""
+_REVIEW_REOPEN_SQL = """
+    UPDATE silver_aa_internal.review_queue SET review_status = 'pending', reviewed_at = NULL
+     WHERE id = $1::uuid AND review_status = 'approved'
+"""
+
+
+async def approve_export(pool: Any, request: Request, review_id: str, version_id: str) -> None:
+    """The publish of a claimed Review Queue approve (api/routers/v1_pipeline.py approve_review, admin path):
+    process_export with exit ``approve``. Its expected refusals become the reviewer's 409 with the review row set
+    right (process_export already moved the version approved -> hitl, nothing is published):
+
+    - the source was trashed between the claim and the export (race): the review is closed 'dismissed' (the
+      _enqueue_review state for a dead source), so no row says "approved" without a Master;
+    - AA-1148: a hand-made tour whose required list is not complete: the review goes back to 'pending', so it can be
+      approved once the tour's facts are complete; the 409 carries the missing items (``required_missing``)."""
+    import structlog
+
+    from services.content_workspace.store import RequiredMissingError
+    from services.export.handler import process_export
+    from shared.tour_liveness import SOURCE_NOT_LIVE, SourceNotLiveError, source_not_live_message
+
+    log = structlog.get_logger()
+    try:
+        await process_export(version_id, contract_exit="approve", **lock_kw(request))
+        return
+    except RequiredMissingError as e:
+        log.warning("approve_export_required_missing", review_id=review_id, version_id=version_id,
+                    missing=[g["key"] for g in e.gaps])
+        sql = _REVIEW_REOPEN_SQL
+        refusal = HTTPException(status_code=409, detail=e.detail(), headers={"X-Error-Code": e.code})
+    except SourceNotLiveError as e:
+        log.warning("approve_export_source_not_live", review_id=review_id, version_id=version_id,
+                    reason=e.state.reason)
+        sql = _REVIEW_DISMISS_SQL
+        refusal = HTTPException(status_code=409, detail=source_not_live_message(e.state, "approve this review"),
+                                headers={"X-Error-Code": SOURCE_NOT_LIVE})
+    async with pool.acquire() as conn:
+        await conn.execute(sql, review_id)
+    raise refusal
+
+
 def lock_kw(request: Request) -> dict:
     """Who published, for the hand-edit lock process_export sets on a hand-edited version."""
     return {"lock_by": request_actor(request)}

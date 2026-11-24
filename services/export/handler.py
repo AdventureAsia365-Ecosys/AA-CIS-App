@@ -9,6 +9,7 @@ from typing import Callable, Optional
 from shared.secrets import get_database_url
 from shared.tour_liveness import SOURCE_NOT_LIVE, SourceNotLiveError, SourceState, source_state
 from services.content_generation import human_lock as _human_lock   # AA-1146: the hand-edit lock of a Master
+from services.content_workspace.store import export_guard as _required_list_guard   # AA-1148: hand-made tours
 
 logger = structlog.get_logger()
 
@@ -599,30 +600,6 @@ async def _refuse_policy_review(conn, silver: str, version_id: str, tour_id: str
     raise _lc_policy.PolicyReviewRequiredError(version_id, review_id)
 
 
-async def _required_list_guard(conn, silver: str, version_id: str, tour_id: str, row: dict) -> None:
-    """AA-1148: a hand-made tour (raw_tours.entry_origin 'manual', CIS 478) publishes only with its required list
-    complete, on every exit (S1 auto publish, Review Queue approve, promote, recompose, the draft publish). Checked on
-    the version being published; an incomplete tour's version leaves 'approved' for 'hitl' (as the other refusals do)
-    and RequiredMissingError is raised before any publish write. A sheet tour, and a database before CIS 478, pass."""
-    try:
-        from services.content_workspace import store as _cw
-        gaps = await _cw.required_gaps(conn, tour_id, wording={
-            "aa_name": row.get("aa_name"), "aa_summary": row.get("aa_summary"),
-            "aa_itineraries": row.get("aa_itineraries")})
-    except ImportError:   # the legacy export Lambda package ships without services/content_workspace (or its readers)
-        return
-    if not gaps:
-        return
-    logger.warning("export_refused_required_missing", version_id=version_id, tour_id=tour_id,
-                   missing=[g["key"] for g in gaps])
-    await conn.execute(f"""
-        UPDATE {silver}.generated_content
-        SET status = 'hitl'
-        WHERE id = $1::uuid AND status = 'approved'
-    """, version_id)
-    raise _cw.RequiredMissingError(tour_id, version_id, gaps)
-
-
 async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomize_force: bool = False,
                          atomize_created_by: str = "system:a3_publish", contract_exit: str = "publish",
                          **lock) -> dict:
@@ -639,8 +616,7 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
     run), ``approve`` (Review Queue), ``promote`` (rollback), ``lambda`` (the legacy handler), ``recompose``
     (AA-1049 path A-new: a code-recomposed version of a served Master, ``content_generation/s1_recompose_store``).
     Every caller names its exit (topology test). It never blocks the publish.
-    AA-1146: the hand-edit lock (human_lock.guard_export / after_export; ``lock``: lock_by, lock_reason).
-    AA-1148: the required list of a hand-made tour (:func:`_required_list_guard`, RequiredMissingError)."""
+    AA-1146 / AA-1148: the hand-edit lock (human_lock; ``lock``: lock_by, lock_reason), a hand-made tour's list."""
     conn = await asyncpg.connect(get_database_url())
     tenant_slug = os.environ.get("TENANT_SLUG", "aa_internal")
     silver = f"silver_{tenant_slug}"
@@ -729,9 +705,7 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
                 "seo_keywords_used":    row.get("seo_keywords_used") or "[]",
                 "og_tags":              row.get("og_tags") or "{}",
                 "quality_score":        row.get("quality_score"),
-                "quality_score_id": (
-                    str(row["quality_score_id"]) if row.get("quality_score_id") else None
-                ),
+                "quality_score_id":     str(row["quality_score_id"]) if row.get("quality_score_id") else None,
                 "s3_gold_path":         None,
                 "approved_by":          "pipeline",
             }, tenant_slug=tenant_slug)

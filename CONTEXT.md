@@ -5357,10 +5357,11 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     list** complete (409 `required_missing`: name, country, an active supplier, 1..max days, nights, a title / place /
     description for each day, the included / not included minimums, no item on both lists, the wording with one
     "Day N —" block per day; nights ≠ days − 1 and a missing overnight are hints). Rewrite (S1) can write it too, but
-    **the required list holds on every publish exit**: `process_export` (`_required_list_guard`) checks the version it
-    publishes and refuses an incomplete hand-made tour with `RequiredMissingError` (the version goes back to `hitl`); the
-    S1 auto publish files it in the Review Queue, a Review Queue approve answers 409 `required_missing` and puts the
-    review back to pending, promote answers 409. **Two people**: the people who saved a hand-made tour's facts since its
+    **the required list holds on every publish exit**: `process_export` checks the version it publishes
+    (`content_workspace.store.export_guard`) and refuses an incomplete hand-made tour with `RequiredMissingError` (the
+    version goes back to `hitl`); the S1 auto publish files it in the Review Queue, a Review Queue approve answers 409
+    `required_missing` and puts the review back to pending (`admin_pipeline._publish.approve_export`), promote answers
+    409. **Two people**: the people who saved a hand-made tour's facts since its
     last publish (its `raw_tour_revision` `staff_edit` rows, and its creator while it was never published) count as
     writers in the publish gate of the draft publish, the Review Queue approve and the promote; while
     `cis.content.publish_two_person` is on, a published hand-made tour's facts are read-only in the workspace (409

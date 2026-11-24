@@ -12,7 +12,7 @@ hand-made tour (409 ``required_missing``). Rewrite (S1) can write it too, like a
 
 The required list holds on every publish path, not only the draft publish: process_export (services/export/handler.py,
 the one exit every publish goes through: S1 auto publish, Review Queue approve, version promote, recompose, the draft
-publish) calls :func:`required_gaps` on the version it publishes and refuses an incomplete hand-made tour with
+publish) calls :func:`export_guard` on the version it publishes and refuses an incomplete hand-made tour with
 :class:`RequiredMissingError` (the version leaves 'approved' for 'hitl', like the other refusals; S1 files a review).
 
 Two people: the people who saved a hand-made tour's facts are its writers too (the facts are staff-written content,
@@ -488,6 +488,26 @@ async def required_gaps(conn, tour_id: str, *, wording: Optional[dict] = None, p
     return F.missing(items)
 
 
+async def export_guard(conn, silver: str, version_id: str, tour_id: str, row: Any) -> None:
+    """process_export (services/export/handler.py), on every exit (S1 auto publish, Review Queue approve, promote,
+    recompose, the draft publish): a hand-made tour publishes only with its required list complete, checked on the
+    version being published. An incomplete tour's version leaves 'approved' for 'hitl' (as the other publish refusals
+    do) and :class:`RequiredMissingError` is raised before any publish write. A sheet tour, and a database before CIS
+    478, pass."""
+    get = row.get if hasattr(row, "get") else (lambda k: row[k])
+    gaps = await required_gaps(conn, tour_id, wording={k: get(k) for k in ("aa_name", "aa_summary", "aa_itineraries")})
+    if not gaps:
+        return
+    logger.warning("export_refused_required_missing", version_id=version_id, tour_id=tour_id,
+                   missing=[g["key"] for g in gaps])
+    await conn.execute(f"""
+        UPDATE {silver}.generated_content
+        SET status = 'hitl'
+        WHERE id = $1::uuid AND status = 'approved'
+    """, version_id)
+    raise RequiredMissingError(tour_id, version_id, gaps)
+
+
 async def publish_check(pool, conn, tour_id: str) -> None:
     """In the draft publish transaction: a hand-made tour publishes only with its required list complete (409
     ``required_missing`` with the missing items); a sheet tour is not checked here. process_export checks the same
@@ -649,5 +669,5 @@ async def apply_suggestions(pool, *, dry_run: bool, reason: str, actor: str) -> 
 
 
 __all__ = ["FACTS_TWO_PERSON", "RequiredMissingError", "WorkspaceError", "apply_suggestions", "checklist_for",
-           "create_tour", "facts_editors", "link_tours", "list_manual", "publish_check", "read_tour", "required_gaps",
-           "save_facts", "unlinked_report", "wording_of"]
+           "create_tour", "export_guard", "facts_editors", "link_tours", "list_manual", "publish_check", "read_tour",
+           "required_gaps", "save_facts", "unlinked_report", "wording_of"]
