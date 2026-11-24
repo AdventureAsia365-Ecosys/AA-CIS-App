@@ -26,7 +26,7 @@ from fastapi import Body, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from api.routers.admin import verify_admin_secret
-from api.routers.admin_pipeline._publish import enforce_publish_gate, request_actor
+from api.routers.admin_pipeline._publish import enforce_publish_gate, facts_editors, request_actor
 from api.routers.admin_pipeline._shared import logger, router
 from api.routers.admin_pipeline.tour_detail import _record_field_edit_signals
 from api.routers.admin_pipeline.uploads import _lifecycle_http
@@ -251,11 +251,37 @@ async def discard_tour_draft(tour_id: str, request: Request, x_admin_secret: str
     return {"tour_id": tour_id, "discarded": draft["version_num"]}
 
 
+async def _hand_made_complete(pool, conn, tour_id: str) -> None:
+    """AA-1148: a hand-made tour (raw_tours.entry_origin 'manual', CIS 478) publishes only with its required list
+    complete (409 ``required_missing``); a sheet tour is not checked here."""
+    from services.content_workspace import store as cw
+    try:
+        await cw.publish_check(pool, conn, tour_id)
+    except cw.WorkspaceError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail(), headers={"X-Error-Code": e.code})
+
+
+_REOPEN_DRAFT_SQL = """
+    UPDATE silver_aa_internal.generated_content g SET status = 'draft'
+     WHERE g.id = $1::uuid AND g.status = 'hitl'
+       AND NOT EXISTS (SELECT 1 FROM silver_aa_internal.generated_content o
+                        WHERE o.tour_id = g.tour_id AND o.status = 'draft')
+"""
+
+
+async def _reopen_draft(pool, version_id: str) -> None:
+    """AA-1148: the required list became incomplete between the check and process_export (a race), which moved the
+    open draft approved -> hitl: put it back to 'draft' so the person keeps editing it (unless another draft opened)."""
+    async with pool.acquire() as conn:
+        await conn.execute(_REOPEN_DRAFT_SQL, version_id)
+
+
 @router.post("/tours/{tour_id}/draft/publish")
 async def publish_tour_draft(tour_id: str, request: Request, x_admin_secret: str = Header(None)):
     """Make the open draft the tour's live version. The one gate: a passing re-validation of the saved text (409
     ``revalidate_required``), the two-person rule while cis.content.publish_two_person is on (403
-    ``two_person_required`` / ``same_person``), a live source (409 ``source_not_live``); then process_export with exit
+    ``two_person_required`` / ``same_person``), a hand-made tour's complete required list (409 ``required_missing``,
+    AA-1148), a live source (409 ``source_not_live``); then process_export with exit
     ``human_publish`` (atomize, segment, source fan-out) locks the Master against automatic reruns."""
     verify_admin_secret(x_admin_secret)
     actor = request_actor(request)
@@ -267,7 +293,10 @@ async def publish_tour_draft(tour_id: str, request: Request, x_admin_secret: str
                 raise HTTPException(status_code=404, detail="This tour has no open draft")
             await conn.execute(
                 "SELECT 1 AS ok FROM silver_aa_internal.generated_content WHERE id = $1::uuid FOR UPDATE", draft["id"])
-            await enforce_publish_gate(conn, request, editors=_draft_editors(draft))
+            # AA-1148: a hand-made tour's facts writers are writers of what goes live too
+            editors = _draft_editors(draft) + await facts_editors(conn, tour_id)
+            await enforce_publish_gate(conn, request, editors=editors)
+            await _hand_made_complete(pool, conn, tour_id)   # AA-1148: the required list of a hand-made tour
             if draft["revalidate_passed"] is not True:
                 raise HTTPException(
                     status_code=409, headers={"X-Error-Code": "revalidate_required"},
@@ -291,6 +320,7 @@ async def publish_tour_draft(tour_id: str, request: Request, x_admin_secret: str
     from services.export.handler import process_export
     from services.tour_lifecycle import LifecycleError
     from services.tour_lifecycle.policy import POLICY_REVIEW_REQUIRED, PolicyReviewRequiredError
+    from services.content_workspace.store import RequiredMissingError
     try:
         exported = await process_export(draft["id"], contract_exit="human_publish",
                                         atomize_created_by="admin:publish_draft", lock_by=actor,
@@ -301,6 +331,9 @@ async def publish_tour_draft(tour_id: str, request: Request, x_admin_secret: str
     except PolicyReviewRequiredError as e:   # AA-1049: elephant riding, the version is now in the Review Queue
         raise HTTPException(status_code=409, detail=f"{e} (v{draft['version_num']} is now in the Review Queue)",
                             headers={"X-Error-Code": POLICY_REVIEW_REQUIRED})
+    except RequiredMissingError as e:   # AA-1148: the required list changed between the check and the publish
+        await _reopen_draft(pool, draft["id"])
+        raise HTTPException(status_code=409, detail=e.detail(), headers={"X-Error-Code": e.code})
     except LifecycleError as e:
         raise _lifecycle_http(e)
     logger.info("tour_draft_published", tour_id=tour_id, version_id=draft["id"], version_num=draft["version_num"],

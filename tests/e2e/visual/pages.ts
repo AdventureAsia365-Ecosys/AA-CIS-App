@@ -36,6 +36,11 @@ export const PAGES: VisualPage[] = [
   { slug: "selftest-document", route: "/kit-gallery", path: "/kit-gallery?plant=overflow", auth: "public", gallery: true, selftest: "document" },
   { slug: "selftest-frame", route: "/kit-gallery", path: "/kit-gallery?plant=frame", auth: "public", gallery: true, selftest: "frame" },
   { slug: "aa-content", route: "/admin/aa-content", path: "/admin/aa-content", auth: "staff" },
+  { slug: "content-workspace", route: "/admin/content-workspace", path: "/admin/content-workspace", auth: "staff" },
+  { slug: "content-workspace-new", route: "/admin/content-workspace/new", path: "/admin/content-workspace/new",
+    auth: "staff" },
+  { slug: "content-workspace-supplier-links", route: "/admin/content-workspace/supplier-links",
+    path: "/admin/content-workspace/supplier-links", auth: "staff" },
   { slug: "ai-gateway", route: "/admin/ai-gateway", path: "/admin/ai-gateway", auth: "staff" },
   { slug: "api-docs", route: "/admin/api-docs", path: "/admin/api-docs", auth: "staff" },
   { slug: "atom-curation", route: "/admin/atom-curation", path: "/admin/atom-curation", auth: "staff" },
@@ -116,5 +121,6 @@ export const EXCLUDED: Record<string, string> = {
   "/admin/lab/[stage]": "a Writing Lab stage, opened from the Lab cards by router push (no stable link to read an id from)",
   "/admin/platform/staff/[id]": "a staff account, opened from the directory rows by router push; staff names are personal data",
   "/admin/supply-content/[id]": "a supplier content item, opened from its list rows by router push",
+  "/admin/content-workspace/[tourId]": "a hand-made tour, opened from the content workspace list (ids differ per env)",
   "/admin/tenants/[id]": "Tenant 360 of one agency, opened from the agency rows by router push",
 };

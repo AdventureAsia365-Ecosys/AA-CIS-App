@@ -221,6 +221,10 @@ def test_content_work_routes_are_the_every_staff_pages():
         "/admin/supply-content/{entity_id}/versions/{version_id}/publish",
         "/admin/supply-content/{entity_id}/versions/{version_id}/reject",
         "/admin/supply-content/{entity_id}/unpublish",
+        # AA-1148 — the content workspace: hand-made tours and the supplier link of a tour (the catalogue-wide apply of
+        # the suggested matches is content.publish, not content work)
+        "/admin/content-workspace/tours", "/admin/content-workspace/tours/{tour_id}/facts",
+        "/admin/content-workspace/supplier-links",
         # AA-1035 R2: AA Catalogue R (catalog.read) and the aa_internal catalog of Master Content (scoped)
         "/admin/atoms", "/admin/atoms/summary", "/admin/atoms/unatomized-tours", "/admin/tenants/{tenant_id}/details",
         # AA-1091: content reads the Reference prices page (reference_price.read; writes stay with the writers)

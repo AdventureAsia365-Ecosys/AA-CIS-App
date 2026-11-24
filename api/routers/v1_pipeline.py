@@ -19,7 +19,7 @@ from api.core.staff_credential import principal_verified
 from typing import Optional
 
 from shared.tour_liveness import (
-    SOURCE_NOT_LIVE, SourceNotLiveError, live_source_exists_sql, live_source_sql, source_not_live_message,
+    SOURCE_NOT_LIVE, live_source_exists_sql, live_source_sql, source_not_live_message,
     source_state,
 )
 from services.content_generation.graph import build_graph
@@ -674,32 +674,14 @@ async def approve_review(
             import structlog as _sl
             _sl.get_logger().warning("send_task_success_failed", error=str(e))
     else:
-        # Admin-path forward export (no SF token). Runs once per claim.
-        from services.export.handler import process_export
+        # Admin-path forward export (no SF token). Runs once per claim. The expected refusals (a dead source, an
+        # incomplete hand-made tour) come back as their 409 with the review row set right (_publish.approve_export).
+        from api.routers.admin_pipeline._publish import approve_export
         try:
-            await process_export(str(generated_content_id), contract_exit="approve", **lock_kw(request))
+            await approve_export(pool, request, review_id, str(generated_content_id))
             exported = True
-        except SourceNotLiveError as e:
-            # The source was trashed between the claim and the export (race). Nothing is published and
-            # process_export already moved the version approved → hitl; close the claimed review as
-            # 'dismissed' (the _enqueue_review state for a dead source) so no row says "approved" without a
-            # Master, and give the reviewer the same 409 as a dead source caught before the claim.
-            import structlog as _sl
-            _sl.get_logger().warning(
-                "approve_export_source_not_live", review_id=review_id,
-                version_id=generated_content_id, reason=e.state.reason,
-            )
-            async with pool.acquire() as conn:
-                await conn.execute("""
-                    UPDATE silver_aa_internal.review_queue
-                    SET review_status = 'dismissed', reviewed_at = NOW()
-                    WHERE id = $1::uuid AND review_status = 'approved'
-                """, review_id)
-            raise HTTPException(
-                status_code=409,
-                detail=source_not_live_message(e.state, "approve this review"),
-                headers={"X-Error-Code": SOURCE_NOT_LIVE},
-            )
+        except HTTPException:
+            raise
         except Exception as e:
             import structlog as _sl
             _sl.get_logger().error(

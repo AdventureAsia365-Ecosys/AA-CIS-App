@@ -61,14 +61,25 @@ async def enforce_publish_gate(conn: Any, request: Request, *, editors: Iterable
                             headers={"X-Error-Code": code})
 
 
+async def facts_editors(conn: Any, tour_id: Any) -> list:
+    """AA-1148: the writers of a hand-made tour's facts since its last publish (services/content_workspace/store.py
+    facts_editors); a publish of that tour puts their facts live too, so the two-person rule counts them. [] for a
+    sheet tour, and no read while the two-person switch is off (the gate then counts nobody)."""
+    if not await gate.switch_on(conn):
+        return []
+    from services.content_workspace import store as cw
+    return await cw.facts_editors(conn, str(tour_id))
+
+
 async def review_publish_gate(conn: Any, request: Request, review_id: str, tenant_id: str) -> None:
     """The publish gate of a Review Queue approve (api/routers/v1_pipeline.py approve_review): the editors are the
-    version's draft editors and its last hand editor (reviewed_by). No extra read while the switch is off."""
+    version's draft editors, its last hand editor (reviewed_by) and, for a hand-made tour, the writers of its facts
+    since the last publish (AA-1148). No extra read while the switch is off."""
     from services.content_generation import tour_draft as td
     if not await gate.switch_on(conn):
         return
     row = await conn.fetchrow("""
-        SELECT gc.reviewed_by::text AS reviewed_by, gc.edit_diff
+        SELECT gc.reviewed_by::text AS reviewed_by, gc.edit_diff, rq.tour_id::text AS tour_id
           FROM silver_aa_internal.review_queue rq
           JOIN silver_aa_internal.generated_content gc ON gc.id = rq.generated_content_id
          WHERE rq.id = $1::uuid AND rq.tenant_id = $2::uuid
@@ -76,7 +87,54 @@ async def review_publish_gate(conn: Any, request: Request, review_id: str, tenan
     editors = td.editors_of(row["edit_diff"], None) if row is not None else []
     if row is not None and row["reviewed_by"]:
         editors.append(f"admin:{row['reviewed_by']}")
+    if row is not None:
+        editors += await facts_editors(conn, row["tour_id"])
     await enforce_publish_gate(conn, request, editors=editors)
+
+
+_REVIEW_DISMISS_SQL = """
+    UPDATE silver_aa_internal.review_queue SET review_status = 'dismissed', reviewed_at = NOW()
+     WHERE id = $1::uuid AND review_status = 'approved'
+"""
+_REVIEW_REOPEN_SQL = """
+    UPDATE silver_aa_internal.review_queue SET review_status = 'pending', reviewed_at = NULL
+     WHERE id = $1::uuid AND review_status = 'approved'
+"""
+
+
+async def approve_export(pool: Any, request: Request, review_id: str, version_id: str) -> None:
+    """The publish of a claimed Review Queue approve (api/routers/v1_pipeline.py approve_review, admin path):
+    process_export with exit ``approve``. Its expected refusals become the reviewer's 409 with the review row set
+    right (process_export already moved the version approved -> hitl, nothing is published):
+
+    - the source was trashed between the claim and the export (race): the review is closed 'dismissed' (the
+      _enqueue_review state for a dead source), so no row says "approved" without a Master;
+    - AA-1148: a hand-made tour whose required list is not complete: the review goes back to 'pending', so it can be
+      approved once the tour's facts are complete; the 409 carries the missing items (``required_missing``)."""
+    import structlog
+
+    from services.content_workspace.store import RequiredMissingError
+    from services.export.handler import process_export
+    from shared.tour_liveness import SOURCE_NOT_LIVE, SourceNotLiveError, source_not_live_message
+
+    log = structlog.get_logger()
+    try:
+        await process_export(version_id, contract_exit="approve", **lock_kw(request))
+        return
+    except RequiredMissingError as e:
+        log.warning("approve_export_required_missing", review_id=review_id, version_id=version_id,
+                    missing=[g["key"] for g in e.gaps])
+        sql = _REVIEW_REOPEN_SQL
+        refusal = HTTPException(status_code=409, detail=e.detail(), headers={"X-Error-Code": e.code})
+    except SourceNotLiveError as e:
+        log.warning("approve_export_source_not_live", review_id=review_id, version_id=version_id,
+                    reason=e.state.reason)
+        sql = _REVIEW_DISMISS_SQL
+        refusal = HTTPException(status_code=409, detail=source_not_live_message(e.state, "approve this review"),
+                                headers={"X-Error-Code": SOURCE_NOT_LIVE})
+    async with pool.acquire() as conn:
+        await conn.execute(sql, review_id)
+    raise refusal
 
 
 def lock_kw(request: Request) -> dict:

@@ -59,6 +59,7 @@ const ICONS: Record<NavIcon, React.ReactNode> = {
   plans: <CreditCard size={16} />,
   assignments: <UserCheck size={16} />,
   upload: <Upload size={16} />,
+  contentWorkspace: <PenLine size={16} />,   // AA-1148
   rewrite: <Wand2 size={16} />,
   review: <ClipboardList size={16} />,
   master: <Library size={16} />,

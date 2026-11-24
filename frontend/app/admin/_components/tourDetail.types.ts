@@ -28,6 +28,7 @@ export interface TourDetailFull {
     exclusions: string | null;
     pipeline_status: string;
     ingest_at: string | null;
+    entry_origin?: string | null;   // AA-1148: 'manual' = a hand-made tour, edited in the content workspace
   };
   generated: {
     id: string;

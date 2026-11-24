@@ -9,6 +9,7 @@ from typing import Callable, Optional
 from shared.secrets import get_database_url
 from shared.tour_liveness import SOURCE_NOT_LIVE, SourceNotLiveError, SourceState, source_state
 from services.content_generation import human_lock as _human_lock   # AA-1146: the hand-edit lock of a Master
+from services.content_workspace.store import export_guard as _required_list_guard   # AA-1148: hand-made tours
 
 logger = structlog.get_logger()
 
@@ -615,7 +616,7 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
     run), ``approve`` (Review Queue), ``promote`` (rollback), ``lambda`` (the legacy handler), ``recompose``
     (AA-1049 path A-new: a code-recomposed version of a served Master, ``content_generation/s1_recompose_store``).
     Every caller names its exit (topology test). It never blocks the publish.
-    AA-1146: the hand-edit lock (human_lock.guard_export / after_export; ``lock``: lock_by, lock_reason)."""
+    AA-1146 / AA-1148: the hand-edit lock (human_lock; ``lock``: lock_by, lock_reason), a hand-made tour's list."""
     conn = await asyncpg.connect(get_database_url())
     tenant_slug = os.environ.get("TENANT_SLUG", "aa_internal")
     silver = f"silver_{tenant_slug}"
@@ -671,6 +672,7 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
         if not src.live:
             await _refuse_not_live(src)
         await _human_lock.guard_export(conn, silver, version_id, str(tour_id), contract_exit)   # AA-1146
+        await _required_list_guard(conn, silver, version_id, str(tour_id), row, contract_exit)  # AA-1148
 
         # 2. Insert into published catalog (gold). AA-986 L2: through the tour lifecycle service (ADR 0015
         # decision 2, `publish`): the insert, "never two active Masters per key" and the `restored` record of a key
@@ -703,9 +705,7 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
                 "seo_keywords_used":    row.get("seo_keywords_used") or "[]",
                 "og_tags":              row.get("og_tags") or "{}",
                 "quality_score":        row.get("quality_score"),
-                "quality_score_id": (
-                    str(row["quality_score_id"]) if row.get("quality_score_id") else None
-                ),
+                "quality_score_id":     str(row["quality_score_id"]) if row.get("quality_score_id") else None,
                 "s3_gold_path":         None,
                 "approved_by":          "pipeline",
             }, tenant_slug=tenant_slug)

@@ -52,6 +52,8 @@ SAMPLES = [
     ("admin_waves", "POST", "/admin/waves/check", None),
     ("admin_overview", "GET", "/admin/overview", None),
     ("admin_my_work", "GET", "/admin/my-work/summary", None),                           # AA-1156
+    ("admin_content_workspace", "POST", "/admin/content-workspace/supplier-links/apply-suggestions",
+     {"dry_run": True, "reason": "zz test"}),                                           # AA-1148
     ("admin_budgets", "GET", "/admin/budgets", None),
     ("admin_llm_ops", "GET", "/admin/spend/daily", None),
     ("admin_usage_explorer", "GET", "/admin/usage-explorer/query", None),               # AA-1045

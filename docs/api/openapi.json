@@ -763,6 +763,26 @@
         "title": "AppProfilePatch",
         "type": "object"
       },
+      "ApplyBody": {
+        "properties": {
+          "dry_run": {
+            "default": true,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "ApplyBody",
+        "type": "object"
+      },
       "ApproveBody": {
         "additionalProperties": false,
         "properties": {
@@ -3844,6 +3864,51 @@
         "title": "DataCoverageResponse",
         "type": "object"
       },
+      "DayIn": {
+        "properties": {
+          "description": {
+            "default": "",
+            "maxLength": 4000,
+            "title": "Description",
+            "type": "string"
+          },
+          "meals": {
+            "items": {
+              "enum": [
+                "breakfast",
+                "lunch",
+                "dinner"
+              ],
+              "type": "string"
+            },
+            "maxItems": 3,
+            "title": "Meals",
+            "type": "array"
+          },
+          "overnight": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Overnight",
+            "type": "string"
+          },
+          "places": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 12,
+            "title": "Places",
+            "type": "array"
+          },
+          "title": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "title": "DayIn",
+        "type": "object"
+      },
       "DecideRequest": {
         "properties": {
           "decision": {
@@ -5244,6 +5309,295 @@
         "title": "FactPatch",
         "type": "object"
       },
+      "FactsIn": {
+        "description": "The facts form of a hand-made tour. Everything may be empty while it is a draft: the required list says what is\nmissing; only the publish needs it complete.",
+        "properties": {
+          "best_time_to_go": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Best Time To Go",
+            "type": "string"
+          },
+          "country": {
+            "anyOf": [
+              {
+                "maxLength": 60,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/DayIn"
+            },
+            "maxItems": 365,
+            "title": "Days",
+            "type": "array"
+          },
+          "exclusions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 40,
+            "title": "Exclusions",
+            "type": "array"
+          },
+          "group_max": {
+            "anyOf": [
+              {
+                "maximum": 999.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Max"
+          },
+          "group_min": {
+            "anyOf": [
+              {
+                "maximum": 999.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Min"
+          },
+          "guide_languages": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 12,
+            "title": "Guide Languages",
+            "type": "array"
+          },
+          "inclusions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 40,
+            "title": "Inclusions",
+            "type": "array"
+          },
+          "name": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Name",
+            "type": "string"
+          },
+          "nights": {
+            "anyOf": [
+              {
+                "maximum": 365.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nights"
+          },
+          "summary": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Summary",
+            "type": "string"
+          },
+          "supplier_id": {
+            "anyOf": [
+              {
+                "maxLength": 36,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supplier Id"
+          },
+          "tour_type": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "pattern": "^[a-z][a-z0-9_]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tour Type"
+          }
+        },
+        "title": "FactsIn",
+        "type": "object"
+      },
+      "FactsSave": {
+        "properties": {
+          "best_time_to_go": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Best Time To Go",
+            "type": "string"
+          },
+          "country": {
+            "anyOf": [
+              {
+                "maxLength": 60,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/DayIn"
+            },
+            "maxItems": 365,
+            "title": "Days",
+            "type": "array"
+          },
+          "exclusions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 40,
+            "title": "Exclusions",
+            "type": "array"
+          },
+          "expected_saved_at": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Saved At"
+          },
+          "group_max": {
+            "anyOf": [
+              {
+                "maximum": 999.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Max"
+          },
+          "group_min": {
+            "anyOf": [
+              {
+                "maximum": 999.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Min"
+          },
+          "guide_languages": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 12,
+            "title": "Guide Languages",
+            "type": "array"
+          },
+          "inclusions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 40,
+            "title": "Inclusions",
+            "type": "array"
+          },
+          "name": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Name",
+            "type": "string"
+          },
+          "nights": {
+            "anyOf": [
+              {
+                "maximum": 365.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nights"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "summary": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Summary",
+            "type": "string"
+          },
+          "supplier_id": {
+            "anyOf": [
+              {
+                "maxLength": 36,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supplier Id"
+          },
+          "tour_type": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "pattern": "^[a-z][a-z0-9_]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tour Type"
+          }
+        },
+        "title": "FactsSave",
+        "type": "object"
+      },
       "FeedbackIn": {
         "additionalProperties": false,
         "properties": {
@@ -5880,6 +6234,37 @@
           "status"
         ],
         "title": "LessonSummary",
+        "type": "object"
+      },
+      "LinkBody": {
+        "properties": {
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          },
+          "supplier_id": {
+            "maxLength": 36,
+            "title": "Supplier Id",
+            "type": "string"
+          },
+          "tour_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 500,
+            "minItems": 1,
+            "title": "Tour Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tour_ids",
+          "supplier_id",
+          "reason"
+        ],
+        "title": "LinkBody",
         "type": "object"
       },
       "LlmCatalogPatch": {
@@ -24484,6 +24869,772 @@
         "summary": "Set Version Signal Exemplar",
         "tags": [
           "admin-content-quality"
+        ]
+      }
+    },
+    "/admin/content-workspace/options": {
+      "get": {
+        "operationId": "options_admin_content_workspace_options_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Countries, limits, option lists and switches of the content workspace",
+        "tags": [
+          "admin-content-workspace"
+        ]
+      }
+    },
+    "/admin/content-workspace/supplier-links": {
+      "get": {
+        "operationId": "supplier_links_admin_content_workspace_supplier_links_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "country",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[A-Za-z]{2}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Country"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 100,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "only_suggested",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Only Suggested",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Live tours not linked to an AA supplier yet",
+        "tags": [
+          "admin-content-workspace"
+        ]
+      },
+      "post": {
+        "operationId": "link_tours_admin_content_workspace_supplier_links_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Link tours to one AA supplier",
+        "tags": [
+          "admin-content-workspace"
+        ]
+      }
+    },
+    "/admin/content-workspace/supplier-links/apply-suggestions": {
+      "post": {
+        "operationId": "apply_suggestions_admin_content_workspace_supplier_links_apply_suggestions_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Link the suggested supplier matches (DRY RUN first)",
+        "tags": [
+          "admin-content-workspace"
+        ]
+      }
+    },
+    "/admin/content-workspace/suppliers": {
+      "get": {
+        "operationId": "list_suppliers_admin_content_workspace_suppliers_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 100,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "country",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[A-Za-z]{2}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Country"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_inactive",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Inactive",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "AA suppliers of Booking for the picker",
+        "tags": [
+          "admin-content-workspace"
+        ]
+      }
+    },
+    "/admin/content-workspace/tours": {
+      "get": {
+        "operationId": "list_tours_admin_content_workspace_tours_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 100,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Hand-made tours",
+        "tags": [
+          "admin-content-workspace"
+        ]
+      },
+      "post": {
+        "operationId": "create_tour_admin_content_workspace_tours_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FactsIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create a hand-made tour",
+        "tags": [
+          "admin-content-workspace"
+        ]
+      }
+    },
+    "/admin/content-workspace/tours/{tour_id}": {
+      "get": {
+        "operationId": "get_tour_admin_content_workspace_tours__tour_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tour_id",
+            "required": true,
+            "schema": {
+              "title": "Tour Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "A tour in the content workspace",
+        "tags": [
+          "admin-content-workspace"
+        ]
+      }
+    },
+    "/admin/content-workspace/tours/{tour_id}/facts": {
+      "put": {
+        "operationId": "save_facts_admin_content_workspace_tours__tour_id__facts_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tour_id",
+            "required": true,
+            "schema": {
+              "title": "Tour Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FactsSave"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Save the facts of a hand-made tour",
+        "tags": [
+          "admin-content-workspace"
         ]
       }
     },
@@ -52424,7 +53575,7 @@
     },
     "/admin/tours/{tour_id}/draft/publish": {
       "post": {
-        "description": "Make the open draft the tour's live version. The one gate: a passing re-validation of the saved text (409\n``revalidate_required``), the two-person rule while cis.content.publish_two_person is on (403\n``two_person_required`` / ``same_person``), a live source (409 ``source_not_live``); then process_export with exit\n``human_publish`` (atomize, segment, source fan-out) locks the Master against automatic reruns.",
+        "description": "Make the open draft the tour's live version. The one gate: a passing re-validation of the saved text (409\n``revalidate_required``), the two-person rule while cis.content.publish_two_person is on (403\n``two_person_required`` / ``same_person``), a hand-made tour's complete required list (409 ``required_missing``,\nAA-1148), a live source (409 ``source_not_live``); then process_export with exit\n``human_publish`` (atomize, segment, source fan-out) locks the Master against automatic reruns.",
         "operationId": "publish_tour_draft_admin_tours__tour_id__draft_publish_post",
         "parameters": [
           {
@@ -53030,7 +54181,7 @@
     },
     "/admin/tours/{tour_id}/raw": {
       "patch": {
-        "description": "Edit fields of the source tour. AA-1146 (S285): every edit keeps the old values: one history row\n(silver_aa_internal.raw_tour_revision, source staff_edit) and one audit row (raw_tour.fields_edited, before / after)\nin the edit's transaction; an optional ``reason`` (3..500 characters) is stored with both. ``price_raw`` needs\nreference_price.write (D5: 403 for content and content_lead).",
+        "description": "Edit fields of the source tour. AA-1146 (S285): every edit keeps the old values: one history row\n(silver_aa_internal.raw_tour_revision, source staff_edit) and one audit row (raw_tour.fields_edited, before / after)\nin the edit's transaction; an optional ``reason`` (3..500 characters) is stored with both. ``price_raw`` needs\nreference_price.write (D5: 403 for content and content_lead). AA-1148: a hand-made tour's facts are edited in the\ncontent workspace (409 ``manual_tour_use_workspace``; the price text stays here).",
         "operationId": "update_raw_tour_fields_admin_tours__tour_id__raw_patch",
         "parameters": [
           {

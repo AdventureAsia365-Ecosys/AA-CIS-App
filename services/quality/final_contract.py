@@ -88,6 +88,8 @@ EXITS: dict[str, dict[str, tuple[str, ...]]] = {
         "api/routers/admin_pipeline/tour_detail.py::update_generated_content_fields": ("human_edit",),
         # AA-1146: a person's draft version (created or saved: its text) and its publish through the gate
         "api/routers/admin_pipeline/drafts.py::put_tour_draft": ("human_edit",),
+        # AA-1148: the first wording draft of a hand-made tour (a person's text, recorded like a draft save)
+        "services/content_workspace/store.py::create_tour": ("human_edit",),
         "api/routers/admin_pipeline/drafts.py::publish_tour_draft": ("human_publish",),
         # every publish of a Master (auto publish after a run, review approve, promote, the legacy Lambda); each
         # caller names its exit (contract_exit=)
@@ -101,6 +103,8 @@ EXITS: dict[str, dict[str, tuple[str, ...]]] = {
         "services/content_generation/s1_recompose_store.py::_default_publish": ("recompose",),
         # the review approve (also the legacy Step Functions branch that does not publish here)
         "api/routers/v1_pipeline.py::approve_review": ("approve",),
+        # its publish (AA-1148): process_export with exit approve and the review row of the expected refusals
+        "api/routers/admin_pipeline/_publish.py::approve_export": ("approve",),
     },
     T2: {
         "services/jobs/t2_rewrite_job.py::_rewrite_and_save": ("done",),

@@ -547,10 +547,12 @@ async def _execute_run_tour(
 
 async def _auto_publish(conn, req: TourRunRequest, version_id, result: dict) -> None:
     """The S1 auto publish of an approved version (moved out of _execute_run_tour, AA-1146): the expected refusals
-    (a hand-locked Master, the elephant-riding policy, a dead source) are warnings, never errors."""
+    (a hand-locked Master, the elephant-riding policy, a dead source, a hand-made tour that is incomplete or whose facts
+    a person wrote while two-person publishing is on) are warnings, never errors."""
     from services.export.handler import process_export
     from services.tour_lifecycle.policy import PolicyReviewRequiredError
     from services.content_generation.human_lock import HumanLockedError
+    from services.content_workspace.store import HandMadeRefusal
     try:
         await process_export(str(version_id), contract_exit="auto_publish")
     except HumanLockedError as _locked:
@@ -563,6 +565,18 @@ async def _auto_publish(conn, req: TourRunRequest, version_id, result: dict) -> 
         # expected refusal: process_export moved it approved → hitl and filed its pending policy review.
         logger.warning("s1_export_refused_policy_review", tour_id=req.tour_id, version_id=str(version_id),
                        review_id=_held.review_id)
+    except HandMadeRefusal as _hand_made:
+        # AA-1148: a hand-made tour never goes live from an S1 run while its required list is not complete (no
+        # supplier, no exclusions...), nor, while two-person publishing is on, when a person wrote its facts since its
+        # last publish (or it was never published): no second person saw them. process_export moved the version
+        # approved -> hitl; file it for a person (Review Queue), whose approve runs the publish gate with the facts
+        # writers and the required list.
+        logger.warning("s1_export_refused_hand_made", tour_id=req.tour_id, version_id=str(version_id),
+                       code=_hand_made.code)
+        try:
+            await _enqueue_review(conn, req.tour_id, version_id, result, failure_summary=str(_hand_made))
+        except Exception as _rq_err:
+            logger.warning("review_queue_enqueue_failed", tour_id=req.tour_id, error=str(_rq_err))
     except SourceNotLiveError as _dead:
         # AA-986: the source was trashed / superseded while S1 ran. An expected refusal, not an error
         # (no Sentry event): process_export already moved the version approved → hitl; file the

@@ -7,11 +7,22 @@
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  /** AA-1148: the router's error code (`detail.code`, e.g. facts_changed), when the body had one. */
+  code: string | null;
+  constructor(message: string, status: number, code: string | null = null) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.code = code;
   }
+}
+
+/** The `code` of an object detail (`{code, message}` from a router's HTTPException), else null. */
+export function apiErrorCode(body: unknown): string | null {
+  const d = body && typeof body === "object" ? (body as { detail?: unknown }).detail : null;
+  if (!d || typeof d !== "object" || Array.isArray(d)) return null;
+  const code = (d as { code?: unknown }).code;
+  return typeof code === "string" && code ? code : null;
 }
 
 /** Admin identity header (temporary until AA-232 per-user auth): x-reviewer-id from localStorage. */
@@ -73,7 +84,7 @@ async function parseOrThrow<T>(res: Response): Promise<T> {
     } catch {
       /* non-JSON error body */
     }
-    throw new ApiError(apiErrorMessage(body, res.status), res.status);
+    throw new ApiError(apiErrorMessage(body, res.status), res.status, apiErrorCode(body));
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
