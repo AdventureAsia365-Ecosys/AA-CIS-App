@@ -307,6 +307,26 @@
     "capability": "tenant_content.read",
     "module": "api.routers.admin_content_quality"
   },
+  "GET /admin/content-workspace/options": {
+    "capability": null,
+    "module": "api.routers.admin_content_workspace"
+  },
+  "GET /admin/content-workspace/supplier-links": {
+    "capability": null,
+    "module": "api.routers.admin_content_workspace"
+  },
+  "GET /admin/content-workspace/suppliers": {
+    "capability": null,
+    "module": "api.routers.admin_content_workspace"
+  },
+  "GET /admin/content-workspace/tours": {
+    "capability": null,
+    "module": "api.routers.admin_content_workspace"
+  },
+  "GET /admin/content-workspace/tours/{tour_id}": {
+    "capability": null,
+    "module": "api.routers.admin_content_workspace"
+  },
   "GET /admin/cost-explorer": {
     "capability": "spend.read",
     "module": "api.routers.admin_llm_ops"
@@ -1435,6 +1455,18 @@
     "capability": "quality.write",
     "module": "api.routers.admin_content_quality"
   },
+  "POST /admin/content-workspace/supplier-links": {
+    "capability": "content.write",
+    "module": "api.routers.admin_content_workspace"
+  },
+  "POST /admin/content-workspace/supplier-links/apply-suggestions": {
+    "capability": "content.publish",
+    "module": "api.routers.admin_content_workspace"
+  },
+  "POST /admin/content-workspace/tours": {
+    "capability": "content.write",
+    "module": "api.routers.admin_content_workspace"
+  },
   "POST /admin/cost-explorer/check": {
     "capability": "spend.write",
     "module": "api.routers.admin_llm_ops"
@@ -2102,6 +2134,10 @@
   "PUT /admin/budgets/{provider}/{scope}": {
     "capability": "spend.write",
     "module": "api.routers.admin_budgets"
+  },
+  "PUT /admin/content-workspace/tours/{tour_id}/facts": {
+    "capability": "content.write",
+    "module": "api.routers.admin_content_workspace"
   },
   "PUT /admin/decisions/questions/{question_key}": {
     "capability": "ai.admin",

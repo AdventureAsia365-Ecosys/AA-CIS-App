@@ -805,6 +805,14 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/supply-content/{entity_id}/versions/{version_id}/publish"): REVIEW_ACT,
     ("POST", "/admin/supply-content/{entity_id}/versions/{version_id}/reject"): REVIEW_ACT,
     ("POST", "/admin/supply-content/{entity_id}/unpublish"): REVIEW_ACT,
+
+    # ── admin_content_workspace (AA-1148) — hand-made tours and the supplier links of source tours. Creating and
+    # saving a hand-made tour and linking tours to a supplier is content work; linking every suggested match of the
+    # catalogue at once is a publish-level action (content_lead, admin). Reads: content.read (OPEN_READ).
+    ("POST", "/admin/content-workspace/tours"): CONTENT_WRITE,
+    ("PUT", "/admin/content-workspace/tours/{tour_id}/facts"): CONTENT_WRITE,
+    ("POST", "/admin/content-workspace/supplier-links"): CONTENT_WRITE,
+    ("POST", "/admin/content-workspace/supplier-links/apply-suggestions"): CONTENT_PUBLISH,
 }
 
 # POLICY entries whose route is not on main yet: (method, route) -> the change that adds it. The route-policy test

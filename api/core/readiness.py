@@ -127,7 +127,9 @@ REQUIRED_CIS_SCHEMA = 322
 # the CRM onboarding write it; every module read fails without it. The marker write is best effort, the read is not).
 # 475 (AA-1140 — the Ecosystem status sampler writes acp_shared.ops_sample / ops_event every 5 minutes and
 # GET /admin/overview/status reads them; the job fails and the runtimes, events and DB tiles are empty without it).
-REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 395, 397, 398, 402, 408, 409, 411, 420, 428, 435, 439, 443, 454, 462, 464, 465, 466, 469, 470, 471, 473, 474, 475)  # noqa: E501
+# 478 (AA-1148 — the content workspace reads and writes raw_tours.supplier_id / entry_origin / manual_facts; every
+# workspace route fails without it. The draft publish check of a hand-made tour skips itself before 478).
+REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 395, 397, 398, 402, 408, 409, 411, 420, 428, 435, 439, 443, 454, 462, 464, 465, 466, 469, 470, 471, 473, 474, 475, 478)  # noqa: E501
 # Versions this code needs that were registered after a higher one (reserved numbers): 297 (AA-920 WM-25) was reserved
 # in S255 and applied after 299. max() is already 299 without it, so the version reported is capped below the lowest
 # listed version that is not registered (297 missing -> 296 -> "schema_behind").

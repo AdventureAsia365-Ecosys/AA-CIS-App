@@ -251,11 +251,22 @@ async def discard_tour_draft(tour_id: str, request: Request, x_admin_secret: str
     return {"tour_id": tour_id, "discarded": draft["version_num"]}
 
 
+async def _hand_made_complete(pool, conn, tour_id: str) -> None:
+    """AA-1148: a hand-made tour (raw_tours.entry_origin 'manual', CIS 478) publishes only with its required list
+    complete (409 ``required_missing``); a sheet tour is not checked here."""
+    from services.content_workspace import store as cw
+    try:
+        await cw.publish_check(pool, conn, tour_id)
+    except cw.WorkspaceError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail(), headers={"X-Error-Code": e.code})
+
+
 @router.post("/tours/{tour_id}/draft/publish")
 async def publish_tour_draft(tour_id: str, request: Request, x_admin_secret: str = Header(None)):
     """Make the open draft the tour's live version. The one gate: a passing re-validation of the saved text (409
     ``revalidate_required``), the two-person rule while cis.content.publish_two_person is on (403
-    ``two_person_required`` / ``same_person``), a live source (409 ``source_not_live``); then process_export with exit
+    ``two_person_required`` / ``same_person``), a hand-made tour's complete required list (409 ``required_missing``,
+    AA-1148), a live source (409 ``source_not_live``); then process_export with exit
     ``human_publish`` (atomize, segment, source fan-out) locks the Master against automatic reruns."""
     verify_admin_secret(x_admin_secret)
     actor = request_actor(request)
@@ -268,6 +279,7 @@ async def publish_tour_draft(tour_id: str, request: Request, x_admin_secret: str
             await conn.execute(
                 "SELECT 1 AS ok FROM silver_aa_internal.generated_content WHERE id = $1::uuid FOR UPDATE", draft["id"])
             await enforce_publish_gate(conn, request, editors=_draft_editors(draft))
+            await _hand_made_complete(pool, conn, tour_id)   # AA-1148: the required list of a hand-made tour
             if draft["revalidate_passed"] is not True:
                 raise HTTPException(
                     status_code=409, headers={"X-Error-Code": "revalidate_required"},
