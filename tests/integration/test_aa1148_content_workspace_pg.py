@@ -7,7 +7,8 @@ the suggested supplier, the bulk link and the apply of the suggestions (DRY RUN 
 
 Needs CIS 478: the module is skipped on a database without it, so the code PR's own CI (before the migration PR is
 merged) skips it and the merge queue (main + this PR) runs it. Booking's view booking.v_supply_suppliers (bk-073) is not
-in the CIS test database: a stand-in view with invented suppliers is created inside the test transaction. Each test
+in the CIS test database: a stand-in view with invented suppliers is created inside the test transaction (and
+pipeline_runs.step_name, a Dev column of CIS 281, which the replay skips). Each test
 runs in one transaction that is rolled back; process_export and the lifecycle side effects are replaced by stand-ins.
 Invented names and places only."""
 import os
@@ -83,6 +84,8 @@ async def conn():
     tr = c.transaction()
     await tr.start()
     try:
+        # Dev's shared.pipeline_runs.step_name (CIS 281, which the replay skips): a hand-made tour's batch row sets it
+        await c.execute("ALTER TABLE shared.pipeline_runs ADD COLUMN IF NOT EXISTS step_name text")
         await c.execute("CREATE SCHEMA IF NOT EXISTS booking")
         await c.execute("DROP VIEW IF EXISTS booking.v_supply_suppliers")
         await c.execute(f"""
@@ -481,3 +484,35 @@ async def test_the_open_draft_stays_editable_when_the_publish_loses_the_race(con
     assert e.value.status_code == 409 and e.value.detail["code"] == "required_missing"
     assert await conn.fetchval("SELECT status::text AS s FROM silver_aa_internal.generated_content "
                                "WHERE id = $1::uuid", version_id) == "draft"
+
+
+# ── live fix (S290): the batch foreign key ────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_the_create_route_writes_the_tours_own_batch_row_under_the_batch_foreign_key(conn):
+    """Live 500 on Dev: POST /admin/content-workspace/tours gave a new batch id to supersede(create_new) with no
+    shared.pipeline_runs row, and raw_tours_batch_id_fkey refused the insert. conftest drops that foreign key for the
+    whole test database (cross-table seeding), which is why the tests above never saw it: it is put back here (NOT
+    VALID: checks the new rows only; rolled back with the test) and the tour is made through the real route."""
+    from api.routers import admin_content_workspace as cw
+
+    await conn.execute("ALTER TABLE silver_aa_internal.raw_tours ADD CONSTRAINT raw_tours_batch_id_fkey "
+                       "FOREIGN KEY (batch_id) REFERENCES shared.pipeline_runs (batch_id) NOT VALID")
+    with pytest.raises(asyncpg.ForeignKeyViolationError):        # the constraint is really in force in this test
+        async with conn.transaction():
+            await conn.execute("INSERT INTO silver_aa_internal.raw_tours (tenant_id, batch_id, src_name) "
+                               "VALUES ($1::uuid, $2::uuid, 'Zz orphan')", MASTER, str(uuid.uuid4()))
+    created = await cw.create_tour(_request(conn), _form())
+    run = await conn.fetchrow(
+        "SELECT pr.tenant_id::text AS tenant_id, pr.batch_name, pr.s3_source_path, pr.status, pr.tours_total, "
+        "pr.step_name, pr.completed_at FROM silver_aa_internal.raw_tours rt "
+        "JOIN shared.pipeline_runs pr ON pr.batch_id = rt.batch_id WHERE rt.tour_id = $1::uuid", created["tour_id"])
+    assert run is not None
+    assert (run["tenant_id"], run["batch_name"], run["s3_source_path"], run["status"], run["tours_total"],
+            run["step_name"]) == (MASTER, "Content workspace", None, "completed", 1, "content_workspace")
+    assert run["completed_at"] is not None
+    # a second tour gets its own batch, not the first one's
+    other = await cw.create_tour(_request(conn), _form(name="Zephyr Delta Second Trip"))
+    batches = await conn.fetch("SELECT DISTINCT batch_id FROM silver_aa_internal.raw_tours "
+                               "WHERE tour_id = ANY($1::uuid[])", [created["tour_id"], other["tour_id"]])
+    assert len(batches) == 2
