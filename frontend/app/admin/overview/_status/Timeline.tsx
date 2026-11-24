@@ -9,10 +9,11 @@ import Link from "next/link";
 import { useState } from "react";
 import { Badge, DataTable, Input, K, useFormat, type ColumnDef, type Tone } from "../../../_kit";
 import {
-  APP_LABEL, EVENT_KINDS, countBy, eventKind, filterEvents, inApps, levelTone, sortingParam, tableSorting, withSort,
+  EVENT_KINDS, countBy, eventKind, filterEvents, inApps, levelTone, sortingParam, tableSorting, withSort,
   type Delivery, type EventRow, type RangeInfo, type Section, type SourceRow, type View, type SetView,
 } from "@/lib/opsStatus";
-import { Card, ChipFilter, NotMeasured, WhenUp, rowWrap, small, useST, type ST } from "./ui";
+import { Card, ChipFilter, ClampText, NotMeasured, WhenUp, rowWrap, small, useST, type ST } from "./ui";
+import { useWords, type StatusWords } from "./words";
 
 const LANES = ["deploy", "alarm", "service", "check", "job"] as const;
 
@@ -24,6 +25,7 @@ function laneDot(e: EventRow): string {
 }
 
 function Lanes({ rows, range }: { rows: EventRow[]; range: RangeInfo }) {
+  const w = useWords();
   const a = Date.parse(range.start);
   const span = Math.max(1, Date.parse(range.end) - a);
   const pos = (iso: string) => `${Math.min(100, Math.max(0, (100 * (Date.parse(iso) - a)) / span))}%`;
@@ -35,7 +37,7 @@ function Lanes({ rows, range }: { rows: EventRow[]; range: RangeInfo }) {
           <span style={{ ...small, fontSize: 11 }}>{lane}</span>
           <span style={{ position: "relative", height: 12, background: K.bg, borderRadius: 3 }}>
             {rows.filter((e) => e.lane === lane).map((e) => (
-              <span key={e.id} title={e.text} style={{ position: "absolute", top: 2, height: 8, left: pos(e.t),
+              <span key={e.id} title={w.text(e.msg, e.text)} style={{ position: "absolute", top: 2, height: 8, left: pos(e.t),
                 minWidth: 3, width: e.t2 ? `calc(${pos(e.t2)} - ${pos(e.t)})` : 3, borderRadius: 2,
                 background: laneDot(e) }} />
             ))}
@@ -46,15 +48,29 @@ function Lanes({ rows, range }: { rows: EventRow[]; range: RangeInfo }) {
   );
 }
 
-function eventColumns(t: ST, formatDateTime: (d: string | null) => string): ColumnDef<EventRow>[] {
+function EventText({ e, w }: { e: EventRow; w: StatusWords }) {
+  return (
+    <span style={{ display: "grid", gap: 2, overflowWrap: "anywhere", minWidth: 0 }}>
+      {w.text(e.msg, e.text)}
+      {e.detail && <ClampText text={e.detail} lines={2}
+        label={e.detail_source ? w.source(SOURCE_OF[e.kind] ?? "") : null} />}
+    </span>
+  );
+}
+
+// the source of an event's outside detail text, by event kind (named in the "As written by ..." caption)
+const SOURCE_OF: Readonly<Record<string, string>> = {
+  alarm: "CloudWatch alarm", rollout_failed: "ECS", check: "Ops check", job_failures: "job",
+};
+
+function eventColumns(t: ST, w: StatusWords, formatDateTime: (d: string | null) => string): ColumnDef<EventRow>[] {
   return [
     { id: "t", header: t("colTime"), accessorFn: (e) => e.t, cell: ({ row }) => formatDateTime(row.original.t) },
     { id: "severity", header: t("severity"), accessorFn: (e) => eventKind(e),
       cell: ({ row }) => <Badge tone={levelTone(row.original.severity) as Tone}>{eventKind(row.original)}</Badge> },
-    { id: "app", header: t("colApp"), accessorFn: (e) => APP_LABEL[e.app] ?? e.app },
-    { id: "event", header: t("colEvent"), accessorFn: (e) => e.text,
-      cell: ({ row }) => (<span style={{ display: "grid", overflowWrap: "anywhere" }}>{row.original.text}
-        {row.original.detail && <span style={small}>{row.original.detail}</span>}</span>) },
+    { id: "app", header: t("colApp"), accessorFn: (e) => w.app(e.app) },
+    { id: "event", header: t("colEvent"), accessorFn: (e) => w.text(e.msg, e.text),
+      cell: ({ row }) => <EventText e={row.original} w={w} /> },
     { id: "ends", header: t("colEnds"), accessorFn: (e) => e.t2 ?? "",
       cell: ({ row }) => row.original.t2 ? formatDateTime(row.original.t2)
         : row.original.open ? <Badge tone="warning">{t("stillOpen")}</Badge> : "—" },
@@ -70,6 +86,7 @@ export function EventsCard({ section, range, view, setView }: {
   section: Section<EventRow[]>; range: RangeInfo; view: View; setView: SetView;
 }) {
   const t = useST();
+  const w = useWords();
   const { formatDateTime } = useFormat();
   const [search, setSearch] = useState("");
   return (
@@ -91,7 +108,7 @@ export function EventsCard({ section, range, view, setView }: {
                   onChange={(e) => setSearch(e.target.value)} style={{ width: 220 }} />
               </div>
               <Lanes rows={rows} range={range} />
-              <DataTable<EventRow> tableId="status-events" data={rows} columns={eventColumns(t, formatDateTime)}
+              <DataTable<EventRow> tableId="status-events" data={rows} columns={eventColumns(t, w, formatDateTime)}
                 getRowId={(e) => e.id} searchable={false} compact pageSize={25} tableMinWidth={640}
                 emptyTitle={t("noEvents")} sorting={tableSorting(view.sort.ev)}
                 onSortingChange={(s) => setView((v) => ({ sort: withSort(v.sort, "ev", sortingParam(s)) }))} />

@@ -4,6 +4,7 @@ a firing alarm become events, a re-run of the bucket writes nothing twice, the n
 completed rollout; a failed rollout closes once a later rollout completed; then build_status reads them back
 (runtimes with the uptime strip, the event timeline, the alarm band, the verdict). AWS and the peer apps are fakes;
 invented service and alarm names only. Rows are removed by the test's own subjects."""
+import json
 import os
 import sys
 from datetime import datetime, timedelta, timezone
@@ -65,6 +66,13 @@ def _cw(firing: bool, at: datetime) -> MagicMock:
     return client
 
 
+@pytest.fixture(autouse=True)
+def rds_size(monkeypatch):
+    # the database part's one DescribeDBInstances (CIS 477 free storage share): a fake, no AWS call
+    size = {"allocated_gib": 20, "max_allocated_gib": 100}
+    monkeypatch.setattr(sampler, "rds_storage", lambda env, client=None: size)
+
+
 @pytest.fixture
 def no_peers(monkeypatch):
     from api.services import platform_apps
@@ -90,6 +98,9 @@ async def test_tick_writes_samples_and_events_and_closes_them(pool, no_peers):
     assert got[("ecs_service", f"aa-crm-{ENV}-web")] == "unknown"
     assert got[("app_health", "crm")] == "down" and got[("app_health", "cis")] == "ok"
     assert ("queue", "shared.job") in got and ("database", "rds") in got and ("alarms", "all") in got
+    db = await pool.fetchval("SELECT value::text FROM acp_shared.ops_sample WHERE job_id = $1::uuid AND kind = "
+                             "'database'", job_id)
+    assert json.loads(db)["allocated_gib"] == 20 and json.loads(db)["max_allocated_gib"] == 100
     ev = await pool.fetch("SELECT kind, severity, ended_at FROM acp_shared.ops_event WHERE dedupe_key LIKE "
                           "'%zz1140%' ORDER BY kind")
     kinds = {r["kind"]: r for r in ev}

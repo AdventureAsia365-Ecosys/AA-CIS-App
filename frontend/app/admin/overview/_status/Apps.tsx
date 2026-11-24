@@ -11,6 +11,7 @@ import {
 } from "@/lib/opsStatus";
 import { fmtCount } from "@/lib/numberFormat";
 import { Card, NotMeasured, WhenUp, levelColor, num, rowWrap, small, useST } from "./ui";
+import { useWords } from "./words";
 
 // One metric: a label on one line (cut with an ellipsis, full text as its title) over a value that never wraps.
 const metricLabel = { fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase",
@@ -91,11 +92,12 @@ function Health({ tile }: { tile: AppTile }) {
 
 function Tile({ tile, sig, compare }: { tile: AppTile; sig: Signals; compare: boolean }) {
   const t = useST();
+  const w = useWords();
   return (
     <div data-testid={`status-app-${tile.app}`} style={{ border: `1px solid ${K.line}`, borderRadius: RADIUS.md,
       padding: `${SPACE.md}px ${SPACE.md}px`, background: K.card, display: "grid", gap: 10, minWidth: 0 }}>
       <div style={{ ...rowWrap, justifyContent: "space-between" }}>
-        <span style={{ fontWeight: 700, color: K.ink }}>{tile.label}</span>
+        <span style={{ fontWeight: 700, color: K.ink }}>{w.app(tile.app)}</span>
         <span title={tile.overall.reason}>
           <Badge tone={levelTone(tile.overall.status) as Tone}>{tile.overall.status.replace("_", " ")}</Badge></span>
       </div>

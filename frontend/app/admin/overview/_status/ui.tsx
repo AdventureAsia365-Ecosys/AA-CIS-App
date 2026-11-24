@@ -2,8 +2,8 @@
 // app/admin/overview/_status/ui.tsx — AA-1140: small shared pieces of the Ecosystem status page (kit only): the card
 // frame with its own "as of" time, the grey "not measured yet" chip, level badges, chip filters and a sort picker.
 
-import type { ReactNode } from "react";
-import { Badge, ChipButton, K, Section, Select, useFormat, useT, type Tone } from "../../../_kit";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { Badge, ChipButton, K, LinkButton, Section, Select, useFormat, useT, type Tone } from "../../../_kit";
 import { flipChip, levelTone, sectionDown, type Section as Sec } from "@/lib/opsStatus";
 import { STATUS } from "../status.messages";
 
@@ -113,4 +113,32 @@ export function SortSelect({ label, options, value, onChange }: {
 export function sortOptions(cols: { col: string; label: string }[]): { value: string; label: string }[] {
   return cols.flatMap((c) => [{ value: `${c.col}:desc`, label: `${c.label} ↓` }, { value: `${c.col}:asc`,
     label: `${c.label} ↑` }]);
+}
+
+/** Long text (an alarm description, an ops check message) clamped to `lines` lines with a "Show more" toggle that
+ *  appears only when the text is cut; the server never cuts it mid-word. `label` is a small caption before the text
+ *  (outside text: "As written by the CloudWatch alarm"). */
+export function ClampText({ text, lines = 3, label, testId }: {
+  text: string; lines?: number; label?: string | null; testId?: string;
+}) {
+  const t = useST();
+  const ref = useRef<HTMLSpanElement>(null);
+  const [open, setOpen] = useState(false);
+  const [cut, setCut] = useState(false);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el && !open) setCut(el.scrollHeight > el.clientHeight + 1);
+  }, [text, open, lines]);
+  const clamp = open ? {} : { display: "-webkit-box", WebkitLineClamp: lines, WebkitBoxOrient: "vertical" as const,
+    overflow: "hidden" };
+  return (
+    <span style={{ display: "grid", gap: 2, minWidth: 0 }} data-testid={testId}>
+      {label && <span style={{ ...small, fontStyle: "italic" }}>{label}</span>}
+      <span ref={ref} style={{ ...small, overflowWrap: "anywhere", ...clamp }}>{text}</span>
+      {(cut || open) && (
+        <span><LinkButton size="sm" tone="muted" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+          {open ? t("showLess") : t("showMore")}</LinkButton></span>
+      )}
+    </span>
+  );
 }

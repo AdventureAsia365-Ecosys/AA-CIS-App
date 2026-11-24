@@ -36,7 +36,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
@@ -46,6 +45,7 @@ import httpx
 import structlog
 
 from api.core.app_registry import APPS
+from api.services.issue_refs import strip_issue_refs
 from api.services.ops_overview import cloudwatch as cw
 
 logger = structlog.get_logger()
@@ -84,37 +84,6 @@ def environment() -> str:
 
 
 # ── helpers (pure) ───────────────────────────────────────────────────────────────────────────────
-
-_ISSUE_PREFIX = re.compile(r"^\s*AA-\d+(?:\s*\([^)]*\))?\s*:\s*")
-_ISSUE_REF = re.compile(r"\s*\bAA-\d+\b")
-_TIDY = (
-    (re.compile(r"\(\s*,\s*"), "("),
-    (re.compile(r",\s*\)"), ")"),
-    (re.compile(r"\(\s*\)"), ""),
-    (re.compile(r",\s*,"), ","),
-    (re.compile(r",\s*\."), "."),
-    (re.compile(r"\.\s*,\s*"), ". "),
-    (re.compile(r"\s+([.,;:)])"), r"\1"),
-    (re.compile(r"\.{2,}"), "."),
-    (re.compile(r"\s{2,}"), " "),
-)
-
-
-def strip_issue_refs(text: str) -> str:
-    """The description without internal tracker references ("AA-873", "AA-939: ...", "(latency SLO, AA-969)"):
-    user-visible admin text never shows issue IDs. The Terraform descriptions keep them for engineers."""
-    raw = text or ""
-    head = _ISSUE_PREFIX.sub("", raw)
-    out = _ISSUE_REF.sub("", head)
-    for pattern, repl in _TIDY:
-        out = pattern.sub(repl, out)
-    out = out.strip()
-    # A sentence that started after a removed "AA-939: " prefix gets its capital back (not a resource name).
-    first = out.split(" ", 1)[0]
-    if head != raw and out and "-" not in first:
-        out = out[:1].upper() + out[1:]
-    return out
-
 
 def split_runbook(description: str) -> tuple[str, Optional[str]]:
     """(text, runbook URL) of an alarm / rule description ending with ' Runbook: <url>' (AA-CIS-Infra
