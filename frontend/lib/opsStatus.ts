@@ -407,19 +407,22 @@ export interface SeriesHeadroom {
 /** The headroom of each series against ITS OWN limit (`limitOf`; a series without one is left out), and the
  *  tightest of them. A chart may carry series with different limits (p95: the API limit for the apps behind API
  *  Gateway, the Lambda limit for TripPlanner), so one peak over every series against one limit would be wrong. */
+/** One series against its own limit: the worst value and the room left, or null when there is no limit or data. */
+function seriesHeadroom(s: Series, lim: Limit | null | undefined): SeriesHeadroom | null {
+  const bound = lim?.warn ?? lim?.crit;
+  const vals = s.values.filter((x): x is number => x != null);
+  if (bound == null || !vals.length) return null;
+  const worst = lim?.dir === "below" ? Math.min(...vals) : Math.max(...vals);
+  const room = headroom(worst, bound, lim?.dir) as number;
+  return { id: s.id, label: s.label, latest: latest(s.values), worst, room, limit: bound };
+}
+
 export function tightestHeadroom(series: readonly Series[], limitOf: (id: string) => Limit | null | undefined):
   SeriesHeadroom | null {
   let best: SeriesHeadroom | null = null;
   for (const s of series) {
-    const lim = limitOf(s.id);
-    const bound = lim?.warn ?? lim?.crit;
-    const vals = s.values.filter((x): x is number => x != null);
-    if (bound == null || !vals.length) continue;
-    const worst = lim?.dir === "below" ? Math.min(...vals) : Math.max(...vals);
-    const room = headroom(worst, bound, lim?.dir) as number;
-    if (!best || room < best.room) {
-      best = { id: s.id, label: s.label, latest: latest(s.values), worst, room, limit: bound };
-    }
+    const h = seriesHeadroom(s, limitOf(s.id));
+    if (h && (!best || h.room < best.room)) best = h;
   }
   return best;
 }
