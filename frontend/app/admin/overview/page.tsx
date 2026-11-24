@@ -16,7 +16,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { Suspense, useEffect, useState } from "react";
 import { Button, ErrorState, LoadingScreen, PageFrame, PageHeader, apiGet, useFormat, useUrlFilters } from "../../_kit";
-import { RESET_VIEW, parseView, statusQuery, viewParams, type StatusResp, type View } from "@/lib/opsStatus";
+import { usePathname } from "next/navigation";
+import {
+  RESET_VIEW, nextViewQuery, parseView, resetViewQuery, statusQuery, type SetView, type StatusResp, type View,
+} from "@/lib/opsStatus";
 import { AppsCard } from "./_status/Apps";
 import { AiCard, CostCard, JobsCard, ResourcesCard } from "./_status/Panels";
 import { ServicesCard } from "./_status/Services";
@@ -28,11 +31,21 @@ import { small, useST } from "./_status/ui";
 
 const REFRESH_MS = 60_000; // technical-constant: page refresh of a preset range (the server caches its AWS reads)
 
-function useView(): { view: View; setView: (v: Partial<View>) => void; reset: () => void; dirty: boolean } {
-  const { get, setMany, params } = useUrlFilters();
+/** The view in the URL. Reads come from the search params of this render; every write starts from the URL as it is at
+ *  that moment (window.location) and goes through the native history.replaceState, which Next.js syncs into
+ *  useSearchParams at once (no server round trip). A router.replace only updates the URL after its navigation, so two
+ *  quick clicks both started from the old URL and the first was lost. */
+function useView(): { view: View; setView: SetView; reset: () => void; dirty: boolean } {
+  const { get, params } = useUrlFilters();
+  const pathname = usePathname();
   const view = parseView(get);
   const dirty = Object.keys(RESET_VIEW).some((k) => params.has(k));
-  return { view, setView: (v) => setMany(viewParams(v)), reset: () => setMany(RESET_VIEW), dirty };
+  const write = (qs: string) => window.history.replaceState(null, "", qs ? `${pathname}?${qs}` : pathname);
+  return {
+    view, dirty,
+    setView: (change) => write(nextViewQuery(window.location.search, change)),
+    reset: () => write(resetViewQuery(window.location.search)),
+  };
 }
 
 /** cis.ops.status_history_days from the last answer (unknown before the first one). */
@@ -57,7 +70,7 @@ function Countdown({ updatedAt, live }: { updatedAt: number; live: boolean }) {
   );
 }
 
-function Body({ data, view, setView }: { data: StatusResp; view: View; setView: (v: Partial<View>) => void }) {
+function Body({ data, view, setView }: { data: StatusResp; view: View; setView: SetView }) {
   const s = data.sections;
   const grid2 = { display: "grid", gap: 18, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 460px), 1fr))" };
   return (
@@ -84,7 +97,7 @@ function Body({ data, view, setView }: { data: StatusResp; view: View; setView: 
 
 function Content({ res, view, setView }: {
   res: { data?: StatusResp; isLoading: boolean; isError: boolean; error: unknown; refetch: () => unknown };
-  view: View; setView: (v: Partial<View>) => void;
+  view: View; setView: SetView;
 }) {
   const t = useST();
   if (res.isLoading) return <LoadingScreen message={t("loading")} />;

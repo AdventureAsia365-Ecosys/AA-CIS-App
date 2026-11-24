@@ -4,7 +4,7 @@
 
 import type { ReactNode } from "react";
 import { Badge, ChipButton, K, Section, Select, useFormat, useT, type Tone } from "../../../_kit";
-import { levelTone, sectionDown, type Section as Sec } from "@/lib/opsStatus";
+import { flipChip, levelTone, sectionDown, type Section as Sec } from "@/lib/opsStatus";
 import { STATUS } from "../status.messages";
 
 export function useST() {
@@ -80,12 +80,13 @@ export function levelColor(level: string | null | undefined): string {
   return tone === "warning" ? K.amber : K.ink;
 }
 
-/** A multi-select chip row (nothing chosen = all). */
+/** A multi-select chip row (nothing chosen = all). `onChange` gets a function of the CURRENT list (read from the URL
+ *  when the change is written), not a list built from this render's `value`: two quick clicks then both count. */
 export function ChipFilter({ label, options, value, onChange, testId }: {
   label: string; options: { value: string; label: string; count?: number }[]; value: string[];
-  onChange: (next: string[]) => void; testId: string;
+  onChange: (update: (current: string[]) => string[]) => void; testId: string;
 }) {
-  const flip = (v: string) => onChange(value.includes(v) ? value.filter((x) => x !== v) : [...value, v]);
+  const flip = (v: string) => onChange((cur) => flipChip(cur, v));
   return (
     <span role="group" aria-label={label} style={rowWrap} data-testid={testId}>
       <span style={small}>{label}</span>

@@ -10,11 +10,10 @@ import { useState } from "react";
 import { Badge, DataTable, Input, K, useFormat, type ColumnDef, type Tone } from "../../../_kit";
 import {
   APP_LABEL, EVENT_KINDS, countBy, eventKind, filterEvents, inApps, levelTone, sortingParam, tableSorting, withSort,
-  type Delivery, type EventRow, type RangeInfo, type Section, type SourceRow, type View,
+  type Delivery, type EventRow, type RangeInfo, type Section, type SourceRow, type View, type SetView,
 } from "@/lib/opsStatus";
 import { Card, ChipFilter, NotMeasured, WhenUp, rowWrap, small, useST, type ST } from "./ui";
 
-type SetView = (v: Partial<View>) => void;
 const LANES = ["deploy", "alarm", "service", "check", "job"] as const;
 
 function laneDot(e: EventRow): string {
@@ -86,7 +85,7 @@ export function EventsCard({ section, range, view, setView }: {
             <>
               <div style={rowWrap}>
                 <ChipFilter label={t("severity")} testId="status-ev-filter" value={view.ev}
-                  onChange={(ev) => setView({ ev })}
+                  onChange={(f) => setView((v) => ({ ev: f(v.ev) }))}
                   options={EVENT_KINDS.map((k) => ({ value: k, label: evLabel(k, t), count: counts[k] ?? 0 }))} />
                 <Input size="sm" type="search" aria-label={t("search")} placeholder={t("search")} value={search}
                   onChange={(e) => setSearch(e.target.value)} style={{ width: 220 }} />
@@ -95,7 +94,7 @@ export function EventsCard({ section, range, view, setView }: {
               <DataTable<EventRow> tableId="status-events" data={rows} columns={eventColumns(t, formatDateTime)}
                 getRowId={(e) => e.id} searchable={false} compact pageSize={25} tableMinWidth={640}
                 emptyTitle={t("noEvents")} sorting={tableSorting(view.sort.ev)}
-                onSortingChange={(s) => setView({ sort: withSort(view.sort, "ev", sortingParam(s)) })} />
+                onSortingChange={(s) => setView((v) => ({ sort: withSort(v.sort, "ev", sortingParam(s)) }))} />
             </>
           );
         }}

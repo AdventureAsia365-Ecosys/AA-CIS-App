@@ -177,6 +177,38 @@ export const RESET_VIEW: Record<string, null> = {
   sort: null,
 };
 
+/** A view change: the fields to set, or a function of the view as the URL holds it when the change is written. */
+export type ViewChange = Partial<View> | ((current: View) => Partial<View>);
+export type SetView = (change: ViewChange) => void;
+
+function withParams(search: string, changes: Record<string, string | null>): string {
+  const next = new URLSearchParams(search);
+  for (const [k, v] of Object.entries(changes)) {
+    if (v) next.set(k, v);
+    else next.delete(k);
+  }
+  next.delete("page");
+  return next.toString();
+}
+
+/** The query string after a view change, read against the URL as it is NOW (not the view of the last render), so two
+ *  quick clicks both count: a function change gets the current view. Keys the page does not own are kept. */
+export function nextViewQuery(search: string, change: ViewChange): string {
+  const cur = new URLSearchParams(search);
+  const patch = typeof change === "function" ? change(parseView((k) => cur.get(k) ?? "")) : change;
+  return withParams(search, viewParams(patch));
+}
+
+/** The query string of "Reset view": every key the page owns removed. */
+export function resetViewQuery(search: string): string {
+  return withParams(search, RESET_VIEW);
+}
+
+/** A chip of a multi-select row clicked: on when off, off when on. */
+export function flipChip(list: readonly string[], v: string): string[] {
+  return list.includes(v) ? list.filter((x) => x !== v) : [...list, v];
+}
+
 /** The API query of a view: preset or custom from / to, and compare. */
 export function statusQuery(v: Pick<View, "range" | "from" | "to" | "compare">): string {
   const q = new URLSearchParams({ range: v.range });
@@ -366,6 +398,30 @@ export function headroom(value: number | null | undefined, limit: number | null 
   number | null {
   if (value == null || limit == null) return null;
   return dir === "below" ? value - limit : limit - value;
+}
+
+export interface SeriesHeadroom {
+  id: string; label: string; latest: number | null; worst: number; room: number; limit: number;
+}
+
+/** The headroom of each series against ITS OWN limit (`limitOf`; a series without one is left out), and the
+ *  tightest of them. A chart may carry series with different limits (p95: the API limit for the apps behind API
+ *  Gateway, the Lambda limit for TripPlanner), so one peak over every series against one limit would be wrong. */
+export function tightestHeadroom(series: readonly Series[], limitOf: (id: string) => Limit | null | undefined):
+  SeriesHeadroom | null {
+  let best: SeriesHeadroom | null = null;
+  for (const s of series) {
+    const lim = limitOf(s.id);
+    const bound = lim?.warn ?? lim?.crit;
+    const vals = s.values.filter((x): x is number => x != null);
+    if (bound == null || !vals.length) continue;
+    const worst = lim?.dir === "below" ? Math.min(...vals) : Math.max(...vals);
+    const room = headroom(worst, bound, lim?.dir) as number;
+    if (!best || room < best.room) {
+      best = { id: s.id, label: s.label, latest: latest(s.values), worst, room, limit: bound };
+    }
+  }
+  return best;
 }
 
 /** Top of the Y axis: the highest value or limit drawn, plus 10 % so a line at the top stays visible. */

@@ -9,7 +9,7 @@ import Link from "next/link";
 import { Badge, DataTable, K, SegmentedControl, type ColumnDef, type Tone } from "../../../_kit";
 import {
   APP_LABEL, RUNTIME_FILTERS, fmtPct, inApps, levelTone, runtimeMatches, shortSha, sortingParam, tableSorting,
-  withSort, type RuntimeFilter, type RuntimeRow, type Section, type View,
+  withSort, type RuntimeFilter, type RuntimeRow, type Section, type View, type SetView,
 } from "@/lib/opsStatus";
 import { Card, WhenUp, rowWrap, small, useST, type ST } from "./ui";
 
@@ -65,7 +65,7 @@ const FILTER_KEY: Readonly<Record<RuntimeFilter, "svcAll" | "svcAttention" | "sv
 };
 
 export function ServicesCard({ section, view, setView }: {
-  section: Section<{ slo_pct: number; rows: RuntimeRow[] }>; view: View; setView: (v: Partial<View>) => void;
+  section: Section<{ slo_pct: number; rows: RuntimeRow[] }>; view: View; setView: SetView;
 }) {
   const t = useST();
   return (
@@ -88,7 +88,7 @@ export function ServicesCard({ section, view, setView }: {
               <DataTable<RuntimeRow> tableId="status-services" data={rows} columns={columns(t, d.slo_pct)}
                 getRowId={(r) => `${r.kind}:${r.subject}`} searchable={false} paginate={false} compact
                 tableMinWidth={860} sorting={tableSorting(view.sort.svc)}
-                onSortingChange={(s) => setView({ sort: withSort(view.sort, "svc", sortingParam(s)) })} />
+                onSortingChange={(s) => setView((v) => ({ sort: withSort(v.sort, "svc", sortingParam(s)) }))} />
             </>
           );
         }}
