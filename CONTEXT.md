@@ -3276,7 +3276,9 @@ queues and the deploy gate, cost of the month, AI gateway spend against caps, th
 and freshness. ONE read, `GET /admin/overview/status` (`ops.read`; backend `api/services/ops_status/`, the 5-minute
 sampler job `ops_status_sample` writing `acp_shared.ops_sample` / `ops_event`, CIS 475); every section has its own
 `as_of`, a signal with no source is "not measured yet" (never green), every limit is a `cis.ops.status_*` setting
-(`shared/ops_status_thresholds.py`). Page `frontend/app/admin/overview/page.tsx` + `_status/`, pure helpers and the
+(`shared/ops_status_thresholds.py`). The CIS client error rate leaves out the refused staff session checks (the 401s
+of `/auth/verify-admin`, counted per 5 minutes in Redis by `api/services/ops_status/session_checks.py`) and shows them
+as their own count under the 4xx rate (S290); every other 4xx stays in the rate. Page `frontend/app/admin/overview/page.tsx` + `_status/`, pure helpers and the
 URL view state (range, compare, app / severity / status filters, legends, sorts) in `frontend/lib/opsStatus.ts`; smoke
 `tests/e2e/smoke/aa1140-ecosystem-status.spec.ts`. The old Overview content moved: the pipeline funnel and content
 counts to Data coverage (`data-coverage/ContentPipeline.tsx`), tenant activity and quota outliers to Tenants

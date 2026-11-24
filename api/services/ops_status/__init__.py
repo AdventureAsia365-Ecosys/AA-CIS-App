@@ -7,8 +7,9 @@ time and degrade on their own (S285 advisory phase 1-2, mockup v2 approved 19/11
 - ``signals``  golden-signal series (CloudWatch GetMetricData in the range's chart step, read on a 5-minute grid and
                cached 5 minutes in Redis, the previous period hourly; never without Redis: no AWS call per page
                view), with the previous period when ``compare``;
-- ``apps``     one tile per app: traffic totals coloured by the page's limits, overall health (one definition,
-               ``app_health``), deployed commit, readiness, the activity line;
+- ``apps``     one tile per app: traffic totals coloured by the page's limits (the CIS client errors without the
+               refused staff session checks, shown apart as ``session_checks``: :mod:`.session_checks`), overall
+               health (one definition, ``app_health``), deployed commit, readiness, the activity line;
 - ``runtimes`` ECS services and health checks with the uptime strip against the objective (the 5-minute sampler,
                ``acp_shared.ops_sample``, CIS 475);
 - ``resources`` RDS CPU / connections / free storage, the busiest DB role, the XID age, ECS tasks;
@@ -38,7 +39,7 @@ import structlog
 
 from api.services.issue_refs import clean
 from api.services.ops_overview import cache
-from api.services.ops_status import cw_series, sections, store, verdict
+from api.services.ops_status import cw_series, sections, session_checks, store, verdict
 from api.services.ops_status.ranges import RangeError, TimeRange, resolve
 from shared import ops_status_thresholds as th
 
@@ -123,7 +124,11 @@ async def _signals(redis: Any, rng: TimeRange, *, previous: bool = False) -> dic
     src = fetch_range(rng, previous=previous)
 
     async def compute() -> dict:
-        return await asyncio.to_thread(cw_series.collect, src)
+        sig = await asyncio.to_thread(cw_series.collect, src)
+        if previous:
+            return sig
+        # S290: the refused staff session checks over the same span, kept out of the CIS client error rate
+        return session_checks.apply(sig, await session_checks.count(redis, src.start, src.end))
 
     kind = "signals_prev" if previous else "signals"
     name = f"{kind}:{src.key}:{int(src.start.timestamp())}:{int(src.end.timestamp())}:{src.step_s}"

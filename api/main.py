@@ -638,6 +638,21 @@ async def verify_admin(request: Request, db: asyncpg.Pool = Depends(get_pool)):
       DB role, not the JWT claim, so the BFF forwards the current role (x-admin-role) and staff_policy
       enforces it within the cache TTLs, not at the 24 h token expiry.
     """
+    # S290 (AA-1140 follow-up): each 401 is an expected refused session check (an expired or signed-out session). It
+    # is counted apart (api/services/ops_status/session_checks.py) so the Ecosystem status page keeps it out of the CIS
+    # client error rate. Best effort: the answer is unchanged.
+    try:
+        return await _verify_admin(request, db)
+    except HTTPException as exc:
+        if exc.status_code == 401:
+            from api.services.ops_status import session_checks
+
+            await session_checks.record(getattr(request.app.state, "redis", None))
+        raise
+
+
+async def _verify_admin(request: Request, db: asyncpg.Pool):
+    """The body of :func:`verify_admin` (its docstring has the rules)."""
     token = await _session_token_from_body(request)
     kind = staff_identity.token_kind(token)
     if kind == staff_identity.AUTH_OTHER:

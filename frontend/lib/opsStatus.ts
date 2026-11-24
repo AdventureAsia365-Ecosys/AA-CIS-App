@@ -55,6 +55,8 @@ export interface Traffic {
   status: string; reason?: string; requests?: number; errors?: number; client_errors?: number | null;
   p95_ms?: number | null; error_rate_pct?: number | null; client_error_rate_pct?: number | null;
   errors_level?: string; client_errors_level?: string; p95_level?: string;
+  // S290: CIS only, the refused staff session checks (401 of /auth/verify-admin), kept out of client_errors
+  session_checks?: number | null;
 }
 export interface Activity { status: string; reason?: string; unit?: string; items?: { metric: string; n: number }[] }
 export interface AppTile {
