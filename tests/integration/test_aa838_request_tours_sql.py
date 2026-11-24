@@ -18,7 +18,7 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 sys.path.insert(0, os.path.dirname(__file__))
 import test_aa986_l2_tour_lifecycle as l2  # noqa: E402  (seed helpers)
-from test_aa1057_segment_liveness import _atom, _segment, conn  # noqa: E402,F401  (fixture + seeds)
+import test_aa1057_segment_liveness as s1057  # noqa: E402  (fixture + seeds)
 
 from services import tour_lifecycle as tl  # noqa: E402
 from shared import tour_liveness as tlv  # noqa: E402
@@ -36,6 +36,9 @@ OLD_REQUEST_TOURS_SQL = f"""
         ON tl_rq.source_id = (COALESCE(rt_rq.source_group_id, rt_rq.tour_id))::text
      WHERE r.request_id = ANY($1::uuid[]) AND r.tenant_id = $2::uuid
 """
+
+conn = s1057.conn                     # the rolled-back transaction fixture
+_atom, _segment = s1057._atom, s1057._segment
 
 PLACE_ALIVE, PLACE_DEAD = "Quill Harbour", "Ferrow Pass"
 
