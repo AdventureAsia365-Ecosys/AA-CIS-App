@@ -21,6 +21,7 @@ import pytest
 import structlog
 
 from api.core.staff_authz import POLICY, TENANT_WRITE
+from services.tenant_account import crm_agency
 from services.tenant_account import crm_onboarding as co
 from services.tenant_account import provision as pv
 
@@ -172,8 +173,9 @@ def test_creates_the_agency_invites_the_owner_nudges_the_feed_and_audits(audit, 
                                "ticket_ref": "AA-1116"}
     assert crm.calls[2][3] == {"owner_email": OWNER, "ticket_ref": "AA-1116"}
     sqls = [s for s, _ in pool.conn.executed]
-    assert sqls == [co.ACTOR_SQL, co.EMIT_SQL]
-    assert pool.conn.executed[1][1] == (TID, "active", None)
+    assert sqls == [crm_agency.UPSERT_SQL, co.ACTOR_SQL, co.EMIT_SQL]          # AA-1160: the marker first
+    assert pool.conn.executed[0][1] == (TID, "crm_onboarding", float(crm_agency.REFRESH_AFTER_S))
+    assert pool.conn.executed[2][1] == (TID, "active", None)
     kw = audit.await_args.kwargs
     assert kw["action"] == "tenant.crm_onboarded" and kw["actor"] == ACTOR and kw["tenant_id"] == TID
     assert kw["details"]["owner_invite"] == "sent" and kw["details"]["provision_request_key"] == KEY
@@ -193,7 +195,8 @@ def test_a_second_run_sends_nothing_new_and_writes_nothing(audit):
                    ("POST", INVITE): (409, {"detail": "owner_invite_pending"})})
     out = _run(pool, crm)
     assert out["status"] == "done" and out["steps"] == ["crm_agency_exists", "crm_owner_invite_pending"]
-    assert pool.conn.executed == [] and not audit.await_count
+    assert [s for s, _ in pool.conn.executed] == [crm_agency.UPSERT_SQL]      # only the AA-1160 marker (throttled)
+    assert not audit.await_count
 
 
 def test_a_create_race_and_an_owner_already_there_are_done(audit):
@@ -202,7 +205,8 @@ def test_a_create_race_and_an_owner_already_there_are_done(audit):
                    ("POST", INVITE): (409, {"detail": "owner_exists"})})
     out = _run(pool, crm)
     assert out["status"] == "done" and out["steps"] == ["crm_agency_exists", "crm_owner_present"]
-    assert pool.conn.executed == [] and not audit.await_count
+    assert [s for s, _ in pool.conn.executed] == [crm_agency.UPSERT_SQL]
+    assert not audit.await_count
 
 
 @pytest.mark.parametrize("step,answers,status,code", [
@@ -219,9 +223,13 @@ def test_a_create_race_and_an_owner_already_there_are_done(audit):
      "partial", "crm_error"),
 ])
 def test_a_crm_refusal_is_reported_never_raised(audit, step, answers, status, code):
-    out = _run(FakePool(_tenant()), FakeCrm(answers))
+    pool = FakePool(_tenant())
+    out = _run(pool, FakeCrm(answers))
     assert out["status"] == status and out["error"]["step"] == step and out["error"]["code"] == code
     assert not audit.await_count
+    # AA-1160: the CRM agency marker only once the agency is known to exist
+    marked = [s for s, _ in pool.conn.executed] == [crm_agency.UPSERT_SQL]
+    assert marked is (step == "owner_invite")
 
 
 def test_a_created_agency_without_an_address_is_audited_and_nudged(audit):
@@ -440,3 +448,19 @@ def test_a_stored_outcome_of_another_tenant_sends_nothing(client, saga):
     pool.fetchval.return_value = "another-slug"   # a create whose stored outcome is a tenant with another slug
     _skipped_reused(c.post("/admin/tenants/provision", json={**CREATE, "crm_owner_email": OWNER}, headers=_h()))
     assert not onboard.await_count
+
+
+def test_a_failing_marker_write_never_fails_the_onboarding(audit):
+    """AA-1160: the marker is best effort (a database error is logged, the onboarding goes on)."""
+    pool = FakePool(_tenant())
+
+    async def broken(sql, *args):
+        if sql == crm_agency.UPSERT_SQL:
+            raise RuntimeError("database gone")
+        pool.conn.executed.append((sql, args))
+    pool.conn.execute = broken
+    crm = FakeCrm({("GET", AGENCY): (200, {}), ("POST", INVITE): (409, {"detail": "owner_exists"})})
+    with structlog.testing.capture_logs() as logs:
+        out = _run(pool, crm)
+    assert out["status"] == "done"
+    assert any(e["event"] == "crm_agency_marker_failed" and e["error"] == "RuntimeError" for e in logs)
