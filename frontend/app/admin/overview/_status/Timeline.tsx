@@ -10,7 +10,8 @@ import { useState } from "react";
 import { Badge, DataTable, Input, K, useFormat, type ColumnDef, type Tone } from "../../../_kit";
 import {
   EVENT_KINDS, countBy, eventKind, filterEvents, inApps, levelTone, sortingParam, tableSorting, withSort,
-  type Delivery, type EventRow, type RangeInfo, type Section, type SourceRow, type View, type SetView,
+  type Delivery, type EventRow, type PipelineRow, type RangeInfo, type Section, type SourceRow, type View,
+  type SetView,
 } from "@/lib/opsStatus";
 import { Card, ChipFilter, ClampText, NotMeasured, WhenUp, rowWrap, small, useST, type ST } from "./ui";
 import { useWords, type StatusWords } from "./words";
@@ -90,7 +91,7 @@ export function EventsCard({ section, range, view, setView }: {
   const { formatDateTime } = useFormat();
   const [search, setSearch] = useState("");
   return (
-    <Card title={t("eventsTitle")} testId="status-events" asOf={section.as_of}
+    <Card title={t("eventsTitle")} testId="status-events" asOf={section.as_of} refreshS={section.refresh_s}
       actions={<Link href="/admin/platform/alerts" style={{ ...small, color: K.accentDeep, fontWeight: 600 }}>
         {t("lAlerts")}</Link>}>
       <WhenUp section={section}>
@@ -123,7 +124,7 @@ export function EventsCard({ section, range, view, setView }: {
 export function DeliveryCard({ section }: { section: Section<Delivery> }) {
   const t = useST();
   return (
-    <Card title={t("deliveryTitle")} testId="status-delivery" asOf={section.as_of}
+    <Card title={t("deliveryTitle")} testId="status-delivery" asOf={section.as_of} refreshS={section.refresh_s}
       actions={<Link href="/admin/platform/delivery" style={{ ...small, color: K.accentDeep, fontWeight: 600 }}>
         {t("lDelivery")}</Link>}>
       <WhenUp section={section}>
@@ -156,7 +157,44 @@ function refreshText(s: number, t: ST): string {
   return t("every", s >= 3600 ? `${s / 3600} h` : s >= 60 ? `${Math.round(s / 60)} min` : `${s} s`);
 }
 
-export function SourcesCard({ rows, staleFactor }: { rows: SourceRow[]; staleFactor: number | null }) {
+function stateBadge(state: string, reason: string | null | undefined, t: ST) {
+  const word = state === "stale" ? t("stale") : state === "unknown" ? t("stUnknown")
+    : state === "not_measured" ? t("stNotMeasured") : state.replace("_", " ");
+  return (
+    <span title={reason ?? undefined}>
+      <Badge tone={levelTone(state) as Tone}>{word}</Badge>
+      {reason && state !== "ok" && <span style={{ ...small, display: "block", overflowWrap: "anywhere" }}>{reason}</span>}
+    </span>
+  );
+}
+
+/** AA-1141 (P1 feature 3): the background producers this page relies on (sampler, digest, probes, delivery summary,
+ *  schema dump), each grey "stale" after cis.ops.status_stale_factor x its refresh time; never green without a run. */
+function Pipelines({ rows }: { rows: PipelineRow[] }) {
+  const t = useST();
+  const { formatDateTime } = useFormat();
+  const columns: ColumnDef<PipelineRow>[] = [
+    { id: "label", header: t("colProducer"), accessorFn: (r) => r.label },
+    { id: "refresh", header: t("colRefresh"), accessorFn: (r) => r.refresh_s,
+      cell: ({ row }) => refreshText(row.original.refresh_s, t) },
+    { id: "asof", header: t("colLastRun"), accessorFn: (r) => r.as_of ?? "",
+      cell: ({ row }) => formatDateTime(row.original.as_of) },
+    { id: "state", header: t("colState"), accessorFn: (r) => r.state,
+      cell: ({ row }) => stateBadge(row.original.state, row.original.reason, t) },
+  ];
+  return (
+    <div style={{ display: "grid", gap: 6 }} data-testid="status-pipelines">
+      <div style={{ fontWeight: 600, fontSize: 13, color: K.ink }}>{t("pipelinesTitle")}</div>
+      <span style={small}>{t("pipelinesNote")}</span>
+      <DataTable<PipelineRow> tableId="status-pipelines" data={rows} columns={columns} getRowId={(r) => r.key}
+        searchable={false} paginate={false} compact tableMinWidth={560} />
+    </div>
+  );
+}
+
+export function SourcesCard({ rows, staleFactor, pipelines = [] }: {
+  rows: SourceRow[]; staleFactor: number | null; pipelines?: PipelineRow[];
+}) {
   const t = useST();
   const { formatDateTime } = useFormat();
   const columns: ColumnDef<SourceRow>[] = [
@@ -167,15 +205,14 @@ export function SourcesCard({ rows, staleFactor }: { rows: SourceRow[]; staleFac
       cell: ({ row }) => refreshText(row.original.refresh_s, t) },
     { id: "asof", header: t("colAsOf"), accessorFn: (r) => r.as_of ?? "", cell: ({ row }) => formatDateTime(row.original.as_of) },
     { id: "state", header: t("colState"), accessorFn: (r) => r.state,
-      cell: ({ row }) => (<span title={row.original.reason ?? undefined}>
-        <Badge tone={levelTone(row.original.state) as Tone}>{row.original.state === "stale" ? t("stale")
-          : row.original.state.replace("_", " ")}</Badge></span>) },
+      cell: ({ row }) => stateBadge(row.original.state, null, t) },
   ];
   return (
     <Card title={t("sourcesTitle")} testId="status-sources">
       {staleFactor != null && <span style={small}>{t("sourcesNote", staleFactor)}</span>}
       <DataTable<SourceRow> tableId="status-sources" data={rows} columns={columns} getRowId={(r) => r.section}
         searchable={false} paginate={false} compact tableMinWidth={620} />
+      {pipelines.length > 0 && <Pipelines rows={pipelines} />}
     </Card>
   );
 }

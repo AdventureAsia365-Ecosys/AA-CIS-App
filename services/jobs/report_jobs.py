@@ -185,6 +185,31 @@ async def _report_terminal(pool, job_row: dict) -> None:
             await store.finish_failed(conn, run_id, job_row.get("error") or f"job {job_row.get('status')}")
 
 
+async def _render_inputs(ctx: JobContext) -> dict:
+    """The payload's render inputs, plus (OPS-12 only) the Ecosystem status part (AA-1141)."""
+    from services.reports.digest import STATUS_INPUT
+
+    inputs = dict((ctx.payload or {}).get("inputs") or {})
+    part = await _status_part(ctx)
+    if part is not None:
+        inputs[STATUS_INPUT] = part
+    return inputs
+
+
+async def _status_part(ctx: JobContext) -> Optional[dict]:
+    """AA-1141: for the OPS-12 digest, the Ecosystem status page's own verdict (range 24 h), built on the job's pool
+    and Redis BEFORE a connection is held (the page build runs its reads side by side). None for every other report;
+    the part never fails the run (api/services/ops_status/digest.build answers {"error": ...})."""
+    run_id = (ctx.payload or {}).get("run_id")
+    async with ctx.pool.acquire() as conn:
+        run = await store.get_run(conn, run_id) if run_id else None
+    if not run or run.get("report_id") != "OPS-12":
+        return None
+    from api.services.ops_status import digest as status_digest
+
+    return await status_digest.build(ctx.pool, (ctx.resources or {}).get("redis"))
+
+
 @job_kind(REPORT_KIND, concurrency=2, max_attempts=2, expected_seconds=120, background=True,
           on_terminal=_report_terminal)
 async def run_report(ctx: JobContext) -> dict:
@@ -192,6 +217,7 @@ async def run_report(ctx: JobContext) -> dict:
     if not run_id:
         raise NonRetryable("payload has no run_id")
     reg = load()
+    inputs = await _render_inputs(ctx)
     async with ctx.pool.acquire() as conn:
         run = await store.get_run(conn, run_id)
         if run is None:
@@ -204,7 +230,7 @@ async def run_report(ctx: JobContext) -> dict:
         await store.mark_running(conn, run_id, ctx.job_id)
         try:
             out = await generate.render(conn, reg, report, run["period_start"], run["period_end"],
-                                        inputs=(ctx.payload or {}).get("inputs"))
+                                        inputs=inputs or None)
         except Exception as e:
             await store.finish_failed(conn, run_id, f"{type(e).__name__}: {str(e)[:1000]}")
             raise

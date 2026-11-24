@@ -11,7 +11,7 @@ import {
   type View,
 } from "@/lib/opsStatus";
 import { fmtCount } from "@/lib/numberFormat";
-import { Card, NotMeasured, WhenUp, levelColor, num, rowWrap, small, useST } from "./ui";
+import { Card, LevelGlyph, NotMeasured, WhenUp, levelColor, num, rowWrap, small, useST } from "./ui";
 import { useWords } from "./words";
 
 // One metric: a label on one line (cut with an ellipsis, full text as its title) over a value that never wraps.
@@ -26,7 +26,7 @@ function Metric({ label, value, level, sub }: { label: string; value: string; le
     <div style={{ minWidth: 0, display: "grid", gap: 2 }}>
       <div style={metricLabel} title={label}>{label}</div>
       <div style={{ ...num, fontSize: 16, fontWeight: 600, whiteSpace: "nowrap", color: levelColor(level) }}>
-        {value}
+        <LevelGlyph level={level} />{value}
       </div>
       {sub && <div style={{ ...small, fontSize: 11 }}>{sub}</div>}
     </div>
@@ -118,7 +118,7 @@ function Tile({ tile, sig, compare }: { tile: AppTile; sig: Signals; compare: bo
 export function AppsCard({ section, sig, view }: { section: Section<AppTile[]>; sig: Signals; view: View }) {
   const t = useST();
   return (
-    <Card title={t("appsTitle")} testId="status-apps-card" asOf={section.as_of}>
+    <Card title={t("appsTitle")} testId="status-apps-card" asOf={section.as_of} refreshS={section.refresh_s}>
       <WhenUp section={section}>
         {(tiles) => (
           <div style={{ display: "grid", gap: 12,

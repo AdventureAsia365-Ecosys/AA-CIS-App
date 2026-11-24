@@ -18,11 +18,17 @@ export const RANGE_KEYS = ["1h", "6h", "24h", "7d", "custom"] as const;
 export type RangeKey = (typeof RANGE_KEYS)[number];
 export const DEFAULT_RANGE: RangeKey = "24h";
 export const SEVERITIES = ["sev1", "sev2", "sev3"] as const;
-export const ITEM_STATES = ["open", "acked"] as const;
+// AA-1141: an item set aside is acked, snoozed or muted (a read ops check bell is "acked" too)
+export const ITEM_STATES = ["open", "acked", "snoozed", "muted"] as const;
 export const RUNTIME_FILTERS = ["all", "attention", "healthy", "no_sample"] as const;
 export type RuntimeFilter = (typeof RUNTIME_FILTERS)[number];
 export const EVENT_KINDS = ["sev1", "sev2", "sev3", "info", "pass"] as const;
 export const CHARTS = ["traffic", "errors", "latency", "queue"] as const;
+// AA-1141: the change types drawn on every chart and listed in "What changed" (api/services/ops_status/changes.py)
+export const CHANGE_TYPES = ["deploy", "setting", "migration", "wave", "route"] as const;
+export type ChangeType = (typeof CHANGE_TYPES)[number];
+export const SNOOZE_OPTIONS = ["1h", "4h", "tomorrow"] as const;
+export type SnoozeOption = (typeof SNOOZE_OPTIONS)[number];
 export type ChartId = (typeof CHARTS)[number];
 
 // ── API shape ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -40,13 +46,17 @@ export interface Limit { warn?: number | null; crit?: number | null; warn_key?: 
   value?: number; key?: string }
 /** A text the API sends as structured fields (S289): the page words it in EN or VI (lib/opsStatusText.ts). */
 export interface Msg { key: string; [field: string]: unknown }
+/** AA-1141: who set an item aside, how, until when and why. */
+export interface Ack { action: "ack" | "snooze" | "mute"; state: string; by: string | null; by_name: string | null;
+  at: string | null; until: string | null; reason: string | null }
 export interface AttentionItem {
   id: string; severity: string; app: string; title: string; detail: string; since: string | null; count: number;
   status: string; source: string; links: { label: string; href: string }[];
-  msg?: Msg | null; detail_msg?: Msg | null; detail_source?: boolean;
+  msg?: Msg | null; detail_msg?: Msg | null; detail_source?: boolean; ack?: Ack | null;
 }
 export interface Verdict {
   status: "ok" | "attention" | "partial" | "unknown"; open: number; attention: AttentionItem[]; unknown: string[];
+  set_aside?: number;
   resolved: { id: string; app: string | null; text: string; msg?: Msg | null; t: string; t2: string | null }[];
   chips: { alarms_firing: number; open_alerts: number; deploy_gate: "open" | "closed" | null;
     deploy_gate_blocked_by: string[] };
@@ -66,9 +76,10 @@ export interface AppTile {
 }
 export interface SignalApp { measured: boolean; rate_per_min?: (number | null)[]; error_pct?: (number | null)[];
   p95_ms?: (number | null)[]; requests?: (number | null)[] }
-export interface Signals { status: string; reason?: string; message?: string; as_of?: string;
+export interface Signals { status: string; reason?: string; message?: string; as_of?: string; refresh_s?: number;
   apps?: Record<string, SignalApp>; deploys?: { t: string; app: string; text: string }[];
   alarm_bands?: { start: string; end: string | null; app: string; severity: string; text: string }[];
+  annotations?: Annotation[];
   previous?: { status: string; apps?: Record<string, SignalApp>; range: RangeInfo } }
 export interface RuntimeRow {
   kind: string; subject: string; app: string; role: string; state: string; reason?: string | null;
@@ -100,6 +111,28 @@ export interface EventRow { id: string; t: string; t2: string | null; lane: stri
   app: string; text: string; detail?: string | null; open: boolean; msg?: Msg | null; detail_source?: boolean }
 export interface Delivery { repos: { id: string; label: string; main: string; red_hours?: number | null }[];
   repos_note: string | null; guards: { key: string; label: string; state: string; detail?: string; day?: string }[] }
+export interface Annotation { id: string; t: string; type: string; app: string; text: string }
+export interface ChangeRow { id: string; t: string; t2: string | null; type: string; app: string; title: string;
+  by: string | null; ref: string | null; href: string | null; msg?: Msg | null }
+export interface Changes { rows: ChangeRow[]; counts: Record<string, number>; types: string[];
+  unavailable: Record<string, string> }
+export interface ForecastRow { id: string; label: string; status: string; reason?: string | null; level: string;
+  unit?: string; latest?: number | null; per_day?: number | null; days_left?: number | null; cap_usd?: number;
+  forecast_usd?: number; month_days_left?: number; days_to_warn?: number | null; days_to_ceiling?: number | null;
+  warn_gib?: number | null; allocated_gib?: number | null; max_allocated_gib?: number | null; basis?: string;
+  connection_key?: string }
+export interface Forecast { rows: ForecastRow[]; window_days: number; warn: number; crit: number; warn_key: string;
+  crit_key: string; window_key: string }
+export interface AnomalyRow { app: string; provider: string; route: string; hour: string; partial: boolean;
+  usd: number; median_usd_h: number; threshold_usd: number; times_median: number | null }
+export interface Anomaly { rows: AnomalyRow[]; groups?: number; factor?: number; floor_usd_h?: number;
+  baseline_days?: number; ready?: boolean }
+export interface PipelineRow { key: string; label: string; refresh_s: number; as_of: string | null; state: string;
+  reason?: string | null }
+export interface AckTrailRow extends Ack { id: number; item_id: string; app: string | null; severity: string | null;
+  title: string | null; cleared_at: string | null; cleared_by_name: string | null; cleared_reason: string | null }
+export interface AckRules { reason_min_chars: number; ack_hours: number; mute_max_days: number;
+  snooze_tomorrow_hour: number }
 export interface SourceRow { section: string; source: string; refresh_s: number; as_of: string | null; state: string;
   reason?: string | null }
 export interface StatusResp {
@@ -107,8 +140,13 @@ export interface StatusResp {
   verdict: Verdict; thresholds: Record<string, Limit>;
   sections: { signals: Signals; apps: Section<AppTile[]>; runtimes: Section<{ slo_pct: number; rows: RuntimeRow[] }>;
     resources: Section<{ tiles: ResourceTile[] }>; jobs: Section<Jobs>; ai: Section<Ai>; cost: Section<Cost>;
-    events: Section<EventRow[]>; delivery: Section<Delivery> };
+    events: Section<EventRow[]>; delivery: Section<Delivery>;
+    // AA-1141 (P1)
+    changes?: Section<Changes>; forecast?: Section<Forecast>; anomaly?: Section<Anomaly> };
   sources: SourceRow[];
+  pipelines?: PipelineRow[];
+  acks?: { rules: AckRules; recent: AckTrailRow[] };
+  viewer?: { can_ack: boolean };
 }
 
 // ── view state in the URL ───────────────────────────────────────────────────────────────────────────────────────
@@ -116,6 +154,8 @@ export interface StatusResp {
 export interface View {
   range: RangeKey; from: string; to: string; compare: boolean; apps: string[]; sev: string[]; st: string[];
   svc: RuntimeFilter; ev: string[]; hide: Record<string, string[]>; sort: Record<string, string>;
+  /** AA-1141: change types hidden on the charts, and the type filter of What changed. */
+  ann: string[]; chg: string[];
 }
 type Getter = (key: string) => string;
 
@@ -157,17 +197,19 @@ export function parseView(get: Getter): View {
     compare: get("compare") === "1", apps: list(get("apps"), STATUS_APPS), sev: list(get("sev"), SEVERITIES),
     st: list(get("st"), ITEM_STATES), svc: pick(get("svc"), RUNTIME_FILTERS, "all"), ev: list(get("ev"), EVENT_KINDS),
     hide: parseHidden(get("hide")), sort: parseSorts(get("sort")),
+    ann: list(get("ann"), CHANGE_TYPES), chg: list(get("chg"), CHANGE_TYPES),
   };
 }
 
 type ParamOf = (v: Partial<View>) => string | null;
-const joined = (k: "apps" | "sev" | "st" | "ev"): ParamOf => (v) => v[k]!.join(",") || null;
+const joined = (k: "apps" | "sev" | "st" | "ev" | "ann" | "chg"): ParamOf => (v) => v[k]!.join(",") || null;
 const PARAM: Readonly<Record<keyof View, ParamOf>> = {
   range: (v) => (v.range === DEFAULT_RANGE ? null : v.range!),
   from: (v) => v.from || null,
   to: (v) => v.to || null,
   compare: (v) => (v.compare ? "1" : null),
-  apps: joined("apps"), sev: joined("sev"), st: joined("st"), ev: joined("ev"),
+  apps: joined("apps"), sev: joined("sev"), st: joined("st"), ev: joined("ev"), ann: joined("ann"),
+  chg: joined("chg"),
   svc: (v) => (v.svc === "all" ? null : v.svc!),
   hide: (v) => hiddenParam(v.hide!) || null,
   sort: (v) => Object.entries(v.sort!).map(([t, s]) => `${t}:${s}`).join(",") || null,
@@ -183,7 +225,7 @@ export function viewParams(v: Partial<View>): Record<string, string | null> {
 /** Every key the page owns, cleared: "Reset view". */
 export const RESET_VIEW: Record<string, null> = {
   range: null, from: null, to: null, compare: null, apps: null, sev: null, st: null, svc: null, ev: null, hide: null,
-  sort: null,
+  sort: null, ann: null, chg: null,
 };
 
 /** A view change: the fields to set, or a function of the view as the URL holds it when the change is written. */
@@ -529,4 +571,90 @@ export function shortSha(v: string | null | undefined): string {
 export function ageMinutes(asOf: string | null | undefined, nowMs: number): number | null {
   const ms = asOf ? Date.parse(asOf) : NaN;
   return Number.isNaN(ms) ? null : Math.max(0, Math.round((nowMs - ms) / 60_000));
+}
+
+// ── AA-1141: what changed, ack / snooze / mute, freshness, saved views, auto refresh ─────────────────────────────
+
+/** The chart markers of a view: the app filter, then the hidden types. */
+export function shownAnnotations(rows: readonly Annotation[] | undefined, v: Pick<View, "apps" | "ann">): Annotation[] {
+  return (rows ?? []).filter((a) => inApps(a.app, v.apps) && !v.ann.includes(a.type));
+}
+
+/** The What changed rows of a view: the app filter and the type chips (none chosen = every type). */
+export function filterChanges(rows: readonly ChangeRow[], v: Pick<View, "apps" | "chg">): ChangeRow[] {
+  return rows.filter((r) => inApps(r.app, v.apps) && (v.chg.length === 0 || v.chg.includes(r.type)));
+}
+
+/** When a snooze ends: 1 h, 4 h, or `tomorrowHour` o'clock the next day on the viewer's own clock (ISO UTC). */
+export function snoozeUntil(option: SnoozeOption, nowMs: number, tomorrowHour: number): string {
+  if (option === "1h") return new Date(nowMs + 3_600_000).toISOString();
+  if (option === "4h") return new Date(nowMs + 4 * 3_600_000).toISOString();
+  const d = new Date(nowMs);
+  d.setDate(d.getDate() + 1);
+  d.setHours(tomorrowHour, 0, 0, 0);
+  return d.toISOString();
+}
+
+/** Why a mute end time cannot be used (a datetime-local value on the viewer's clock), or null. */
+export function muteProblem(local: string, nowMs: number, maxDays: number): "missing" | "past" | "tooFar" | null {
+  const ms = Date.parse(local);
+  if (!local || Number.isNaN(ms)) return "missing";
+  if (ms <= nowMs + 60_000) return "past";
+  return ms > nowMs + maxDays * 86_400_000 ? "tooFar" : null;
+}
+
+/** The reason is long enough (trimmed). */
+export function reasonOk(reason: string, minChars: number): boolean {
+  return reason.trim().length >= minChars;
+}
+
+/** A section older than `factor` x its refresh time is stale (grey); no time or no factor = not judged. */
+export function isStale(asOf: string | null | undefined, refreshS: number | null | undefined,
+  factor: number | null | undefined, nowMs: number): boolean {
+  const ms = asOf ? Date.parse(asOf) : NaN;
+  if (Number.isNaN(ms) || !refreshS || !factor) return false;
+  return nowMs - ms > factor * refreshS * 1000;
+}
+
+export type PauseReason = "custom" | "hidden" | "paused" | null;
+
+/** Why auto refresh is paused: a custom (or zoomed) range does not move, a hidden tab and a manual pause wait. */
+export function refreshPause(v: Pick<View, "range">, tabHidden: boolean, manual: boolean): PauseReason {
+  if (v.range === "custom") return "custom";
+  if (manual) return "paused";
+  return tabHidden ? "hidden" : null;
+}
+
+/** The page's own keys of a URL query, for saving a view (keys the page does not own are left out). */
+export function viewQueryOf(search: string): Record<string, string> {
+  const p = new URLSearchParams(search);
+  const out: Record<string, string> = {};
+  for (const k of Object.keys(RESET_VIEW)) {
+    const v = p.get(k);
+    if (v) out[k] = v;
+  }
+  return out;
+}
+
+/** The URL query of a saved view (only the page's keys; keys the page does not own are kept from `search`). */
+export function savedViewQuery(search: string, query: Record<string, string>): string {
+  const changes: Record<string, string | null> = { ...RESET_VIEW };
+  for (const [k, v] of Object.entries(query)) if (k in RESET_VIEW && v) changes[k] = v;
+  return withParams(search, changes);
+}
+
+/** A drag on a chart as a custom range: the two times in order, at least the backend's shortest span, or null. */
+export function zoomRange(a: number | null | undefined, b: number | null | undefined):
+  { from: string; to: string } | null {
+  if (a == null || b == null || !Number.isFinite(a) || !Number.isFinite(b)) return null;
+  const lo = Math.min(a, b);
+  const hi = Math.max(a, b);
+  if (hi - lo < MIN_SPAN_MS) return null;
+  return { from: new Date(lo).toISOString(), to: new Date(hi).toISOString() };
+}
+
+/** "12.5 days" style days left; null = not reached (in the horizon). */
+export function fmtDays(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return v < 10 ? v.toFixed(1) : String(Math.round(v));
 }

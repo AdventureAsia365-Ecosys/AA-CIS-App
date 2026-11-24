@@ -65,3 +65,18 @@ test("free storage says the share and the GiB it equals; other tiles their unit"
   assert.equal(freeLimitText(null, 15), "15 GiB");
   assert.equal(withUnit(null, "%"), "—");
 });
+
+// AA-1141: the forecast and anomaly items, and the What changed rows
+import { CHANGE_KEYS, changePhrase } from "./opsStatusText.ts";
+
+test("AA-1141 forecast, anomaly and change phrases", () => {
+  assert.deepEqual(phrase({ key: "forecast", tile: "rds_free", days: 5.5 }, words), { key: "m_forecast_rds",
+    args: ["5.5"] });
+  assert.deepEqual(phrase({ key: "forecast", tile: "ai:zz", label: "Zz conn", days: 3 }, words).key, "m_forecast_ai");
+  const an = phrase({ key: "anomaly", app: "cis", route: "anthropic", value: 1.2, times: 6, median: 0.2 }, words);
+  assert.deepEqual(an, { key: "m_anomaly", args: ["CIS", "anthropic", "1.2 USD", "6×", "0.2 USD"] });
+  assert.equal(phrase({ key: "anomaly", app: "cis", route: "r", value: 1, times: null, median: 0 }, words).args[3], "");
+  for (const key of CHANGE_KEYS) assert.ok(changePhrase({ key, subject: "zz", version: 1, name: "w" }), key);
+  assert.equal(changePhrase({ key: "chg_unknown" }), null);
+  assert.deepEqual(changePhrase({ key: "chg_setting", label: "Zz", version: 3, tenant: true }).args, ["Zz", "3", "1"]);
+});

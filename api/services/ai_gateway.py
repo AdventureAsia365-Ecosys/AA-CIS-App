@@ -1424,7 +1424,7 @@ async def _read_spend_budgets(pool) -> dict:
     return {"rows": rows, "spent_today": spent, "kind_spent_today": kind_spent, "names": names}
 
 
-async def _read_connection_budgets(pool) -> list[dict]:
+async def read_connection_budgets(pool) -> list[dict]:   # also the Ecosystem status capacity forecast (AA-1141)
     from shared import cost_guard
     from shared.llm_client import connections as conn_registry
 
@@ -1563,7 +1563,7 @@ async def read_budgets(pool, *, now: Optional[datetime] = None) -> dict:
 
     (sb, sb_err), (conns, conns_err), (tenants, tenants_err), (central, central_err) = await asyncio.gather(
         _guard("Spend budgets", lambda: _read_spend_budgets(pool)),
-        _guard("LLM connection budgets", lambda: _read_connection_budgets(pool)),
+        _guard("LLM connection budgets", lambda: read_connection_budgets(pool)),
         _guard("Tenant AI budgets", lambda: tenant_ai_budget.read_tier(pool, now=now)),
         _guard("Central LLM budgets", lambda: _read_central(pool, now=now)),
     )

@@ -12,12 +12,23 @@ import {
 import { ChipFilter, ClampText, SortSelect, rowWrap, small, sortOptions, useST, type ST } from "./ui";
 import { useWords, type StatusWords } from "./words";
 import { AssistButton, AssistSignals } from "./Assist";
+import { AckControls, AckLine, AckTrail } from "./Ack";
+import type { AckRules, AckTrailRow } from "@/lib/opsStatus";
 
 const SORT_DEFAULT = "severity:desc";
 
 function headline(v: V, t: ST): { text: string; tone: Tone } {
   const h = verdictHeadline(v);
-  return { text: h.key === "needYou" ? t("needYou", v.open) : t(h.key), tone: h.tone as Tone };
+  const text = h.key === "needYou" ? t("needYou", v.open) : t(h.key);
+  // AA-1141: items set aside (acked, snoozed, muted) are said next to the headline, never hidden
+  const aside = v.set_aside ? ` · ${t("setAside", v.set_aside)}` : "";
+  return { text: text + aside, tone: h.tone as Tone };
+}
+
+function stateLabel(s: string, t: ST): string {
+  if (s === "open") return t("stOpen");
+  if (s === "snoozed") return t("stSnoozed");
+  return s === "muted" ? t("stMuted") : t("stAcked");
 }
 
 function gateText(gate: V["chips"]["deploy_gate"], t: ST): string {
@@ -41,7 +52,9 @@ function ItemDetail({ item, w }: { item: AttentionItem; w: StatusWords }) {
     testId={`status-att-${item.id}-detail`} />;
 }
 
-function ItemRow({ item, range }: { item: AttentionItem; range: string }) {
+function ItemRow({ item, range, rules, canAck }: {
+  item: AttentionItem; range: string; rules: AckRules | undefined; canAck: boolean;
+}) {
   const t = useST();
   const w = useWords();
   const { formatDateTime } = useFormat();
@@ -54,12 +67,14 @@ function ItemRow({ item, range }: { item: AttentionItem; range: string }) {
         <Badge tone="neutral" dot={false}>{w.app(item.app)}</Badge>
         <span style={{ fontWeight: 600, color: K.ink, overflowWrap: "anywhere", minWidth: 0 }}
           data-testid={`status-att-${item.id}-title`}>{w.text(item.msg, item.title)}</span>
-        {item.status !== "open" && <Badge tone="info" dot={false}>{t("stAcked")}</Badge>}
-        <span style={{ marginLeft: "auto" }}>
+        {item.status !== "open" && <Badge tone="info" dot={false}>{stateLabel(item.status, t)}</Badge>}
+        <span style={{ marginLeft: "auto", ...rowWrap }}>
+          <AckControls item={item} rules={rules} range={range} canAck={canAck} />
           <AssistButton itemId={item.id} title={w.text(item.msg, item.title)} range={range} />
         </span>
       </div>
       <ItemDetail item={item} w={w} />
+      <AckLine item={item} />
       <div style={{ ...rowWrap, ...small }}>
         {item.since && <span>{t("since", formatDateTime(item.since))}</span>}
         {item.count > 1 && <span>{t("times", item.count)}</span>}
@@ -101,8 +116,8 @@ function Chips({ v, t }: { v: V; t: ST }) {
   );
 }
 
-export function VerdictCard({ verdict, view, setView }: {
-  verdict: V; view: View; setView: SetView;
+export function VerdictCard({ verdict, view, setView, rules, canAck = false, trail = [] }: {
+  verdict: V; view: View; setView: SetView; rules?: AckRules; canAck?: boolean; trail?: AckTrailRow[];
 }) {
   const t = useST();
   const h = headline(verdict, t);
@@ -115,7 +130,7 @@ export function VerdictCard({ verdict, view, setView }: {
   return (
     <Section testId="status-verdict" bodyStyle={{ display: "grid", gap: 12 }}>
       <div style={{ ...rowWrap, justifyContent: "space-between" }}>
-        <span data-testid="status-verdict-title"
+        <span data-testid="status-verdict-title" role="status" aria-live="polite" aria-atomic="true"
           style={{ fontSize: 20, fontWeight: 700, color: TONE[h.tone].fg }}>{h.text}</span>
         <Chips v={verdict} t={t} />
       </div>
@@ -125,8 +140,8 @@ export function VerdictCard({ verdict, view, setView }: {
             <ChipFilter label={t("severity")} testId="status-sev" value={view.sev} onChange={(f) => setView((v) => ({ sev: f(v.sev) }))}
               options={SEVERITIES.map((s) => ({ value: s, label: s.toUpperCase(), count: sev[s] ?? 0 }))} />
             <ChipFilter label={t("status")} testId="status-st" value={view.st} onChange={(f) => setView((v) => ({ st: f(v.st) }))}
-              options={ITEM_STATES.map((s) => ({ value: s, label: s === "open" ? t("stOpen") : t("stAcked"),
-                count: st[s] ?? 0 }))} />
+              options={ITEM_STATES.filter((s) => s === "open" || st[s]).map((s) => ({ value: s,
+                label: stateLabel(s, t), count: st[s] ?? 0 }))} />
             <span style={{ marginLeft: "auto" }}>
               <SortSelect label={t("sortBy")} value={`${sort.col}:${sort.dir}`}
                 onChange={(s) => setView((v) => ({ sort: withSort(v.sort, "att", s === SORT_DEFAULT ? "" : s) }))}
@@ -135,13 +150,15 @@ export function VerdictCard({ verdict, view, setView }: {
             </span>
           </div>
           <div role="list" style={{ display: "grid", gap: 8 }} data-testid="status-attention">
-            {rows.map((i) => <ItemRow key={i.id} item={i} range={view.range} />)}
+            {rows.map((i) => <ItemRow key={i.id} item={i} range={view.range} rules={rules} canAck={canAck} />)}
             {rows.length === 0 && <span style={small}>{t("noAttention")}</span>}
           </div>
         </>
       )}
       <AssistSignals attentionIds={verdict.attention.map((i) => i.id)} range={view.range} />
+      {!canAck && verdict.attention.length > 0 && <span style={small}>{t("ackNoRights")}</span>}
       <Resolved items={verdict.resolved} />
+      <AckTrail rows={trail} />
     </Section>
   );
 }

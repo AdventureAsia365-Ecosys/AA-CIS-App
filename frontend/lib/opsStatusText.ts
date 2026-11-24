@@ -12,7 +12,7 @@ export const MSG_KEYS = [
   "health_down", "health_degraded", "errors", "client_errors", "p95", "service", "alarm", "rollout_failed", "check",
   "queue_no_worker", "queue_no_worker_detail", "queue_wait", "ecs_tasks", "resource", "ai_cap", "ai_near", "ai_spend",
   "of_requests", "guard_failed", "guard_missing", "guard_value", "guard_age", "main_red", "red_for", "deploy",
-  "service_down", "job_failures",
+  "service_down", "job_failures", "forecast", "anomaly",
 ] as const;
 export type MsgKey = (typeof MSG_KEYS)[number];
 
@@ -49,7 +49,7 @@ function serviceDownWhy(m: Msg, w: Words): string {
   return w.why(running === 0 ? "none_running" : "below_desired", running, num(m.desired)) ?? "—";
 }
 
-const PHRASES: Readonly<Record<Exclude<MsgKey, "resource">, (m: Msg, w: Words) => string[]>> = {
+const PHRASES: Readonly<Record<Exclude<MsgKey, "resource" | "forecast">, (m: Msg, w: Words) => string[]>> = {
   health_down: appOnly,
   health_degraded: appOnly,
   errors: share,
@@ -76,7 +76,17 @@ const PHRASES: Readonly<Record<Exclude<MsgKey, "resource">, (m: Msg, w: Words) =
   deploy: (m) => [str(m.subject), m.tag ? String(m.tag) : "", str(m.rev)],
   service_down: (m, w) => [str(m.subject), serviceDownWhy(m, w)],
   job_failures: (m) => [str(m.n), str(m.kind)],
+  // AA-1141: an AI spend hour above N x its median hour (times is null when the median hour is 0: above the floor)
+  anomaly: (m, w) => [w.app(str(m.app)), str(m.route), withUnit(m.value, "USD"),
+    num(m.times) == null ? "" : `${withUnit(m.times, "")}×`, withUnit(m.median, "USD")],
 };
+
+/** AA-1141: a capacity forecast item: the database storage, or one AI connection's monthly cap. */
+function forecastPhrase(m: Msg): Phrase {
+  const days = withUnit(m.days, "");
+  return m.tile === "rds_free" ? { key: "m_forecast_rds", args: [days] }
+    : { key: "m_forecast_ai", args: [str(m.label), days] };
+}
 
 /** A limit item of a shared resource tile: free storage against a share of the allocated storage (CIS 477) says the
  *  share and the GiB it equals; the other tiles say value and limit in their unit. */
@@ -97,13 +107,15 @@ function resourcePhrase(m: Msg, w: Words): Phrase {
 export function phrase(m: Msg | null | undefined, w: Words): Phrase | null {
   if (!m || typeof m.key !== "string") return null;
   if (m.key === "resource") return resourcePhrase(m, w);
+  if (m.key === "forecast") return forecastPhrase(m);
   const build = (PHRASES as Record<string, (m: Msg, w: Words) => string[]>)[m.key];
   return build ? { key: `m_${m.key}`, args: build(m, w) } : null;
 }
 
 /** Every message key a phrase can name (the catalogue must have each in EN and VI; lib/opsStatusText.test.mjs). */
 export function phraseKeys(): string[] {
-  return [...Object.keys(PHRASES).map((k) => `m_${k}`), "m_res_free_pct", "m_res_below", "m_res_above"];
+  return [...Object.keys(PHRASES).map((k) => `m_${k}`), "m_res_free_pct", "m_res_below", "m_res_above",
+    "m_forecast_rds", "m_forecast_ai", ...CHANGE_KEYS.map((k) => `m_${k}`)];
 }
 
 /** The service reason codes of api/services/ops_status/sections.py service_reason_code. */
@@ -114,4 +126,29 @@ export const REASON_CODES = [
 /** "Free storage" threshold line: "20 % = 4 GiB" on the pct basis, "15 GiB" on the GiB fallback. */
 export function freeLimitText(pct: number | null | undefined, gib: number | null | undefined): string {
   return pct == null ? withUnit(gib, "GiB") : `${withUnit(pct, "%")} = ${withUnit(gib, "GiB")}`;
+}
+
+// ── AA-1141: the What changed rows (api/services/ops_status/changes.py `msg`) ──────────────────────────────────────
+
+export const CHANGE_KEYS = [
+  "chg_deploy", "chg_deploy_failed", "chg_setting", "chg_migration", "chg_wave_opened", "chg_wave_paused",
+  "chg_wave_closed", "chg_route",
+] as const;
+
+const CHANGE_PHRASES: Readonly<Record<(typeof CHANGE_KEYS)[number], (m: Msg) => string[]>> = {
+  chg_deploy: (m) => [str(m.subject), m.tag ? String(m.tag) : ""],
+  chg_deploy_failed: (m) => [str(m.subject), m.tag ? String(m.tag) : ""],
+  chg_setting: (m) => [str(m.label), str(m.version), m.tenant ? "1" : ""],
+  chg_migration: (m) => [str(m.version)],
+  chg_wave_opened: (m) => [str(m.name)],
+  chg_wave_paused: (m) => [str(m.name)],
+  chg_wave_closed: (m) => [str(m.name)],
+  chg_route: (m) => [str(m.version), str(m.action), m.preset ? String(m.preset) : ""],
+};
+
+/** The phrase of a What changed row, or null (show the API's English title). */
+export function changePhrase(m: Msg | null | undefined): Phrase | null {
+  if (!m || typeof m.key !== "string") return null;
+  const build = (CHANGE_PHRASES as Record<string, (m: Msg) => string[]>)[m.key];
+  return build ? { key: `m_${m.key}`, args: build(m) } : null;
 }

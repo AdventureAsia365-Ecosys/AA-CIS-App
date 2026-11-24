@@ -12,14 +12,24 @@
 // The view (time range, compare, app / severity / status filters, legends, sorts) lives in the URL
 // (lib/opsStatus.ts), so "Copy link to this view" shares it. A preset range refreshes every minute; a custom one does
 // not move. Kit only (ADR 0016); English by default, Vietnamese in status.messages.ts.
+//
+// AA-1141 (P1, S291): change annotations on every chart and a What changed panel, ack / snooze / mute with a reason
+// (viewer.can_ack), "as of" chips that grey out when stale plus the background producers, a capacity forecast, the AI
+// cost anomaly banner, the OPS-12 digest from the same verdict, named saved views, auto refresh paused on a hidden
+// tab / custom or zoomed range / by hand, and WCAG 2.2 AA (levels in words, table views, aria-live verdict).
 
 import { useQuery } from "@tanstack/react-query";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useState, useSyncExternalStore } from "react";
 import { Button, ErrorState, LoadingScreen, PageFrame, PageHeader, apiGet, useFormat, useUrlFilters } from "../../_kit";
 import { usePathname } from "next/navigation";
 import {
-  RESET_VIEW, nextViewQuery, parseView, resetViewQuery, statusQuery, type SetView, type StatusResp, type View,
+  RESET_VIEW, nextViewQuery, parseView, refreshPause, resetViewQuery, statusQuery, type SetView, type StatusResp,
+  type View,
 } from "@/lib/opsStatus";
+import { STATUS_QUERY_KEY } from "./_status/Ack";
+import { AnomalyBanner, ForecastCard } from "./_status/Capacity";
+import { ChangesCard } from "./_status/Changes";
+import { RefreshChip } from "./_status/Views";
 import { AppsCard } from "./_status/Apps";
 import { AiCard, CostCard, JobsCard, ResourcesCard } from "./_status/Panels";
 import { ServicesCard } from "./_status/Services";
@@ -27,7 +37,7 @@ import { SignalsCard } from "./_status/Signals";
 import { DeliveryCard, DrillLinks, EventsCard, SourcesCard } from "./_status/Timeline";
 import { Toolbar } from "./_status/Toolbar";
 import { VerdictCard } from "./_status/Verdict";
-import { small, useST } from "./_status/ui";
+import { Freshness, small, useST } from "./_status/ui";
 
 const REFRESH_MS = 60_000; // technical-constant: page refresh of a preset range (the server caches its AWS reads)
 
@@ -35,7 +45,7 @@ const REFRESH_MS = 60_000; // technical-constant: page refresh of a preset range
  *  that moment (window.location) and goes through the native history.replaceState, which Next.js syncs into
  *  useSearchParams at once (no server round trip). A router.replace only updates the URL after its navigation, so two
  *  quick clicks both started from the old URL and the first was lost. */
-function useView(): { view: View; setView: SetView; reset: () => void; dirty: boolean } {
+function useView(): { view: View; setView: SetView; reset: () => void; dirty: boolean; apply: (qs: string) => void } {
   const { get, params } = useUrlFilters();
   const pathname = usePathname();
   const view = parseView(get);
@@ -45,7 +55,17 @@ function useView(): { view: View; setView: SetView; reset: () => void; dirty: bo
     view, dirty,
     setView: (change) => write(nextViewQuery(window.location.search, change)),
     reset: () => write(resetViewQuery(window.location.search)),
+    apply: write,
   };
+}
+
+/** AA-1141: is the tab hidden (document.visibilityState)? Auto refresh waits while it is. */
+function subscribeVisibility(cb: () => void): () => void {
+  document.addEventListener("visibilitychange", cb);
+  return () => document.removeEventListener("visibilitychange", cb);
+}
+function useTabHidden(): boolean {
+  return useSyncExternalStore(subscribeVisibility, () => document.visibilityState === "hidden", () => false);
 }
 
 /** cis.ops.status_history_days from the last answer (unknown before the first one). */
@@ -73,11 +93,16 @@ function Countdown({ updatedAt, live }: { updatedAt: number; live: boolean }) {
 function Body({ data, view, setView }: { data: StatusResp; view: View; setView: SetView }) {
   const s = data.sections;
   const grid2 = { display: "grid", gap: 18, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 460px), 1fr))" };
+  const fresh = { factor: data.thresholds.stale_factor?.value ?? null, nowMs: Date.parse(data.generated_at) };
   return (
+    <Freshness.Provider value={fresh}>
     <div style={{ display: "grid", gap: 18, gridTemplateColumns: "minmax(0, 1fr)" }} data-testid="status-body">
-      <VerdictCard verdict={data.verdict} view={view} setView={setView} />
+      <AnomalyBanner section={s.anomaly} view={view} />
+      <VerdictCard verdict={data.verdict} view={view} setView={setView} rules={data.acks?.rules}
+        canAck={!!data.viewer?.can_ack} trail={data.acks?.recent ?? []} />
       <AppsCard section={s.apps} sig={s.signals} view={view} />
       <SignalsCard data={data} view={view} setView={setView} />
+      <ChangesCard section={s.changes} view={view} setView={setView} />
       <ServicesCard section={s.runtimes} view={view} setView={setView} />
       <div style={grid2}>
         <JobsCard section={s.jobs} view={view} setView={setView} />
@@ -88,10 +113,13 @@ function Body({ data, view, setView }: { data: StatusResp; view: View; setView: 
         <DeliveryCard section={s.delivery} />
       </div>
       <AiCard section={s.ai} view={view} setView={setView} />
+      <ForecastCard section={s.forecast} />
       <EventsCard section={s.events} range={data.range} view={view} setView={setView} />
-      <SourcesCard rows={data.sources} staleFactor={data.thresholds.stale_factor?.value ?? null} />
+      <SourcesCard rows={data.sources} staleFactor={data.thresholds.stale_factor?.value ?? null}
+        pipelines={data.pipelines ?? []} />
       <DrillLinks />
     </div>
+    </Freshness.Provider>
   );
 }
 
@@ -111,11 +139,15 @@ function Content({ res, view, setView }: {
 
 function StatusPage() {
   const t = useST();
-  const { view, setView, reset, dirty } = useView();
-  const live = view.range !== "custom";
+  const { view, setView, reset, dirty, apply } = useView();
+  // AA-1141: auto refresh pauses on a custom (or zoomed) range, while the tab is hidden, or by hand
+  const hidden = useTabHidden();
+  const [manual, setManual] = useState(false);
+  const pause = refreshPause(view, hidden, manual);
+  const live = pause === null;
   const q = statusQuery(view);
   const res = useQuery({
-    queryKey: ["admin-ecosystem-status", q],
+    queryKey: [STATUS_QUERY_KEY, q],
     queryFn: () => apiGet<StatusResp>(`/api/admin/overview/status?${q}`, { admin: true }),
     refetchInterval: live ? REFRESH_MS : false,
     refetchOnWindowFocus: false,
@@ -129,8 +161,9 @@ function StatusPage() {
           <Countdown updatedAt={res.dataUpdatedAt} live={live} />
           <Button variant="ghost" onClick={() => res.refetch()}>{res.isFetching ? t("refreshing") : t("refresh")}</Button>
         </span>} />
-      <Toolbar view={view} setView={setView} range={data?.range} dirty={dirty} onReset={reset}
-        historyDays={historyDaysOf(data)} />
+      <Toolbar view={view} setView={setView} range={data?.range} dirty={dirty} onReset={reset} applyQuery={apply}
+        historyDays={historyDaysOf(data)}
+        refresh={<RefreshChip pause={pause} seconds={REFRESH_MS / 1000} onToggle={() => setManual((m) => !m)} />} />
       <div style={{ height: 14 }} />
       <Content res={res} view={view} setView={setView} />
     </PageFrame>

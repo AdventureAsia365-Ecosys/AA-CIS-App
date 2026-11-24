@@ -207,7 +207,7 @@ async def _register(pool) -> dict:
 
 async def _caps(pool) -> list[dict]:
     from api.services import ai_gateway
-    return caps_view(await ai_gateway._read_connection_budgets(pool))
+    return caps_view(await ai_gateway.read_connection_budgets(pool))
 
 
 async def _coverage(pool) -> dict:

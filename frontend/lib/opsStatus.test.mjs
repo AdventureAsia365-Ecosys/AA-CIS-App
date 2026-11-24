@@ -270,3 +270,88 @@ test("headroom per series against its own limit, the tightest one wins (S289 F1)
   // a floor: the lowest value counts
   assert.equal(tightestHeadroom([{ id: "f", label: "F", values: [40, 25] }], () => ({ warn: 20, dir: "below" })).room, 5);
 });
+
+// ── AA-1141 (P1) ───────────────────────────────────────────────────────────────────────────────────────────────────
+import {
+  filterChanges, fmtDays, isStale, muteProblem, reasonOk, refreshPause, savedViewQuery, shownAnnotations,
+  snoozeUntil, viewQueryOf, zoomRange,
+} from "./opsStatus.ts";
+
+test("AA-1141 view keys: hidden annotation types and the What changed filter live in the URL", () => {
+  const v = parseView(getter("ann=setting,bogus,route&chg=deploy"));
+  assert.deepEqual(v.ann, ["setting", "route"]);
+  assert.deepEqual(v.chg, ["deploy"]);
+  assert.equal(nextViewQuery("", { ann: ["wave"] }), "ann=wave");
+  assert.ok("ann" in RESET_VIEW && "chg" in RESET_VIEW);
+});
+
+test("AA-1141 annotations and changes follow the app filter; types hide and filter", () => {
+  const rows = [{ id: "a", t: "2026-11-25T01:00:00Z", type: "deploy", app: "cis", text: "x" },
+    { id: "b", t: "2026-11-25T02:00:00Z", type: "setting", app: "booking", text: "y" },
+    { id: "c", t: "2026-11-25T03:00:00Z", type: "route", app: "shared", text: "z" }];
+  assert.deepEqual(shownAnnotations(rows, { apps: ["cis"], ann: [] }).map((r) => r.id), ["a", "c"]);
+  assert.deepEqual(shownAnnotations(rows, { apps: [], ann: ["deploy"] }).map((r) => r.id), ["b", "c"]);
+  const changes = rows.map((r) => ({ ...r, title: r.text, t2: null, by: null, ref: null, href: null }));
+  assert.deepEqual(filterChanges(changes, { apps: [], chg: ["setting"] }).map((r) => r.id), ["b"]);
+  assert.deepEqual(filterChanges(changes, { apps: ["booking"], chg: [] }).map((r) => r.id), ["b", "c"]);
+});
+
+test("AA-1141 snooze ends 1 h, 4 h or at the morning hour of the next day on the viewer's clock", () => {
+  const now = new Date(2026, 10, 25, 22, 30).getTime();   // local 22:30
+  assert.equal(Date.parse(snoozeUntil("1h", now, 8)) - now, 3_600_000);
+  assert.equal(Date.parse(snoozeUntil("4h", now, 8)) - now, 4 * 3_600_000);
+  const t = new Date(snoozeUntil("tomorrow", now, 8));
+  assert.deepEqual([t.getDate(), t.getHours(), t.getMinutes()], [26, 8, 0]);
+});
+
+test("AA-1141 mute end time and reason rules", () => {
+  const now = Date.parse("2026-11-25T00:00:00Z");
+  assert.equal(muteProblem("", now, 7), "missing");
+  assert.equal(muteProblem(isoToLocal("2026-11-24T00:00:00Z"), now, 7), "past");
+  assert.equal(muteProblem(isoToLocal("2026-12-03T00:00:00Z"), now, 7), "tooFar");
+  assert.equal(muteProblem(isoToLocal("2026-11-27T00:00:00Z"), now, 7), null);
+  assert.equal(reasonOk("   short   ", 20), false);
+  assert.equal(reasonOk("an invented reason, long enough", 20), true);
+});
+
+test("AA-1141 a section is stale after factor x its refresh time; unknown is never judged", () => {
+  const now = Date.parse("2026-11-25T01:00:00Z");
+  assert.equal(isStale("2026-11-25T00:40:00Z", 300, 3, now), true);    // 20 min > 15 min
+  assert.equal(isStale("2026-11-25T00:50:00Z", 300, 3, now), false);
+  assert.equal(isStale(null, 300, 3, now), false);
+  assert.equal(isStale("2026-11-25T00:00:00Z", 300, null, now), false);
+});
+
+test("AA-1141 auto refresh pauses on a custom range, a hidden tab or by hand", () => {
+  assert.equal(refreshPause({ range: "24h" }, false, false), null);
+  assert.equal(refreshPause({ range: "24h" }, true, false), "hidden");
+  assert.equal(refreshPause({ range: "24h" }, false, true), "paused");
+  assert.equal(refreshPause({ range: "custom" }, true, true), "custom");
+});
+
+test("AA-1141 saved views carry only the page's keys and restore them", () => {
+  const q = viewQueryOf("range=6h&apps=cis&other=keep&ann=wave");
+  assert.deepEqual(q, { range: "6h", apps: "cis", ann: "wave" });
+  assert.equal(savedViewQuery("range=1h&sev=sev1&other=keep", { range: "7d", bogus: "x" }), "range=7d&other=keep");
+});
+
+test("AA-1141 a drag on a chart becomes a custom range of at least 10 minutes", () => {
+  const a = Date.parse("2026-11-25T01:00:00Z");
+  assert.deepEqual(zoomRange(a + 3_600_000, a), { from: "2026-11-25T01:00:00.000Z", to: "2026-11-25T02:00:00.000Z" });
+  assert.equal(zoomRange(a, a + 60_000), null);
+  assert.equal(zoomRange(null, a), null);
+  assert.equal(fmtDays(4.25), "4.3");
+  assert.equal(fmtDays(42.4), "42");
+  assert.equal(fmtDays(null), "—");
+});
+
+test("AA-1141 the page reads limits from the API and says levels in words, not colour alone", () => {
+  const ui = read("app/admin/overview/_status/ui.tsx");
+  assert.match(ui, /export function LevelGlyph/);
+  for (const f of ["Panels.tsx", "Apps.tsx", "Services.tsx", "Capacity.tsx"]) {
+    assert.match(read(`app/admin/overview/_status/${f}`), /LevelGlyph/, f);
+  }
+  assert.match(read("app/admin/overview/_status/Verdict.tsx"), /aria-live="polite"/);
+  assert.match(read("app/admin/overview/_status/Ack.tsx"), /rules\.reason_min_chars/);
+  assert.doesNotMatch(read("app/admin/overview/_status/Ack.tsx"), /reason_min_chars\s*[:=]\s*\d/);
+});
