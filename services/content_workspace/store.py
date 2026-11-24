@@ -248,7 +248,7 @@ async def checklist_for(pool, conn, row, facts: dict, *, limits: policy.Limits) 
 async def create_tour(pool, form: F.FactsIn, *, actor: str) -> dict:
     """A new hand-made tour from the form: the source tour (a new catalog key), its facts and the first wording draft.
     Returns {tour_id, wording_version_id}."""
-    from services.tour_lifecycle import run_after_commit, supersede
+    from services.tour_lifecycle import open_batch, run_after_commit, supersede
 
     lim, opts = await policy.limits(), await policy.form_options()
     stored = F.normalize(form, tour_type_label=_tour_type_label(form.tour_type, {}, opts))
@@ -262,9 +262,11 @@ async def create_tour(pool, form: F.FactsIn, *, actor: str) -> dict:
     payload = {**text, "country": country, "provider": sup["company_name"] if sup else None}
     async with pool.acquire() as conn:
         async with conn.transaction():
-            outcome = await supersede(conn, decision="create_new", tenant_id=MASTER_TENANT,
-                                      batch_id=str(uuid.uuid4()), payload=payload, matched_tour_id=None,
-                                      matched_group_id=None, actor=actor)
+            # raw_tours.batch_id is a foreign key to shared.pipeline_runs: the tour's own batch row comes first
+            batch_id = await open_batch(conn, tenant_id=MASTER_TENANT, batch_name="Content workspace",
+                                        step_name="content_workspace")
+            outcome = await supersede(conn, decision="create_new", tenant_id=MASTER_TENANT, batch_id=batch_id,
+                                      payload=payload, matched_tour_id=None, matched_group_id=None, actor=actor)
             tour_id = outcome.tour_id
             await conn.execute(
                 "UPDATE silver_aa_internal.raw_tours SET entry_origin = 'manual', manual_facts = $2::jsonb, "
