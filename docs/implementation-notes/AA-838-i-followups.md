@@ -17,16 +17,25 @@ check for AA-CIS-App.
   asyncpg 0.29.0 (CIS pin) has the same two internals as 0.31.0 (checked: `Transaction.start` calls
   `con._get_unique_id('savepoint')` and stores it in `_id`).
 - **Pools changed**: the api main pool (`api/main.py`, `cis-api`), the tenant pool (`api/core/aa544_tenant_pool.py`,
-  `cis-tenant`: only `connection_class` is added; its role, limits, timeouts and the fail-closed logic are unchanged)
-  and the job worker pool (`shared/jobs/worker.py`, `cis-worker`). These carry all the steady load.
-- **Not changed**: `shared/repository/database.py` (no importer), and the one-off pools of manual or batch scripts
-  under `services/*` (`grounding.py`, `eval/regression.py`, `export/handler.py`, the writer proof and writing memory
-  runners, the tenant backup / E2E fixtures CLIs): a manual run adds a few texts once. Also untouched: the ops status
-  files another S291 lane edits, compliance and the two-person publish code.
+  `cis-tenant`: only `connection_class` is added; its role, limits, timeouts and the fail-closed logic are unchanged),
+  the job worker pool (`shared/jobs/worker.py`, `cis-worker`) and the three `cis-job` pools a job opens for itself:
+  `open_job_pool()` in `services/export/handler.py` (every `recompute` job and every A3 publish; the recompute
+  `retarget` stage, on by default, opens one savepoint per row in `apply_plan`), `assess_rows_standalone()` in
+  `services/ingestion/jev_gates.py` (the ingestion commit path) and `_judge_all()` in
+  `services/content_generation/grounding.py` (the grounding judge of each S1 tour). Together these carry the steady
+  load. (Fix pass: the first cut left the three `cis-job` pools out and wrongly listed `export/handler.py` as a
+  one-off script pool; a reviewer caught it.)
+- **Not changed**: `shared/repository/database.py` (no importer); the one-off pools of manual or batch scripts under
+  `services/*` and `scripts/*` (`eval/regression.py`, `ground_truth/instrument_eval.py`, the writer proof and writing
+  memory runners, the tenant backup / E2E fixtures CLIs): a manual run adds a few texts once. Single
+  `asyncpg.connect()` connections are also left as they are, including `record_calls()` in
+  `shared/llm_client/call_log.py`, which opens a savepoint inside its own transaction for the ledger v2 insert: many
+  unit and integration tests stub `asyncpg.connect` there with fixed signatures, so it is a follow-up, not part of this slice.
+  Also untouched: the ops status files another S291 lane edits, compliance and the two-person publish code.
 
 ## Changed
 
-- `shared/pg_connection.py` (new); `connection_class=StableSavepointConnection` on the three pools above.
+- `shared/pg_connection.py` (new); `connection_class=StableSavepointConnection` on the six pools above.
 
 ## Tradeoffs
 
@@ -35,7 +44,7 @@ check for AA-CIS-App.
 
 ## Should know
 
-- Tests: `tests/unit/test_s291_pg_connection.py` (statement texts, rollback depth, the three pools) and
+- Tests: `tests/unit/test_s291_pg_connection.py` (statement texts, rollback depth, the six pools) and
   `tests/integration/test_s291_pg_connection_pg.py` (rollback semantics on PostgreSQL).
 - Live check after deploy: `pg_stat_statements` rows for role `cis_app` (and the tenant role) whose query starts with
   `SAVEPOINT` / `RELEASE` / `ROLLBACK TO` stop growing; new ones read `cis_sp_<n>`.

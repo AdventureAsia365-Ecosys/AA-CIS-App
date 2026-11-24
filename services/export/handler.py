@@ -6,6 +6,7 @@ import structlog
 import time
 from contextlib import asynccontextmanager
 from typing import Callable, Optional
+from shared.pg_connection import StableSavepointConnection   # S291: savepoint names by depth
 from shared.secrets import get_database_url
 from shared.tour_liveness import SOURCE_NOT_LIVE, SourceNotLiveError, SourceState, source_state
 from services.content_generation import human_lock as _human_lock   # AA-1146: the hand-edit lock of a Master
@@ -140,7 +141,8 @@ JOB_POOL_MAX = 5
 async def open_job_pool():
     """A small asyncpg pool owned by one job run (close it when done)."""
     return await asyncpg.create_pool(get_database_url(), ssl="require", min_size=1, max_size=JOB_POOL_MAX,
-                                     server_settings={"application_name": "cis-job"})  # AA-824
+                                     server_settings={"application_name": "cis-job"},  # AA-824
+                                     connection_class=StableSavepointConnection)  # S291 (retarget savepoints)
 
 
 async def recompute_rankings_and_routes(pool, *, log_reason: str = "",

@@ -112,8 +112,14 @@ def test_other_unique_ids_keep_asyncpg_s_counter() -> None:
 def test_the_api_tenant_and_worker_pools_use_the_connection_class() -> None:
     from api import main
     from api.core import aa544_tenant_pool
+    from services.content_generation import grounding
+    from services.export import handler
+    from services.ingestion import jev_gates
     from shared.jobs import worker
 
+    # The three `cis-job` pools run inside jobs on every recompute / A3 publish (the retarget stage opens one savepoint
+    # per row), ingestion commit and grounding judge, so they nest as often as the long-lived pools.
     for source in (inspect.getsource(main), inspect.getsource(aa544_tenant_pool.create_tenant_pool),
-                   inspect.getsource(worker)):
+                   inspect.getsource(worker), inspect.getsource(handler.open_job_pool),
+                   inspect.getsource(jev_gates.assess_rows_standalone), inspect.getsource(grounding._judge_all)):
         assert "connection_class=StableSavepointConnection" in source

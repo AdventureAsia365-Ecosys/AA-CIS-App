@@ -20,8 +20,10 @@ the previous one at that depth has ended), so ``RELEASE`` and ``ROLLBACK TO`` by
 means. The depth is the number of this connection's savepoint blocks still open (state ``STARTED``); a new top-level
 transaction starts from zero.
 
-Used by the api main pool (``api/main.py``), the tenant pool (``api/core/aa544_tenant_pool.py``) and the job worker
-pool (``shared/jobs/worker.py``). Relies on two asyncpg internals, both pinned by ``requirements.txt`` and checked by
+Used by the api main pool (``api/main.py``), the tenant pool (``api/core/aa544_tenant_pool.py``), the job worker
+pool (``shared/jobs/worker.py``) and the ``cis-job`` pools a job opens for itself (``open_job_pool`` in
+``services/export/handler.py``, ``services/ingestion/jev_gates.py``, ``services/content_generation/grounding.py``).
+Relies on two asyncpg internals, both pinned by ``requirements.txt`` and checked by
 ``tests/unit/test_s291_pg_connection.py``: ``Transaction.start`` takes the savepoint name from
 ``Connection._get_unique_id("savepoint")`` and stores it in ``Transaction._id``.
 """
