@@ -202,6 +202,10 @@ async def create_tour(pool, form: F.FactsIn, *, actor: str) -> dict:
                                       "tour_id": tour_id, "supplier_id": sup["id"] if sup else None,
                                       "country": country, "days": len(stored["days"]), "version_id": version_id})
     await run_after_commit(pool, outcome)
+    # AA-1047 W1: the first wording through the REPORT-mode final contract (recorded, never blocks), like a draft save
+    from services.quality import final_contract_store as fc_store
+    async with pool.acquire() as conn:
+        await fc_store.record_s1_exit(conn, version_id, "human_edit")
     logger.info("aa1148_manual_tour_created", tour_id=tour_id, supplier_id=sup["id"] if sup else None)
     return {"tour_id": tour_id, "wording_version_id": version_id}
 

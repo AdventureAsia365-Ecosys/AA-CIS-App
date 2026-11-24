@@ -33,6 +33,7 @@ export const NAV_MESSAGES = defineMessages(
     // AA Catalogue
     "Upload (S0)": "Upload (S0)",
     "Rewrite (S1)": "Rewrite (S1)",
+    "Content workspace": "Content workspace",
     "Review Queue": "Review Queue",
     "Master Content": "Master Content",
     "Atoms & routes": "Atoms & routes",
@@ -105,6 +106,7 @@ export const NAV_MESSAGES = defineMessages(
     "Plans & add-ons": "Gói & add-on",
     "Upload (S0)": "Tải lên (S0)",
     "Rewrite (S1)": "Viết lại (S1)",
+    "Content workspace": "Khu làm nội dung",
     "Review Queue": "Hàng chờ duyệt",
     "Master Content": "Nội dung Master",
     "Atoms & routes": "Atom & tuyến",

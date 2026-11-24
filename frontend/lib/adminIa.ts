@@ -23,7 +23,7 @@ export type NavIcon =
   | "overview" | "myWork" | "appHealth" | "reports" | "dataCoverage"
   | "tenants" | "agencies" | "erasure" | "plans" | "assignments"
   | "upload" | "rewrite" | "review" | "master" | "atoms" | "places" | "placeCards" | "photos" | "facts" | "supply"
-  | "aaContent" | "referencePrices"
+  | "aaContent" | "referencePrices" | "contentWorkspace"
   | "seo" | "settings"
   | "quality" | "trace" | "reviewLog" | "slate" | "compliance"
   | "aiGateway" | "spend" | "usage"
@@ -83,6 +83,8 @@ export const ADMIN_IA: IaGroup[] = [
   ] },
   { label: "AA Catalogue", items: [
     { href: "/admin/upload", label: "Upload (S0)", icon: "upload" },
+    // AA-1148: hand-made tours tied to an AA supplier, and the supplier links of the old tours
+    { href: "/admin/content-workspace", label: "Content workspace", icon: "contentWorkspace" },
     { href: "/admin/s1-rewrite", label: "Rewrite (S1)", icon: "rewrite" },
     { href: "/admin/review", label: "Review Queue", icon: "review" },
     { href: "/admin/master-content", label: "Master Content", icon: "master" },

@@ -125,6 +125,9 @@ const UNLISTED = new Set([
   "/admin/lab/[stage]",              // Writing Lab › one stage (the stage bar of /admin/lab)
   "/admin/tenants/view-as",          // AA-1035 R2 slice 2: opened from Tenant 360 › View as partner
   "/admin/tenants/[id]",             // AA-1039 R6 rest: Tenant 360, opened from a Directory row (and ⌘K, Jobs, Budgets)
+  "/admin/content-workspace/new",            // AA-1148: New tour of the content workspace list
+  "/admin/content-workspace/[tourId]",       // AA-1148: a hand-made tour, opened from the content workspace list
+  "/admin/content-workspace/supplier-links", // AA-1148: Supplier links of the content workspace list
 ]);
 
 test("5. every admin page is in the nav or reached from another page", () => {
