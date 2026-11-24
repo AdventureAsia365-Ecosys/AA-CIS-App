@@ -50,10 +50,15 @@ async def test_ack_snooze_clear_round_trip_with_audit(pool):
     first = await acks.set_ack(pool, item=_item(), action="ack", until=None, reason=REASON, actor=f"admin:{STAFF_A}",
                                now=now)
     assert first["state"] == "acked"
-    second = await acks.set_ack(pool, item=_item(), action="snooze", until=now + timedelta(hours=4), reason=REASON,
+    second = await acks.set_ack(pool, item=_item(), action="snooze", until=None, snooze_hours=4, reason=REASON,
                                 actor=f"admin:{STAFF_A}", now=now)
+    assert second["until"] == (now + timedelta(hours=4)).isoformat()
     in_force, _names = await acks.read_in_force(pool, now + timedelta(minutes=1))
     assert in_force[ITEM]["ack_id"] == second["ack_id"] and in_force[ITEM]["action"] == "snooze"
+    # the severity it was given at is read back: a worse item under the same id is open again
+    assert in_force[ITEM]["severity"] == _item()["severity"]
+    worse = acks.apply([{**_item(), "severity": "sev1", "status": "open"}], in_force)[0]
+    assert worse["status"] == "open" and worse["escalated"]["from"] == _item()["severity"]
     rows = await pool.fetch("SELECT ack_id, cleared_at IS NOT NULL AS cleared FROM acp_shared.ops_alert_ack "
                             "WHERE item_id = $1 ORDER BY ack_id", ITEM)
     assert [r["cleared"] for r in rows][-2:] == [True, False]   # the first one was replaced
@@ -62,7 +67,7 @@ async def test_ack_snooze_clear_round_trip_with_audit(pool):
     assert [a["action"] for a in audit][-2:] == ["ops_alert_ack", "ops_alert_ack"]
     details = audit[-1]["details"]
     details = json.loads(details) if isinstance(details, str) else details
-    assert details["action"] == "snooze" and details["replaced"] == [first["ack_id"]]
+    assert details["action"] == "snooze" and details["replaced"] == [first["ack_id"]] and details["snooze_hours"] == 4
     # ends by itself: 5 hours later nothing is in force
     later, _ = await acks.read_in_force(pool, now + timedelta(hours=5))
     assert ITEM not in later
