@@ -20,6 +20,7 @@
 // unmapped-markets banner (tenant.read) is not even fetched for the desk roles. The backend stays the authority.
 
 import { Suspense, useState, useEffect, useCallback } from "react";
+import { TenantActivity } from "./TenantActivity";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Plus, RefreshCw, ChevronRight,
@@ -562,6 +563,9 @@ function TenantsPageInner() {
               );
             })}
           </div>
+
+          {/* AA-1140: tenant activity and quota outliers moved here from the old Overview (ops.read only) */}
+          <TenantActivity />
 
           {/* Table */}
           <Section padded={false} style={{ overflow: "hidden" }} bodyStyle={{ padding: loading ? 0 : 12 }}>

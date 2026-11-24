@@ -1,0 +1,115 @@
+"use client";
+// app/admin/overview/_status/ui.tsx — AA-1140: small shared pieces of the Ecosystem status page (kit only): the card
+// frame with its own "as of" time, the grey "not measured yet" chip, level badges, chip filters and a sort picker.
+
+import type { ReactNode } from "react";
+import { Badge, ChipButton, K, Section, Select, useFormat, useT, type Tone } from "../../../_kit";
+import { levelTone, sectionDown, type Section as Sec } from "@/lib/opsStatus";
+import { STATUS } from "../status.messages";
+
+export function useST() {
+  return useT(STATUS);
+}
+export type ST = ReturnType<typeof useST>;
+export type SKey = Parameters<ST>[0];
+
+export const small = { fontSize: 12, color: K.muted, lineHeight: 1.45 } as const;
+export const rowWrap = { display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" } as const;
+export const num = { fontVariantNumeric: "tabular-nums" } as const;
+
+/** One card of the page: kit Section with the section's own "as of" time at the right of the header. */
+export function Card({ title, testId, asOf, actions, children, stale }: {
+  title: ReactNode; testId: string; asOf?: string | null; actions?: ReactNode; children: ReactNode; stale?: boolean;
+}) {
+  const t = useST();
+  const { formatDateTime } = useFormat();
+  const head = (
+    <span style={rowWrap}>
+      {asOf && <span style={small} data-testid={`${testId}-asof`}>{t("asOf", formatDateTime(asOf))}</span>}
+      {stale && <Badge tone="neutral">{t("stale")}</Badge>}
+      {actions}
+    </span>
+  );
+  return (
+    <Section title={title} actions={head} testId={testId}
+      style={{ minWidth: 0, opacity: stale ? 0.7 : 1 }} bodyStyle={{ display: "grid", gap: 12, minWidth: 0 }}>
+      {children}
+    </Section>
+  );
+}
+
+/** The grey chip of a signal with no source yet, with the reason as its title (never green). */
+export function NotMeasured({ reason, testId }: { reason?: string | null; testId?: string }) {
+  const t = useST();
+  return (
+    <span data-testid={testId} title={reason ?? undefined} style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+      <Badge tone="neutral" dot={false}>{t("notMeasured")}</Badge>
+      {reason && <span style={small}>{reason}</span>}
+    </span>
+  );
+}
+
+/** A section that did not answer: its reason in place of its body. */
+export function SectionDown({ section, testId }: { section: Sec<unknown> | null | undefined; testId?: string }) {
+  const t = useST();
+  if (section?.status === "not_measured") return <NotMeasured reason={section.reason} testId={testId} />;
+  return (
+    <div data-testid={testId} style={small}>
+      <Badge tone="neutral" dot={false}>{t("unavailable")}</Badge>{" "}
+      {section?.message ?? section?.reason ?? ""}
+    </div>
+  );
+}
+
+/** Renders the body only for a section that answered "ok". */
+export function WhenUp<T>({ section, testId, children }: {
+  section: Sec<T> | null | undefined; testId?: string; children: (data: T) => ReactNode;
+}) {
+  if (sectionDown(section) || section?.data === undefined) return <SectionDown section={section} testId={testId} />;
+  return <>{children(section.data)}</>;
+}
+
+export function LevelBadge({ level, children }: { level: string | null | undefined; children: ReactNode }) {
+  return <Badge tone={levelTone(level) as Tone}>{children}</Badge>;
+}
+
+/** A colour for a value next to a level (ink when fine or unknown). */
+export function levelColor(level: string | null | undefined): string {
+  const tone = levelTone(level);
+  if (tone === "danger") return K.danger;
+  return tone === "warning" ? K.amber : K.ink;
+}
+
+/** A multi-select chip row (nothing chosen = all). */
+export function ChipFilter({ label, options, value, onChange, testId }: {
+  label: string; options: { value: string; label: string; count?: number }[]; value: string[];
+  onChange: (next: string[]) => void; testId: string;
+}) {
+  const flip = (v: string) => onChange(value.includes(v) ? value.filter((x) => x !== v) : [...value, v]);
+  return (
+    <span role="group" aria-label={label} style={rowWrap} data-testid={testId}>
+      <span style={small}>{label}</span>
+      {options.map((o) => (
+        <ChipButton key={o.value} size="sm" selected={value.includes(o.value)} onClick={() => flip(o.value)}>
+          {o.label}{o.count != null ? ` ${o.count}` : ""}
+        </ChipButton>
+      ))}
+    </span>
+  );
+}
+
+/** "Sort by" select for a list; value "col:dir". */
+export function SortSelect({ label, options, value, onChange }: {
+  label: string; options: { value: string; label: string }[]; value: string; onChange: (v: string) => void;
+}) {
+  return (
+    <Select size="sm" aria-label={label} value={value} onChange={(e) => onChange(e.target.value)}
+      options={options} style={{ width: "auto" }} />
+  );
+}
+
+/** The sort options of a column list: each column ascending and descending. */
+export function sortOptions(cols: { col: string; label: string }[]): { value: string; label: string }[] {
+  return cols.flatMap((c) => [{ value: `${c.col}:desc`, label: `${c.label} ↓` }, { value: `${c.col}:asc`,
+    label: `${c.label} ↑` }]);
+}
