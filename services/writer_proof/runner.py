@@ -32,6 +32,7 @@ Commands (DRY RUN unless `run --live`; every command prints one JSON document, i
                                                 --live --confirm CONFIRM [--requested-by <who>]
   python -m services.writer_proof.runner report --prereg w5-null-t9-blog
   python -m services.writer_proof.runner campaign [--r1-report <file> [--instrument <id>]]
+  python -m services.writer_proof.runner first-pass --prereg w5-t9 [--fixed rarity,route_timing] [--no-gates]
 
 plan    reads the DB (READ ONLY): the pre-registration (valid, registered, golden version = the active one; S285: for a
         draft, what its registration would refuse, `registration_problems`), the
@@ -51,6 +52,9 @@ report  the runs of the pre-registration: the lock check, the pre-registered ver
         cost / requests per object from the ledger (cost_report.py).
 campaign the plan of every W5 proof in the D12 order (null run, T9, S1, T2): samples, stage, estimate vs cap, ready
         or not and why, and the estimates' sum against the D12 total. Nothing is written or queued.
+first-pass AA-1169 (READ ONLY, $0): why the counted B run's first drafts fail, per flagged-claim class (first flag,
+        items with the class, items it fails alone, flags per field), the projection of a fix that removes the
+        `--fixed` classes, and the deterministic T10 gates re-run on each stored draft (first_pass.py). Counts only.
 """
 from __future__ import annotations
 
@@ -524,6 +528,21 @@ async def report(pool, pre: pr.Prereg) -> dict:
             "d12": {"workflow_cap_usd": pr.workflow_cap(pre.workflow), "total_cap_usd": pr.total_cap()}}
 
 
+async def first_pass_report(pool, pre: pr.Prereg, *, fixed: tuple[str, ...] = (), gates: bool = True) -> dict:
+    """AA-1169: the first-pass diagnosis of a proof's counted B run (READ ONLY, no model call; first_pass.py)."""
+    from services.writer_proof import first_pass as fp
+    unknown = sorted(set(fixed) - set(fp.CLASS_ORDER))
+    if unknown:
+        raise RunRefused(f"unknown --fixed classes: {', '.join(unknown)} (known: {', '.join(fp.CLASS_ORDER)})")
+    run_b, set_id, rows = await fp.load(pool, pre.id)
+    if not run_b:
+        return {"prereg": pre.id, "ok": False, "refused": "no B run with results yet"}
+    pre = await resolved(pool, pre, set_id=set_id)       # a sample rule, on the B run's golden version
+    out = await asyncio.to_thread(fp.run, pre.doc, rows, fixed=fixed, gates=gates)
+    return {"prereg": pre.id, "sha256": pre.sha256, "ok": True, "run_b": run_b, "rows": len(rows), **out,
+            "judge": pre.doc.get("judge"), "advisory": _advisory(pre)}
+
+
 async def draft(pool, pre: pr.Prereg, *, n: Optional[int], noise: int) -> dict:
     from services.writing_memory import r2
     store = r2.PgStore(pool)
@@ -540,7 +559,7 @@ async def draft(pool, pre: pr.Prereg, *, n: Optional[int], noise: int) -> dict:
 def _parse(argv=None):
     ap = argparse.ArgumentParser(prog="python -m services.writer_proof.runner", description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("plan", "draft", "run", "report", "campaign"):
+    for name in ("plan", "draft", "run", "report", "campaign", "first-pass"):
         sp = sub.add_parser(name)
         if name != "campaign":
             sp.add_argument("--prereg", required=True, help="pre-registration id (prereg/<id>.json) or path")
@@ -550,6 +569,9 @@ def _parse(argv=None):
             sp.add_argument("--two-step-report", help="S283: the two-step gated report (a claim instrument judge)")
             if name != "campaign":
                 sp.add_argument("--cap-usd", type=float)
+        if name == "first-pass":
+            sp.add_argument("--fixed", default="", help="comma-separated claim classes a writer fix would remove")
+            sp.add_argument("--no-gates", action="store_true", help="skip the deterministic gate replay")
         if name == "draft":
             sp.add_argument("--n", type=int)
             sp.add_argument("--noise", type=int, default=0)
@@ -588,6 +610,9 @@ async def _main(argv=None) -> int:
                                                     two_step_report=a.two_step_report)}
         elif a.cmd == "draft":
             out = await draft(pool, pre, n=a.n, noise=a.noise)
+        elif a.cmd == "first-pass":
+            out = await first_pass_report(pool, pre, fixed=tuple(c.strip() for c in a.fixed.split(",") if c.strip()),
+                                          gates=not a.no_gates)
         else:
             out = await report(pool, pre)
     except (RunRefused, pr.PreregRefused) as e:
