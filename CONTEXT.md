@@ -5343,7 +5343,7 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     only while the version's `edited_at` is the one it read (a save during the run rolls the verdict back, result
     `stale`). **Waves**: a tour skipped for its lock (or left out of the batch) is the terminal wave state `locked`
     (who, when, why on the report row), so a wave holding one can complete.
-  - **Content workspace: hand-made tours tied to an AA supplier** (AA-1148, S290; CIS 478, Booking bk-072).
+  - **Content workspace: hand-made tours tied to an AA supplier** (AA-1148, S290; CIS 478, Booking bk-073).
     `/admin/content-workspace` (AA Catalogue): a supplier that sends one tour by e-mail or PDF is entered as a form
     instead of an Excel row. **Create** (`POST /admin/content-workspace/tours`, content.write) starts a new catalog key
     through the tour lifecycle service (`supersede(create_new)`, the only raw_tours INSERT), marks the row
@@ -5368,7 +5368,7 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     first publish the page autosaves; once published a save needs a reason (422 `reason_required`) and runs the source
     fan-out, like the drawer's raw edit; every save that changes something writes one `raw_tour_revision` row
     (`staff_edit`) and one audit row; a save carrying an older `expected_saved_at` is 409 `facts_changed`. **The AA
-    supplier** is Booking's (`booking.v_supply_suppliers`, contract `supply.supplier.v1`, bk-072: id, code, company
+    supplier** is Booking's (`booking.v_supply_suppliers`, contract `supply.supplier.v1`, bk-073: id, code, company
     name, categories incl. `dmc`, country, status; SELECT to cis_app), stored as the soft key `raw_tours.supplier_id`;
     `provider` keeps the sheet text (a hand-made tour's provider is the supplier's name). Every read of the view fails
     soft (the picker says the list is unavailable; nothing is linked). **Supplier links** (`GET /admin/content-workspace/

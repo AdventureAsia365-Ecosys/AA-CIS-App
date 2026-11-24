@@ -2,9 +2,9 @@
 an old source tour whose supplier is only the sheet's text (raw_tours.provider).
 
 Booking owns the supplier list (booking.suppliers). It opens the read-only view ``booking.v_supply_suppliers``
-(Booking bk-072, contract supply.supplier.v1: id, code, company_name, categories, country_code, status, updated_at;
+(Booking bk-073, contract supply.supplier.v1: id, code, company_name, categories, country_code, status, updated_at;
 never a contact, note, bank detail or price) with SELECT to cis_app. CIS reads it on its main pool and stores the
-chosen id as a soft key (raw_tours.supplier_id, CIS 478). Every read fails soft: before bk-072 is applied, without the
+chosen id as a soft key (raw_tours.supplier_id, CIS 478). Every read fails soft: before bk-073 is applied, without the
 grant or on any error the workspace says "the supplier list is not available" and nothing is linked.
 
 The match is deliberately strict: the names equal after normalising (accents, case, punctuation and company-form words

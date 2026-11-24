@@ -6,7 +6,7 @@ and a published hand-made tour's facts are not saved here while the switch is on
 the suggested supplier, the bulk link and the apply of the suggestions (DRY RUN first), each with its history row.
 
 Needs CIS 478: the module is skipped on a database without it, so the code PR's own CI (before the migration PR is
-merged) skips it and the merge queue (main + this PR) runs it. Booking's view booking.v_supply_suppliers (bk-072) is not
+merged) skips it and the merge queue (main + this PR) runs it. Booking's view booking.v_supply_suppliers (bk-073) is not
 in the CIS test database: a stand-in view with invented suppliers is created inside the test transaction. Each test
 runs in one transaction that is rolled back; process_export and the lifecycle side effects are replaced by stand-ins.
 Invented names and places only."""
