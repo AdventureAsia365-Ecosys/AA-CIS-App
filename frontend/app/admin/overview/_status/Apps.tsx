@@ -1,7 +1,8 @@
 "use client";
 // app/admin/overview/_status/Apps.tsx — AA-1140: one tile per app (CIS, TripPlanner, Booking, Partner CRM): overall
 // health (the App health definition), the health check of the sampler, requests / 5xx / 4xx / p95 over the range
-// coloured by the page's limits (cis.ops.status_*), the change against the previous period when compare is on, the
+// coloured by the page's limits (cis.ops.status_*; the CIS 4xx without the refused staff session checks, shown under
+// it as their own count, S290), the change against the previous period when compare is on, the
 // deployed commit, readiness and the business activity of the range. A signal with no source says "not measured yet".
 
 import { Badge, K, RADIUS, SPACE, useFormat, type Tone } from "../../../_kit";
@@ -59,7 +60,8 @@ function Traffic({ tile, sig, compare }: { tile: AppTile; sig: Signals; compare:
         {tr.client_error_rate_pct == null
           ? <Metric label={t("errors4xx")} value="—" />
           : <Metric label={t("errors4xx")} value={fmtPct(tr.client_error_rate_pct, 2)}
-            level={tr.client_errors_level} />}
+            level={tr.client_errors_level}
+            sub={tr.session_checks == null ? undefined : t("sessionChecks", fmtCount(tr.session_checks))} />}
         <Metric label={t("p95")} value={fmtMs(tr.p95_ms)} level={tr.p95_level} />
       </div>
     </div>
