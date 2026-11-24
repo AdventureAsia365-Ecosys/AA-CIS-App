@@ -60,7 +60,9 @@ async def test_475_registered_and_each_row_is_the_compiled_default(conn):
         assert row is not None, key
         d = settings.definition(key)
         assert json.loads(row["d"]) == d.default_value
-        assert (row["lo"], row["hi"]) == (float(d.min_value), float(d.max_value))
+        # A list setting (CIS 483 snooze choices) has no numeric bounds.
+        assert (row["lo"], row["hi"]) == (
+            None if d.min_value is None else float(d.min_value), None if d.max_value is None else float(d.max_value))
         assert (row["area"], row["scope_kind"], row["approval"]) == ("ops", "platform", "maker_checker")
         assert row["evidence_required"] is False and row["env_override"] is None and row["enforced"] is True
         assert row["guided"] is True and row["label"] == d.label
