@@ -6,7 +6,7 @@
 -- hand-made tour: the content workspace (/admin/content-workspace, AA-CIS-App code PR) creates the source tour from a
 -- structured form (day cards, inclusions, exclusions) and keeps the structured facts next to the text columns the
 -- pipeline reads. The tour's supplier is today free text (raw_tours.provider, the Excel cell) that CIS cannot link to
--- Booking's supplier list; Booking bk-072 opens the read-only view booking.v_supply_suppliers (contract
+-- Booking's supplier list; Booking bk-073 opens the read-only view booking.v_supply_suppliers (contract
 -- supply.supplier.v1) to cis_app, and CIS stores the chosen supplier's id as a soft key (no foreign key across owners).
 --
 -- What (cis_owner, the owner of silver_aa_internal):
