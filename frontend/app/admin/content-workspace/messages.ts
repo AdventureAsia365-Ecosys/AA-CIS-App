@@ -90,6 +90,7 @@ export const CW = defineMessages(
     saveFailed: "Could not save. Retry",
     retry: "Retry",
     staleSave: "Someone else saved this tour since you opened it.",
+    liveIncomplete: "Not saved: this tour is published, so every item under “Before you publish” must stay filled in.",
     reload: "Reload",
     liveNote: "This tour is published. Changes to its facts go live when you save them, so say why.",
     factsTwoPerson: "Two-person publishing is on and this tour is published: a change to its facts would go live "
@@ -266,6 +267,7 @@ export const CW = defineMessages(
     saveFailed: "Chưa lưu được. Thử lại",
     retry: "Thử lại",
     staleSave: "Người khác vừa lưu tour này sau khi bạn mở.",
+    liveIncomplete: "Chưa lưu: tour này đã xuất bản nên mọi mục trong “Trước khi xuất bản” phải luôn được điền đủ.",
     reload: "Tải lại",
     liveNote: "Tour này đã xuất bản. Thay đổi dữ kiện có hiệu lực ngay khi lưu, nên hãy ghi lý do.",
     factsTwoPerson: "Đang bật xuất bản hai người và tour này đã xuất bản: sửa dữ kiện sẽ có hiệu lực mà không có "

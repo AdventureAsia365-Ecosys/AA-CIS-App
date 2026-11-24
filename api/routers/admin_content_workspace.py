@@ -29,7 +29,7 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from api.core.staff_authz import staff_policy
 from api.routers.admin import verify_admin_secret
@@ -50,12 +50,14 @@ class FactsSave(F.FactsIn):
 
 
 class LinkBody(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)   # the reason's 3 characters do not count spaces
     tour_ids: list[str] = Field(..., min_length=1, max_length=500)
     supplier_id: str = Field(..., max_length=36)
     reason: str = Field(..., min_length=3, max_length=500)
 
 
 class ApplyBody(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
     dry_run: bool = True
     reason: str = Field(..., min_length=3, max_length=500)
 

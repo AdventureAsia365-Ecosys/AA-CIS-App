@@ -18,14 +18,18 @@ publish) calls :func:`export_guard` on the version it publishes and refuses an i
 Two people: the people who saved a hand-made tour's facts are its writers too (the facts are staff-written content,
 not supplier input), so the draft publish counts them with the wording's editors (:func:`facts_editors`, the history
 rows since the tour's last publish). While cis.content.publish_two_person is on, a facts save of a published hand-made
-tour is refused (409 ``facts_two_person``): it would go live with no second person. A facts draft that a second person
-publishes is a follow-up.
+tour is refused (409 ``facts_two_person``): it would go live with no second person; and an automatic exit (the S1
+auto publish, recompose) of a hand-made tour whose facts a person wrote since its last publish, or that was never
+published, is refused (:class:`FactsReviewRequiredError`, S1 files it in the Review Queue). A facts draft that a second
+person publishes is a follow-up.
 
 Facts saves: a tour that was never published is a draft nobody outside sees, so the form saves as the person types
-(autosave). Once it has a Master, a save is a change of a live tour: it needs a reason and runs the source fan-out, like
-every raw edit (the drawer's PATCH /admin/tours/{id}/raw). Every save that changes something writes one history row
+(autosave). Once it has a Master, a save is a change of a live tour: it needs a reason, keeps the required list complete
+(409 ``required_missing``) and runs the source fan-out (the drawer's PATCH /admin/tours/{id}/raw refuses a hand-made
+tour's facts: 409 ``manual_tour_use_workspace``). Every save that changes something writes one history row
 (raw_tour_revision, staff_edit) and one audit row with the before / after. Two people saving the same form: the save
-carries the ``saved_at`` it was loaded with; another save in between is 409 ``facts_changed``.
+carries the ``saved_at`` it was loaded with (422 without it once the tour has one); another save in between is 409
+``facts_changed``.
 """
 from __future__ import annotations
 
@@ -57,7 +61,14 @@ class WorkspaceError(Exception):
         return {"code": self.code, "message": self.message, **self.extra}
 
 
-class RequiredMissingError(Exception):
+class HandMadeRefusal(Exception):
+    """process_export refused to publish a hand-made tour (:func:`export_guard`); the version left 'approved' for
+    'hitl' before the refusal. The S1 auto publish files it in the Review Queue (admin_pipeline/_engine.py)."""
+
+    code = "hand_made_refused"
+
+
+class RequiredMissingError(HandMadeRefusal):
     """process_export refused to publish a hand-made tour whose required list is not complete; the version left
     'approved' for 'hitl' before the refusal (services/export/handler.py)."""
 
@@ -72,6 +83,23 @@ class RequiredMissingError(Exception):
 
     def detail(self) -> dict:
         return {"code": self.code, "message": str(self), "items": _missing_items(self.gaps)}
+
+
+class FactsReviewRequiredError(HandMadeRefusal):
+    """While cis.content.publish_two_person is on, an automatic exit (S1 auto publish, recompose, lambda) refused a
+    hand-made tour whose facts a person wrote since its last publish, or that was never published: no second person has
+    seen those facts. The S1 auto publish files the version in the Review Queue, whose approve counts the facts
+    writers in the two-person gate (api/routers/admin_pipeline/_publish.py review_publish_gate)."""
+
+    code = "facts_review_required"
+
+    def __init__(self, tour_id: str, version_id: str, writers: list[str]):
+        super().__init__(tour_id, version_id, writers)
+        self.tour_id, self.version_id, self.writers = tour_id, version_id, writers
+
+    def __str__(self) -> str:
+        return ("Two-person publishing is on: a person wrote this hand-made tour's facts, so a second person approves "
+                "it in the Review Queue before it goes live")
 
 
 def _missing_message(gaps: list[dict]) -> str:
@@ -371,6 +399,14 @@ async def list_manual(pool, *, q: str = "", limit: int = 50, offset: int = 0) ->
 
 # ── save facts ────────────────────────────────────────────────────────────────────────────────────────────────────
 
+def _normal_reason(reason: Optional[str]) -> Optional[str]:
+    """A facts save's reason, stripped: blank is None (no reason), anything else has 3 to 500 characters (422)."""
+    why = (reason or "").strip() or None
+    if why is not None and not 3 <= len(why) <= 500:
+        raise WorkspaceError(422, "reason_length", "A reason has 3 to 500 characters")
+    return why
+
+
 def _check_savable(row, old: dict, *, expected_saved_at: Optional[str], reason: Optional[str],
                    two_person: bool = False) -> bool:
     """Refuse a save the tour cannot take; True when the tour is published (the save is a live change). While the
@@ -384,6 +420,9 @@ def _check_savable(row, old: dict, *, expected_saved_at: Optional[str], reason: 
     state = _state(row)
     if state == "retired":
         raise WorkspaceError(409, "tour_retired", "This tour was deleted: restore it before you edit it")
+    if old.get("saved_at") and not expected_saved_at:
+        raise WorkspaceError(422, "expected_saved_at_required", "Say which save you changed (expected_saved_at): "
+                             "reload the tour and save again")
     if expected_saved_at and old.get("saved_at") and expected_saved_at != old.get("saved_at"):
         raise WorkspaceError(409, "facts_changed", "Someone else saved this tour since you opened it: reload it to see "
                              "their changes", {"saved_at": old.get("saved_at")})
@@ -391,7 +430,7 @@ def _check_savable(row, old: dict, *, expected_saved_at: Optional[str], reason: 
     if live and two_person:
         raise WorkspaceError(409, FACTS_TWO_PERSON, "Two-person publishing is on: a change to the facts of a published "
                              "hand-made tour would go live without a second person, so it cannot be saved here yet")
-    if live and not (reason and 3 <= len(reason.strip()) <= 500):
+    if live and not reason:
         raise WorkspaceError(422, "reason_required", "This tour is published: say why you change its facts "
                              "(3 to 500 characters)")
     return live
@@ -418,6 +457,20 @@ async def _plan_save(pool, row, form: F.FactsIn, stored: dict, old: dict, countr
     return new_cols, sup, changed, {c: before_vals[c] for c in changed}, {c: after_vals[c] for c in changed}
 
 
+async def _refuse_incomplete_live(pool, conn, tour_id: str, stored: dict, country: Optional[str], supplier_id,
+                                  lim: policy.Limits) -> None:
+    """A save of a published hand-made tour goes live at once (the source fan-out), so it must keep the tour's required
+    list complete: the same list as the publish (the new facts, country and supplier; the open wording draft, else the
+    live version), 409 ``required_missing`` with the missing items. A never-published tour keeps saving incomplete
+    drafts (nobody outside sees it; the publish checks the list)."""
+    supplier, _ok = await _supplier_of(pool, supplier_id)
+    items = F.checklist(stored, limits=lim, country_ok=bool(country), supplier=supplier,
+                        wording=await wording_of(conn, tour_id))
+    gaps = F.missing(items)
+    if gaps:
+        raise WorkspaceError(409, "required_missing", _missing_message(gaps), {"items": _missing_items(gaps)})
+
+
 async def save_facts(pool, tour_id: str, form: F.FactsIn, *, expected_saved_at: Optional[str], reason: Optional[str],
                      actor: str) -> dict:
     from api.routers.admin_pipeline.tour_detail import _source_fanout_raw, record_raw_revision
@@ -426,16 +479,19 @@ async def save_facts(pool, tour_id: str, form: F.FactsIn, *, expected_saved_at: 
     lim, opts = await policy.limits(), await policy.form_options()
     _check_size(F.normalize(form), lim)
     country, _iso2 = _country(form.country)
+    why = _normal_reason(reason)
     async with pool.acquire() as conn:
         async with conn.transaction():
             row = await conn.fetchrow(_TOUR_SQL + " FOR UPDATE OF rt", tour_id)
             old = F.facts_from_row(row) if row is not None else {}
-            live = _check_savable(row, old, expected_saved_at=expected_saved_at, reason=reason,
+            live = _check_savable(row, old, expected_saved_at=expected_saved_at, reason=why,
                                   two_person=await gate.switch_on(conn))
             stored = F.normalize(form, tour_type_label=_tour_type_label(form.tour_type, old, opts))
             new_cols, sup, changed, hist_b, hist_a = await _plan_save(pool, row, form, stored, old, country)
             if not changed:
                 return {"tour_id": tour_id, "saved": False, "saved_at": old.get("saved_at")}
+            if live:                     # AA-1148 review: a live tour stays complete
+                await _refuse_incomplete_live(pool, conn, tour_id, stored, country, sup, lim)
             stored["saved_at"] = _now_iso()
             cols = list(new_cols)
             sets = ", ".join(f"{c} = ${i + 2}" for i, c in enumerate(cols))
@@ -444,7 +500,6 @@ async def save_facts(pool, tour_id: str, form: F.FactsIn, *, expected_saved_at: 
                 f"UPDATE silver_aa_internal.raw_tours SET {sets}, manual_facts = ${n + 2}::jsonb, "
                 f"supplier_id = ${n + 3}::uuid WHERE tour_id = $1::uuid RETURNING now() AS changed_at",
                 tour_id, *[new_cols[c] for c in cols], json.dumps(stored, ensure_ascii=False), sup)
-            why = reason.strip() if reason else None
             revision = await record_raw_revision(conn, tour_id, source="staff_edit", before=hist_b, after=hist_a,
                                                  actor=actor, reason=why)
             await write_audit_log(conn, tenant_id=None, actor=actor, action="raw_tour.manual_facts_saved",
@@ -488,24 +543,52 @@ async def required_gaps(conn, tour_id: str, *, wording: Optional[dict] = None, p
     return F.missing(items)
 
 
-async def export_guard(conn, silver: str, version_id: str, tour_id: str, row: Any) -> None:
+_EVER_PUBLISHED_SQL = """
+    SELECT EXISTS (SELECT 1 FROM gold_aa_internal.published_tours pt WHERE pt.tour_id = $1::uuid) AS published
+"""
+
+
+async def _automatic_exit_refusal(conn, version_id: str, tour_id: str,
+                                  contract_exit: Optional[str]) -> Optional[FactsReviewRequiredError]:
+    """The two-person rule on an automatic exit of a complete hand-made tour: while cis.content.publish_two_person is
+    on, a tour whose facts a person wrote since its last publish (:func:`facts_editors`), or that was never published
+    (its creator typed every fact), never goes live without a second person. None when the exit is a person's (the
+    draft publish, the approve and the promote run the publish gate with the facts writers) or the switch is off."""
+    from api.services import content_publish_gate as gate
+    from services.content_generation.human_lock import AUTOMATIC_EXITS
+
+    if contract_exit not in AUTOMATIC_EXITS or not await gate.switch_on(conn):
+        return None
+    writers = await facts_editors(conn, tour_id)
+    if writers or not await conn.fetchval(_EVER_PUBLISHED_SQL, tour_id):
+        return FactsReviewRequiredError(tour_id, version_id, writers)
+    return None
+
+
+async def export_guard(conn, silver: str, version_id: str, tour_id: str, row: Any,
+                       contract_exit: Optional[str] = None) -> None:
     """process_export (services/export/handler.py), on every exit (S1 auto publish, Review Queue approve, promote,
     recompose, the draft publish): a hand-made tour publishes only with its required list complete, checked on the
-    version being published. An incomplete tour's version leaves 'approved' for 'hitl' (as the other publish refusals
-    do) and :class:`RequiredMissingError` is raised before any publish write. A sheet tour, and a database before CIS
-    478, pass."""
+    version being published (:class:`RequiredMissingError`); on an automatic exit, while two-person publishing is on,
+    only when no person wrote its facts since its last publish (:class:`FactsReviewRequiredError`). A refused version
+    leaves 'approved' for 'hitl' (as the other publish refusals do) before any publish write. A sheet tour, and a
+    database before CIS 478, pass."""
     get = row.get if hasattr(row, "get") else (lambda k: row[k])
     gaps = await required_gaps(conn, tour_id, wording={k: get(k) for k in ("aa_name", "aa_summary", "aa_itineraries")})
-    if not gaps:
+    if gaps is None:                     # not a hand-made tour
         return
-    logger.warning("export_refused_required_missing", version_id=version_id, tour_id=tour_id,
-                   missing=[g["key"] for g in gaps])
+    refusal = (RequiredMissingError(tour_id, version_id, gaps) if gaps
+               else await _automatic_exit_refusal(conn, version_id, tour_id, contract_exit))
+    if refusal is None:
+        return
+    logger.warning("export_refused_hand_made", version_id=version_id, tour_id=tour_id, exit=contract_exit,
+                   code=refusal.code, missing=[g["key"] for g in gaps])
     await conn.execute(f"""
         UPDATE {silver}.generated_content
         SET status = 'hitl'
         WHERE id = $1::uuid AND status = 'approved'
     """, version_id)
-    raise RequiredMissingError(tour_id, version_id, gaps)
+    raise refusal
 
 
 async def publish_check(pool, conn, tour_id: str) -> None:
@@ -668,6 +751,7 @@ async def apply_suggestions(pool, *, dry_run: bool, reason: str, actor: str) -> 
             "bulk_max": lim.bulk_max, "by_supplier": preview}
 
 
-__all__ = ["FACTS_TWO_PERSON", "RequiredMissingError", "WorkspaceError", "apply_suggestions", "checklist_for",
+__all__ = ["FACTS_TWO_PERSON", "FactsReviewRequiredError", "HandMadeRefusal", "RequiredMissingError", "WorkspaceError",
+           "apply_suggestions", "checklist_for",
            "create_tour", "export_guard", "facts_editors", "link_tours", "list_manual", "publish_check", "read_tour",
            "required_gaps", "save_facts", "unlinked_report", "wording_of"]

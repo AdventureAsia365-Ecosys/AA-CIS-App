@@ -672,7 +672,7 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
         if not src.live:
             await _refuse_not_live(src)
         await _human_lock.guard_export(conn, silver, version_id, str(tour_id), contract_exit)   # AA-1146
-        await _required_list_guard(conn, silver, version_id, str(tour_id), row)                 # AA-1148
+        await _required_list_guard(conn, silver, version_id, str(tour_id), row, contract_exit)  # AA-1148
 
         # 2. Insert into published catalog (gold). AA-986 L2: through the tour lifecycle service (ADR 0015
         # decision 2, `publish`): the insert, "never two active Masters per key" and the `restored` record of a key

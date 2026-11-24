@@ -261,6 +261,21 @@ async def _hand_made_complete(pool, conn, tour_id: str) -> None:
         raise HTTPException(status_code=e.status, detail=e.detail(), headers={"X-Error-Code": e.code})
 
 
+_REOPEN_DRAFT_SQL = """
+    UPDATE silver_aa_internal.generated_content g SET status = 'draft'
+     WHERE g.id = $1::uuid AND g.status = 'hitl'
+       AND NOT EXISTS (SELECT 1 FROM silver_aa_internal.generated_content o
+                        WHERE o.tour_id = g.tour_id AND o.status = 'draft')
+"""
+
+
+async def _reopen_draft(pool, version_id: str) -> None:
+    """AA-1148: the required list became incomplete between the check and process_export (a race), which moved the
+    open draft approved -> hitl: put it back to 'draft' so the person keeps editing it (unless another draft opened)."""
+    async with pool.acquire() as conn:
+        await conn.execute(_REOPEN_DRAFT_SQL, version_id)
+
+
 @router.post("/tours/{tour_id}/draft/publish")
 async def publish_tour_draft(tour_id: str, request: Request, x_admin_secret: str = Header(None)):
     """Make the open draft the tour's live version. The one gate: a passing re-validation of the saved text (409
@@ -317,6 +332,7 @@ async def publish_tour_draft(tour_id: str, request: Request, x_admin_secret: str
         raise HTTPException(status_code=409, detail=f"{e} (v{draft['version_num']} is now in the Review Queue)",
                             headers={"X-Error-Code": POLICY_REVIEW_REQUIRED})
     except RequiredMissingError as e:   # AA-1148: the required list changed between the check and the publish
+        await _reopen_draft(pool, draft["id"])
         raise HTTPException(status_code=409, detail=e.detail(), headers={"X-Error-Code": e.code})
     except LifecycleError as e:
         raise _lifecycle_http(e)

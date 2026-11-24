@@ -365,6 +365,144 @@ def test_a_live_facts_save_is_refused_while_two_person_publishing_is_on():
     assert store._check_savable(draft, {}, expected_saved_at=None, reason=None, two_person=True) is False
 
 
+# ── review fix pass 2: the two-person rule on automatic exits, the drawer, the live required list, the reasons ──────
+
+def _guard_on_exit(contract_exit, *, switch=True, writers=(), published=True):
+    """Run export_guard for a complete hand-made tour on one exit; returns (raised error or None, rows written)."""
+    from services.export import handler
+
+    conn = _FetchConn(published)
+    row = {"aa_name": "Zz", "aa_summary": "Zz.", "aa_itineraries": "Day 1 — Zz"}
+    with patch.object(store, "required_gaps", side_effect=_async([])), \
+            patch("api.services.content_publish_gate.switch_on", side_effect=_async(switch)), \
+            patch.object(store, "facts_editors", side_effect=_async(list(writers))):
+        try:
+            asyncio.run(handler._required_list_guard(conn, "silver_aa_internal", "v-zz", "t-zz", row, contract_exit))
+        except store.HandMadeRefusal as e:
+            return e, conn.executed
+    return None, conn.executed
+
+
+class _FetchConn(_Conn):
+    def __init__(self, published):
+        super().__init__()
+        self.published = published
+
+    async def fetchval(self, sql, *args):
+        assert "published_tours" in sql
+        return self.published
+
+
+@pytest.mark.parametrize("contract_exit", ["auto_publish", "recompose", "lambda"])
+def test_an_automatic_exit_never_publishes_facts_a_person_wrote_while_two_person_is_on(contract_exit):
+    err, written = _guard_on_exit(contract_exit, writers=["admin:zz-a"])
+    assert isinstance(err, store.FactsReviewRequiredError) and err.writers == ["admin:zz-a"]
+    assert err.code == "facts_review_required" and "second person" in str(err)
+    assert len(written) == 1 and "SET status = 'hitl'" in written[0][0]
+    err, _ = _guard_on_exit(contract_exit, published=False)          # never published: its creator typed the facts
+    assert isinstance(err, store.FactsReviewRequiredError)
+
+
+def test_the_two_person_rule_of_automatic_exits_passes_the_other_cases():
+    for kw in ({"contract_exit": "auto_publish", "switch": False, "writers": ["admin:zz-a"], "published": False},
+               {"contract_exit": "auto_publish", "writers": [], "published": True},     # nobody wrote facts since
+               {"contract_exit": "approve", "writers": ["admin:zz-a"]},                 # a person's exit: the gate
+               {"contract_exit": "human_publish", "writers": ["admin:zz-a"]},
+               {"contract_exit": "promote", "writers": ["admin:zz-a"]},
+               {"contract_exit": None, "writers": ["admin:zz-a"]}):
+        exit_ = kw.pop("contract_exit")
+        assert _guard_on_exit(exit_, **kw) == (None, [])
+
+
+def test_s1_auto_publish_files_a_hand_made_tour_with_person_written_facts_for_review():
+    from api.routers.admin_pipeline import _engine
+
+    req = type("Req", (), {"tour_id": "t-zz"})()
+    err = store.FactsReviewRequiredError("t-zz", "v-zz", ["admin:zz-a"])
+    with patch("services.export.handler.process_export", side_effect=err), \
+            patch.object(_engine, "_enqueue_review", side_effect=_async(None)) as enq:
+        asyncio.run(_engine._auto_publish(object(), req, "v-zz", {}))
+    assert enq.call_args.args[1:3] == ("t-zz", "v-zz")
+    assert "second person" in enq.call_args.kwargs["failure_summary"]
+
+
+def test_the_drawer_refuses_the_facts_of_a_hand_made_tour_but_not_its_price():
+    from fastapi import HTTPException
+
+    from api.routers.admin_pipeline import tour_detail as tdm
+
+    with pytest.raises(HTTPException) as e:
+        tdm._refuse_hand_made({"entry_origin_probe": "manual"}, ["src_itineraries", "price_raw"])
+    assert e.value.status_code == 409 and e.value.detail["code"] == "manual_tour_use_workspace"
+    assert e.value.headers["X-Error-Code"] == "manual_tour_use_workspace"
+    tdm._refuse_hand_made({"entry_origin_probe": "manual"}, ["price_raw"])       # the price text stays here
+    for origin in ("sheet", None):                                                # a sheet tour, before CIS 478
+        tdm._refuse_hand_made({"entry_origin_probe": origin}, ["src_itineraries"])
+
+
+def test_raw_edit_reason_is_stripped_and_bounded():
+    from fastapi import HTTPException
+
+    from api.routers.admin_pipeline import tour_detail as tdm
+
+    body = {"reason": "  zz why  ", "src_name": "Zz"}
+    assert tdm._raw_edit_reason(body) == "zz why" and body == {"src_name": "Zz"}
+    assert tdm._raw_edit_reason({}) is None
+    for bad in ("  ", "ab", 5, "z" * 501):
+        with pytest.raises(HTTPException) as e:
+            tdm._raw_edit_reason({"reason": bad})
+        assert e.value.status_code == 422
+
+
+def test_a_facts_save_reason_is_normalised():
+    assert store._normal_reason(None) is None and store._normal_reason("   ") is None
+    assert store._normal_reason("  zz the hotel changed ") == "zz the hotel changed"
+    for bad in ("ab", " ab ", "z" * 501):
+        with pytest.raises(store.WorkspaceError) as e:
+            store._normal_reason(bad)
+        assert e.value.status == 422 and e.value.code == "reason_length"
+
+
+def test_a_save_must_say_which_save_it_changes_once_the_tour_has_one():
+    draft = {"entry_origin": "manual", "source_status": "active", "deleted_at": None, "master_status": None,
+             "master_deleted_at": None}
+    old = {"saved_at": "2026-11-24T00:00:00+00:00"}
+    with pytest.raises(store.WorkspaceError) as e:
+        store._check_savable(draft, old, expected_saved_at=None, reason=None)
+    assert e.value.status == 422 and e.value.code == "expected_saved_at_required"
+    with pytest.raises(store.WorkspaceError) as e:
+        store._check_savable(draft, old, expected_saved_at="2026-11-23T00:00:00+00:00", reason=None)
+    assert e.value.code == "facts_changed"
+    assert store._check_savable(draft, old, expected_saved_at=old["saved_at"], reason=None) is False
+    assert store._check_savable(draft, {}, expected_saved_at=None, reason=None) is False   # nothing saved yet
+
+
+def test_link_bodies_strip_the_reason_before_its_length_is_checked():
+    from api.routers import admin_content_workspace as r
+
+    with pytest.raises(ValidationError):
+        r.LinkBody(tour_ids=["t"], supplier_id="s", reason="  a  ")
+    with pytest.raises(ValidationError):
+        r.ApplyBody(reason="   ")
+    assert r.LinkBody(tour_ids=["t"], supplier_id="s", reason="  zz chosen ").reason == "zz chosen"
+
+
+def test_a_live_facts_save_keeps_the_required_list_complete():
+    lim = LIMITS
+    stored = F.normalize(_form(exclusions=[]))
+
+    async def _wording(_conn, _tid):
+        return WORDING
+    with patch.object(store, "_supplier_of", side_effect=_async((SUPPLIER, True))), \
+            patch.object(store, "wording_of", _wording):
+        with pytest.raises(store.WorkspaceError) as e:
+            asyncio.run(store._refuse_incomplete_live(None, None, "t-zz", stored, "Vietnam", SUPPLIER["id"], lim))
+        assert e.value.status == 409 and e.value.code == "required_missing"
+        assert [i["key"] for i in e.value.extra["items"]] == ["exclusions"]
+        asyncio.run(store._refuse_incomplete_live(None, None, "t-zz", F.normalize(_form()), "Vietnam",
+                                                  SUPPLIER["id"], lim))
+
+
 def _async(value):
     async def _f(*_a, **_k):
         return value

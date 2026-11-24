@@ -15,6 +15,9 @@ export const M = defineMessages(
     saveFailed: "Save failed",
     savedToast: "Saved",
     allSaved: "All changes saved",
+    // AA-1148: a hand-made tour's facts are edited in the content workspace
+    handMadeNote: "This tour was made in the content workspace: change its facts there. Only the price text is edited here.",
+    handMadeOpen: "Open in the content workspace",
     noGenerated: "No generated content to save",
     // SEO keywords panel
     loadingSeo: "Loading SEO keywords…",
@@ -129,6 +132,8 @@ export const M = defineMessages(
     saveFailed: "Lưu thất bại",
     savedToast: "Đã lưu",
     allSaved: "Đã lưu mọi thay đổi",
+    handMadeNote: "Tour này được tạo trong Khu làm nội dung: hãy sửa dữ kiện ở đó. Ở đây chỉ sửa được giá.",
+    handMadeOpen: "Mở trong Khu làm nội dung",
     noGenerated: "Không có nội dung đã sinh để lưu",
     loadingSeo: "Đang tải từ khoá SEO…",
     seoFailed: "Không tải được dữ liệu SEO",

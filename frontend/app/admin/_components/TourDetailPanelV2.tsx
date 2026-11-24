@@ -12,6 +12,8 @@ import { scoreTone, type ScoreBands } from "@/lib/qualityThresholds";
 import { useScoreBands } from "./useQualityThresholds";
 import { SubjectLabelSection } from "../tenant-qa/quality/PieceLabel";
 import { can } from "@/lib/rbac";
+import Link from "next/link";
+import { CW_PAGE } from "@/lib/contentWorkspace";
 import TourDraftEditor from "./TourDraftEditor";
 import TourFactDraft from "./TourFactDraft";
 import { D as DRAFT_M } from "./tourDraft.messages";
@@ -78,6 +80,29 @@ function priceHintText(canEditPrice: boolean, text: string): string | undefined 
 
 function rawText(raw: TourDetailFull["raw"] | undefined, k: string): string {
   return String((raw as unknown as Record<string, unknown> | undefined)?.[k] ?? "");
+}
+
+/** AA-1148: a hand-made tour's facts are edited in the content workspace (the API refuses a drawer edit with 409
+ * manual_tour_use_workspace); only the price text stays editable here. */
+function rawEditable(roleMayEdit: boolean, detail: TourDetailFull | null): boolean {
+  return roleMayEdit && detail?.raw?.entry_origin !== "manual";
+}
+
+function rawReadOnlyText(detail: TourDetailFull | null, roleText: string, handMadeText: string): string {
+  return detail?.raw?.entry_origin === "manual" ? handMadeText : roleText;
+}
+
+function HandMadeNote({ tourId, detail, text, open }: {
+  tourId: string; detail: TourDetailFull | null; text: string; open: string;
+}) {
+  if (detail?.raw?.entry_origin !== "manual") return null;
+  return (
+    <div data-testid="hand-made-note" style={{ border: `1px solid ${K.line}`, borderRadius: 8, padding: "8px 12px",
+      marginBottom: 12, fontSize: 13, background: K.panel, color: K.ink }}>
+      {text}{" "}
+      <Link href={`${CW_PAGE}/${tourId}`} style={{ color: K.accentDeep, fontWeight: 600 }}>{open}</Link>
+    </div>
+  );
 }
 
 function RawSaveBar({ canEdit, saving, onSave, labels }: {
@@ -348,11 +373,12 @@ function TourDetailPanel({ tourId, tourName, rewriteCount = 0, onClose }: PanelP
   const { isAdmin, role } = useAdminIdentity();
   const td = useT(DRAFT_M);
   // AA-1146: the source tour's fields follow the role (content.write); the price text only reference_price.write (D5)
-  const canEditRaw = can(role, "content.write");
+  const roleMayEditRaw = can(role, "content.write");
   const canEditPrice = can(role, "reference_price.write");
   const priceHint = priceHintText(canEditPrice, td("priceReadOnly"));
   const rel = useRelTime();
   const [detail, setDetail] = useState<TourDetailFull | null>(null);
+  const canEditRaw = rawEditable(roleMayEditRaw, detail);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"original" | "rewrite" | "history" | "seo" | "published">("original");
   // null = not loaded: opening the History tab clears it, so the tab always shows fresh rows.
@@ -614,6 +640,7 @@ function TourDetailPanel({ tourId, tourName, rewriteCount = 0, onClose }: PanelP
           ) : tab === "original" ? (
             <div>
               <TourFactDraft tourId={tourId} />
+              <HandMadeNote tourId={tourId} detail={detail} text={t("handMadeNote")} open={t("handMadeOpen")} />
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 24px" }}>
                 <EditableField label={t("fTourName")} initialValue={raw?.src_name || ""} onSave={v => saveRaw("src_name", v)} onChange={v => setRawDraft(d => ({ ...d, src_name: v }))} readOnly={!canEditRaw} />
                 <EditableField label={t("fCountry")} initialValue={raw?.country || ""} onSave={v => saveRaw("country", v)} onChange={v => setRawDraft(d => ({ ...d, country: v }))} readOnly={!canEditRaw} />
@@ -638,7 +665,7 @@ function TourDetailPanel({ tourId, tourName, rewriteCount = 0, onClose }: PanelP
               <EditableField label={t("fInclusions")} initialValue={raw?.inclusions || ""} onSave={v => saveRaw("inclusions", v)} onChange={v => setRawDraft(d => ({ ...d, inclusions: v }))} rows={4} readOnly={!canEditRaw} />
               <EditableField label={t("fExclusions")} initialValue={raw?.exclusions || ""} onSave={v => saveRaw("exclusions", v)} onChange={v => setRawDraft(d => ({ ...d, exclusions: v }))} rows={4} readOnly={!canEditRaw} />
               <RawSaveBar canEdit={canEditRaw} saving={savingAll} onSave={saveAllRaw}
-                labels={{ saving: t("saving"), saveAll: t("saveAll"), readOnly: td("readOnly") }} />
+                labels={{ saving: t("saving"), saveAll: t("saveAll"), readOnly: rawReadOnlyText(detail, td("readOnly"), t("handMadeNote")) }} />
             </div>
           ) : tab === "rewrite" ? (
             gen ? (

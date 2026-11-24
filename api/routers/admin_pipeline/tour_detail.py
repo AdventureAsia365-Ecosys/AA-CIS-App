@@ -245,8 +245,8 @@ async def get_tour_detail(tour_id: str, request: Request, x_admin_secret: str = 
             SELECT tour_id::text, src_name, src_subtitle, src_summary, src_description,
                    src_highlights, src_itineraries, country, duration, price_raw,
                    group_size, period, provider, inclusions, exclusions,
-                   pipeline_status::text, ingest_at
-            FROM silver_aa_internal.raw_tours
+                   pipeline_status::text, ingest_at, to_jsonb(rt) ->> 'entry_origin' AS entry_origin
+            FROM silver_aa_internal.raw_tours rt
             WHERE tour_id = $1::uuid
         """, tour_id)
         if not raw:
@@ -317,6 +317,7 @@ async def get_tour_detail(tour_id: str, request: Request, x_admin_secret: str = 
             "exclusions":      raw["exclusions"],
             "pipeline_status": raw["pipeline_status"],
             "ingest_at":       str(raw["ingest_at"]) if raw["ingest_at"] else None,
+            "entry_origin":    raw.get("entry_origin"),  # AA-1148: 'manual' = edited in the content workspace
         },
         "generated": {
             "id":               gen["id"],
@@ -442,6 +443,34 @@ async def record_raw_revision(conn, tour_id: str, *, source: str, before: dict, 
         return None
 
 
+# AA-1148: a hand-made tour's facts (raw_tours.entry_origin 'manual', CIS 478) are edited in the content workspace,
+# which renders these columns from raw_tours.manual_facts and keeps the two-person rule and the required list of its
+# saves; a drawer edit would bypass both and be overwritten by the next workspace save. Only the price text, which the
+# workspace does not hold (reference_price.write), stays here. The origin is read through to_jsonb: NULL before 478.
+MANUAL_TOUR_USE_WORKSPACE = "manual_tour_use_workspace"
+_DRAWER_FIELDS_OF_HAND_MADE = _PRICE_RAW_FIELDS
+
+
+def _raw_edit_reason(body: dict):
+    """The optional reason of a raw edit, popped from the body and stripped (422 outside 3..500 characters)."""
+    reason = body.pop("reason", None)
+    if reason is None:
+        return None
+    reason = reason.strip() if isinstance(reason, str) else ""
+    if not 3 <= len(reason) <= 500:
+        raise HTTPException(status_code=422, detail="The reason must be 3 to 500 characters")
+    return reason
+
+
+def _refuse_hand_made(old, fields: list) -> None:
+    """409 ``manual_tour_use_workspace`` for a drawer edit of a hand-made tour's facts (any field but the price)."""
+    if old.get("entry_origin_probe") == "manual" and set(fields) - _DRAWER_FIELDS_OF_HAND_MADE:
+        raise HTTPException(status_code=409, headers={"X-Error-Code": MANUAL_TOUR_USE_WORKSPACE}, detail={
+            "code": MANUAL_TOUR_USE_WORKSPACE,
+            "message": "This tour was made in the content workspace: change its facts there (only the price text is "
+                       "edited here)"})
+
+
 @router.patch("/tours/{tour_id}/raw")
 async def update_raw_tour_fields(
     tour_id: str,
@@ -451,16 +480,13 @@ async def update_raw_tour_fields(
     """Edit fields of the source tour. AA-1146 (S285): every edit keeps the old values: one history row
     (silver_aa_internal.raw_tour_revision, source staff_edit) and one audit row (raw_tour.fields_edited, before / after)
     in the edit's transaction; an optional ``reason`` (3..500 characters) is stored with both. ``price_raw`` needs
-    reference_price.write (D5: 403 for content and content_lead)."""
+    reference_price.write (D5: 403 for content and content_lead). AA-1148: a hand-made tour's facts are edited in the
+    content workspace (409 ``manual_tour_use_workspace``; the price text stays here)."""
     verify_admin_secret(x_admin_secret)
     body = await request.json()
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="Send a JSON object of fields")
-    reason = body.pop("reason", None)
-    if reason is not None:
-        reason = reason.strip() if isinstance(reason, str) else ""
-        if not 3 <= len(reason) <= 500:
-            raise HTTPException(status_code=422, detail="The reason must be 3 to 500 characters")
+    reason = _raw_edit_reason(body)
     invalid = set(body.keys()) - _ALLOWED_RAW_FIELDS
     if invalid:
         raise HTTPException(status_code=400, detail=f"Fields not allowed: {sorted(invalid)}")
@@ -488,10 +514,11 @@ async def update_raw_tour_fields(
     async with pool.acquire() as conn:
         async with conn.transaction():
             old = await conn.fetchrow(
-                f"SELECT {', '.join(fields)} FROM silver_aa_internal.raw_tours WHERE tour_id = $1::uuid FOR UPDATE",
-                tour_id)
+                f"SELECT {', '.join(fields)}, to_jsonb(rt) ->> 'entry_origin' AS entry_origin_probe "
+                "FROM silver_aa_internal.raw_tours rt WHERE rt.tour_id = $1::uuid FOR UPDATE", tour_id)
             if old is None:
                 raise HTTPException(status_code=404, detail=f"Tour {tour_id} not found")
+            _refuse_hand_made(old, fields)
             updated = await conn.fetchrow(
                 f"UPDATE silver_aa_internal.raw_tours SET {set_clause}"
                 f" WHERE tour_id = ${len(fields)+1}::uuid RETURNING tour_id, now() AS changed_at",

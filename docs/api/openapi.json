@@ -54181,7 +54181,7 @@
     },
     "/admin/tours/{tour_id}/raw": {
       "patch": {
-        "description": "Edit fields of the source tour. AA-1146 (S285): every edit keeps the old values: one history row\n(silver_aa_internal.raw_tour_revision, source staff_edit) and one audit row (raw_tour.fields_edited, before / after)\nin the edit's transaction; an optional ``reason`` (3..500 characters) is stored with both. ``price_raw`` needs\nreference_price.write (D5: 403 for content and content_lead).",
+        "description": "Edit fields of the source tour. AA-1146 (S285): every edit keeps the old values: one history row\n(silver_aa_internal.raw_tour_revision, source staff_edit) and one audit row (raw_tour.fields_edited, before / after)\nin the edit's transaction; an optional ``reason`` (3..500 characters) is stored with both. ``price_raw`` needs\nreference_price.write (D5: 403 for content and content_lead). AA-1148: a hand-made tour's facts are edited in the\ncontent workspace (409 ``manual_tour_use_workspace``; the price text stays here).",
         "operationId": "update_raw_tour_fields_admin_tours__tour_id__raw_patch",
         "parameters": [
           {

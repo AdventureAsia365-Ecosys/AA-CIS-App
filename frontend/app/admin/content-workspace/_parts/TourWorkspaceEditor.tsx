@@ -68,9 +68,16 @@ const initialSaved = (view: TourView | null): Saved => ({
   at: view?.facts.saved_at, key: formKey(view ? formOf(view.facts) : emptyForm()),
 });
 
+/** The toast of a refused facts save: a live tour must keep its required list complete (409 required_missing, the
+ *  checklist names the items); any other refusal shows the API's message. */
+function saveErrorText(e: unknown, t: T): string {
+  if (e instanceof ApiError && e.code === "required_missing") return t("liveIncomplete");
+  return (e as Error).message;
+}
+
 /** Save the facts of an existing tour (autosave or with a reason). The save carries the time of the last save it
  *  knows (expected_saved_at); a 409 means someone else saved in between. */
-function useFactsSaver(tourId: string | null, view: TourView | null, form: FactsForm, toast: Toast) {
+function useFactsSaver(tourId: string | null, view: TourView | null, form: FactsForm, toast: Toast, t: T) {
   const qc = useQueryClient();
   const [status, setStatus] = useState<Status>("idle");
   const [saved, setSaved] = useState<Saved>(() => initialSaved(view));
@@ -88,12 +95,12 @@ function useFactsSaver(tourId: string | null, view: TourView | null, form: Facts
       void qc.invalidateQueries({ queryKey: ["content-workspace-history", tourId] });
       return true;
     } catch (e) {
-      const stale = e instanceof ApiError && e.status === 409;
+      const stale = e instanceof ApiError && e.code === "facts_changed";
       setStatus(stale ? "stale" : "error");
-      if (!stale) toast.error((e as Error).message, 5000);
+      if (!stale) toast.error(saveErrorText(e, t), 5000);
       return false;
     }
-  }, [form, qc, saved.at, toast, tourId]);
+  }, [form, qc, saved.at, t, toast, tourId]);
   return { status, setStatus, saved, dirty: formKey(form) !== saved.key, save };
 }
 
@@ -120,7 +127,7 @@ function Editor({ tourId, view }: { tourId: string | null; view: TourView | null
   const { formatDateTime } = useFormat();
   const [form, setForm] = useState<FactsForm>(() => (view ? formOf(view.facts) : emptyForm()));
   const [reason, setReason] = useState("");
-  const saver = useFactsSaver(tourId, view, form, toast);
+  const saver = useFactsSaver(tourId, view, form, toast, t);
   const writer = can(role, "content.write");
   const readOnly = !writer || (view !== null && !view.editable);
   const autosave = !!tourId && !readOnly && !view?.reason_required;

@@ -5365,10 +5365,17 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     last publish (its `raw_tour_revision` `staff_edit` rows, and its creator while it was never published) count as
     writers in the publish gate of the draft publish, the Review Queue approve and the promote; while
     `cis.content.publish_two_person` is on, a published hand-made tour's facts are read-only in the workspace (409
-    `facts_two_person`: the save would go live with no second person; a facts draft is a follow-up). **Facts saves** (`PUT …/tours/{id}/facts`, content.write; hand-made tours only, 409 `not_hand_made`): before the
-    first publish the page autosaves; once published a save needs a reason (422 `reason_required`) and runs the source
-    fan-out, like the drawer's raw edit; every save that changes something writes one `raw_tour_revision` row
-    (`staff_edit`) and one audit row; a save carrying an older `expected_saved_at` is 409 `facts_changed`. **The AA
+    `facts_two_person`: the save would go live with no second person; a facts draft is a follow-up), and an
+    **automatic exit** (S1 auto publish, recompose, lambda) refuses a hand-made tour whose facts a person wrote since
+    its last publish, or that was never published (`FactsReviewRequiredError`, version -> `hitl`; S1 files it in the
+    Review Queue, where the approve counts the facts writers). **The drawer** (`PATCH /admin/tours/{id}/raw`) refuses a
+    hand-made tour's facts (409 `manual_tour_use_workspace`; only `price_raw` stays there) and its Original tab shows
+    them read-only with a link to the workspace (`raw.entry_origin` in the detail). **Facts saves** (`PUT …/tours/{id}/facts`, content.write; hand-made tours only, 409 `not_hand_made`): before the
+    first publish the page autosaves; once published a save needs a reason (422 `reason_required`; a reason has 3..500
+    characters, 422 `reason_length`), keeps the required list complete (409 `required_missing`) and runs the source
+    fan-out; every save that changes something writes one `raw_tour_revision` row (`staff_edit`) and one audit row; a
+    save carries the `expected_saved_at` it loaded (422 `expected_saved_at_required` without it once the tour has one,
+    409 `facts_changed` when older). **The AA
     supplier** is Booking's (`booking.v_supply_suppliers`, contract `supply.supplier.v1`, bk-073: id, code, company
     name, categories incl. `dmc`, country, status; SELECT to cis_app), stored as the soft key `raw_tours.supplier_id`;
     `provider` keeps the sheet text (a hand-made tour's provider is the supplier's name). Every read of the view fails

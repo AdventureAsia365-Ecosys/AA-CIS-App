@@ -118,6 +118,11 @@ def _form(**over):
     return F.FactsIn(**base)
 
 
+async def _at(pool, tour_id):
+    """The saved_at a facts save carries (the page sends the one it loaded)."""
+    return (await store.read_tour(pool, tour_id))["facts"]["saved_at"]
+
+
 async def _publish(conn, tour_id):
     async def _export(version_id, **kw):     # process_export's own connection would not see the uncommitted rows
         assert kw["contract_exit"] == "human_publish"
@@ -200,9 +205,15 @@ async def test_facts_autosave_history_and_the_stale_save(conn):
         await store.save_facts(pool, tour_id, _form(), expected_saved_at=first, reason=None, actor=ACTOR)
     assert e.value.code == "facts_changed"
     with pytest.raises(store.WorkspaceError) as e:
-        await store.save_facts(pool, tour_id, _form(supplier_id=GONE), expected_saved_at=None, reason=None,
+        await store.save_facts(pool, tour_id, _form(supplier_id=GONE), expected_saved_at=out["saved_at"], reason=None,
                                actor=ACTOR)
     assert e.value.code == "supplier_inactive"
+    with pytest.raises(store.WorkspaceError) as e:     # the save must say which save it changes
+        await store.save_facts(pool, tour_id, _form(), expected_saved_at=None, reason=None, actor=ACTOR)
+    assert (e.value.status, e.value.code) == (422, "expected_saved_at_required")
+    with pytest.raises(store.WorkspaceError) as e:     # a reason, when given, has 3..500 characters (not a 500)
+        await store.save_facts(pool, tour_id, _form(), expected_saved_at=out["saved_at"], reason=" ab ", actor=ACTOR)
+    assert (e.value.status, e.value.code) == (422, "reason_length")
     with pytest.raises(store.WorkspaceError) as e:
         await store.create_tour(pool, _form(days=[{"title": "x"}] * 22), actor=ACTOR)
     assert e.value.code == "too_many_days"
@@ -216,10 +227,11 @@ async def test_a_published_tour_needs_a_reason_and_a_sheet_tour_is_not_edited_he
                        "WHERE tour_id = $1::uuid", tour_id)
     await _publish(conn, tour_id)
     with pytest.raises(store.WorkspaceError) as e:
-        await store.save_facts(pool, tour_id, _form(exclusions=["Drinks", "Tips"]), expected_saved_at=None,
-                               reason=None, actor=ACTOR)
+        await store.save_facts(pool, tour_id, _form(exclusions=["Drinks", "Tips"]),
+                               expected_saved_at=await _at(pool, tour_id), reason="   ", actor=ACTOR)
     assert e.value.code == "reason_required"
-    out = await store.save_facts(pool, tour_id, _form(exclusions=["Drinks", "Tips"]), expected_saved_at=None,
+    out = await store.save_facts(pool, tour_id, _form(exclusions=["Drinks", "Tips"]),
+                                 expected_saved_at=await _at(pool, tour_id),
                                  reason="zz the supplier no longer covers tips", actor=ACTOR)
     assert out["saved"] and "exclusions" in out["fields"]
     ap.tour_detail._source_fanout_raw.assert_awaited()
@@ -228,7 +240,7 @@ async def test_a_published_tour_needs_a_reason_and_a_sheet_tour_is_not_edited_he
                        "VALUES ($1, $2, $3, 'Ombre Lake Walk', 'Zephyr Delta Journeys Co., Ltd')", sheet, MASTER,
                        uuid.uuid4())
     with pytest.raises(store.WorkspaceError) as e:
-        await store.save_facts(pool, str(sheet), _form(), expected_saved_at=None, reason="zz", actor=ACTOR)
+        await store.save_facts(pool, str(sheet), _form(), expected_saved_at=None, reason="zz why", actor=ACTOR)
     assert e.value.code == "not_hand_made"
 
 
@@ -295,7 +307,7 @@ async def test_the_person_who_saved_the_facts_cannot_publish_alone(conn):
     tour_id = (await store.create_tour(pool, _form(exclusions=[]), actor=ACTOR))["tour_id"]
     with patch("api.services.content_publish_gate.switch_on", AsyncMock(return_value=True)):
         # B (a content lead) completes the facts of a tour A created: B wrote what goes live
-        out = await store.save_facts(pool, tour_id, _form(), expected_saved_at=None, reason=None,
+        out = await store.save_facts(pool, tour_id, _form(), expected_saved_at=await _at(pool, tour_id), reason=None,
                                      actor=f"admin:{LEAD_B}")
         assert out["saved"]
         assert await store.facts_editors(conn, tour_id) == sorted([ACTOR, f"admin:{LEAD_B}"])
@@ -320,8 +332,9 @@ async def test_the_person_who_saved_the_facts_cannot_publish_alone(conn):
         view = await store.read_tour(pool, tour_id)
         assert view["facts_two_person"] and not view["editable"]
         with pytest.raises(store.WorkspaceError) as e:
-            await store.save_facts(pool, tour_id, _form(exclusions=["Drinks", "Tips"]), expected_saved_at=None,
-                                   reason="zz the supplier changed", actor=f"admin:{LEAD_C}")
+            await store.save_facts(pool, tour_id, _form(exclusions=["Drinks", "Tips"]),
+                                   expected_saved_at=await _at(pool, tour_id), reason="zz the supplier changed",
+                                   actor=f"admin:{LEAD_C}")
         assert e.value.code == "facts_two_person"
     assert await store.facts_editors(conn, str(uuid.uuid4())) == []
 
@@ -343,5 +356,128 @@ async def test_a_tour_type_from_the_options_and_its_label_in_the_source_text(con
     gone = policy.FormOptions(tour_types=(), quick_inclusions=(), quick_exclusions=())
     with patch.object(policy, "form_options", AsyncMock(return_value=gone)):
         out = await store.save_facts(pool, tour_id, _form(tour_type="zz_small", summary="Zz changed."),
-                                     expected_saved_at=None, reason=None, actor=ACTOR)
+                                     expected_saved_at=await _at(pool, tour_id), reason=None, actor=ACTOR)
     assert out["saved"] and (await store.read_tour(pool, tour_id))["facts"]["tour_type_label"] == "Zz small group"
+
+
+# ── review fix pass 2 ────────────────────────────────────────────────────────────────────────────────────────────
+
+def _patch_export_conn(conn):
+    from services.export import handler
+
+    async def _connect(*_a, **_k):
+        return _NoClose(conn)
+    return patch.object(handler.asyncpg, "connect", _connect), patch.object(handler, "get_database_url",
+                                                                             MagicMock(return_value="x"))
+
+
+@pytest.mark.asyncio
+async def test_a_content_users_rewrite_of_a_complete_hand_made_tour_does_not_publish_it(conn):
+    """The two-person bypass through S1: a content user creates a complete hand-made tour and runs Rewrite; the judge
+    passes and S1 auto-publishes. While cis.content.publish_two_person is on nothing goes live: the version is filed in
+    the Review Queue (pending), where a second person approves it."""
+    from api.routers.admin_pipeline import _engine
+
+    pool = _OneConnPool(conn)
+    created = await store.create_tour(pool, _form(), actor=ACTOR)     # complete: supplier, days, lists, wording
+    tour_id, version_id = created["tour_id"], created["wording_version_id"]
+    await conn.execute("UPDATE silver_aa_internal.generated_content SET status = 'approved' WHERE id = $1::uuid",
+                       version_id)                                      # the S1 judge approved it
+    row = await conn.fetchrow("SELECT aa_name, aa_summary, aa_itineraries FROM silver_aa_internal.generated_content "
+                              "WHERE id = $1::uuid", version_id)
+    assert await store.required_gaps(conn, tour_id, wording=dict(row)) == []
+    req = SimpleNamespace(tour_id=tour_id)
+    c1, c2 = _patch_export_conn(conn)
+    with c1, c2, patch("api.services.content_publish_gate.switch_on", AsyncMock(return_value=True)):
+        await _engine._auto_publish(conn, req, version_id, {})
+    assert await conn.fetchval("SELECT count(*) AS n FROM gold_aa_internal.published_tours WHERE tour_id = $1::uuid",
+                               tour_id) == 0
+    assert await conn.fetchval("SELECT status::text AS s FROM silver_aa_internal.generated_content "
+                               "WHERE id = $1::uuid", version_id) == "hitl"
+    review = await conn.fetchrow("SELECT review_status::text AS s, failure_summary FROM silver_aa_internal.review_queue"
+                                 " WHERE generated_content_id = $1::uuid", version_id)
+    assert review["s"] == "pending" and "second person" in review["failure_summary"]
+    # with the switch off the guard lets the automatic exit through (no extra rule)
+    await conn.execute("UPDATE silver_aa_internal.generated_content SET status = 'approved' WHERE id = $1::uuid",
+                       version_id)
+    with patch("api.services.content_publish_gate.switch_on", AsyncMock(return_value=False)):
+        await store.export_guard(conn, "silver_aa_internal", version_id, tour_id, dict(row), "auto_publish")
+
+
+def _raw_request(conn, body, *, role="content"):
+    req = _request(conn, role=role)
+    req.json = AsyncMock(return_value=body)
+    return req
+
+
+@pytest.mark.asyncio
+async def test_the_drawer_does_not_edit_a_hand_made_tours_facts(conn):
+    pool = _OneConnPool(conn)
+    tour_id = (await store.create_tour(pool, _form(), actor=ACTOR))["tour_id"]
+    before = await conn.fetchval("SELECT src_itineraries AS s FROM silver_aa_internal.raw_tours WHERE tour_id = "
+                                 "$1::uuid", tour_id)
+    with pytest.raises(HTTPException) as e:
+        await ap.tour_detail.update_raw_tour_fields(
+            tour_id, _raw_request(conn, {"src_itineraries": "Day 1 — Zz edited in the drawer"}), x_admin_secret="s")
+    assert e.value.status_code == 409 and e.value.detail["code"] == "manual_tour_use_workspace"
+    assert await conn.fetchval("SELECT src_itineraries AS s FROM silver_aa_internal.raw_tours WHERE tour_id = "
+                               "$1::uuid", tour_id) == before
+    # the price text (not in the workspace form) still changes here, for a role that may change it
+    out = await ap.tour_detail.update_raw_tour_fields(
+        tour_id, _raw_request(conn, {"price_raw": "Zz 100 USD"}, role="admin"), x_admin_secret="s")
+    assert out["updated"] == ["price_raw"]
+    detail = await ap.tour_detail.get_tour_detail(tour_id, _request(conn), x_admin_secret="s")
+    assert detail["raw"]["entry_origin"] == "manual"
+    # a sheet tour is edited in the drawer as before
+    sheet = uuid.uuid4()
+    await conn.execute("INSERT INTO silver_aa_internal.raw_tours (tour_id, tenant_id, batch_id, src_name) "
+                       "VALUES ($1, $2, $3, 'Ombre Lake Walk')", sheet, MASTER, uuid.uuid4())
+    out = await ap.tour_detail.update_raw_tour_fields(str(sheet), _raw_request(conn, {"src_summary": "Zz lake."}),
+                                                      x_admin_secret="s")
+    assert out["updated"] == ["src_summary"]
+
+
+@pytest.mark.asyncio
+async def test_a_live_facts_save_cannot_make_the_tour_incomplete(conn):
+    pool = _OneConnPool(conn)
+    tour_id = (await store.create_tour(pool, _form(), actor=ACTOR))["tour_id"]
+    await conn.execute("UPDATE silver_aa_internal.generated_content SET revalidate_passed = true "
+                       "WHERE tour_id = $1::uuid", tour_id)
+    await _publish(conn, tour_id)
+    with patch("api.services.content_publish_gate.switch_on", AsyncMock(return_value=False)):
+        with pytest.raises(store.WorkspaceError) as e:
+            await store.save_facts(pool, tour_id, _form(exclusions=[], supplier_id=None),
+                                   expected_saved_at=await _at(pool, tour_id), reason="zz the supplier left",
+                                   actor=ACTOR)
+        assert (e.value.status, e.value.code) == (409, "required_missing")
+        assert {i["key"] for i in e.value.extra["items"]} == {"supplier", "exclusions"}
+        assert await conn.fetchval("SELECT exclusions AS x FROM silver_aa_internal.raw_tours WHERE tour_id = "
+                                   "$1::uuid", tour_id) == "Drinks"
+        ap.tour_detail._source_fanout_raw.assert_not_awaited()
+        # a never-published tour still saves an incomplete draft
+        other = (await store.create_tour(pool, _form(), actor=ACTOR))["tour_id"]
+        out = await store.save_facts(pool, other, _form(exclusions=[]), expected_saved_at=await _at(pool, other),
+                                     reason=None, actor=ACTOR)
+        assert out["saved"]
+
+
+@pytest.mark.asyncio
+async def test_the_open_draft_stays_editable_when_the_publish_loses_the_race(conn):
+    """The required list became incomplete between the publish check and process_export: the 409 leaves the person's
+    draft open (status draft), not in hitl."""
+    pool = _OneConnPool(conn)
+    created = await store.create_tour(pool, _form(), actor=ACTOR)
+    tour_id, version_id = created["tour_id"], created["wording_version_id"]
+    await conn.execute("UPDATE silver_aa_internal.generated_content SET revalidate_passed = true "
+                       "WHERE tour_id = $1::uuid", tour_id)
+
+    async def _export(vid, **_kw):   # process_export's guard: approved -> hitl, then the refusal
+        await conn.execute("UPDATE silver_aa_internal.generated_content SET status = 'hitl' WHERE id = $1::uuid "
+                           "AND status = 'approved'", vid)
+        raise store.RequiredMissingError(tour_id, vid, [{"key": "supplier", "message": "Zz", "params": {}}])
+    with patch("services.export.handler.process_export", _export):
+        with pytest.raises(HTTPException) as e:
+            await ap.publish_tour_draft(tour_id, _request(conn), x_admin_secret="s")
+    assert e.value.status_code == 409 and e.value.detail["code"] == "required_missing"
+    assert await conn.fetchval("SELECT status::text AS s FROM silver_aa_internal.generated_content "
+                               "WHERE id = $1::uuid", version_id) == "draft"
