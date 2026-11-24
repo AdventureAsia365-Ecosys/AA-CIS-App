@@ -5,8 +5,9 @@ why, and until when (S285 review idea 2, PagerDuty / Opsgenie style).
   **Snooze** for one of the lengths of ``cis.ops.status_snooze_choices_hours`` (the page sends ``snooze_hours``, the
   API refuses any other length and computes the end on its own clock) or until ``cis.ops.status_snooze_tomorrow_hour``
   the next day on the viewer's clock (the page computes that time and sends it as ``until``); **Mute** until an end
-  time the person picks, at most ``cis.ops.status_mute_max_days`` ahead. A reason of at least ``cis.ops.status_ack_reason_min_chars`` characters is
-  required for each. Everything ends by itself at ``until``; an item that resolves simply leaves the list.
+  time the person picks, at most ``cis.ops.status_mute_max_days`` ahead. A reason of at least
+  ``cis.ops.status_ack_reason_min_chars`` characters is required for each. Everything ends by itself at ``until``;
+  an item that resolves simply leaves the list.
 - Rows live in ``acp_shared.ops_alert_ack`` (CIS 482); one row of an item is in force at a time (a new ack clears the
   previous one in the same transaction). Every write is also an ``acp_shared.audit_log`` row (``ops_alert_ack`` /
   ``ops_alert_ack_cleared``).

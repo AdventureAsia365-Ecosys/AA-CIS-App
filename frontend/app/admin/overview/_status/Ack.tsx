@@ -1,8 +1,9 @@
 "use client";
 // app/admin/overview/_status/Ack.tsx — AA-1141 (P1 feature 2): Ack / Snooze for one of the lengths of the setting
-// cis.ops.status_snooze_choices_hours or until tomorrow / Mute until an end time on one Needs-attention item, with a reason of at least cis.ops.status_ack_reason_min_chars characters, and
-// the "Acked by … at …, until …" line. POST /api/admin/overview/status/acks (ops.write, never the business owner: the
-// API answers viewer.can_ack, the buttons show only then). Everything ends by itself at its end time; "Back to open"
+// cis.ops.status_snooze_choices_hours or until tomorrow / Mute until an end time on one Needs-attention item, with a
+// reason of at least cis.ops.status_ack_reason_min_chars characters, and the "Acked by … at …, until …" line.
+// POST /api/admin/overview/status/acks (ops.write, never the business owner: the API answers viewer.can_ack, the
+// buttons show only then). Everything ends by itself at its end time; "Back to open"
 // clears it now. Every write is audited by the API. Kit only (ADR 0016).
 
 import { useQueryClient } from "@tanstack/react-query";
