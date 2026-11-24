@@ -129,10 +129,10 @@ REQUIRED_CIS_SCHEMA = 322
 # GET /admin/overview/status reads them; the job fails and the runtimes, events and DB tiles are empty without it).
 # 478 (AA-1148 — the content workspace reads and writes raw_tours.supplier_id / entry_origin / manual_facts; every
 # workspace route fails without it. The draft publish check of a hand-made tour skips itself before 478).
-# 481 (AA-1173 — Platform › Compliance writes compliance.evidence.object_key / object_sha256 on every ingest and the
+# 479 (AA-1173 — Platform › Compliance writes compliance.evidence.object_key / object_sha256 on every ingest and the
 # Exceptions / Reviews tabs read and write compliance.exception / compliance.review; every evidence ingest fails without
 # it).
-REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 395, 397, 398, 402, 408, 409, 411, 420, 428, 435, 439, 443, 454, 462, 464, 465, 466, 469, 470, 471, 473, 474, 475, 478, 481)  # noqa: E501
+REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 395, 397, 398, 402, 408, 409, 411, 420, 428, 435, 439, 443, 454, 462, 464, 465, 466, 469, 470, 471, 473, 474, 475, 478, 479)  # noqa: E501
 # Versions this code needs that were registered after a higher one (reserved numbers): 297 (AA-920 WM-25) was reserved
 # in S255 and applied after 299. max() is already 299 without it, so the version reported is capped below the lowest
 # listed version that is not registered (297 missing -> 296 -> "schema_behind").

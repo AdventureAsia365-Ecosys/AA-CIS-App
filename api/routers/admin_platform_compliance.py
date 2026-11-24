@@ -16,7 +16,7 @@
                                                         API's own sources (cis_db, crm_ops; each at most every 10
                                                         minutes); the answer carries the counts     compliance.write
 
-  AA-1173 (S290, phase 3, CIS 481; api/services/compliance_exceptions.py):
+  AA-1173 (S290, phase 3, CIS 479; api/services/compliance_exceptions.py):
   GET  /admin/platform/compliance/exceptions            every exception with its state (proposed, approved, expired,
                                                         rejected, revoked), the counts, the longest expiry (setting)
                                                                                                     compliance.read

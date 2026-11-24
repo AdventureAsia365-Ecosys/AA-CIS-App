@@ -42,7 +42,7 @@ with the staff member's own token; a 401 / 403 / no Cognito session records only
 row, so a viewer without CRM access cannot turn the check red for everyone). A source is collected at most every
 LIVE_MIN_INTERVAL_S, whatever the number of processes and presses, so compliance.evidence grows by a few rows a day.
 
-AA-1173 (S290, phases 2-3, CIS 481). Evidence is sealed: the collectors write write-once objects and a hash-chained
+AA-1173 (S290, phases 2-3, CIS 479). Evidence is sealed: the collectors write write-once objects and a hash-chained
 manifest per source into the Object Lock evidence bucket (api/services/compliance_store.py). The same read that takes
 the docs reader file (page load, cached; Refresh) first reads the newest sealed bundle of every sealed source
 (``root_daily``, ``aws_nightly``, ``prowler_weekly``), checks it against its manifest and the manifest's chain link, and

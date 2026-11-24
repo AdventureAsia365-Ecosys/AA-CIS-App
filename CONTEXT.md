@@ -3083,7 +3083,7 @@ erasure drill age, retention run age and live run age, consent capture age, camp
 applicability review age). Refresh evidence reports its counts (toast and a status line): success only when the file
 was read and every source collected; nothing published or a skipped source is a warning with a plain reason.
 
-**Compliance phases 2-3 (AA-1173, CIS 481).** *Sealed evidence:* the collectors (root `compliance-evidence.yml` daily,
+**Compliance phases 2-3 (AA-1173, CIS 479).** *Sealed evidence:* the collectors (root `compliance-evidence.yml` daily,
 AA-CIS-Infra `compliance-aws.yml` nightly AWS read-only checks and weekly Prowler) assume the role
 `aa-cis-<env>-compliance-evidence` and write write-once objects into the Object Lock evidence bucket (AA-CIS-Infra
 `accounts/aa365/compliance_evidence.tf`: GOVERNANCE, retention a variable, bypass / retention change / delete denied to
@@ -3107,7 +3107,7 @@ reason, compensating control, risk, expiry; maker-checker: the proposer approves
 exception never raises a score: the control keeps its state and shows "Accepted risk". Routes
 `GET|POST /admin/platform/compliance/exceptions`, `POST …/exceptions/{id}/approve|reject|revoke`,
 `GET|POST …/reviews` (compliance.read / .write; writes need a verified Cognito sign-in, not E2E, not view-as). Tabs
-Exceptions and Reviews (`GovernanceTabs.tsx`, `governance.messages.ts`). Settings (CIS 481): validity of `aws_nightly`
+Exceptions and Reviews (`GovernanceTabs.tsx`, `governance.messages.ts`). Settings (CIS 479): validity of `aws_nightly`
 and `prowler_weekly`, `prowler_critical_high_max`, `exception_max_days`, `review_max_age_days`.
 
 **Platform apps, audit and cost (AA-884).** Router `api/routers/admin_platform_ops.py` (read only, admin-only POLICY

@@ -1,4 +1,4 @@
-"""AA-1173 (S290, compliance readiness phase 3, CIS 481) — exceptions (accepted risks) and the monthly posture review of
+"""AA-1173 (S290, compliance readiness phase 3, CIS 479) — exceptions (accepted risks) and the monthly posture review of
 Platform › Compliance (/admin/platform/compliance, tabs Exceptions and Reviews).
 
 Exceptions (compliance.exception). One person proposes (subject = a control id, a check id or a vulnerability id; a
@@ -40,7 +40,7 @@ RISK_LEVELS = ("low", "medium", "high")
 STATUSES = ("proposed", "approved", "rejected", "revoked")
 REVIEW_KIND = "monthly_posture"
 _SUBJECT_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$")
-# technical-constant: these bounds mirror the CHECKs of CIS 481 (a 422 before the database refuses it)
+# technical-constant: these bounds mirror the CHECKs of CIS 479 (a 422 before the database refuses it)
 TITLE_RANGE, REASON_RANGE, TEXT_MAX, NOTE_MAX = (3, 160), (20, 2000), 2000, 1000
 REVIEW_NOTES_RANGE, REVIEW_ACTIONS_MAX = (20, 4000), 4000
 AUDIT_RESOURCE_EXCEPTION, AUDIT_RESOURCE_REVIEW = "compliance_exception", "compliance_review"
@@ -200,7 +200,7 @@ async def decide(pool: Any, exception_id: int, actor: str, approve: bool, note: 
             self_approved = False
             if actor == row["proposed_by"]:
                 if not approve:
-                    # a rejection is the checker's decision (CIS 481 exception_checker_check); the proposer withdraws
+                    # a rejection is the checker's decision (CIS 479 exception_checker_check); the proposer withdraws
                     raise ComplianceRefused(409, "Withdraw your own proposal instead of rejecting it",
                                             "withdraw_instead")
                 if await _two_person(conn):
@@ -297,7 +297,7 @@ async def record_review(pool: Any, body: dict, actor: str, summary: dict, now: O
     if period not in (current, previous):
         raise ComplianceRefused(422, "A review records the current or the previous month", "period_out_of_range")
     data = json.dumps(summary, sort_keys=True, default=str)
-    if len(data.encode()) > 16384:   # technical-constant: CIS 481 review_summary_check
+    if len(data.encode()) > 16384:   # technical-constant: CIS 479 review_summary_check
         raise ComplianceRefused(422, "The review summary is too large", "summary_too_large")
     async with pool.acquire() as conn:
         async with conn.transaction():

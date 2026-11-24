@@ -36,7 +36,7 @@ once a day on the worker (the Refresh action still may), and three more checks j
   db_grants                the same rules p g e (a grant to PUBLIC, a grant to another owner's role, a foreign key
                            across owners). pass = none off the allowlist.
   monthly_review_recent    fact ``last_date`` = the day of the newest Security posture monthly review
-                           (compliance.review, CIS 481); CIS grades its age against
+                           (compliance.review, CIS 479); CIS grades its age against
                            cis.compliance.review_max_age_days. No review yet = ``fail`` (no date to grade).
 
 The catalog reads only pg_catalog views every role may read (pg_class, pg_attribute, pg_policies, aclexplode of the
@@ -208,7 +208,7 @@ async def collect(pool: Any, now: datetime) -> list[dict]:
         async with pool.acquire() as conn:
             last = await conn.fetchval(SQL_LAST_REVIEW)
         out.append(evaluate_review(last, now))
-    except Exception as err:   # noqa: BLE001 - CIS 481 not applied yet, or the table unreadable
+    except Exception as err:   # noqa: BLE001 - CIS 479 not applied yet, or the table unreadable
         logger.warning("compliance_db_review_failed", error=type(err).__name__)
         out.append(_row("monthly_review_recent", "error",
                         f"the review record could not be read ({type(err).__name__})", {}, now))

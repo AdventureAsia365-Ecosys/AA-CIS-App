@@ -1,5 +1,5 @@
 """AA-1173 — exceptions, monthly reviews and the read-only DB checks of Platform › Compliance on a real database (CIS
-481 replayed by conftest; skipped while this branch's main has no 481, the MIG-4 chain: the migration PR lands first).
+479 replayed by conftest; skipped while this branch's main has no 479, the MIG-4 chain: the migration PR lands first).
 Maker-checker (a second person approves; the proposer self-approves only while two-person approval is off, recorded),
 the expiry window from the setting, revoke and withdraw, the approved exception on the control rows, one review a
 month with the page's numbers, and compliance_db.collect: the catalogue checks read the live catalog and the review
@@ -44,7 +44,7 @@ async def conn():
     c = await asyncpg.connect(DSN)
     if not await c.fetchval("SELECT to_regclass('compliance.exception') IS NOT NULL AS ok"):
         await c.close()
-        pytest.skip("CIS 481 is not applied on this branch's database (MIG-4: the migration PR lands first)")
+        pytest.skip("CIS 479 is not applied on this branch's database (MIG-4: the migration PR lands first)")
     tr = c.transaction()
     await tr.start()
     try:
