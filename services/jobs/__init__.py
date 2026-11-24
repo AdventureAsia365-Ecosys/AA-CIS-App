@@ -50,4 +50,5 @@ from . import source_fanout_job  # noqa: F401  AA-1052 W6 (source-change fan-out
 from . import tenant_backup_job  # noqa: F401  AA-1093 part 3 (per-tenant CIS backup to the gold bucket, $0)
 from . import tenant_erasure_saga_job  # noqa: F401  AA-1093 L2 (tenant offboarding erasure saga across the apps, $0)
 from . import tripplanner_custom_domain_job  # noqa: F401  AA-1090 R8 (TripPlanner custom host: ACM + CloudFront, $0)
+from . import ops_status_sample_job  # noqa: F401  AA-1140 (Ecosystem status sampler, every 5 min, $0)
 from . import noop_sleep_job  # noqa: F401  AA-993 G1 (test-only kind, registered only when JOB_TEST_KINDS=1)

@@ -99,7 +99,9 @@ KIND_LINES: dict[str, Optional[str]] = {
     "data_erasure": None, "inquiry_handoff_check": None, "kpi_snapshot_daily": None, "llm_cost_reconcile": None,
     "cost_explorer_refresh": None,   # AA-1127: AWS Cost Explorer reads, no LLM call
     "llm_route_watch": None,     # AA-1042: route alerts and digest from the ledger (database reads only)
-    "ops_alert_email": None, "photo_destination_match": None, "photo_medium_backfill": None, "photo_sync": None,
+    "ops_alert_email": None,
+    "ops_status_sample": None,   # AA-1140: the 5-minute Ecosystem status sampler (ECS / CloudWatch / database reads)
+    "photo_destination_match": None, "photo_medium_backfill": None, "photo_sync": None,
     "place_geocode": None, "place_relocate": None, "place_shape": None,
     "quality_funnel_watch": None,  # AA-900: the nightly quality digest from a stored CIS-08 run (database reads only)
     "recompute": None, "report_email": None,

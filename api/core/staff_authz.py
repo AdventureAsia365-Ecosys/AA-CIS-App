@@ -618,7 +618,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/waves/{wave_id}/report"): any_of(OPS_READ, WAVE_RUN),   # incl. the wave's LLM cost
     # ── admin_overview — whole-system snapshot incl. spend (admin-only page; CI smoke = machine)
     ("GET", "/admin/overview"): OPS_READ,
-    ("GET", "/admin/overview/ops"): OPS_READ,   # AA-858 business view incl. cost per app (admin-only page)
+    ("GET", "/admin/overview/ops"): OPS_READ, ("GET", "/admin/overview/status"): OPS_READ,  # AA-858, AA-1140 status
     ("GET", "/admin/my-work/summary"): any_of(REVIEW_ACT, CONTENT_WRITE, QUALITY_WRITE),  # AA-1156 My work (per tile)
     ("GET", "/admin/data-coverage"): OPS_READ,  # AA-992 data coverage counts, incl. CRM over crm.ops.v1 (admin-only)
     # ── admin_reports (AA-1003) — report register, runs, generate now (admin-only page)

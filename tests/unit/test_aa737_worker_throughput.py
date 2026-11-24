@@ -108,7 +108,9 @@ def test_background_kind_never_claimed_with_two_or_fewer_free_slots(free):
                           "tenant_erasure_saga",
                           # AA-1090 R8: TripPlanner own domains, one host + the daily agency-edge check ($0: ACM and
                           # CloudFront control plane, polls by rescheduling)
-                          "tripplanner_custom_domain"}
+                          "tripplanner_custom_domain",
+                          # AA-1140: the Ecosystem status sampler ($0: free ECS / CloudWatch reads, every 5 min)
+                          "ops_status_sample"}
     assert bool(background & set(w.claim_caps(free))) == (free > worker.BACKGROUND_RESERVE)
 
 
