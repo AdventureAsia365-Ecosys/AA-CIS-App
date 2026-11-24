@@ -32,6 +32,10 @@ async def get_tours_ready(request: Request, x_admin_secret: str = Header(None)):
               AND t.deleted_at IS NULL
               AND t.src_itineraries IS NOT NULL
               AND TRIM(BOTH FROM t.src_itineraries) <> ''
+              -- AA-1148 (S291): a hand-made tour (CIS 478 entry_origin 'manual') belongs to the content workspace,
+              -- not to an uploaded sheet: it is written, checked and published there (its required list and the
+              -- two-person rule), so the Upload page does not offer it for Rewrite.
+              AND t.entry_origin <> 'manual'
             ORDER BY t.ingest_at DESC
         """)
     return {

@@ -101,8 +101,8 @@ class Outcome:
     recompute: list = field(default_factory=list)         # [(tour_id, new_status)] for after commit
     extra: dict = field(default_factory=dict)
 
-    def add_recompute(self, tour_id: str, status: str) -> None:
-        if (tour_id, status) not in self.recompute:
+    def add_recompute(self, tour_id: str, status: str, served_only: bool = False) -> None:
+        if (tour_id, status) not in self.recompute and not (served_only and self.before == self.after == (None, None)):
             self.recompute.append((tour_id, status))
 
     def summary(self) -> dict:
@@ -383,7 +383,7 @@ async def retire_source(conn, tour_id, *, actor: str = "admin", deleted_by: Opti
         await _cascade(conn, out, actor)
         await _staff_event(conn, EventType.SOURCE_TRASHED, out.tour_id, v["tenant_id"],
                            {"tour_name": out.tour_name, "changed_by": actor})
-        out.add_recompute(out.tour_id, "trashed")
+        out.add_recompute(out.tour_id, "trashed", served_only=True)  # S291: a key never served has nothing to recompute
     return out
 
 
@@ -418,7 +418,7 @@ async def restore_source(conn, tour_id, *, actor: str = "admin") -> Outcome:
         await _cascade(conn, out, actor)
         await _staff_event(conn, EventType.SOURCE_RESTORED, out.tour_id, v["tenant_id"],
                            {"tour_name": out.tour_name, "changed_by": actor})
-        out.add_recompute(out.tour_id, "active" if out.after[0] == "served" else "inactive")
+        out.add_recompute(out.tour_id, "active" if out.after[0] == "served" else "inactive", served_only=True)
     return out
 
 

@@ -236,16 +236,30 @@ def requests_about_tours_sql(tours: str, *, r: str = "r", ta: str = "ta") -> str
 # a supersede waiting for its Master comes back on the same tour), so the request keeps the old atom, and the honest
 # answer is 409 tour_paused ("try again once it is out"), not a pass here and an atom_replaced 409 at T8 / T9.
 # Same rows on both pools.
+# AA-838 (S291, C4.3 W48 finding 1): the representative tour is computed once per request row (LATERAL `rep`), and the
+# state of its key is read through a LATERAL lookup: the key is a value of the outer row there, not a join column
+# (`OFFSET 0` keeps the planner from flattening the subquery back into a join), so the filter is pushed into
+# v_tour_liveness's GROUP BY and the view is computed for that one key (an index probe with
+# raw_tours_key_expr_idx, CIS 480) instead of in full for each request row, which the LEFT JOIN on the key expression
+# did (~29,000 buffers, ~120 ms a call). The key is the expression, not the stored raw_tours.source_key (CIS 258,
+# which the integration replay skips). The Subject rule's served-member subquery stays inside the CASE
+# branch, so it runs only for a retired representative. Same rows as before
+# (tests/integration/test_aa838_request_tours_sql.py compares the two statements).
 REQUEST_TOURS_SQL = f"""
     SELECT r.request_id::text AS request_id,
-           (CASE WHEN tl_rq.state = 'retired'
-                 THEN COALESCE({segment_served_member_tour_sql('r')}, {request_tour_sql()})
-                 ELSE {request_tour_sql()} END)::text AS tour_id
+           (CASE WHEN lv_rq.state = 'retired'
+                 THEN COALESCE({segment_served_member_tour_sql('r')}, rep.tour_id)
+                 ELSE rep.tour_id END)::text AS tour_id
       FROM acp_shared.angle_gate_request r
       LEFT JOIN acp_contract.tour_atoms ta ON ta.atom_id = r.atom_id
-      LEFT JOIN silver_aa_internal.raw_tours rt_rq ON rt_rq.tour_id = {request_tour_sql()}
-      LEFT JOIN gold_aa_internal.v_tour_liveness tl_rq
-        ON tl_rq.source_id = (COALESCE(rt_rq.source_group_id, rt_rq.tour_id))::text
+     CROSS JOIN LATERAL (SELECT {request_tour_sql()} AS tour_id) rep
+      LEFT JOIN silver_aa_internal.raw_tours rt_rq ON rt_rq.tour_id = rep.tour_id
+      LEFT JOIN LATERAL (
+            SELECT tl_rq.state
+              FROM gold_aa_internal.v_tour_liveness tl_rq
+             WHERE tl_rq.source_id = (COALESCE(rt_rq.source_group_id, rt_rq.tour_id))::text
+            OFFSET 0
+           ) lv_rq ON true
      WHERE r.request_id = ANY($1::uuid[]) AND r.tenant_id = $2::uuid
 """
 

@@ -27,6 +27,8 @@ REPLAY_ALLOWED = frozenset({"the acc1 account key"})
 SKIPPED_DIRS = {"node_modules", ".next", "__pycache__", "dist", "build"}
 SUFFIXES = {".py", ".ts", ".tsx", ".js", ".mjs", ".cjs", ".sh", ".sql", ".json", ".yml", ".yaml", ".toml"}
 ROOT_FILES = ("Dockerfile", "README.md", "CONTEXT.md")
+# AA-1118: CONTEXT.md keeps a short core; its detail pages under docs/context/ are the same text and get the same scan.
+CONTEXT_PAGES = "docs/context"
 
 # sha256 of the retired account's 12-digit ID (the ID itself is never written in this public repo).
 ACC1_ACCOUNT_ID_SHA256 = "5a1e173cd62aa9f50be3678daa187e66a6aab118166e79def0740a4a9c1cb143"
@@ -90,10 +92,21 @@ def test_runtime_code_never_names_acc1():
                        + "\n".join(found))
 
 
+def _root_docs():
+    return [REPO / name for name in ROOT_FILES if (REPO / name).exists()] + sorted(
+        (REPO / CONTEXT_PAGES).glob("*.md"))
+
+
 def test_root_docs_name_no_acc1_resource():
-    found = [hit for name in ROOT_FILES if (REPO / name).exists()
-             for hit in _hits(REPO / name, allowed=ROOT_DOC_ALLOWED)]
+    found = [hit for path in _root_docs() for hit in _hits(path, allowed=ROOT_DOC_ALLOWED)]
     assert not found, "\n".join(found)
+
+
+def test_context_detail_pages_are_scanned():
+    # A move of the detail pages must not take them out of the root-docs scan.
+    names = {p.relative_to(REPO).as_posix() for p in _root_docs()}
+    assert "CONTEXT.md" in names
+    assert "docs/context/ai-gateway.md" in names
 
 
 def test_the_scan_sees_runtime_code():

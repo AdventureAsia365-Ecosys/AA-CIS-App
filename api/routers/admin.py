@@ -974,22 +974,13 @@ async def get_tenant_details(
 
         # AA-702: real LLM spend from shared.llm_call_log (same source as External Spend). The old
         # pipeline_runs sum only saw the legacy S1 batch path, so tenants showed $0.000. Internal
-        # work is logged both as NULL and as the aa_internal UUID.
-        total_cost = await conn.fetchval("""
-            SELECT COALESCE(SUM(cost_usd), 0)
-            FROM shared.llm_call_log
-            WHERE tenant_id = $1 OR ($2 AND tenant_id IS NULL)
-        """, tenant_id, is_internal)
+        # work is logged both as NULL and as the aa_internal UUID (api/services/tenant360_lists.py).
+        total_cost = await conn.fetchval(_t360.TENANT_COST_TOTAL_SQL, tenant_id, is_internal)
 
         # AA-718 bug 2: a windowed cost (rolling 30d, UTC) that reconciles with External Spend's
         # own 30-day window, alongside the all-time figure above. External Spend buckets by
         # created_at in [now-30d, now) over the same llm_call_log — matching that here.
-        cost_window = await conn.fetchval("""
-            SELECT COALESCE(SUM(cost_usd), 0)
-            FROM shared.llm_call_log
-            WHERE (tenant_id = $1 OR ($2 AND tenant_id IS NULL))
-              AND created_at >= $3 AND created_at < $4
-        """, tenant_id, is_internal, _cost_since, _now)
+        cost_window = await conn.fetchval(_t360.TENANT_COST_WINDOW_SQL, tenant_id, is_internal, _cost_since, _now)
 
         # v_tenant_monthly_usage has one row per tenant per billing_month;
         # ORDER BY DESC so we always get the current/most-recent month.
