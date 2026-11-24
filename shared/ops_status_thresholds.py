@@ -32,6 +32,9 @@ RDS_CONNECTIONS_CRIT_PCT = "cis.ops.status_rds_connections_crit_pct"
 ROLE_CONNECTIONS_CRIT_PCT = "cis.ops.status_role_connections_crit_pct"
 RDS_FREE_STORAGE_WARN_GIB = "cis.ops.status_rds_free_storage_warn_gib"
 RDS_FREE_STORAGE_CRIT_GIB = "cis.ops.status_rds_free_storage_crit_gib"
+# CIS 477: free storage as a share of the allocated storage; the GiB pair above is the fallback (size unknown)
+RDS_FREE_WARN_PCT = "cis.ops.status_rds_free_warn_pct"
+RDS_FREE_CRIT_PCT = "cis.ops.status_rds_free_crit_pct"
 XID_AGE_CRIT = "cis.ops.status_xid_age_crit"
 UPTIME_SLO_PCT = "cis.ops.status_uptime_slo_pct"
 STALE_FACTOR = "cis.ops.status_stale_factor"
@@ -41,7 +44,8 @@ GUARD_STALE_HOURS = "cis.ops.status_guard_stale_hours"
 ALL = (ERROR_RATE_WARN_PCT, ERROR_RATE_CRIT_PCT, CLIENT_ERROR_WARN_PCT, P95_WARN_MS, P95_CRIT_MS, LAMBDA_P95_LIMIT_MS,
        MIN_REQUESTS, QUEUE_WAIT_WARN_MIN, QUEUE_WAIT_CRIT_MIN, RDS_CPU_WARN_PCT, RDS_CPU_CRIT_PCT,
        RDS_CONNECTIONS_WARN_PCT, RDS_CONNECTIONS_CRIT_PCT, ROLE_CONNECTIONS_CRIT_PCT, RDS_FREE_STORAGE_WARN_GIB,
-       RDS_FREE_STORAGE_CRIT_GIB, XID_AGE_CRIT, UPTIME_SLO_PCT, STALE_FACTOR, HISTORY_DAYS, GUARD_STALE_HOURS)
+       RDS_FREE_STORAGE_CRIT_GIB, RDS_FREE_WARN_PCT, RDS_FREE_CRIT_PCT, XID_AGE_CRIT, UPTIME_SLO_PCT, STALE_FACTOR,
+       HISTORY_DAYS, GUARD_STALE_HOURS)
 
 
 def _num(key: str) -> float:
@@ -78,7 +82,26 @@ def rds_connections_pct() -> dict:
 
 
 def rds_free_storage_gib() -> dict:
+    """The deprecated fallback (CIS 475): fixed GiB limits, used only while the allocated storage is unknown."""
     return _pair(RDS_FREE_STORAGE_WARN_GIB, RDS_FREE_STORAGE_CRIT_GIB, below=True)
+
+
+def rds_free_storage_pct() -> dict:
+    """Free storage limits as a share (%) of the allocated storage (CIS 477)."""
+    return _pair(RDS_FREE_WARN_PCT, RDS_FREE_CRIT_PCT, below=True)
+
+
+def rds_free_storage(allocated_gib: float | None) -> dict:
+    """The free storage limits in GiB for a volume of ``allocated_gib``: the CIS 477 share of it (``basis`` pct, with
+    ``warn_pct`` / ``crit_pct`` and ``allocated_gib`` so the page can say "20 % = 4 GiB"), or the CIS 475 GiB pair
+    (``basis`` gib) while the size is unknown. A share follows the volume as storage autoscaling grows it."""
+    if not allocated_gib or allocated_gib <= 0:
+        return {**rds_free_storage_gib(), "basis": "gib"}
+    pct = rds_free_storage_pct()
+    size = float(allocated_gib)
+    return {"warn": round(size * pct["warn"] / 100.0, 2), "crit": round(size * pct["crit"] / 100.0, 2),
+            "warn_pct": pct["warn"], "crit_pct": pct["crit"], "allocated_gib": size,
+            "warn_key": RDS_FREE_WARN_PCT, "crit_key": RDS_FREE_CRIT_PCT, "dir": "below", "basis": "pct"}
 
 
 def role_connections_pct() -> dict:
@@ -139,6 +162,7 @@ def snapshot() -> dict:
         "rds_connections_pct": rds_connections_pct(),
         "role_connections_pct": role_connections_pct(),
         "rds_free_storage_gib": rds_free_storage_gib(),
+        "rds_free_storage_pct": rds_free_storage_pct(),
         "xid_age": xid_age(),
         "uptime_slo_pct": {"value": uptime_slo_pct(), "key": UPTIME_SLO_PCT},
         "stale_factor": {"value": stale_factor(), "key": STALE_FACTOR},

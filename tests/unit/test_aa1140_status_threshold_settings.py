@@ -1,5 +1,5 @@
-"""AA-1140 (S289, the Ecosystem status page; CIS 475) — the twenty-one status page limits are compiled with the S285
-advisory values as defaults, a plain label and a complete EN + VI guide, maker-checker, and the accessors of
+"""AA-1140 (S289, the Ecosystem status page; CIS 475, 477) — the twenty-three status page limits are compiled with
+the S285 advisory values as defaults, a plain label and a complete EN + VI guide, maker-checker, and the accessors of
 shared/ops_status_thresholds.py return them in the units the page uses, a critical value never on the wrong side of its
 warn value. No DB."""
 from unittest.mock import patch
@@ -13,7 +13,8 @@ DEFAULTS = {
     t.P95_WARN_MS: 1500, t.P95_CRIT_MS: 3000, t.LAMBDA_P95_LIMIT_MS: 6000, t.MIN_REQUESTS: 50,
     t.QUEUE_WAIT_WARN_MIN: 15, t.QUEUE_WAIT_CRIT_MIN: 60, t.RDS_CPU_WARN_PCT: 70, t.RDS_CPU_CRIT_PCT: 90,
     t.RDS_CONNECTIONS_WARN_PCT: 80, t.RDS_CONNECTIONS_CRIT_PCT: 95, t.ROLE_CONNECTIONS_CRIT_PCT: 95,
-    t.RDS_FREE_STORAGE_WARN_GIB: 15, t.RDS_FREE_STORAGE_CRIT_GIB: 10, t.XID_AGE_CRIT: 1_500_000_000,
+    t.RDS_FREE_STORAGE_WARN_GIB: 15, t.RDS_FREE_STORAGE_CRIT_GIB: 10, t.RDS_FREE_WARN_PCT: 20, t.RDS_FREE_CRIT_PCT: 10,
+    t.XID_AGE_CRIT: 1_500_000_000,
     t.UPTIME_SLO_PCT: 99.5, t.STALE_FACTOR: 3, t.HISTORY_DAYS: 14, t.GUARD_STALE_HOURS: 30,
 }
 
@@ -64,3 +65,23 @@ def test_snapshot_names_only_known_keys():
     allowed = set(t.ALL) | {ops_thresholds.ROLE_CONNECTIONS_PCT, ops_thresholds.XID_AGE_LIMIT,
                             ops_thresholds.APP_SPEND_NEAR_PCT}
     assert keys <= allowed and set(t.ALL) <= keys
+
+
+def test_free_storage_is_a_share_of_the_allocated_storage_with_the_gib_pair_as_fallback():
+    # CIS 477: 20 GiB allocated, 20 % / 10 % -> 4 / 2 GiB; a share follows autoscaling (100 GiB -> 20 / 10 GiB)
+    small = t.rds_free_storage(20)
+    assert (small["warn"], small["crit"], small["warn_pct"], small["crit_pct"]) == (4.0, 2.0, 20.0, 10.0)
+    assert (small["basis"], small["dir"], small["warn_key"], small["allocated_gib"]) == (
+        "pct", "below", t.RDS_FREE_WARN_PCT, 20.0)
+    assert (t.rds_free_storage(100)["warn"], t.rds_free_storage(100)["crit"]) == (20.0, 10.0)
+    for unknown in (None, 0):
+        fb = t.rds_free_storage(unknown)
+        assert (fb["warn"], fb["crit"], fb["basis"], fb["warn_key"]) == (15.0, 10.0, "gib", t.RDS_FREE_STORAGE_WARN_GIB)
+    assert t.snapshot()["rds_free_storage_pct"]["warn"] == 20.0
+
+
+def test_a_free_storage_share_on_the_wrong_side_falls_back_to_the_warn_share():
+    values = {t.RDS_FREE_WARN_PCT: 15, t.RDS_FREE_CRIT_PCT: 25}
+    real = settings.get
+    with patch.object(settings, "get", side_effect=lambda k, *a, **kw: values.get(k, real(k, *a, **kw))):
+        assert t.rds_free_storage(40)["crit"] == t.rds_free_storage(40)["warn"] == 6.0

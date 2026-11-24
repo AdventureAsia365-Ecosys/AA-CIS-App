@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql, 469_aa1171_ops_thresholds_and_recipient_topic.sql, 471_aa1174_compliance_obligations.sql, 472_aa1172_fact_instruction_guard.sql, 474_aa1160_tenant_crm_agency_marker.sql, 475_aa1140_ops_status_samples_and_thresholds.sql, 476_aa1152_tp_agency_price_stale_hours.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql, 469_aa1171_ops_thresholds_and_recipient_topic.sql, 471_aa1174_compliance_obligations.sql, 472_aa1172_fact_instruction_guard.sql, 474_aa1160_tenant_crm_agency_marker.sql, 475_aa1140_ops_status_samples_and_thresholds.sql, 476_aa1152_tp_agency_price_stale_hours.sql, 477_aa1140_rds_free_storage_pct.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -4356,11 +4356,47 @@
    }
   },
   {
+   "key": "cis.ops.status_rds_free_crit_pct",
+   "app": "cis",
+   "area": "ops",
+   "label": "Status page: database free storage, critical (% of allocated)",
+   "description": "On the Ecosystem status page (/admin/overview, api/services/ops_status/) the database storage tile turns red (SEV2) when the free space falls to or below this share of the instance's allocated storage. The page keeps it at or below the warn share. RDS storage autoscaling grows the volume when free space drops under about 10 %, so a red tile with autoscaling on usually means it reached its maximum size. Default 10 %.",
+   "value_type": "pct",
+   "unit": "%",
+   "min_value": 2,
+   "max_value": 50,
+   "allowed_values": null,
+   "default_value": 10,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How small a share of the database disk may be free before its tile turns red (SEV2).",
+     "raise": "The tile turns red while autoscaling may still grow the disk on its own.",
+     "lower": "Writes may fail soon after the tile turns red if autoscaling cannot grow the disk.",
+     "when": "Keep it near the point where storage autoscaling grows the disk (about 10 % free).",
+     "example": "With the default 10 % and a 20 GiB disk, 1.8 GiB free turns the tile red."
+    },
+    "vi": {
+     "what": "Phần trăm dung lượng đĩa database còn trống tối thiểu trước khi ô chuyển đỏ (SEV2).",
+     "raise": "Ô chuyển đỏ trong khi autoscaling có thể vẫn tự nới đĩa.",
+     "lower": "Lệnh ghi có thể lỗi ngay sau khi ô chuyển đỏ nếu autoscaling không nới được đĩa.",
+     "when": "Giữ gần ngưỡng storage autoscaling nới đĩa (khoảng 10 % còn trống).",
+     "example": "Với mặc định 10 % và đĩa 20 GiB, còn trống 1,8 GiB làm ô chuyển đỏ."
+    }
+   }
+  },
+  {
    "key": "cis.ops.status_rds_free_storage_crit_gib",
    "app": "cis",
    "area": "ops",
-   "label": "Status page: database free storage, critical (GiB)",
-   "description": "On the Ecosystem status page (/admin/overview, api/services/ops_status/, AA-1140) the database storage tile turns red (SEV2) when the free space falls to or below this. The page keeps it below the warn value. Default 10 GiB.",
+   "label": "Status page: database free storage, critical (GiB, fallback)",
+   "description": "Fallback only: the Ecosystem status page judges free storage as a share of the allocated storage (cis.ops.status_rds_free_crit_pct). This GiB value is used only while the allocated size is unknown; then the tile turns red (SEV2) when the free space falls to or below it. The page keeps it below the warn value. Default 10 GiB.",
    "value_type": "numeric",
    "unit": "GiB",
    "min_value": 0.5,
@@ -4376,18 +4412,18 @@
    "enforced": true,
    "guide": {
     "en": {
-     "what": "How little free disk the database may have before its tile turns red (SEV2).",
-     "raise": "Writes may fail before the tile turns red.",
-     "lower": "The tile turns red while there is still room.",
-     "when": "Keep it above a few days of growth.",
-     "example": "With the default 10 GiB, 8 GiB free turns the tile red."
+     "what": "Fallback only. The red line of the free storage tile while the database size cannot be read.",
+     "raise": "While the size is unknown: the tile turns red while there is still room.",
+     "lower": "While the size is unknown: writes may fail before the tile turns red.",
+     "when": "Change the percentage settings instead; touch this only if the size read keeps failing.",
+     "example": "With the default 10 GiB and no size read, 8 GiB free turns the tile red."
     },
     "vi": {
-     "what": "Dung lượng đĩa trống tối thiểu trước khi ô database chuyển đỏ (SEV2).",
-     "raise": "Lệnh ghi có thể lỗi trước khi ô chuyển đỏ.",
-     "lower": "Ô chuyển đỏ trong khi vẫn còn chỗ.",
-     "when": "Giữ trên mức tăng trưởng của vài ngày.",
-     "example": "Với mặc định 10 GiB, còn trống 8 GiB làm ô chuyển đỏ."
+     "what": "Chỉ dùng dự phòng. Ngưỡng đỏ của ô dung lượng trống khi không đọc được dung lượng database.",
+     "raise": "Khi không rõ dung lượng: ô chuyển đỏ trong khi vẫn còn chỗ.",
+     "lower": "Khi không rõ dung lượng: lệnh ghi có thể lỗi trước khi ô chuyển đỏ.",
+     "when": "Hãy chỉnh các cài đặt phần trăm; chỉ đổi giá trị này nếu việc đọc dung lượng liên tục lỗi.",
+     "example": "Với mặc định 10 GiB và không đọc được dung lượng, còn trống 8 GiB làm ô chuyển đỏ."
     }
    }
   },
@@ -4395,8 +4431,8 @@
    "key": "cis.ops.status_rds_free_storage_warn_gib",
    "app": "cis",
    "area": "ops",
-   "label": "Status page: database free storage, warn (GiB)",
-   "description": "On the Ecosystem status page (/admin/overview, api/services/ops_status/, AA-1140) the database storage tile (RDS FreeStorageSpace) turns amber (SEV3) when the free space falls to or below this. Advisory S285 default 15 GiB.",
+   "label": "Status page: database free storage, warn (GiB, fallback)",
+   "description": "Fallback only: the Ecosystem status page judges free storage as a share of the allocated storage (cis.ops.status_rds_free_warn_pct). This GiB value is used only while the allocated size is unknown (no fresh sampler row, or DescribeDBInstances refused). Then the database storage tile turns amber (SEV3) when the free space falls to or below it. Default 15 GiB.",
    "value_type": "numeric",
    "unit": "GiB",
    "min_value": 1,
@@ -4412,18 +4448,54 @@
    "enforced": true,
    "guide": {
     "en": {
-     "what": "How little free disk the database may have before its tile turns amber.",
-     "raise": "Less time to grow the disk before writes fail.",
-     "lower": "The tile may stay amber for weeks on a small disk.",
-     "when": "Raise it when data grows fast; lower it after the disk was sized for the long term.",
-     "example": "With the default 15 GiB, 12.4 GiB free turns the tile amber."
+     "what": "Fallback only. The free storage tile uses the share of allocated storage; this GiB value applies only while the database size cannot be read.",
+     "raise": "While the size is unknown: earlier warning, but a small disk may show amber for weeks.",
+     "lower": "While the size is unknown: less time to grow the disk before writes fail.",
+     "when": "Change the percentage settings instead; touch this only if the size read keeps failing.",
+     "example": "With the default 15 GiB and no size read, 12.4 GiB free turns the tile amber."
     },
     "vi": {
-     "what": "Dung lượng đĩa trống tối thiểu của database trước khi ô chuyển vàng.",
-     "raise": "Ít thời gian mở rộng đĩa hơn trước khi ghi bị lỗi.",
-     "lower": "Với đĩa nhỏ, ô có thể vàng hàng tuần.",
-     "when": "Tăng khi dữ liệu tăng nhanh; giảm sau khi đĩa đã được cấp đủ lâu dài.",
-     "example": "Với mặc định 15 GiB, còn trống 12,4 GiB làm ô chuyển vàng."
+     "what": "Chỉ dùng dự phòng. Ô dung lượng trống dùng phần trăm trên dung lượng cấp phát; giá trị GiB này chỉ áp dụng khi không đọc được dung lượng database.",
+     "raise": "Khi không rõ dung lượng: báo sớm hơn, nhưng đĩa nhỏ có thể vàng hàng tuần.",
+     "lower": "Khi không rõ dung lượng: ít thời gian nới đĩa hơn trước khi ghi bị lỗi.",
+     "when": "Hãy chỉnh các cài đặt phần trăm; chỉ đổi giá trị này nếu việc đọc dung lượng liên tục lỗi.",
+     "example": "Với mặc định 15 GiB và không đọc được dung lượng, còn trống 12,4 GiB làm ô chuyển vàng."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.status_rds_free_warn_pct",
+   "app": "cis",
+   "area": "ops",
+   "label": "Status page: database free storage, warn (% of allocated)",
+   "description": "On the Ecosystem status page (/admin/overview, api/services/ops_status/) the database storage tile (RDS FreeStorageSpace) turns amber (SEV3) when the free space falls to or below this share of the instance's allocated storage (AllocatedStorage, read by the 5-minute status sampler with DescribeDBInstances). A share follows the volume as storage autoscaling grows it; a fixed GiB limit raised a false alarm on a small autoscaling volume. Default 20 %.",
+   "value_type": "pct",
+   "unit": "%",
+   "min_value": 5,
+   "max_value": 60,
+   "allowed_values": null,
+   "default_value": 20,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How small a share of the database disk may be free before its tile turns amber. The share is of the disk size the database has now, so it follows the disk when storage autoscaling grows it.",
+     "raise": "Earlier warning, but a small disk that autoscaling keeps growing may show amber often.",
+     "lower": "Fewer amber tiles, but less time to act if autoscaling has reached its maximum size.",
+     "when": "Raise it when data grows fast or autoscaling is near its maximum; lower it if the tile turns amber while autoscaling still has room.",
+     "example": "With the default 20 % and a 20 GiB disk, the tile turns amber at 4 GiB free or less."
+    },
+    "vi": {
+     "what": "Phần trăm dung lượng đĩa database còn trống tối thiểu trước khi ô chuyển vàng. Phần trăm tính trên dung lượng đĩa hiện tại, nên tự theo khi storage autoscaling nới đĩa.",
+     "raise": "Báo sớm hơn, nhưng đĩa nhỏ được autoscaling nới dần có thể hay chuyển vàng.",
+     "lower": "Ô ít chuyển vàng hơn, nhưng còn ít thời gian xử lý nếu autoscaling đã chạm mức tối đa.",
+     "when": "Tăng khi dữ liệu tăng nhanh hoặc autoscaling gần mức tối đa; giảm nếu ô chuyển vàng trong khi autoscaling vẫn còn chỗ nới.",
+     "example": "Với mặc định 20 % và đĩa 20 GiB, ô chuyển vàng khi còn trống từ 4 GiB trở xuống."
     }
    }
   },
