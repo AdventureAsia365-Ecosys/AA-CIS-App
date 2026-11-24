@@ -1431,8 +1431,7 @@ async def read_connection_budgets(pool) -> list[dict]:   # also the Ecosystem st
     async with pool.acquire() as conn:
         registry = await conn_registry.fetch_connections(conn)
         policies = await cost_guard.read_cost_policies(conn)
-        # one month-to-date ledger scan for every connection, reused for the capped ones (AA-1141)
-        spend = await cost_guard.connection_month_spend(conn, sorted(registry))
+        spend = await cost_guard.connection_month_spend(conn, sorted(registry))   # one ledger scan (AA-1141)
         monthly = await cost_guard.connection_budgets(
             conn, {k: c.monthly_budget_usd for k, c in registry.items()}, policies, spent=spend)
     connections = [{"connection_key": c.connection_key, "kind": c.kind, "label": c.label, "enabled": c.enabled,
