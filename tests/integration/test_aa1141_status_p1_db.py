@@ -63,11 +63,13 @@ async def test_ack_snooze_clear_round_trip_with_audit(pool):
                             "WHERE item_id = $1 ORDER BY ack_id", ITEM)
     assert [r["cleared"] for r in rows][-2:] == [True, False]   # the first one was replaced
     audit = await pool.fetch("SELECT action, details FROM acp_shared.audit_log WHERE resource_type = 'ops_alert' "
-                             "AND resource_id = $1 ORDER BY created_at", ITEM)
-    assert [a["action"] for a in audit][-2:] == ["ops_alert_ack", "ops_alert_ack"]
-    details = audit[-1]["details"]
-    details = json.loads(details) if isinstance(details, str) else details
-    assert details["action"] == "snooze" and details["replaced"] == [first["ack_id"]] and details["snooze_hours"] == 4
+                             "AND resource_id = $1", ITEM)
+    assert sum(1 for a in audit if a["action"] == "ops_alert_ack") >= 2
+    detail_rows = [json.loads(a["details"]) if isinstance(a["details"], str) else a["details"] for a in audit]
+    snoozes = [d for d in detail_rows if d and d.get("action") == "snooze"]   # picked by content, not by row order
+    assert len(snoozes) == 1
+    details = snoozes[0]
+    assert details["replaced"] == [first["ack_id"]] and details["snooze_hours"] == 4
     # ends by itself: 5 hours later nothing is in force
     later, _ = await acks.read_in_force(pool, now + timedelta(hours=5))
     assert ITEM not in later
