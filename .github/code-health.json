@@ -10,7 +10,8 @@
    {"glob": "tests/*", "reason": "tests: complexity ratchet covers product code; tests still count for file size"},
    {"glob": "*conftest.py", "reason": "pytest fixtures"},
    {"glob": "api/migrations/*", "reason": "migrations are append-only history"},
-   {"glob": "api/services/delivery_engine.py", "reason": "vendored byte copy of the root collector's delivery engine (AA-1135, api/services/delivery_engine.lock.json); its complexity is measured in AA-Ecosys"}
+   {"glob": "api/services/delivery_engine.py", "reason": "vendored byte copy of the root collector's delivery engine (AA-1135, api/services/delivery_engine.lock.json); its complexity is measured in AA-Ecosys"},
+   {"glob": "shared/compliance/rls_catalogue_rules.py", "reason": "byte copy of tests/integration/rls_catalogue_rules.py (the X2 catalogue rules the CI guard runs; kept equal by tests/unit/test_aa1173_compliance_db_checks.py, AA-1173); tests/ is outside the complexity ratchet"}
   ]
  },
  "typescript": {

@@ -37,6 +37,7 @@ DB_PASS = os.environ.get("CIS_TEST_DB_PASS", "cistest")
 
 # AA-902: a fixed bronze bucket name (shared/aws_client/bronze.py) keeps S3Archiver & co. from asking STS.
 os.environ.setdefault("BRONZE_BUCKET", "aa-cis-bronze-test")
+os.environ.setdefault("COMPLIANCE_EVIDENCE_BUCKET", "aa-cis-compliance-evidence-test")   # AA-1173 (no STS)
 os.environ.setdefault("BEDROCK_ACCT_PRIMARY", "acc3-test-account")
 # AA-900 W0: the R1 freeze (services/writing_memory/r1_gate.py) is off for the release / mining / L0 mechanics these
 # modules test; tests/integration/test_aa900_w0_config_fp_db.py turns it on (monkeypatch.delenv) and tests it.

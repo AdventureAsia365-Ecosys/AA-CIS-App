@@ -150,7 +150,8 @@ def test_cis_db_error_is_a_row_not_an_exception():
         def acquire(self):
             raise RuntimeError("db down")
     rows = asyncio.run(compliance_db.collect(Broken(), NOW))
-    assert {r["status"] for r in rows} == {"error"} and len(rows) == 2
+    # AA-1173: + the two catalogue checks and the monthly review check, each an error row too
+    assert {r["status"] for r in rows} == {"error"} and len(rows) == 5
 
 
 # ── crm_ops ─────────────────────────────────────────────────────────────────────────────────────────────────────────

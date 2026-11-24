@@ -2,3 +2,6 @@
 max-line-length = 120
 extend-ignore = E203,W503,E302,E303,E305,E221,F401,E128,E124,E401,E127,E126,B008,E701,F821,F841,W291,E272,W293,E231
 exclude = .git,__pycache__,.venv,migrations
+per-file-ignores =
+    # AA-1173: a byte copy of tests/integration/rls_catalogue_rules.py (tests/unit/test_aa1173_compliance_db_checks.py)
+    shared/compliance/rls_catalogue_rules.py:E501

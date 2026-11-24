@@ -110,7 +110,9 @@ def test_background_kind_never_claimed_with_two_or_fewer_free_slots(free):
                           # CloudFront control plane, polls by rescheduling)
                           "tripplanner_custom_domain",
                           # AA-1140: the Ecosystem status sampler ($0: free ECS / CloudWatch reads, every 5 min)
-                          "ops_status_sample"}
+                          "ops_status_sample",
+                          # AA-1173: the daily read-only compliance DB checks ($0: catalog and CIS table reads)
+                          "compliance_db_checks"}
     assert bool(background & set(w.claim_caps(free))) == (free > worker.BACKGROUND_RESERVE)
 
 

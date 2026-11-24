@@ -15,6 +15,11 @@
 // /obligations). Framework names and kinds come from the API (compliance.framework), so laws mapped to controls show
 // their names in the Controls tab and its filter. Refresh evidence reports its result: a toast and a line under the
 // header with the counts read from the published file and from the API's own sources, or the error.
+//
+// AA-1173: two more tabs, Exceptions and Reviews (GovernanceTabs.tsx: maker-checker exceptions with an expiry, the
+// Security posture monthly review). A control with an approved, unexpired exception shows "Accepted risk" beside its
+// real state (table and drawer); the Collectors section lists the sealed sources of the Object Lock evidence store
+// (state, rows, hash chain), and an evidence row read from it carries a "sealed" tag in the drawer history.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ClipboardCheck, ExternalLink, RefreshCw, SlidersHorizontal } from "lucide-react";
@@ -30,10 +35,12 @@ import {
   CONTROLS_PATH, OVERVIEW_PATH, REFRESH_PATH, SETTINGS_HREF, checkTone, controlTone, deltaToReference,
   fmtPct, frameworkList, frameworkName, inFramework, isLegal, refreshCounts, safeLink, skipReason, sortControls, trendSeries,
   type CheckView, type ControlDetail, type ControlRow, type ControlsResp, type FrameworkInfo, type FrameworkScore,
-  type Heartbeat, type IngestState, type LiveSourceState, type OverviewResp,
+  type Heartbeat, type IngestState, type LiveSourceState, type OverviewResp, type SealedState, sealedTone,
 } from "@/lib/compliance";
 import { COMPLIANCE } from "./messages";
 import { ObligationsTab } from "./ObligationsTab";
+import { ExceptionsTab, ReviewsTab } from "./GovernanceTabs";
+import { GOVERNANCE } from "./governance.messages";
 
 const KEY = ["platform-compliance"];
 const small = { fontSize: 12, color: K.muted, lineHeight: 1.45 } as const;
@@ -128,12 +135,25 @@ function ingestText(state: IngestState | null, t: CT): string | null {
   if (state.state === "ok") return t("ingestOk", state.rows ?? 0, state.new ?? 0);
   if (state.state === "missing") return t("ingestMissing");
   if (state.state === "invalid") return t("ingestInvalid");
+  if (state.state === "superseded") return t("ingestSuperseded");
   return t("ingestUnavailable");
+}
+
+function useGT() {
+  return useT(GOVERNANCE);
+}
+type GT = ReturnType<typeof useGT>;
+
+function sealedText(s: SealedState, g: GT): string {
+  if (s.state === "ok") return g("sealed_ok", s.rows ?? 0, s.chain === "linked" ? g("chain_linked") : g("chain_first"));
+  return g(`sealed_${s.state}`) as string;
 }
 
 function Collectors({ beats, ingest, t }: { beats: Heartbeat[]; ingest: IngestState | null; t: CT }) {
   const { formatDateTime } = useFormat();
+  const g = useGT();
   const text = ingestText(ingest, t);
+  const sealed = Object.entries(ingest?.sealed ?? {});
   return (
     <Section title={t("heartbeat")} testId="compliance-heartbeat">
       <div style={{ display: "grid", gap: 8 }}>
@@ -152,6 +172,16 @@ function Collectors({ beats, ingest, t }: { beats: Heartbeat[]; ingest: IngestSt
         ))}
         {text && <p style={{ ...small, margin: 0 }}>{t("ingest")}: {text}
           {ingest?.dropped?.length ? ` ${t("dropped", ingest.dropped.length)}` : ""}</p>}
+        {sealed.length > 0 && <div style={{ display: "grid", gap: 4 }} data-testid="compliance-sealed">
+          <span style={{ ...small, fontWeight: 600 }}>{g("sealed")}</span>
+          {sealed.map(([source, s]) => (
+            <span key={source} style={{ ...small, display: "inline-flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              <span style={{ fontFamily: mono }}>{source}</span>
+              <Badge tone={sealedTone(s.state)}>{sealedText(s, g)}</Badge>
+              {s.sha256 && <span style={{ fontFamily: mono }} title={s.object ?? undefined}>{s.sha256.slice(0, 12)}</span>}
+            </span>
+          ))}
+        </div>}
       </div>
     </Section>
   );
@@ -185,7 +215,8 @@ function Overview({ data, t }: { data: OverviewResp; t: CT }) {
 // ── controls ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 function Controls({ t }: { t: CT }) {
-  const { formatDateTime } = useFormat();
+  const { formatDate, formatDateTime } = useFormat();
+  const g = useGT();
   const { get, setMany } = useUrlFilters();
   const framework = get("framework") || "all";
   const q = useQuery({ queryKey: [...KEY, "controls"], queryFn: () => apiGet<ControlsResp>(CONTROLS_PATH),
@@ -198,7 +229,10 @@ function Controls({ t }: { t: CT }) {
       cell: ({ row: { original: r } }) => <span style={{ fontFamily: mono, fontSize: 12 }}>{r.control_id}</span> },
     { id: "title", header: t("colTitle"), accessorKey: "title" },
     { id: "state", header: t("colState"), accessorKey: "state",
-      cell: ({ row: { original: r } }) => <Badge tone={controlTone(r.state)}>{stateLabel(t, r.state)}</Badge> },
+      cell: ({ row: { original: r } }) => <span style={{ display: "inline-flex", gap: 4, flexWrap: "wrap" }}>
+        <Badge tone={controlTone(r.state)}>{stateLabel(t, r.state)}</Badge>
+        {r.exception && <span title={g("acceptedUntil", formatDate(r.exception.expires_on))}>
+          <Badge tone="purple" dot={false}>{g("acceptedRisk")}</Badge></span>}</span> },
     { id: "domain", header: t("colDomain"), accessorKey: "domain" },
     { id: "owner", header: t("colOwner"), accessorKey: "owner_role" },
     { id: "frequency", header: t("colFrequency"), accessorKey: "frequency" },
@@ -231,7 +265,8 @@ function Controls({ t }: { t: CT }) {
 
 function ControlDrawer({ id, onClose, info, t }: { id: string | null; onClose: () => void;
   info?: FrameworkInfo[]; t: CT }) {
-  const { formatDateTime } = useFormat();
+  const { formatDate, formatDateTime } = useFormat();
+  const g = useGT();
   const q = useQuery({ queryKey: [...KEY, "control", id], enabled: !!id, retry: false,
     queryFn: () => apiGet<ControlDetail>(`${CONTROLS_PATH}/${encodeURIComponent(id ?? "")}`) });
   const d = q.data;
@@ -247,6 +282,9 @@ function ControlDrawer({ id, onClose, info, t }: { id: string | null; onClose: (
             <strong>{d.title}</strong>
             {d.intent && <p style={{ ...small, margin: "4px 0 0" }}>{t("intent")}: {d.intent}</p>}
             <p style={{ ...small, margin: "4px 0 0" }}>{d.domain} · {d.owner_role} · {d.frequency} · {d.test_type}</p>
+            {d.exception && <p style={{ ...small, margin: "6px 0 0" }} data-testid="compliance-control-exception">
+              <Badge tone="purple" dot={false}>{g("acceptedUntil", formatDate(d.exception.expires_on))}</Badge>{" "}
+              #{d.exception.exception_id} {d.exception.title}</p>}
           </div>
           <Section title={t("requirements")}>
             <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 4 }}>
@@ -279,6 +317,8 @@ function ControlDrawer({ id, onClose, info, t }: { id: string | null; onClose: (
                           <li key={`${h.source}-${h.collected_at}`} style={small}>
                             {formatDateTime(h.collected_at)} · <Badge tone={checkTone(h.status)}>{stateLabel(t, h.status)}</Badge>
                             {h.summary ? ` ${h.summary}` : ""}{h.run_ref ? ` · ${t("runRef", h.run_ref)}` : ""}
+                            {h.object_sha256 && <span title={h.object_key ?? undefined}> · <Badge tone="success"
+                              dot={false}>{g("sealedTag")}</Badge></span>}
                             {href && <> · <a href={href} target="_blank" rel="noreferrer" style={linkStyle}>
                               {t("open")}<ExternalLink size={11} /></a></>}
                           </li>
@@ -332,7 +372,7 @@ function RefreshResult({ state, error, t }: { state: IngestState | null; error: 
 
 // ── page ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-const TABS = ["overview", "controls", "obligations"] as const;
+const TABS = ["overview", "controls", "obligations", "exceptions", "reviews"] as const;
 type TabKey = (typeof TABS)[number];
 
 function tabOf(value: string | null | undefined): TabKey {
@@ -355,6 +395,7 @@ function OverviewTab({ t }: { t: CT }) {
 
 export default function CompliancePage() {
   const t = useCT();
+  const g = useGT();
   const qc = useQueryClient();
   const { get, setMany } = useUrlFilters();
   const toast = useToast();
@@ -396,8 +437,10 @@ export default function CompliancePage() {
         <Tabs ariaLabel={t("title")} active={tab} testId="compliance-tabs"
           onChange={(k) => setMany({ tab: k === "overview" ? null : k, control: null, law: null })}
           tabs={[{ key: "overview", label: t("tabOverview") }, { key: "controls", label: t("tabControls") },
-            { key: "obligations", label: t("tabObligations") }]} />
-        {tab === "obligations" ? <ObligationsTab /> : tab === "controls" ? <Controls t={t} /> : <OverviewTab t={t} />}
+            { key: "obligations", label: t("tabObligations") }, { key: "exceptions", label: g("tabExceptions") },
+            { key: "reviews", label: g("tabReviews") }]} />
+        {tab === "obligations" ? <ObligationsTab /> : tab === "controls" ? <Controls t={t} />
+          : tab === "exceptions" ? <ExceptionsTab /> : tab === "reviews" ? <ReviewsTab /> : <OverviewTab t={t} />}
       </div>
     </PageFrame>
   );

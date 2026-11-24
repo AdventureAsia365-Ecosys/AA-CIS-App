@@ -41,6 +41,23 @@ Refresh action (POST, compliance.write; never on a GET, so a read-only "view as"
 with the staff member's own token; a 401 / 403 / no Cognito session records only the ingest state, never an evidence
 row, so a viewer without CRM access cannot turn the check red for everyone). A source is collected at most every
 LIVE_MIN_INTERVAL_S, whatever the number of processes and presses, so compliance.evidence grows by a few rows a day.
+
+AA-1173 (S290, phases 2-3, CIS 479). Evidence is sealed: the collectors write write-once objects and a hash-chained
+manifest per source into the Object Lock evidence bucket (api/services/compliance_store.py). The same read that takes
+the docs reader file (page load, cached; Refresh) first reads the newest sealed bundle of every sealed source
+(``root_daily``, ``aws_nightly``, ``prowler_weekly``), checks it against its manifest and the manifest's chain link, and
+ingests it with ``object_key`` / ``object_sha256`` on each row (``sealed`` in the answer: per source ok | missing |
+unavailable | invalid | broken). A bundle that does not match its manifest is refused whole (state ``broken``, logged
+at error): nothing of it is ingested. The docs reader file is still read after it (phase 1 path, kept until the root
+workflow stops writing it), but it can never override sealed evidence (the Docs sync role can overwrite it): it may
+only carry source ``root_daily`` (any other source = state ``invalid``, nothing ingested), it is not read at all once
+the sealed ``root_daily`` is ``ok`` (state ``superseded``), and SQL_LATEST takes, per check, a sealed row
+(``object_key`` set) before any unsealed row of a sealed source, so an older or rewritten unsealed copy never wins.
+``cis_db`` is now collected daily by the job compliance_db_checks (services/jobs/compliance_db_checks_job.py), so the
+heartbeat applies to it; the weekly Prowler scan is graded by its validity window only (a weekly source is never
+"silent" after 36 h).
+Exceptions (api/services/compliance_exceptions.py) never raise a score: a control with an approved, unexpired exception
+keeps its state and carries ``exception`` (the page shows "accepted risk").
 """
 from __future__ import annotations
 
@@ -71,7 +88,13 @@ EVIDENCE_HISTORY = 20                 # technical-constant: evidence rows per ch
 # that grade the rows are settings, in hours.
 LIVE_MIN_INTERVAL_S = 600   # technical-constant: write-rate bound of an append-only table
 LIVE_SOURCES = ("cis_db", "crm_ops")
-SCHEDULED_SOURCES = frozenset({"root_daily"})   # the heartbeat applies to these only (a live source has no schedule)
+# the heartbeat applies to these only: a source collected on demand has no schedule, and the weekly Prowler scan is
+# graded by its own validity window (AA-1173: cis_db is collected daily by the job compliance_db_checks)
+SCHEDULED_SOURCES = frozenset({"root_daily", "aws_nightly", "cis_db"})
+# AA-1173: the only source the phase 1 docs reader file may carry (the root daily workflow); the sealed sources
+# themselves are compliance_store.SOURCES
+DOCS_READER_SOURCE = "root_daily"
+SEALED_SOURCES = ("root_daily", "aws_nightly", "prowler_weekly")   # = compliance_store.SOURCES (a unit test pins it)
 STATUSES = ("pass", "fail", "error", "stale", "manual")
 _SOURCE = re.compile(r"^[a-z][a-z0-9_]{1,40}$")
 _CHECK_ID = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
@@ -180,8 +203,9 @@ def _read_published(client_factory: Callable[[], Any]) -> Optional[bytes]:
 
 SQL_INSERT_EVIDENCE = """
 INSERT INTO compliance.evidence
-    (source, check_id, status, collected_at, valid_until, collector, collector_version, run_ref, summary, detail, link)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)
+    (source, check_id, status, collected_at, valid_until, collector, collector_version, run_ref, summary, detail, link,
+     object_key, object_sha256)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13)
 ON CONFLICT (source, check_id, collected_at) DO NOTHING
 """
 
@@ -199,7 +223,7 @@ async def ingest(pool: Any, rows: list[dict], validity_hours: Optional[int]) -> 
                 status = await conn.execute(
                     SQL_INSERT_EVIDENCE, r["source"], r["check_id"], r["status"], r["collected_at"], until,
                     r["collector"], r["collector_version"], r["run_ref"], r["summary"], json.dumps(r["detail"]),
-                    r["link"])
+                    r["link"], r.get("object_key"), r.get("object_sha256"))
                 new += status.endswith(" 1")
     return new
 
@@ -229,24 +253,75 @@ async def _sync_published(pool: Any, refresh: bool, client_factory: Optional[Cal
             return _cache["state"]
         now = now or datetime.now(timezone.utc)
         state: dict[str, Any] = {"read_at": now.isoformat(), "object": OBJECT_NAME}
-        try:
-            raw = await asyncio.to_thread(_read_published, client_factory or docs_reader._s3_client)
-        except Exception as err:   # storage
-            logger.warning("compliance_evidence_read_failed", error=type(err).__name__)
-            raw, state["state"] = None, "unavailable"
-        if raw is None and "state" not in state:
-            state["state"] = "missing"
-        if raw is not None:
-            try:
-                rows, dropped = parse_bundle(raw, now)
-            except ValueError as err:
-                state.update(state="invalid", detail=str(err))
-            else:
-                source = rows[0]["source"] if rows else None
-                hours = await _validity_hours(source) if source else None
-                state.update(state="ok", rows=len(rows), new=await ingest(pool, rows, hours), dropped=dropped)
+        state["sealed"] = await _sync_sealed(pool, client_factory or docs_reader._s3_client, now)
+        state.update(await _sync_docs_reader(pool, client_factory, now, state["sealed"]))
         _cache["state"], _cache["at"] = state, time.monotonic()
         return state
+
+
+async def _sync_docs_reader(pool: Any, client_factory: Optional[Callable[[], Any]], now: datetime,
+                            sealed: dict) -> dict:
+    """The phase 1 docs reader file (mutable: the Docs sync role can overwrite it). Not read once the sealed root_daily
+    is ok (the sealed copy covers that run); refused whole when it claims any source but root_daily."""
+    if sealed.get(DOCS_READER_SOURCE, {}).get("state") == "ok":
+        return {"state": "superseded", "detail": f"the sealed {DOCS_READER_SOURCE} bundle is read instead"}
+    try:
+        raw = await asyncio.to_thread(_read_published, client_factory or docs_reader._s3_client)
+    except Exception as err:   # noqa: BLE001 - storage
+        logger.warning("compliance_evidence_read_failed", error=type(err).__name__)
+        return {"state": "unavailable"}
+    if raw is None:
+        return {"state": "missing"}
+    try:
+        rows, dropped = parse_bundle(raw, now)
+    except ValueError as err:
+        return {"state": "invalid", "detail": str(err)}
+    if any(r["source"] != DOCS_READER_SOURCE for r in rows):
+        logger.error("compliance_docs_reader_wrong_source", source=rows[0]["source"])
+        return {"state": "invalid", "detail": f"the docs reader file may only carry source {DOCS_READER_SOURCE}"}
+    hours = await _validity_hours(DOCS_READER_SOURCE) if rows else None
+    return {"state": "ok", "rows": len(rows), "new": await ingest(pool, rows, hours), "dropped": dropped}
+
+
+async def _sync_sealed(pool: Any, client_factory: Callable[[], Any], now: datetime) -> dict:
+    """AA-1173: the newest sealed bundle of every sealed source, verified, ingested with its object key and hash. One
+    source failing never stops the others; nothing of a bundle that fails its manifest is ingested."""
+    from api.services import compliance_store as store   # noqa: PLC0415 - phase 2 reader, imported on use
+
+    out: dict[str, dict] = {}
+    try:
+        client, bucket_name = client_factory(), store.bucket()
+    except Exception as err:   # noqa: BLE001 - no credentials / no account: the page still loads
+        logger.warning("compliance_sealed_unavailable", error=type(err).__name__)
+        return {src: {"state": "unavailable"} for src in store.SOURCES}
+    for src in store.SOURCES:
+        try:
+            sealed = await asyncio.to_thread(store.latest, client, bucket_name, src, now)
+        except store.SealError as err:
+            logger.error("compliance_sealed_broken", source=src, error=str(err)[:200])
+            out[src] = {"state": "broken", "detail": str(err)[:200]}
+            continue
+        except Exception as err:   # noqa: BLE001 - storage
+            logger.warning("compliance_sealed_read_failed", source=src, error=type(err).__name__)
+            out[src] = {"state": "unavailable"}
+            continue
+        if sealed is None:
+            out[src] = {"state": "missing"}
+            continue
+        try:
+            rows, dropped = parse_bundle(sealed.bundle, now)
+        except ValueError as err:
+            out[src] = {"state": "invalid", "detail": str(err)[:200]}
+            continue
+        if any(r["source"] != src for r in rows):
+            out[src] = {"state": "invalid", "detail": f"the bundle is not of source {src}"}
+            continue
+        for r in rows:
+            r["object_key"], r["object_sha256"] = sealed.bundle_key, sealed.bundle_sha256
+        new = await ingest(pool, rows, await _validity_hours(src))
+        out[src] = {"state": "ok", "rows": len(rows), "new": new, "dropped": dropped, "chain": sealed.chain,
+                    "object": sealed.bundle_key, "sha256": sealed.bundle_sha256, "created_at": sealed.created_at}
+    return out
 
 
 SQL_SOURCE_LAST = "SELECT max(collected_at) AS last FROM compliance.evidence WHERE source = $1"
@@ -316,11 +391,13 @@ SQL_FRAMEWORKS = ("SELECT framework, kind, title, jurisdiction, citation, source
 SQL_CONTROLS = ("SELECT control_id, title, intent, domain, owner_role, frequency, test_type, checks, scope, active, "
                 "updated_at FROM compliance.control ORDER BY control_id")
 SQL_MAPPINGS = "SELECT control_id, framework, ref, coverage, note FROM compliance.requirement_mapping"
+# per check, a sealed row (object_key set) wins over every unsealed row of a sealed source ($1 = SEALED_SOURCES),
+# whatever its date: an unsealed root_daily row (phase 1 docs reader copy) only counts while nothing is sealed
 SQL_LATEST = """
 SELECT DISTINCT ON (check_id) check_id, source, status, collected_at, valid_until, collector, collector_version,
-       run_ref, summary, detail, link
+       run_ref, summary, detail, link, object_key, object_sha256
   FROM compliance.evidence
- ORDER BY check_id, collected_at DESC, evidence_id DESC
+ ORDER BY check_id, (object_key IS NULL AND source = ANY($1::text[])), collected_at DESC, evidence_id DESC
 """
 SQL_LAST_SEEN = "SELECT source, max(collected_at) AS last_seen, count(*) AS n FROM compliance.evidence GROUP BY source"
 SQL_UPSERT_SNAPSHOT = """
@@ -341,7 +418,8 @@ SELECT snapshot_date, framework, strict_pct, weighted_pct, reference_pct, n_stal
  ORDER BY snapshot_date, framework
 """
 SQL_HISTORY = """
-SELECT check_id, source, status, collected_at, valid_until, collector, collector_version, run_ref, summary, detail, link
+SELECT check_id, source, status, collected_at, valid_until, collector, collector_version, run_ref, summary, detail,
+       link, object_key, object_sha256
   FROM (SELECT e.*, row_number() OVER (PARTITION BY check_id ORDER BY collected_at DESC, evidence_id DESC) AS rn
           FROM compliance.evidence e WHERE check_id = ANY($1::text[])) h
  WHERE rn <= $2
@@ -367,7 +445,7 @@ async def _state(conn: Any) -> dict:
         "requirements": [_row(r) for r in await conn.fetch(SQL_REQUIREMENTS)],
         "controls": [_row(r) for r in await conn.fetch(SQL_CONTROLS)],
         "mappings": [_row(r) for r in await conn.fetch(SQL_MAPPINGS)],
-        "latest": {r["check_id"]: _row(r) for r in await conn.fetch(SQL_LATEST)},
+        "latest": {r["check_id"]: _row(r) for r in await conn.fetch(SQL_LATEST, list(SEALED_SOURCES))},
         "sources": {r["source"]: {"last_seen": r["last_seen"], "n": r["n"]} for r in await conn.fetch(SQL_LAST_SEEN)},
     }
 
@@ -433,6 +511,7 @@ async def overview(pool: Any, now: Optional[datetime] = None, ingest_state: Opti
                                        sc["weighted_pct"], refs.get(fw), json.dumps(s.as_json(), sort_keys=True))
         trend_rows = [_row(r) for r in await conn.fetch(SQL_TREND, today - timedelta(days=TREND_DAYS))
                       if r["framework"] in scored]
+        exceptions = await _exceptions(conn, now)
     titles = {}
     for c in data["controls"]:
         for cid in cs.required_checks(c):
@@ -465,7 +544,22 @@ async def overview(pool: Any, now: Optional[datetime] = None, ingest_state: Opti
         "register": {"requirements": len(data["requirements"]), "controls": len(data["controls"]),
                      "mappings": len(data["mappings"]), "laws": len(laws), "obligations": len(obligations)},
         "ingest": ingest_state,
+        # AA-1173: approved, unexpired exceptions (accepted risk; they never raise a score)
+        "exceptions_active": {"controls": sorted(ref for (kind, ref) in exceptions if kind == "control"),
+                              "total": len(exceptions)},
     }
+
+
+async def _exceptions(conn: Any, now: datetime) -> dict[tuple[str, str], dict]:
+    """AA-1173: the approved, unexpired exceptions by subject; empty when the table cannot be read (never a page
+    error)."""
+    from api.services import compliance_exceptions   # noqa: PLC0415 - phase 3 module, imported on use
+
+    try:
+        return await compliance_exceptions.active_by_subject(conn, now)
+    except Exception as err:   # noqa: BLE001
+        logger.warning("compliance_exceptions_read_failed", error=type(err).__name__)
+        return {}
 
 
 def _mapped(data: dict) -> dict[str, list[dict]]:
@@ -481,6 +575,7 @@ async def controls(pool: Any, now: Optional[datetime] = None) -> dict:
     now = now or datetime.now(timezone.utc)
     async with pool.acquire() as conn:
         data, result, _ = await _evaluate(conn, now)
+        exceptions = await _exceptions(conn, now)
     by_ctl = _mapped(data)
     rows = []
     for c in data["controls"]:
@@ -493,7 +588,8 @@ async def controls(pool: Any, now: Optional[datetime] = None) -> dict:
                      "owner_role": c["owner_role"], "frequency": c["frequency"], "test_type": c["test_type"],
                      "scope": c["scope"], "active": c["active"],
                      "state": result["controls"].get(c["control_id"], "inactive"),
-                     "frameworks": frameworks, "checks": checks, "last_evidence_at": last})
+                     "frameworks": frameworks, "checks": checks, "last_evidence_at": last,
+                     "exception": exceptions.get(("control", c["control_id"]))})
     info = framework_info(data)
     return {"generated_at": now.isoformat(), "controls": rows, "frameworks": [f["framework"] for f in info],
             "framework_info": info}
@@ -511,6 +607,7 @@ async def control_detail(pool: Any, control_id: str, now: Optional[datetime] = N
         ids = [c.get("check_id") if isinstance(c, dict) else c for c in control.get("checks") or []]
         history = [_row(r) for r in await conn.fetch(SQL_HISTORY, [i for i in ids if isinstance(i, str)],
                                                      EVIDENCE_HISTORY)]
+        exceptions = await _exceptions(conn, now)
     reqs = {(r["framework"], r["ref"]): r for r in data["requirements"]}
     covers = []
     for m in sorted(_mapped(data).get(control_id, []), key=lambda m: (m["framework"], m["ref"])):
@@ -525,9 +622,11 @@ async def control_detail(pool: Any, control_id: str, now: Optional[datetime] = N
             continue
         st = result["checks"].get(cid)
         checks.append(dict(_check_json(st) if st else {"check_id": cid, "state": "missing"},
+                           exception=exceptions.get(("check", cid)),
                            required=bool(c.get("required", True)) if isinstance(c, dict) else True,
                            history=[{k: _iso(v) for k, v in h.items() if k != "check_id"}
                                     for h in history if h["check_id"] == cid]))
     out = {k: _iso(v) for k, v in control.items()}
-    out.update(state=result["controls"].get(control_id, "inactive"), requirements=covers, checks=checks)
+    out.update(state=result["controls"].get(control_id, "inactive"), requirements=covers, checks=checks,
+               exception=exceptions.get(("control", control_id)))
     return out

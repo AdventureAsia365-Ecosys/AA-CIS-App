@@ -683,7 +683,15 @@
     "capability": "compliance.read",
     "module": "api.routers.admin_platform_compliance"
   },
+  "GET /admin/platform/compliance/exceptions": {
+    "capability": "compliance.read",
+    "module": "api.routers.admin_platform_compliance"
+  },
   "GET /admin/platform/compliance/obligations": {
+    "capability": "compliance.read",
+    "module": "api.routers.admin_platform_compliance"
+  },
+  "GET /admin/platform/compliance/reviews": {
     "capability": "compliance.read",
     "module": "api.routers.admin_platform_compliance"
   },
@@ -1651,7 +1659,27 @@
     "capability": "alerts.write",
     "module": "api.routers.admin_alert_recipients"
   },
+  "POST /admin/platform/compliance/exceptions": {
+    "capability": "compliance.write",
+    "module": "api.routers.admin_platform_compliance"
+  },
+  "POST /admin/platform/compliance/exceptions/{exception_id}/approve": {
+    "capability": "compliance.write",
+    "module": "api.routers.admin_platform_compliance"
+  },
+  "POST /admin/platform/compliance/exceptions/{exception_id}/reject": {
+    "capability": "compliance.write",
+    "module": "api.routers.admin_platform_compliance"
+  },
+  "POST /admin/platform/compliance/exceptions/{exception_id}/revoke": {
+    "capability": "compliance.write",
+    "module": "api.routers.admin_platform_compliance"
+  },
   "POST /admin/platform/compliance/refresh": {
+    "capability": "compliance.write",
+    "module": "api.routers.admin_platform_compliance"
+  },
+  "POST /admin/platform/compliance/reviews": {
     "capability": "compliance.write",
     "module": "api.routers.admin_platform_compliance"
   },

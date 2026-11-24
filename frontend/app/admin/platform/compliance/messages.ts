@@ -10,7 +10,7 @@ export const COMPLIANCE = defineMessages(
       "How much of each security and AI framework the platform can prove today. Only fresh, passing evidence counts (Evidenced %), so the number is lower than a hand assessment until more checks are automated.",
     banner: "Readiness score (Dev environment), not a certification.",
     bannerNote:
-      "Evidence is collected automatically from the repos and registers and kept for readiness tracking; it is not yet stored in a tamper-proof evidence store.",
+      "Evidence is collected automatically from the repos, the AWS account, the database and the registers, and the collectors seal each run in a write-once evidence store (Object Lock, a hash-chained manifest). The numbers are a Dev readiness view, not an audit opinion.",
     devNumbers: "Dev",
     refresh: "Refresh evidence",
     refreshHint: "Re-reads the newest evidence file the daily collector published and collects the checks of the CIS database and the partner CRM.",
@@ -57,6 +57,7 @@ export const COMPLIANCE = defineMessages(
     ingestMissing: "Nothing published yet: the file appears after the first run of the root Compliance evidence workflow.",
     ingestUnavailable: "The evidence file could not be read; the scores use the evidence already stored.",
     ingestInvalid: "The evidence file was refused (wrong format); the scores use the evidence already stored.",
+    ingestSuperseded: "Not read: the sealed daily bundle replaces the published file.",
     dropped: (n: number) => `${n} results were dropped (see the API answer for the reasons).`,
     // controls
     filterFramework: "Framework",
@@ -168,7 +169,7 @@ export const COMPLIANCE = defineMessages(
       "Nền tảng chứng minh được bao nhiêu phần của từng khung bảo mật và AI hôm nay. Chỉ bằng chứng còn hạn và đạt mới được tính (Evidenced %), nên con số thấp hơn đánh giá tay cho tới khi có thêm kiểm tra tự động.",
     banner: "Điểm sẵn sàng (môi trường Dev), không phải chứng nhận.",
     bannerNote:
-      "Bằng chứng được thu tự động từ các repo và sổ đăng ký, dùng để theo dõi mức sẵn sàng; chưa được lưu trong kho bằng chứng chống sửa.",
+      "Bằng chứng được thu tự động từ các repo, tài khoản AWS, database và các sổ đăng ký; mỗi lượt thu được niêm phong trong kho bằng chứng chỉ ghi một lần (Object Lock, manifest nối chuỗi hash). Các con số là góc nhìn sẵn sàng trên Dev, không phải ý kiến kiểm toán.",
     devNumbers: "Dev",
     refresh: "Làm mới bằng chứng",
     refreshHint: "Đọc lại tệp bằng chứng mới nhất mà bộ thu hằng ngày đã đăng và thu các kiểm tra từ database CIS và CRM đối tác.",
@@ -210,6 +211,7 @@ export const COMPLIANCE = defineMessages(
     ingestMissing: "Chưa có gì được đăng: tệp xuất hiện sau lần chạy đầu của workflow Compliance evidence ở repo gốc.",
     ingestUnavailable: "Không đọc được tệp bằng chứng; điểm dùng bằng chứng đã lưu.",
     ingestInvalid: "Tệp bằng chứng bị từ chối (sai định dạng); điểm dùng bằng chứng đã lưu.",
+    ingestSuperseded: "Không đọc: gói niêm phong hằng ngày thay cho tệp đã đăng.",
     dropped: (n: number) => `${n} kết quả bị bỏ (xem lý do trong phản hồi API).`,
     filterFramework: "Khung",
     allFrameworks: "Mọi khung",
