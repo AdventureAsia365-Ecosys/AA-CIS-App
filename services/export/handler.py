@@ -15,7 +15,6 @@ from services.content_workspace.store import export_guard as _required_list_guar
 logger = structlog.get_logger()
 
 
-
 class _SingleConnAsPool:
     """AA-526 — process_export() (and this class's other user, _run_a3_atomize_background()
     below) each own exactly ONE asyncpg.Connection, Lambda-handler style — no asyncpg.Pool in
@@ -139,10 +138,9 @@ JOB_POOL_MAX = 5
 
 
 async def open_job_pool():
-    """A small asyncpg pool owned by one job run (close it when done)."""
-    return await asyncpg.create_pool(get_database_url(), ssl="require", min_size=1, max_size=JOB_POOL_MAX,
-                                     server_settings={"application_name": "cis-job"},  # AA-824
-                                     connection_class=StableSavepointConnection)  # S291 (retarget savepoints)
+    """A small asyncpg pool owned by one job run (close it when done); `cis-job` (AA-824), savepoint names (S291)."""
+    return await asyncpg.create_pool(get_database_url(), ssl="require", connection_class=StableSavepointConnection,
+                                     min_size=1, max_size=JOB_POOL_MAX, server_settings={"application_name": "cis-job"})
 
 
 async def recompute_rankings_and_routes(pool, *, log_reason: str = "",
