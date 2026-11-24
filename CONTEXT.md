@@ -5343,6 +5343,36 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     only while the version's `edited_at` is the one it read (a save during the run rolls the verdict back, result
     `stale`). **Waves**: a tour skipped for its lock (or left out of the batch) is the terminal wave state `locked`
     (who, when, why on the report row), so a wave holding one can complete.
+  - **Content workspace: hand-made tours tied to an AA supplier** (AA-1148, S290; CIS 478, Booking bk-072).
+    `/admin/content-workspace` (AA Catalogue): a supplier that sends one tour by e-mail or PDF is entered as a form
+    instead of an Excel row. **Create** (`POST /admin/content-workspace/tours`, content.write) starts a new catalog key
+    through the tour lifecycle service (`supersede(create_new)`, the only raw_tours INSERT), marks the row
+    `entry_origin = 'manual'`, keeps the structured facts in `raw_tours.manual_facts` (day cards: title, places, meals,
+    overnight, description; inclusions; exclusions; nights; group size; tour type; guide languages; best time) and
+    renders the text columns every reader uses from them (`src_itineraries` as canonical "Day N — Title" blocks,
+    `duration` "3 days 2 nights", `inclusions` / `exclusions` one item per line, `group_size`, `best_time_to_go`), and
+    writes the first wording draft (version 1, status draft, origin human) from the facts (REPORT-mode final contract
+    exit `human_edit`). From there it is a normal tour: the wording is edited, checked and published through the
+    AA-1146 draft routes and gate; `POST /admin/tours/{id}/draft/publish` also requires a hand-made tour's **required
+    list** complete (409 `required_missing`: name, country, an active supplier, 1..max days, nights, a title / place /
+    description for each day, the included / not included minimums, no item on both lists, the wording with one
+    "Day N —" block per day; nights ≠ days − 1 and a missing overnight are hints). Rewrite (S1) can write it too.
+    **Facts saves** (`PUT …/tours/{id}/facts`, content.write; hand-made tours only, 409 `not_hand_made`): before the
+    first publish the page autosaves; once published a save needs a reason (422 `reason_required`) and runs the source
+    fan-out, like the drawer's raw edit; every save that changes something writes one `raw_tour_revision` row
+    (`staff_edit`) and one audit row; a save carrying an older `expected_saved_at` is 409 `facts_changed`. **The AA
+    supplier** is Booking's (`booking.v_supply_suppliers`, contract `supply.supplier.v1`, bk-072: id, code, company
+    name, categories incl. `dmc`, country, status; SELECT to cis_app), stored as the soft key `raw_tours.supplier_id`;
+    `provider` keeps the sheet text (a hand-made tour's provider is the supplier's name). Every read of the view fails
+    soft (the picker says the list is unavailable; nothing is linked). **Supplier links** (`GET /admin/content-workspace/
+    supplier-links`): the live tours with no `supplier_id`, with the one supplier whose normalised name (accents, case,
+    punctuation and company-form words removed) equals the sheet text in a compatible country; `POST …/supplier-links`
+    links chosen tours (content.write), `POST …/supplier-links/apply-suggestions` links every suggestion (content.publish,
+    DRY RUN first); each link writes a history and an audit row. **Limits** are settings (CIS 478, Platform › Settings,
+    `services/content_workspace/policy.py`): `cis.content.manual_tour.max_days` (21),
+    `cis.content.manual_tour.min_inclusions` (3), `cis.content.manual_tour.min_exclusions` (1),
+    `cis.content.supplier_link.bulk_max` (100). The editor's price panel shows `booking.v_from_prices` read-only. Code:
+    `api/routers/admin_content_workspace.py`, `services/content_workspace/` (facts, suppliers, store, policy).
   - **Atomize retires what the new text no longer has** (AA-645 step 0): the per-day path soft-deletes live atoms on a
     day the itinerary no longer has (and day-less legacy rows), also on an all-skipped run (C6); the legacy path (no
     `Day N —` headers, random ids) soft-deletes the tour's earlier atoms after a good read (L1). An atomize that changed
