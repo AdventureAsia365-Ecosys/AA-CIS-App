@@ -40,12 +40,26 @@ UPTIME_SLO_PCT = "cis.ops.status_uptime_slo_pct"
 STALE_FACTOR = "cis.ops.status_stale_factor"
 HISTORY_DAYS = "cis.ops.status_history_days"
 GUARD_STALE_HOURS = "cis.ops.status_guard_stale_hours"
+# CIS 483 (AA-1141, the P1 features of the page): alert ack / snooze / mute, the cost anomaly banner, the capacity
+# forecast. Every window, factor, floor and limit below is a setting (tech lead S279), never a code literal.
+ACK_REASON_MIN_CHARS = "cis.ops.status_ack_reason_min_chars"
+ACK_HOURS = "cis.ops.status_ack_hours"
+MUTE_MAX_DAYS = "cis.ops.status_mute_max_days"
+SNOOZE_TOMORROW_HOUR = "cis.ops.status_snooze_tomorrow_hour"
+COST_ANOMALY_FACTOR = "cis.ops.status_cost_anomaly_factor"
+COST_ANOMALY_BASELINE_DAYS = "cis.ops.status_cost_anomaly_baseline_days"
+COST_ANOMALY_FLOOR_USD_H = "cis.ops.status_cost_anomaly_floor_usd_h"
+FORECAST_WINDOW_DAYS = "cis.ops.status_forecast_window_days"
+FORECAST_WARN_DAYS = "cis.ops.status_forecast_warn_days"
+FORECAST_CRIT_DAYS = "cis.ops.status_forecast_crit_days"
 
 ALL = (ERROR_RATE_WARN_PCT, ERROR_RATE_CRIT_PCT, CLIENT_ERROR_WARN_PCT, P95_WARN_MS, P95_CRIT_MS, LAMBDA_P95_LIMIT_MS,
        MIN_REQUESTS, QUEUE_WAIT_WARN_MIN, QUEUE_WAIT_CRIT_MIN, RDS_CPU_WARN_PCT, RDS_CPU_CRIT_PCT,
        RDS_CONNECTIONS_WARN_PCT, RDS_CONNECTIONS_CRIT_PCT, ROLE_CONNECTIONS_CRIT_PCT, RDS_FREE_STORAGE_WARN_GIB,
        RDS_FREE_STORAGE_CRIT_GIB, RDS_FREE_WARN_PCT, RDS_FREE_CRIT_PCT, XID_AGE_CRIT, UPTIME_SLO_PCT, STALE_FACTOR,
-       HISTORY_DAYS, GUARD_STALE_HOURS)
+       HISTORY_DAYS, GUARD_STALE_HOURS, ACK_REASON_MIN_CHARS, ACK_HOURS, MUTE_MAX_DAYS, SNOOZE_TOMORROW_HOUR,
+       COST_ANOMALY_FACTOR, COST_ANOMALY_BASELINE_DAYS, COST_ANOMALY_FLOOR_USD_H, FORECAST_WINDOW_DAYS,
+       FORECAST_WARN_DAYS, FORECAST_CRIT_DAYS)
 
 
 def _num(key: str) -> float:
@@ -148,6 +162,48 @@ def guard_stale_hours() -> float:
     return _num(GUARD_STALE_HOURS)
 
 
+def ack_reason_min_chars() -> int:
+    return int(settings.get(ACK_REASON_MIN_CHARS))
+
+
+def ack_hours() -> int:
+    return int(settings.get(ACK_HOURS))
+
+
+def mute_max_days() -> int:
+    return int(settings.get(MUTE_MAX_DAYS))
+
+
+def snooze_tomorrow_hour() -> int:
+    return int(settings.get(SNOOZE_TOMORROW_HOUR))
+
+
+def cost_anomaly() -> dict:
+    """{factor, baseline_days, floor_usd_h}: an hour's AI spend of one app x provider x route is abnormal above
+    ``max(factor x its median hour over baseline_days, floor_usd_h)``."""
+    return {"factor": _num(COST_ANOMALY_FACTOR), "baseline_days": int(settings.get(COST_ANOMALY_BASELINE_DAYS)),
+            "floor_usd_h": _num(COST_ANOMALY_FLOOR_USD_H), "factor_key": COST_ANOMALY_FACTOR,
+            "baseline_days_key": COST_ANOMALY_BASELINE_DAYS, "floor_key": COST_ANOMALY_FLOOR_USD_H}
+
+
+def forecast() -> dict:
+    """{window_days, warn, crit}: the trend window of the capacity forecast and its days-left limits (fewer days left
+    is worse: a critical value above its warn value is moved to the warn value)."""
+    warn = _num(FORECAST_WARN_DAYS)
+    return {"window_days": int(settings.get(FORECAST_WINDOW_DAYS)), "warn": warn,
+            "crit": min(_num(FORECAST_CRIT_DAYS), warn), "warn_key": FORECAST_WARN_DAYS,
+            "crit_key": FORECAST_CRIT_DAYS, "window_key": FORECAST_WINDOW_DAYS, "dir": "below"}
+
+
+def acks() -> dict:
+    """The ack / snooze / mute rules: the shortest reason, how long an Ack lasts, the longest mute, the hour of the
+    viewer's clock "until tomorrow" ends at."""
+    return {"reason_min_chars": ack_reason_min_chars(), "ack_hours": ack_hours(), "mute_max_days": mute_max_days(),
+            "snooze_tomorrow_hour": snooze_tomorrow_hour(), "reason_key": ACK_REASON_MIN_CHARS,
+            "ack_hours_key": ACK_HOURS, "mute_max_days_key": MUTE_MAX_DAYS,
+            "snooze_tomorrow_hour_key": SNOOZE_TOMORROW_HOUR}
+
+
 def snapshot() -> dict:
     """Every limit the page draws, in one dict (the endpoint's ``thresholds`` block; the page links each key to
     Platform › Settings)."""
@@ -170,4 +226,7 @@ def snapshot() -> dict:
         "guard_stale_hours": {"value": guard_stale_hours(), "key": GUARD_STALE_HOURS},
         "app_spend_near_pct": {"warn": ops_thresholds.app_spend_near_ratio() * 100.0,
                                "warn_key": ops_thresholds.APP_SPEND_NEAR_PCT, "dir": "above"},
+        "acks": acks(),
+        "cost_anomaly": cost_anomaly(),
+        "forecast": forecast(),
     }

@@ -1,7 +1,7 @@
-"""AA-1140 (S289, the Ecosystem status page; CIS 475, 477) — the twenty-three status page limits are compiled with
-the S285 advisory values as defaults, a plain label and a complete EN + VI guide, maker-checker, and the accessors of
-shared/ops_status_thresholds.py return them in the units the page uses, a critical value never on the wrong side of its
-warn value. No DB."""
+"""AA-1140 (S289, the Ecosystem status page; CIS 475, 477; AA-1141 CIS 483) — the thirty-three status page limits are
+compiled with the S285 advisory values as defaults, a plain label and a complete EN + VI guide, maker-checker, and the
+accessors of shared/ops_status_thresholds.py return them in the units the page uses, a critical value never on the
+wrong side of its warn value. No DB."""
 from unittest.mock import patch
 
 from shared import ops_status_thresholds as t
@@ -16,6 +16,10 @@ DEFAULTS = {
     t.RDS_FREE_STORAGE_WARN_GIB: 15, t.RDS_FREE_STORAGE_CRIT_GIB: 10, t.RDS_FREE_WARN_PCT: 20, t.RDS_FREE_CRIT_PCT: 10,
     t.XID_AGE_CRIT: 1_500_000_000,
     t.UPTIME_SLO_PCT: 99.5, t.STALE_FACTOR: 3, t.HISTORY_DAYS: 14, t.GUARD_STALE_HOURS: 30,
+    # AA-1141 (CIS 483): ack / snooze / mute, the cost anomaly banner, the capacity forecast
+    t.ACK_REASON_MIN_CHARS: 20, t.ACK_HOURS: 24, t.MUTE_MAX_DAYS: 7, t.SNOOZE_TOMORROW_HOUR: 8,
+    t.COST_ANOMALY_FACTOR: 3, t.COST_ANOMALY_BASELINE_DAYS: 7, t.COST_ANOMALY_FLOOR_USD_H: 0.1,
+    t.FORECAST_WINDOW_DAYS: 7, t.FORECAST_WARN_DAYS: 30, t.FORECAST_CRIT_DAYS: 7,
 }
 
 
@@ -61,7 +65,7 @@ def test_snapshot_names_only_known_keys():
     snap = t.snapshot()
     keys = set()
     for v in snap.values():
-        keys |= {v[k] for k in ("key", "warn_key", "crit_key") if k in v}
+        keys |= {v[k] for k in v if k == "key" or k.endswith("_key")}   # AA-1141: acks / anomaly / forecast blocks
     allowed = set(t.ALL) | {ops_thresholds.ROLE_CONNECTIONS_PCT, ops_thresholds.XID_AGE_LIMIT,
                             ops_thresholds.APP_SPEND_NEAR_PCT}
     assert keys <= allowed and set(t.ALL) <= keys
