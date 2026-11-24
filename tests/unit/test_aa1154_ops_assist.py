@@ -23,8 +23,10 @@ ROOT = Path(__file__).resolve().parents[2]
 PKG = ROOT / "api" / "services" / "ops_assist"
 CASE = "llm-access-denied-2026-10-29"
 _SECRET = "aa1154-test-secret"
-LIMITS = {"evidence_window_min": 30, "changes_window_min": 120, "refused_trigger_calls": 3, "spend_spike_factor": 3.0,
-          "wide_scope_stages": 5, "small_money_usd": 0.1, "history_min_n": 5, "card_ttl_min": 30,
+LIMITS = {"evidence_window_min": 30, "changes_window_min": 120, "refused_trigger_calls": 3,
+          "throttled_trigger_calls": 3, "spend_spike_factor": 3.0, "spend_baseline_days": 7,
+          "spend_spike_floor_usd_h": 0.1, "wide_scope_stages": 5, "small_money_usd": 0.1, "history_min_n": 5,
+          "card_ttl_min": 30,
           "reason_min_chars": 20}
 
 
@@ -136,11 +138,18 @@ def test_replay_29_10_gives_ranked_cards_with_risk_predictions_and_way_back():
     assert by["retry_llm_denied"]["precondition_met"] is False
     assert cards[-1]["action"] == "aws_support_case" and cards[-1]["copy_only"]
     assert cards.index(by["retry_llm_denied"]) > cards.index(by["route_save"])
-    # the way back of a route change is a revert to the version in force
+    # the bodies the route-control API takes: the preview only the change (PreviewBody forbids extra fields), the
+    # save the change + the version it was read against (SaveBody), and the way back reverts to that version with
+    # the version the save makes as its expected_version
+    moved = {"gpt-5.6-luna": ["acc3", "openai-direct", "acc1"], "gpt-6-luna": ["acc3", "openai-direct", "acc1"]}
+    assert by["route_save"]["dry_run"] == {"method": "POST", "path": "/admin/ai-gateway/route-control/preview",
+                                           "body": {"provider_order": moved}}
+    assert by["route_save"]["call"]["body"] == {"provider_order": moved, "expected_version": 30}
     assert by["route_save"]["way_back"]["call"] == {
-        "method": "POST", "path": "/admin/ai-gateway/route-control/versions/30/revert"}
-    assert by["route_save"]["call"]["body"] == {"provider_order": {
-        "gpt-5.6-luna": ["acc3", "openai-direct", "acc1"], "gpt-6-luna": ["acc3", "openai-direct", "acc1"]}}
+        "method": "POST", "path": "/admin/ai-gateway/route-control/versions/30/revert",
+        "body": {"expected_version": 31}}
+    assert "needs_evidence" in by["route_save"]["precondition"] and "break_glass_reason" in by["route_save"][
+        "precondition"]
     assert by["llm_probe"]["dry_run"]["body"] == {"dry_run": True}
     # the measured prediction: the fallback that answered the lost GPT calls
     obs = by["observe"]
@@ -276,7 +285,29 @@ def test_throttle_and_spend_signals_use_the_settings():
     spend = {"zz1": {"window_usd": 0.5, "per_hour_usd": 1.0, "baseline_hour_usd": 0.2}}
     s = _bare("", connections=[conn], calls=calls, spend=spend)
     assert {x["id"] for x in playbooks.signals(s, LIMITS)} == {"llm-throttle-zz1", "llm-spend-zz1"}
-    assert playbooks.signals(s, dict(LIMITS, refused_trigger_calls=10, spend_spike_factor=6.0)) == []
+    assert playbooks.signals(s, dict(LIMITS, throttled_trigger_calls=10, spend_spike_factor=6.0)) == []
+    # each signal has its own setting: the refusal trigger does not quiet throttles, the R1 money cap not spikes
+    quiet_refusals = dict(LIMITS, refused_trigger_calls=1000, small_money_usd=10.0)
+    assert {x["id"] for x in playbooks.signals(s, quiet_refusals)} == {"llm-throttle-zz1", "llm-spend-zz1"}
+    assert {x["id"] for x in playbooks.signals(s, dict(LIMITS, spend_spike_floor_usd_h=1.0))} == {"llm-throttle-zz1"}
+    spike = next(x for x in playbooks.signals(dict(s, spend_baseline_days=14), LIMITS) if x["kind"] == "llm_cost_spike")
+    assert spike["detail"].startswith("14-day median 0.2 USD/h")
+
+
+def test_spend_baseline_days_is_the_setting():
+    """The usual spend is the median over ``spend_baseline_days`` x 24 hours (CIS 481), and the copy names that
+    number, not a fixed 7."""
+    c = {"cost_usd": 0.25}
+    base = [{"connection_key": "zz1", "usd": 1.0}] * 100
+    assert evidence.spend_by_connection({"zz1": c}, base, 30, 7)["zz1"]["baseline_hour_usd"] == 1.0   # 100 of 168
+    assert evidence.spend_by_connection({"zz1": c}, base, 30, 14)["zz1"]["baseline_hour_usd"] == 0.0  # 100 of 336
+    assert evidence.baseline_label({"spend_baseline_days": 3}) == "3-day median"
+    assert evidence.baseline_label({}) == "usual hourly median"
+    s = dict(_snap(), spend_baseline_days=3)
+    texts = [e["value"] for e in evidence.evidence_items(s) if e["id"].startswith("spend:")]
+    assert texts and all("3-day median" in t for t in texts)
+    out = ops_assist.analyse_snapshot(s, LIMITS)
+    assert "3-day median" in {c["action"]: c for c in out["cards"]}["observe"]["if_nothing"]
 
 
 # ── evidence shaping ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -291,9 +322,9 @@ def test_calls_by_connection_and_spend_median():
     assert (c["ok"], c["refused"], c["error"], c["access_refused"]) == (5, 3, 1, 3)
     assert c["refused_by_model"] == {"m1": 3} and c["classes"] == {"access_denied": 3, "throttled": 1}
     base = [{"connection_key": "zz1", "usd": 1.0}] * 100   # 100 busy hours of 168: the median is 1.0
-    sp = evidence.spend_by_connection({"zz1": c}, base, 30)["zz1"]
+    sp = evidence.spend_by_connection({"zz1": c}, base, 30, 7)["zz1"]
     assert sp == {"window_usd": 0.25, "per_hour_usd": 0.5, "baseline_hour_usd": 1.0}
-    quiet = evidence.spend_by_connection({"zz1": c}, base[:10], 30)["zz1"]   # 10 of 168 hours: median 0
+    quiet = evidence.spend_by_connection({"zz1": c}, base[:10], 30, 7)["zz1"]   # 10 of 168 hours: median 0
     assert quiet["baseline_hour_usd"] == 0.0
 
 

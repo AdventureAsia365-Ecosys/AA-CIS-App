@@ -10,7 +10,8 @@ reason and never stops the others; a missing source is never read as healthy), i
   ``shared.llm_provider_health``, AA-1018);
 - ``calls``: the AI gateway ledger of the evidence window per connection: answered, refused and failed calls, the
   error classes, the refused models and the spend (``shared.llm_call_log``);
-- ``spend``: per connection, the spend per hour of the window against its median hourly spend of the last 7 days;
+- ``spend``: per connection, the spend per hour of the window against its median hourly spend of the
+  ``spend_baseline_days`` days before it (a setting; the snapshot keeps the number it used);
 - ``routes``: the live route config (``llm_route_control``: version, each active stage's chain, the provider order of
   each model) and the route versions saved inside the changes window;
 - ``jobs``: jobs an account-level refusal failed in the window (the ``llm_access_denied`` error prefix, AA-900), the
@@ -41,8 +42,6 @@ import structlog
 
 logger = structlog.get_logger()
 
-BASELINE_DAYS = 7  # technical-constant: the advisory's 7-day median baseline (a definition, not a policy limit)
-_HOURS = BASELINE_DAYS * 24
 ACCESS_CLASSES = ("access_denied", "credential", "quota_exhausted")
 # Read limits of the lists below (technical-constant: the size of a read, not a policy).
 EVENT_ROWS = 50  # technical-constant: rows of a read
@@ -170,16 +169,18 @@ def calls_by_connection(rows: list[dict]) -> dict[str, dict]:
     return out
 
 
-def spend_by_connection(window_rows: dict[str, dict], baseline_rows: list[dict], window_min: int) -> dict[str, dict]:
+def spend_by_connection(window_rows: dict[str, dict], baseline_rows: list[dict], window_min: int,
+                        baseline_days: int) -> dict[str, dict]:
     """{connection_key: {window_usd, per_hour_usd, baseline_hour_usd}}: the window's spend scaled to an hour against
-    the median of the 7 x 24 hourly sums before it (hours with no call count as 0). Pure."""
+    the median of the ``baseline_days`` x 24 hourly sums before it (hours with no call count as 0). Pure."""
+    hours_total = max(int(baseline_days), 1) * 24
     hours: dict[str, list[float]] = {}
     for r in baseline_rows:
         hours.setdefault(r["connection_key"], []).append(float(r.get("usd") or 0.0))
     out = {}
     for key in set(hours) | set(window_rows):
         vals = hours.get(key, [])
-        padded = vals + [0.0] * max(0, _HOURS - len(vals))
+        padded = vals + [0.0] * max(0, hours_total - len(vals))
         window = float((window_rows.get(key) or {}).get("cost_usd") or 0.0)
         out[key] = {"window_usd": round(window, 4), "per_hour_usd": round(window * 60.0 / max(window_min, 1), 4),
                     "baseline_hour_usd": round(statistics.median(padded), 4) if padded else 0.0}
@@ -320,6 +321,7 @@ async def collect(pool: Any, redis: Any, *, item_id: str, limits: dict, range_ke
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     win = now - timedelta(minutes=int(limits["evidence_window_min"]))
     changes_since = now - timedelta(minutes=int(limits["changes_window_min"]))
+    baseline_days = int(limits["spend_baseline_days"])
     unavailable: dict[str, str] = {}
     g = _guard
     (status, connections, calls_rows, baseline_rows, routes, route_versions, denied, stuck, waves, probe_rows,
@@ -328,7 +330,7 @@ async def collect(pool: Any, redis: Any, *, item_id: str, limits: dict, range_ke
           unavailable) if include_status else _none(),
         g("connections", _connections(pool, now), unavailable),
         g("calls", _rows(pool, CALLS_SQL, win, now), unavailable),
-        g("spend_baseline", _rows(pool, BASELINE_SQL, win - timedelta(hours=_HOURS), win), unavailable),
+        g("spend_baseline", _rows(pool, BASELINE_SQL, win - timedelta(days=baseline_days), win), unavailable),
         g("routes", _routes(pool), unavailable),
         g("route_versions", _rows(pool, ROUTE_VERSIONS_SQL, changes_since), unavailable),
         g("denied_jobs", _rows(pool, DENIED_JOBS_SQL, win), unavailable),
@@ -345,11 +347,12 @@ async def collect(pool: Any, redis: Any, *, item_id: str, limits: dict, range_ke
         "as_of": now.isoformat(), "range": range_key, "item_id": item_id,
         "window": {"since": win.isoformat(), "minutes": int(limits["evidence_window_min"])},
         "changes_window": {"since": changes_since.isoformat(), "minutes": int(limits["changes_window_min"])},
+        "spend_baseline_days": baseline_days,
         "status": st,
         "item": find_item(status, item_id) if status else None,
         "connections": connections,
         "calls": calls if calls_rows is not None else None,
-        "spend": spend_by_connection(calls, baseline_rows or [], int(limits["evidence_window_min"]))
+        "spend": spend_by_connection(calls, baseline_rows or [], int(limits["evidence_window_min"]), baseline_days)
         if calls_rows is not None and baseline_rows is not None else None,
         "routes": routes,
         "route_versions": [{"version": r["version"], "created_at": _iso(r["created_at"]), "action": r["action"],
@@ -418,6 +421,13 @@ def _calls_ev(s: dict) -> list[dict]:
     return out
 
 
+def baseline_label(s: dict) -> str:
+    """The name of the usual-spend baseline the snapshot was read with ("7-day median" with the default
+    ``spend_baseline_days``); a recorded snapshot without the number says "usual hourly median". Pure."""
+    days = s.get("spend_baseline_days")
+    return f"{int(days)}-day median" if days else "usual hourly median"
+
+
 def _spend_ev(s: dict) -> list[dict]:
     out = []
     since = _since(s)
@@ -425,8 +435,8 @@ def _spend_ev(s: dict) -> list[dict]:
         if not sp.get("window_usd") and not sp.get("baseline_hour_usd"):
             continue
         out.append(_ev(f"spend:{key}", f"Spend on {key}",
-                       f"{sp['per_hour_usd']:g} USD/h now against a median of {sp['baseline_hour_usd']:g} USD/h "
-                       f"over {BASELINE_DAYS} days", "shared.llm_call_log", s.get("as_of"),
+                       f"{sp['per_hour_usd']:g} USD/h now against a {baseline_label(s)} of "
+                       f"{sp['baseline_hour_usd']:g} USD/h", "shared.llm_call_log", s.get("as_of"),
                        calls_href(since) if since else PAGES["budgets"]))
     return out
 

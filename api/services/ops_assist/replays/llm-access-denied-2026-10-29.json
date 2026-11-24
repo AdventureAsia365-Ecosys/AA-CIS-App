@@ -15,6 +15,7 @@
     "item_id": "llm-conn-acc1",
     "window": {"since": "2026-10-29T08:00:00+00:00", "minutes": 30},
     "changes_window": {"since": "2026-10-29T06:30:00+00:00", "minutes": 120},
+    "spend_baseline_days": 7,
     "status": null,
     "item": null,
     "connections": [

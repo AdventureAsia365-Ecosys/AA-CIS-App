@@ -2,8 +2,9 @@
 
 ``signals(snapshot, limits)`` lists what the assistant sees beyond the status page's Needs-attention list (the page
 does not show an AI connection refusal yet): an AI connection refusing at account level (its circuit refusing, or at
-least ``refused_trigger_calls`` account-level refusals in the window), a throttled connection, a spend spike (spend
-per hour at least ``spend_spike_factor`` x its 7-day hourly median).
+least ``refused_trigger_calls`` account-level refusals in the window), a throttled connection (its circuit open on
+throttling, or at least ``throttled_trigger_calls`` throttled calls), a spend spike (spend per hour above
+``spend_spike_floor_usd_h`` and at least ``spend_spike_factor`` x its hourly median of ``spend_baseline_days`` days).
 
 ``cards(snapshot, limits)`` picks the playbook of the item (``choose``) and returns its cards in rank order:
 
@@ -27,7 +28,8 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from api.services.ops_assist import catalog, risk
-from api.services.ops_assist.evidence import ACCESS_CLASSES, stages_by_connection
+from api.services.ops_assist.evidence import ACCESS_CLASSES, baseline_label, stages_by_connection
+from shared.llm_client.route_evidence import BREAK_GLASS_MIN_CHARS
 
 SEV_ACCESS = "sev2"
 SEV_THROTTLE = "sev3"
@@ -59,6 +61,7 @@ def signals(s: dict, limits: dict) -> list[dict]:
     out: list[dict] = []
     calls = s.get("calls") or {}
     trigger = int(limits["refused_trigger_calls"])
+    throttle_trigger = int(limits["throttled_trigger_calls"])
     for c in s.get("connections") or []:
         key = c["connection_key"]
         circ = c.get("circuit") or {}
@@ -73,19 +76,19 @@ def signals(s: dict, limits: dict) -> list[dict]:
             continue
         throttled = int((n.get("classes") or {}).get("throttled") or 0)
         circuit_throttled = circ.get("state") not in (None, "closed") and circ.get("error_class") == "throttled"
-        if circuit_throttled or throttled >= trigger:
+        if circuit_throttled or throttled >= throttle_trigger:
             out.append({"id": f"llm-throttle-{key}", "severity": SEV_THROTTLE, "app": "shared",
                         "kind": "llm_throttled", "connection_key": key,
                         "title": f"AI connection {c.get('label') or key} is throttled",
                         "detail": f"{throttled} throttled calls in {s['window']['minutes']} min"})
     factor = float(limits["spend_spike_factor"])
-    small = float(limits["small_money_usd"])
+    floor = float(limits["spend_spike_floor_usd_h"])
     for key, sp in sorted((s.get("spend") or {}).items()):
         base, now = float(sp.get("baseline_hour_usd") or 0.0), float(sp.get("per_hour_usd") or 0.0)
-        if now > small and now >= factor * base:
+        if now > floor and now >= factor * base:
             out.append({"id": f"llm-spend-{key}", "severity": SEV_SPEND, "app": "shared", "kind": "llm_cost_spike",
                         "connection_key": key, "title": f"AI spend on {_conn_label(s, key)} is {now:g} USD/h",
-                        "detail": f"Median over 7 days {base:g} USD/h; limit {factor:g} x"})
+                        "detail": f"{baseline_label(s).capitalize()} {base:g} USD/h; limit {factor:g} x"})
     out.sort(key=lambda x: x["severity"])
     return out
 
@@ -182,7 +185,8 @@ def make_card(s: dict, limits: dict, action_id: str, *, reason: str, evidence: l
               if_nothing: str, cost_usd: Optional[float], cost_basis: str, body: Optional[dict] = None,
               params: Optional[dict] = None, stages: Optional[int] = None, change: Optional[dict] = None,
               precondition: Optional[str] = None, precondition_met: bool = True, title: Optional[str] = None,
-              copy_text: Optional[str] = None) -> dict:
+              copy_text: Optional[str] = None, way_back_body: Optional[dict] = None,
+              dry_run_body: Optional[dict] = None) -> dict:
     a = catalog.get(action_id)
     params = params or {}
     rk = risk.assess(a, limits, stages=stages, cost_usd=cost_usd, change=change)
@@ -191,7 +195,12 @@ def make_card(s: dict, limits: dict, action_id: str, *, reason: str, evidence: l
     if call is not None and body is not None:
         call["body"] = body
     dry = _route(a.dry_run, **params)
-    if dry is not None and action_id in ("llm_probe", "retry_llm_denied"):
+    back = _route(a.way_back, **params)
+    if back is not None and way_back_body is not None:
+        back["body"] = way_back_body
+    if dry is not None and dry_run_body is not None:
+        dry["body"] = dry_run_body
+    elif dry is not None and action_id in ("llm_probe", "retry_llm_denied"):
         dry["body"] = {**(body or {}), "dry_run": True}
     elif dry is not None and body is not None:
         dry["body"] = body
@@ -200,7 +209,7 @@ def make_card(s: dict, limits: dict, action_id: str, *, reason: str, evidence: l
         "reason": reason, "evidence": evidence, "risk": rk,
         "predictions": predictions + [track_record(s, action_id, limits)],
         "if_nothing": if_nothing,
-        "way_back": {"text": a.way_back_text, "call": _route(a.way_back, **params)},
+        "way_back": {"text": a.way_back_text, "call": back},
         "cost": {"usd": cost_usd, "basis": cost_basis},
         "approval": approval(a, rk["level"], limits),
         "call": call, "dry_run": dry, "copy_only": a.copy_only, "runbook": a.runbook, "copy_text": copy_text,
@@ -254,7 +263,7 @@ def _fallbacks(s: dict, key: str) -> list[str]:
 
 
 def _paid_fallback_spend(s: dict, key: str) -> tuple[float, float, list[str]]:
-    """(spend per hour now, its 7-day median) summed over the fallback connections. Pure."""
+    """(spend per hour now, its usual hourly median) summed over the fallback connections. Pure."""
     fb = _fallbacks(s, key)
     sp = s.get("spend") or {}
     now = sum(float((sp.get(k) or {}).get("per_hour_usd") or 0.0) for k in fb)
@@ -348,8 +357,8 @@ def llm_access_denied(s: dict, limits: dict, ctx: dict) -> tuple[list[dict], lis
         s, limits,
         reason=f"The breaker already skips {label}; each stage moves to its next connection ({served}).",
         evidence=[f"conn:{key}", f"stages:{key}"] + [f"calls:{k}" for k in fb] + [f"spend:{k}" for k in fb],
-        if_nothing=f"Spend continues at about {now_h:g} USD/h on the fallback ({base_h:g} USD/h is the 7-day "
-                   "median); refused attempts keep adding latency.",
+        if_nothing=f"Spend continues at about {now_h:g} USD/h on the fallback ({base_h:g} USD/h is the "
+                   f"{baseline_label(s)}); refused attempts keep adding latency.",
         predictions=[pred(f"Calls keep being answered by {served}: "
                           + ", ".join(f"{k} {(s.get('calls') or {})[k]['ok']} answered" for k in fb)
                           + f" in {window} min.", "measured", f"shared.llm_call_log, last {window} min")
@@ -361,10 +370,15 @@ def llm_access_denied(s: dict, limits: dict, ctx: dict) -> tuple[list[dict], lis
         cards.append(wave)
 
     order = _provider_order_moving_last(s, key)
-    if order:
-        version = (s.get("routes") or {}).get("version")
+    version = (s.get("routes") or {}).get("version")
+    if order and isinstance(version, int):
+        # The bodies the API takes: the preview (PreviewBody) only the change; the save (SaveBody) the change plus the
+        # version it was read against (409 when another was saved since); the way back reverts to that version, its
+        # expected_version being the one the save makes.
         cards.append(make_card(
-            s, limits, "route_save", body={"provider_order": order}, params={"version": version},
+            s, limits, "route_save", body={"provider_order": order, "expected_version": version},
+            dry_run_body={"provider_order": order}, way_back_body={"expected_version": version + 1},
+            params={"version": version},
             title=f"Move {label} behind its fallbacks for {len(order)} model(s) (preview first, $0)",
             reason=f"{len(st['primary'])} stage(s) try {label} first; each call loses one refused attempt before "
                    "the fallback answers.",
@@ -378,7 +392,10 @@ def llm_access_denied(s: dict, limits: dict, ctx: dict) -> tuple[list[dict], lis
             cost_usd=None, cost_basis="The fallback's own price per call (paid); the preview costs 0 USD.",
             stages=len(st["stages"]),
             precondition=f"The live route version is still {version} when saving (the API refuses a stale "
-                         "version)."))
+                         "version). When the preview's needs_evidence names a writer or judge stage, the save also "
+                         "needs eval_run_id (an eval run of the new order) or break_glass_reason (why now, at least "
+                         f"{BREAK_GLASS_MIN_CHARS} characters; it raises an admin alert). The way back holds while no "
+                         f"other version was saved after it (expected version {version + 1})."))
 
     denied = sum(d["n"] for d in (s.get("jobs") or {}).get("denied") or [])
     if denied:
@@ -458,7 +475,7 @@ def llm_cost_spike(s: dict, limits: dict, ctx: dict) -> tuple[list[dict], list[d
     if s.get("item"):
         ev.append("item")
     cards = [_observe(
-        s, limits, reason=f"Spend is {now_h:g} USD/h against a 7-day median of {base_h:g} USD/h.",
+        s, limits, reason=f"Spend is {now_h:g} USD/h against a {baseline_label(s)} of {base_h:g} USD/h.",
         evidence=ev, watch="The app's daily cap and the stage caps still stop the spend at their limits.",
         if_nothing=f"About {now_h * 24:g} USD a day at this rate until a cap stops it.",
         predictions=[pred(f"About {now_h:g} USD/h keeps being spent.", "measured",

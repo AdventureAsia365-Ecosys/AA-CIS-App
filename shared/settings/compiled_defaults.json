@@ -3973,14 +3973,14 @@
      "raise": "Longer reasons, better records, a little slower in an incident.",
      "lower": "Faster to act, with thinner records of why.",
      "when": "Keep the tech lead's 20 unless audits show reasons that say too little.",
-     "example": "With the default 20, \"acc1 refused, testing\" (21 characters) is accepted."
+     "example": "With the default 20, \"provider refused, testing\" (25 characters) is accepted."
     },
     "vi": {
      "what": "Độ dài tối thiểu của lý do viết tay mà thẻ rủi ro cao (R3) yêu cầu trước khi thực hiện.",
      "raise": "Lý do dài hơn, hồ sơ rõ hơn, chậm hơn một chút khi có sự cố.",
      "lower": "Thực hiện nhanh hơn, hồ sơ lý do sơ sài hơn.",
      "when": "Giữ mức 20 của tech lead trừ khi audit thấy lý do quá sơ sài.",
-     "example": "Với mặc định 20, \"acc1 refused, testing\" (21 ký tự) được chấp nhận."
+     "example": "Với mặc định 20, \"provider refused, testing\" (25 ký tự) được chấp nhận."
     }
    }
   },
@@ -4057,11 +4057,47 @@
    }
   },
   {
+   "key": "cis.ops.assist_spend_baseline_days",
+   "app": "cis",
+   "area": "ops",
+   "label": "Assistant: days of usual AI spend",
+   "description": "On the CIS admin assistant (Ecosystem status page, Actions on a Needs-attention row; api/services/ops_assist/) the usual spend of an AI connection is its median hourly spend over this many days before the evidence window (hours with no call count as 0). The spend spike signal compares the spend per hour of the window with it, and it is the baseline of the \"if we do nothing\" cost on every AI card. The S285 advisory reads 7 days. Default 7.",
+   "value_type": "int",
+   "unit": "days",
+   "min_value": 1,
+   "max_value": 30,
+   "allowed_values": null,
+   "default_value": 7,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many days of past AI spend the assistant uses to know a connection's usual hourly spend.",
+     "raise": "A steadier usual spend that a few busy days do not move, but a lasting change in use is learned slower.",
+     "lower": "The usual spend follows recent use sooner, and a busy day can hide a spike that follows it.",
+     "when": "Keep a full week so weekdays and weekends both count; lower it after a lasting change in how much AI the platform uses.",
+     "example": "With the default 7, a card on 24/11 compares with the median hour from 17/11 to 24/11."
+    },
+    "vi": {
+     "what": "Số ngày chi phí AI trước đó mà trợ lý dùng để biết mức chi theo giờ thường ngày của một kết nối.",
+     "raise": "Mức thường ngày ổn định hơn, vài ngày bận không làm lệch, nhưng thay đổi lâu dài được học chậm hơn.",
+     "lower": "Mức thường ngày theo sát mức dùng gần đây hơn, và một ngày bận có thể che một đợt tăng ngay sau đó.",
+     "when": "Giữ trọn một tuần để tính cả ngày thường và cuối tuần; giảm sau khi mức dùng AI của hệ thống đổi hẳn.",
+     "example": "Với mặc định 7, thẻ ngày 24/11 so với giờ trung vị từ 17/11 tới 24/11."
+    }
+   }
+  },
+  {
    "key": "cis.ops.assist_spend_spike_factor",
    "app": "cis",
    "area": "ops",
    "label": "Assistant: AI spend spike factor",
-   "description": "On the CIS admin assistant (Ecosystem status page, Actions on a Needs-attention row; api/services/ops_assist/) an AI connection whose spend per hour inside the evidence window is at least this many times its median hourly spend of the last 7 days opens an \"AI spend spike\" signal. The same median is the baseline of the \"if we do nothing\" cost on every AI card. Default 3.",
+   "description": "On the CIS admin assistant (Ecosystem status page, Actions on a Needs-attention row; api/services/ops_assist/) an AI connection whose spend per hour inside the evidence window is at least this many times its usual hourly spend (the median over cis.ops.assist_spend_baseline_days days) and above cis.ops.assist_spend_spike_floor_usd_h opens an \"AI spend spike\" signal. The same median is the baseline of the \"if we do nothing\" cost on every AI card. Default 3.",
    "value_type": "numeric",
    "unit": "x",
    "min_value": 1.5,
@@ -4089,6 +4125,78 @@
      "lower": "Bước nhảy nhỏ cũng báo, kể cả giờ bận bình thường của một wave.",
      "when": "Tăng khi wave chạy thường xuyên; giảm khi chi phí đều và bước nhảy nào cũng đáng ngờ.",
      "example": "Với mặc định 3, kết nối thường tốn 0,20 USD một giờ sẽ báo khi lên 0,60 USD một giờ."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.assist_spend_spike_floor_usd_h",
+   "app": "cis",
+   "area": "ops",
+   "label": "Assistant: smallest AI spend per hour that can be a spike",
+   "description": "On the CIS admin assistant (Ecosystem status page, Actions on a Needs-attention row; api/services/ops_assist/) an AI connection spending at most this many USD per hour inside the evidence window never opens an \"AI spend spike\" signal, whatever its usual spend, so a connection with almost no usual spend does not raise one on its first cents. Separate from the most an R1 action may cost. Default 0.10 USD per hour.",
+   "value_type": "usd",
+   "unit": "USD/hour",
+   "min_value": 0,
+   "max_value": 10,
+   "allowed_values": null,
+   "default_value": 0.1,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The lowest spend per hour at which the assistant can call a connection's spend a spike.",
+     "raise": "Small connections never raise a spike signal; only real money does.",
+     "lower": "Even a few cents an hour can raise a spike on a connection that is usually idle.",
+     "when": "Keep it near the hourly cost you would not act on; raise it if idle connections keep raising spikes.",
+     "example": "With the default 0.10, a usually idle connection spending 0.05 USD an hour raises no signal."
+    },
+    "vi": {
+     "what": "Mức chi theo giờ thấp nhất mà trợ lý có thể coi chi phí của một kết nối là tăng đột biến.",
+     "raise": "Kết nối nhỏ không bao giờ báo tăng đột biến; chỉ số tiền đáng kể mới báo.",
+     "lower": "Chỉ vài cent một giờ cũng có thể gây báo trên một kết nối thường không dùng.",
+     "when": "Giữ gần mức chi theo giờ mà bạn sẽ không xử lý; tăng nếu kết nối ít dùng cứ gây báo.",
+     "example": "Với mặc định 0,10, kết nối thường không dùng chi 0,05 USD một giờ không gây báo."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.assist_throttled_trigger_calls",
+   "app": "cis",
+   "area": "ops",
+   "label": "Assistant: throttled calls that open a throttle signal",
+   "description": "On the CIS admin assistant (Ecosystem status page, Actions on a Needs-attention row; api/services/ops_assist/) an AI connection with at least this many throttled calls (error class throttled) inside the evidence window opens an \"AI connection throttled\" signal with its action cards, even before its connection circuit opens. A circuit open on throttling always opens the signal. Separate from the refused-calls trigger, so quieting one never quiets the other. Default 3.",
+   "value_type": "int",
+   "unit": "calls",
+   "min_value": 1,
+   "max_value": 1000,
+   "allowed_values": null,
+   "default_value": 3,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many throttled calls on one AI connection make the assistant raise a throttle signal.",
+     "raise": "Fewer throttle signals; a short burst of throttling stays quiet.",
+     "lower": "Earlier throttle signals, including brief bursts that the limiter already absorbs.",
+     "when": "Raise it during busy waves when some throttling is normal; lower it when calls are few and any throttle matters.",
+     "example": "With the default 3, three throttled calls on one connection in the window raise the signal."
+    },
+    "vi": {
+     "what": "Số lời gọi bị giới hạn tốc độ (throttled) trên một kết nối AI để trợ lý báo tín hiệu throttle.",
+     "raise": "Ít tín hiệu throttle hơn; một đợt throttle ngắn không gây báo.",
+     "lower": "Báo throttle sớm hơn, kể cả đợt ngắn mà bộ giới hạn đã tự xử lý.",
+     "when": "Tăng khi wave đông và throttle là bình thường; giảm khi ít lời gọi và lần throttle nào cũng quan trọng.",
+     "example": "Với mặc định 3, ba lời gọi bị throttle trên một kết nối trong cửa sổ sẽ mở tín hiệu."
     }
    }
   },

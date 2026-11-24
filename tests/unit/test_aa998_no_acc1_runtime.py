@@ -18,6 +18,12 @@ REPO = Path(__file__).resolve().parents[2]
 SCANNED_ROOTS = ("api", "services", "shared", "worker", "scripts", "frontend/app", "frontend/lib",
                  "frontend/components")
 SKIPPED = (Path("api/migrations"),)
+# AA-1154: the CIS admin assistant's recorded incidents (JSON snapshots its rules replay). S278 (AA-1095, tech lead
+# decision) brought acc1 back as the Bedrock serving account, and its live gateway connection key is "acc1", so the
+# 29/10 replay names that connection key as data. Only these JSON fixtures: code in the same folder is still scanned,
+# and the account ID, roles, env var and profile patterns still apply to them.
+REPLAY_FIXTURES = Path("api/services/ops_assist/replays")
+REPLAY_ALLOWED = frozenset({"the acc1 account key"})
 SKIPPED_DIRS = {"node_modules", ".next", "__pycache__", "dist", "build"}
 SUFFIXES = {".py", ".ts", ".tsx", ".js", ".mjs", ".cjs", ".sh", ".sql", ".json", ".yml", ".yaml", ".toml"}
 ROOT_FILES = ("Dockerfile", "README.md", "CONTEXT.md")
@@ -73,8 +79,13 @@ def _hits(path: Path, allowed=frozenset()):
     return out
 
 
+def _allowed(path: Path) -> frozenset:
+    rel = path.relative_to(REPO)
+    return REPLAY_ALLOWED if rel.parent == REPLAY_FIXTURES and rel.suffix == ".json" else frozenset()
+
+
 def test_runtime_code_never_names_acc1():
-    found = [hit for path in _files() for hit in _hits(path)]
+    found = [hit for path in _files() for hit in _hits(path, _allowed(path))]
     assert not found, ("acc1 left the ecosystem (AA-998): LLM runs on acc3 only. Remove these references:\n"
                        + "\n".join(found))
 
@@ -91,6 +102,15 @@ def test_the_scan_sees_runtime_code():
     assert "shared/llm_client/bedrock_satellite.py" in scanned
     assert "frontend/app/admin/spend/page.tsx" in scanned
     assert not any(s.startswith("api/migrations/") for s in scanned)
+
+
+def test_the_replay_exemption_is_narrow():
+    # AA-1154: only the replay JSON fixtures may name the connection key; code beside them, a nested folder and any
+    # other JSON are still refused, and the other patterns still apply to the fixtures.
+    assert _allowed(REPO / REPLAY_FIXTURES / "llm-access-denied-2026-10-29.json") == {"the acc1 account key"}
+    for rel in (REPLAY_FIXTURES / "__init__.py", REPLAY_FIXTURES / "x" / "case.json",
+                Path("api/services/ops_assist/catalog.py"), Path("shared/settings/compiled_defaults.json")):
+        assert _allowed(REPO / rel) == frozenset(), rel
 
 
 def test_hashed_account_id_matches_a_12_digit_run(monkeypatch):

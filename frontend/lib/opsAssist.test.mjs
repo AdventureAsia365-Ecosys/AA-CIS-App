@@ -45,8 +45,8 @@ test("order, cited evidence, expiry, call text", () => {
 });
 
 test("signals already on the Needs-attention list are not repeated", () => {
-  const s = [{ id: "llm-conn-acc1" }, { id: "llm-spend-openai-direct" }];
-  assert.deepEqual(extraSignals(s, ["llm-conn-acc1"]).map((x) => x.id), ["llm-spend-openai-direct"]);
+  const s = [{ id: "llm-conn-zz1" }, { id: "llm-spend-openai-direct" }];
+  assert.deepEqual(extraSignals(s, ["llm-conn-zz1"]).map((x) => x.id), ["llm-spend-openai-direct"]);
 });
 
 test("the panel is read-only, uses the kit and is wired on the attention rows", () => {
