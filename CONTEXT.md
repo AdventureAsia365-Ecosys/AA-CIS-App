@@ -5356,8 +5356,15 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     AA-1146 draft routes and gate; `POST /admin/tours/{id}/draft/publish` also requires a hand-made tour's **required
     list** complete (409 `required_missing`: name, country, an active supplier, 1..max days, nights, a title / place /
     description for each day, the included / not included minimums, no item on both lists, the wording with one
-    "Day N —" block per day; nights ≠ days − 1 and a missing overnight are hints). Rewrite (S1) can write it too.
-    **Facts saves** (`PUT …/tours/{id}/facts`, content.write; hand-made tours only, 409 `not_hand_made`): before the
+    "Day N —" block per day; nights ≠ days − 1 and a missing overnight are hints). Rewrite (S1) can write it too, but
+    **the required list holds on every publish exit**: `process_export` (`_required_list_guard`) checks the version it
+    publishes and refuses an incomplete hand-made tour with `RequiredMissingError` (the version goes back to `hitl`); the
+    S1 auto publish files it in the Review Queue, a Review Queue approve answers 409 `required_missing` and puts the
+    review back to pending, promote answers 409. **Two people**: the people who saved a hand-made tour's facts since its
+    last publish (its `raw_tour_revision` `staff_edit` rows, and its creator while it was never published) count as
+    writers in the publish gate of the draft publish, the Review Queue approve and the promote; while
+    `cis.content.publish_two_person` is on, a published hand-made tour's facts are read-only in the workspace (409
+    `facts_two_person`: the save would go live with no second person; a facts draft is a follow-up). **Facts saves** (`PUT …/tours/{id}/facts`, content.write; hand-made tours only, 409 `not_hand_made`): before the
     first publish the page autosaves; once published a save needs a reason (422 `reason_required`) and runs the source
     fan-out, like the drawer's raw edit; every save that changes something writes one `raw_tour_revision` row
     (`staff_edit`) and one audit row; a save carrying an older `expected_saved_at` is 409 `facts_changed`. **The AA
@@ -5371,7 +5378,11 @@ _Avoid_: global / local, shared (ambiguous with the `shared` schema).
     DRY RUN first); each link writes a history and an audit row. **Limits** are settings (CIS 478, Platform › Settings,
     `services/content_workspace/policy.py`): `cis.content.manual_tour.max_days` (21),
     `cis.content.manual_tour.min_inclusions` (3), `cis.content.manual_tour.min_exclusions` (1),
-    `cis.content.supplier_link.bulk_max` (100). The editor's price panel shows `booking.v_from_prices` read-only. Code:
+    `cis.content.supplier_link.bulk_max` (100); so are the **business option lists** of the form, which an administrator
+    edits: `cis.content.manual_tour.tour_types` (json `[{code, label, label_vi}]`, seeded private / join-in; a save
+    accepts a listed code or the one the tour already holds, and the tour keeps the label it was saved with in
+    `manual_facts.tour_type_label`, rendered as "Tour type: <label>"), `cis.content.manual_tour.quick_inclusions` and
+    `…quick_exclusions` (the one-click chips), all served by `GET /admin/content-workspace/options`. The editor's price panel shows `booking.v_from_prices` read-only. Code:
     `api/routers/admin_content_workspace.py`, `services/content_workspace/` (facts, suppliers, store, policy).
   - **Atomize retires what the new text no longer has** (AA-645 step 0): the per-day path soft-deletes live atoms on a
     day the itinerary no longer has (and day-less legacy rows), also on an all-skipped run (C6); the legacy path (no

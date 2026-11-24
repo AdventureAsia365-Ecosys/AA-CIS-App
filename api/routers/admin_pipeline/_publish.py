@@ -61,14 +61,25 @@ async def enforce_publish_gate(conn: Any, request: Request, *, editors: Iterable
                             headers={"X-Error-Code": code})
 
 
+async def facts_editors(conn: Any, tour_id: Any) -> list:
+    """AA-1148: the writers of a hand-made tour's facts since its last publish (services/content_workspace/store.py
+    facts_editors); a publish of that tour puts their facts live too, so the two-person rule counts them. [] for a
+    sheet tour, and no read while the two-person switch is off (the gate then counts nobody)."""
+    if not await gate.switch_on(conn):
+        return []
+    from services.content_workspace import store as cw
+    return await cw.facts_editors(conn, str(tour_id))
+
+
 async def review_publish_gate(conn: Any, request: Request, review_id: str, tenant_id: str) -> None:
     """The publish gate of a Review Queue approve (api/routers/v1_pipeline.py approve_review): the editors are the
-    version's draft editors and its last hand editor (reviewed_by). No extra read while the switch is off."""
+    version's draft editors, its last hand editor (reviewed_by) and, for a hand-made tour, the writers of its facts
+    since the last publish (AA-1148). No extra read while the switch is off."""
     from services.content_generation import tour_draft as td
     if not await gate.switch_on(conn):
         return
     row = await conn.fetchrow("""
-        SELECT gc.reviewed_by::text AS reviewed_by, gc.edit_diff
+        SELECT gc.reviewed_by::text AS reviewed_by, gc.edit_diff, rq.tour_id::text AS tour_id
           FROM silver_aa_internal.review_queue rq
           JOIN silver_aa_internal.generated_content gc ON gc.id = rq.generated_content_id
          WHERE rq.id = $1::uuid AND rq.tenant_id = $2::uuid
@@ -76,6 +87,8 @@ async def review_publish_gate(conn: Any, request: Request, review_id: str, tenan
     editors = td.editors_of(row["edit_diff"], None) if row is not None else []
     if row is not None and row["reviewed_by"]:
         editors.append(f"admin:{row['reviewed_by']}")
+    if row is not None:
+        editors += await facts_editors(conn, row["tour_id"])
     await enforce_publish_gate(conn, request, editors=editors)
 
 

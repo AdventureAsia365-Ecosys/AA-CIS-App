@@ -547,10 +547,12 @@ async def _execute_run_tour(
 
 async def _auto_publish(conn, req: TourRunRequest, version_id, result: dict) -> None:
     """The S1 auto publish of an approved version (moved out of _execute_run_tour, AA-1146): the expected refusals
-    (a hand-locked Master, the elephant-riding policy, a dead source) are warnings, never errors."""
+    (a hand-locked Master, the elephant-riding policy, a dead source, an incomplete hand-made tour) are warnings, never
+    errors."""
     from services.export.handler import process_export
     from services.tour_lifecycle.policy import PolicyReviewRequiredError
     from services.content_generation.human_lock import HumanLockedError
+    from services.content_workspace.store import RequiredMissingError
     try:
         await process_export(str(version_id), contract_exit="auto_publish")
     except HumanLockedError as _locked:
@@ -563,6 +565,16 @@ async def _auto_publish(conn, req: TourRunRequest, version_id, result: dict) -> 
         # expected refusal: process_export moved it approved → hitl and filed its pending policy review.
         logger.warning("s1_export_refused_policy_review", tour_id=req.tour_id, version_id=str(version_id),
                        review_id=_held.review_id)
+    except RequiredMissingError as _gaps:
+        # AA-1148: a hand-made tour whose required list is not complete (no supplier, no exclusions...) never goes
+        # live from an S1 run. process_export moved the version approved -> hitl; file it for a person (Review Queue),
+        # whose approve is refused the same way until the tour's facts are complete.
+        logger.warning("s1_export_refused_required_missing", tour_id=req.tour_id, version_id=str(version_id),
+                       missing=[g["key"] for g in _gaps.gaps])
+        try:
+            await _enqueue_review(conn, req.tour_id, version_id, result, failure_summary=str(_gaps))
+        except Exception as _rq_err:
+            logger.warning("review_queue_enqueue_failed", tour_id=req.tour_id, error=str(_rq_err))
     except SourceNotLiveError as _dead:
         # AA-986: the source was trashed / superseded while S1 ran. An expected refusal, not an error
         # (no Sentry event): process_export already moved the version approved → hitl; file the

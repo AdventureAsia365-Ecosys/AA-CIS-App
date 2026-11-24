@@ -676,9 +676,24 @@ async def approve_review(
     else:
         # Admin-path forward export (no SF token). Runs once per claim.
         from services.export.handler import process_export
+        from services.content_workspace.store import RequiredMissingError
         try:
             await process_export(str(generated_content_id), contract_exit="approve", **lock_kw(request))
             exported = True
+        except RequiredMissingError as e:
+            # AA-1148: a hand-made tour publishes only with its required list complete. Nothing is published and
+            # process_export moved the version approved -> hitl; the review goes back to pending, so it can be
+            # approved once the tour's facts are complete, and the reviewer gets the missing items.
+            import structlog as _sl
+            _sl.get_logger().warning("approve_export_required_missing", review_id=review_id,
+                                     version_id=generated_content_id, missing=[g["key"] for g in e.gaps])
+            async with pool.acquire() as conn:
+                await conn.execute("""
+                    UPDATE silver_aa_internal.review_queue
+                    SET review_status = 'pending', reviewed_at = NULL
+                    WHERE id = $1::uuid AND review_status = 'approved'
+                """, review_id)
+            raise HTTPException(status_code=409, detail=e.detail(), headers={"X-Error-Code": e.code})
         except SourceNotLiveError as e:
             # The source was trashed between the claim and the export (race). Nothing is published and
             # process_export already moved the version approved → hitl; close the claimed review as

@@ -1,8 +1,9 @@
 """AA-1148 (S290) — the content workspace on real Postgres: a content user creates a 3-day tour from a blank form tied
 to an AA supplier, autosaves its facts (with the stale-save refusal), sees its required list, and publishes it through
-the AA-1146 draft gate, which refuses an incomplete hand-made tour (409 required_missing). Also: the unlinked tours
-report with the suggested supplier, the bulk link and the apply of the suggestions (DRY RUN first), each with its
-history row.
+the AA-1146 draft gate, which refuses an incomplete hand-made tour (409 required_missing); process_export refuses it on
+every other exit too (S1 auto publish, Review Queue approve). The two-person rule counts the people who saved the facts,
+and a published hand-made tour's facts are not saved here while the switch is on. Also: the unlinked tours report with
+the suggested supplier, the bulk link and the apply of the suggestions (DRY RUN first), each with its history row.
 
 Needs CIS 478: the module is skipped on a database without it, so the code PR's own CI (before the migration PR is
 merged) skips it and the merge queue (main + this PR) runs it. Booking's view booking.v_supply_suppliers (bk-072) is not
@@ -33,11 +34,28 @@ from services.content_workspace import store  # noqa: E402
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 MASTER = "00000000-0000-0000-0000-000000000001"
 EDITOR = "00000000-0000-4000-8000-0000000011e1"
+LEAD_B = "00000000-0000-4000-8000-0000000011e2"
+LEAD_C = "00000000-0000-4000-8000-0000000011e3"
 DMC = "aa114800-0000-4000-8000-000000000001"
 HOTEL = "aa114800-0000-4000-8000-000000000002"
 GONE = "aa114800-0000-4000-8000-000000000003"
 LIMITS = policy.Limits(max_days=21, min_inclusions=3, min_exclusions=1, bulk_max=2)
+OPTIONS = policy.FormOptions(tour_types=({"code": "private", "label": "Private tour", "label_vi": "Tour riêng"},),
+                             quick_inclusions=("Zz boat",), quick_exclusions=("Zz tips",))
 ACTOR = f"admin:{EDITOR}"
+
+
+class _NoClose:
+    """process_export opens its own connection: hand it the test's (uncommitted rows visible), never closed there."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    async def close(self):
+        return None
 
 
 class _OneConnPool:
@@ -77,6 +95,7 @@ async def conn():
                    AS v (id, code, company_name, categories, country_code, status)""")
         with patch.object(ap, "verify_admin_secret", MagicMock()), \
                 patch.object(policy, "limits", AsyncMock(return_value=LIMITS)), \
+                patch.object(policy, "form_options", AsyncMock(return_value=OPTIONS)), \
                 patch("services.tour_lifecycle.run_after_commit", AsyncMock()), \
                 patch.object(ap.tour_detail, "_source_fanout_raw", AsyncMock()):
             yield c
@@ -241,3 +260,88 @@ async def test_unlinked_report_bulk_link_and_suggestions(conn):
                                "AND supplier_id IS NOT NULL", ids) == 1
     done = await store.apply_suggestions(pool, dry_run=False, reason="zz match", actor=ACTOR)
     assert done["linked"] == 2 and done["remaining"] == done["matches"] - 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("contract_exit", ["auto_publish", "approve", "promote"])
+async def test_process_export_refuses_an_incomplete_hand_made_tour_on_every_exit(conn, contract_exit):
+    from services.export import handler
+
+    pool = _OneConnPool(conn)
+    created = await store.create_tour(pool, _form(exclusions=[], supplier_id=None), actor=ACTOR)
+    tour_id, version_id = created["tour_id"], created["wording_version_id"]
+    # an S1 run (or a reviewer) approved this version: the wording is complete, the facts are not
+    await conn.execute("UPDATE silver_aa_internal.generated_content SET status = 'approved' WHERE id = $1::uuid",
+                       version_id)
+
+    async def _connect(*_a, **_k):
+        return _NoClose(conn)
+    with patch.object(handler.asyncpg, "connect", _connect), patch.object(handler, "get_database_url",
+                                                                          MagicMock(return_value="x")):
+        with pytest.raises(store.RequiredMissingError) as e:
+            await handler.process_export(version_id, contract_exit=contract_exit)
+    assert {g["key"] for g in e.value.gaps} == {"supplier", "exclusions"}
+    assert await conn.fetchval("SELECT status::text AS s FROM silver_aa_internal.generated_content "
+                               "WHERE id = $1::uuid", version_id) == "hitl"
+    assert await conn.fetchval("SELECT count(*) AS n FROM gold_aa_internal.published_tours WHERE tour_id = $1::uuid",
+                               tour_id) == 0
+    # a sheet tour (or a complete hand-made one) is not stopped by the guard
+    assert await store.required_gaps(conn, str(uuid.uuid4())) is None
+
+
+@pytest.mark.asyncio
+async def test_the_person_who_saved_the_facts_cannot_publish_alone(conn):
+    pool = _OneConnPool(conn)
+    tour_id = (await store.create_tour(pool, _form(exclusions=[]), actor=ACTOR))["tour_id"]
+    with patch("api.services.content_publish_gate.switch_on", AsyncMock(return_value=True)):
+        # B (a content lead) completes the facts of a tour A created: B wrote what goes live
+        out = await store.save_facts(pool, tour_id, _form(), expected_saved_at=None, reason=None,
+                                     actor=f"admin:{LEAD_B}")
+        assert out["saved"]
+        assert await store.facts_editors(conn, tour_id) == sorted([ACTOR, f"admin:{LEAD_B}"])
+        await conn.execute("UPDATE silver_aa_internal.generated_content SET revalidate_passed = true "
+                           "WHERE tour_id = $1::uuid", tour_id)
+
+        async def _export(version_id, **kw):
+            await conn.execute(
+                "INSERT INTO gold_aa_internal.published_tours (tour_id, generated_content_id, tenant_id, aa_name, "
+                "master_status) SELECT tour_id, id, tenant_id, aa_name, 'active' FROM "
+                "silver_aa_internal.generated_content WHERE id = $1::uuid", version_id)
+            return {"catalog_id": "pt-zz", "atomize_job_id": None}
+        with patch("services.export.handler.process_export", _export):
+            with pytest.raises(HTTPException) as e:
+                await ap.publish_tour_draft(tour_id, _request(conn, role="content_lead", user=LEAD_B),
+                                            x_admin_secret="s")
+            assert e.value.status_code == 403 and e.value.detail["code"] == "same_person"
+            res = await ap.publish_tour_draft(tour_id, _request(conn, role="content_lead", user=LEAD_C),
+                                              x_admin_secret="s")
+        assert res["published"]
+        # published, switch on: a facts save would go live with no second person
+        view = await store.read_tour(pool, tour_id)
+        assert view["facts_two_person"] and not view["editable"]
+        with pytest.raises(store.WorkspaceError) as e:
+            await store.save_facts(pool, tour_id, _form(exclusions=["Drinks", "Tips"]), expected_saved_at=None,
+                                   reason="zz the supplier changed", actor=f"admin:{LEAD_C}")
+        assert e.value.code == "facts_two_person"
+    assert await store.facts_editors(conn, str(uuid.uuid4())) == []
+
+
+@pytest.mark.asyncio
+async def test_a_tour_type_from_the_options_and_its_label_in_the_source_text(conn):
+    pool = _OneConnPool(conn)
+    opts = policy.FormOptions(tour_types=({"code": "zz_small", "label": "Zz small group", "label_vi": "Zz nhỏ"},),
+                              quick_inclusions=(), quick_exclusions=())
+    with patch.object(policy, "form_options", AsyncMock(return_value=opts)):
+        tour_id = (await store.create_tour(pool, _form(tour_type="zz_small"), actor=ACTOR))["tour_id"]
+        with pytest.raises(store.WorkspaceError) as e:
+            await store.create_tour(pool, _form(tour_type="zz_other"), actor=ACTOR)
+        assert e.value.code == "tour_type_unknown"
+    desc = await conn.fetchval("SELECT src_description AS d FROM silver_aa_internal.raw_tours WHERE tour_id = $1::uuid",
+                               tour_id)
+    assert desc.startswith("Tour type: Zz small group")
+    # the administrator removes the type: the tour keeps it and still saves
+    gone = policy.FormOptions(tour_types=(), quick_inclusions=(), quick_exclusions=())
+    with patch.object(policy, "form_options", AsyncMock(return_value=gone)):
+        out = await store.save_facts(pool, tour_id, _form(tour_type="zz_small", summary="Zz changed."),
+                                     expected_saved_at=None, reason=None, actor=ACTOR)
+    assert out["saved"] and (await store.read_tour(pool, tour_id))["facts"]["tour_type_label"] == "Zz small group"

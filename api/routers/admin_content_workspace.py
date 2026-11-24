@@ -1,8 +1,10 @@
 """AA-1148 (S290) — /admin/content-workspace: content staff create and edit tours by hand, tied to an AA supplier of
 AA-Booking, and link the old tours whose supplier is only the sheet's text.
 
-  GET  /admin/content-workspace/options                       countries, the limits in force, whether the Booking
-                                                              supplier list can be read, two-person publishing
+  GET  /admin/content-workspace/options                       countries, the limits in force, the tour types and the
+                                                              one-click included / not included items (settings an
+                                                              administrator edits), whether the Booking supplier list
+                                                              can be read, two-person publishing
   GET  /admin/content-workspace/suppliers                     the supplier picker (Booking view supply.supplier.v1)
   GET  /admin/content-workspace/tours                         the hand-made tours (state, supplier, days)
   POST /admin/content-workspace/tours                         create a hand-made tour + its first wording draft
@@ -62,7 +64,7 @@ def _raise(e: store.WorkspaceError):
     raise HTTPException(status_code=e.status, detail=e.detail(), headers={"X-Error-Code": e.code})
 
 
-@router.get("/options", summary="Countries, limits and switches of the content workspace")
+@router.get("/options", summary="Countries, limits, option lists and switches of the content workspace")
 async def options(request: Request):
     from shared import countries
 
@@ -72,8 +74,8 @@ async def options(request: Request):
         two_person = await publish_gate.switch_on(conn)
     return {"countries": sorted(({"iso2": c.iso2, "name": c.name} for c in countries.all_countries()),
                                 key=lambda c: c["name"]),
-            "limits": (await policy.limits()).as_dict(), "suppliers_available": sup is not None,
-            "two_person_publish": two_person}
+            "limits": (await policy.limits()).as_dict(), **(await policy.form_options()).as_dict(),
+            "suppliers_available": sup is not None, "two_person_publish": two_person}
 
 
 @router.get("/suppliers", summary="AA suppliers of Booking for the picker")

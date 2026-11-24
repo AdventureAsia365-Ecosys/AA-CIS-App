@@ -10,6 +10,17 @@ wording is edited through the draft routes of AA-1146 (PUT /admin/tours/{id}/dra
 published through the one gate (POST /admin/tours/{id}/draft/publish), which also runs :func:`publish_check` here for a
 hand-made tour (409 ``required_missing``). Rewrite (S1) can write it too, like any source tour.
 
+The required list holds on every publish path, not only the draft publish: process_export (services/export/handler.py,
+the one exit every publish goes through: S1 auto publish, Review Queue approve, version promote, recompose, the draft
+publish) calls :func:`required_gaps` on the version it publishes and refuses an incomplete hand-made tour with
+:class:`RequiredMissingError` (the version leaves 'approved' for 'hitl', like the other refusals; S1 files a review).
+
+Two people: the people who saved a hand-made tour's facts are its writers too (the facts are staff-written content,
+not supplier input), so the draft publish counts them with the wording's editors (:func:`facts_editors`, the history
+rows since the tour's last publish). While cis.content.publish_two_person is on, a facts save of a published hand-made
+tour is refused (409 ``facts_two_person``): it would go live with no second person. A facts draft that a second person
+publishes is a follow-up.
+
 Facts saves: a tour that was never published is a draft nobody outside sees, so the form saves as the person types
 (autosave). Once it has a Master, a save is a change of a live tour: it needs a reason and runs the source fan-out, like
 every raw edit (the drawer's PATCH /admin/tours/{id}/raw). Every save that changes something writes one history row
@@ -34,6 +45,7 @@ logger = structlog.get_logger()
 
 MASTER_TENANT = "00000000-0000-0000-0000-000000000001"
 RESOURCE = "raw_tour"
+FACTS_TWO_PERSON = "facts_two_person"
 
 
 class WorkspaceError(Exception):
@@ -43,6 +55,47 @@ class WorkspaceError(Exception):
 
     def detail(self) -> dict:
         return {"code": self.code, "message": self.message, **self.extra}
+
+
+class RequiredMissingError(Exception):
+    """process_export refused to publish a hand-made tour whose required list is not complete; the version left
+    'approved' for 'hitl' before the refusal (services/export/handler.py)."""
+
+    code = "required_missing"
+
+    def __init__(self, tour_id: str, version_id: str, gaps: list[dict]):
+        super().__init__(tour_id, version_id, gaps)
+        self.tour_id, self.version_id, self.gaps = tour_id, version_id, gaps
+
+    def __str__(self) -> str:
+        return _missing_message(self.gaps)
+
+    def detail(self) -> dict:
+        return {"code": self.code, "message": str(self), "items": _missing_items(self.gaps)}
+
+
+def _missing_message(gaps: list[dict]) -> str:
+    return "This hand-made tour is not complete: " + "; ".join(i["message"] for i in gaps)
+
+
+def _missing_items(gaps: list[dict]) -> list[dict]:
+    return [{"key": i["key"], "message": i["message"], "params": i["params"]} for i in gaps]
+
+
+class _OneConn:
+    """A pool-like view of one connection (the readers here take a pool): acquire() yields the connection itself, so a
+    read in ``async with pool.acquire() as c, c.transaction()`` is a savepoint of the caller's transaction."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def acquire(self):
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def _cm():
+            yield self._conn
+        return _cm()
 
 
 # The columns a facts save writes (the rendered text columns, the country and the supplier fields).
@@ -169,8 +222,8 @@ async def create_tour(pool, form: F.FactsIn, *, actor: str) -> dict:
     Returns {tour_id, wording_version_id}."""
     from services.tour_lifecycle import run_after_commit, supersede
 
-    lim = await policy.limits()
-    stored = F.normalize(form)
+    lim, opts = await policy.limits(), await policy.form_options()
+    stored = F.normalize(form, tour_type_label=_tour_type_label(form.tour_type, {}, opts))
     _check_size(stored, lim)
     if not stored["name"]:
         raise WorkspaceError(422, "name_required", "Give the tour a name")
@@ -211,6 +264,20 @@ async def create_tour(pool, form: F.FactsIn, *, actor: str) -> dict:
     return {"tour_id": tour_id, "wording_version_id": version_id}
 
 
+def _tour_type_label(code: Optional[str], old: dict, opts: policy.FormOptions) -> Optional[str]:
+    """The label of a chosen tour type: an option in force, or the type the tour already holds (an administrator may
+    have removed it since; the tour keeps the label it was saved with). Anything else is 422 ``tour_type_unknown``."""
+    if not code:
+        return None
+    option = opts.tour_type(code)
+    if option is not None:
+        return option["label"]
+    if old.get("tour_type") == code:
+        return old.get("tour_type_label") or None
+    raise WorkspaceError(422, "tour_type_unknown", "Choose the tour type from the list",
+                         {"allowed": [t["code"] for t in opts.tour_types]})
+
+
 def _check_size(stored: dict, lim: policy.Limits) -> None:
     if len(stored["days"]) > lim.max_days:
         raise WorkspaceError(422, "too_many_days", f"A hand-made tour has at most {lim.max_days} days",
@@ -234,6 +301,8 @@ async def _from_price(pool, key: str) -> Optional[dict]:
 
 
 async def read_tour(pool, tour_id: str) -> dict:
+    from api.services import content_publish_gate as gate
+
     lim = await policy.limits()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(_TOUR_SQL, tour_id)
@@ -244,13 +313,17 @@ async def read_tour(pool, tour_id: str) -> dict:
         has_draft = bool(await conn.fetchval(
             "SELECT 1 AS ok FROM silver_aa_internal.generated_content WHERE tour_id = $1::uuid AND status = 'draft' "
             "AND origin = 'human'", tour_id))
+        two_person = await gate.switch_on(conn)
     state = _state(row)
     if state == "live" and has_draft:
         state = "live_changes"
+    published = state in ("live", "live_changes", "paused")
+    facts_two_person = row["entry_origin"] == "manual" and published and two_person
     return {
         "tour_id": row["tour_id"], "entry_origin": row["entry_origin"], "state": state,
-        "editable": row["entry_origin"] == "manual" and state != "retired",
-        "reason_required": row["entry_origin"] == "manual" and state in ("live", "live_changes", "paused"),
+        "editable": row["entry_origin"] == "manual" and state != "retired" and not facts_two_person,
+        "facts_two_person": facts_two_person,
+        "reason_required": row["entry_origin"] == "manual" and published,
         "facts": {**stored, "country": row["country_iso2"], "supplier_id": row["supplier_id"]},
         "country_name": row["country"], "provider": row["provider"], "supplier": supplier,
         "checklist": items, "completeness": F.completeness(items), "has_draft": has_draft,
@@ -298,8 +371,11 @@ async def list_manual(pool, *, q: str = "", limit: int = 50, offset: int = 0) ->
 
 # ── save facts ────────────────────────────────────────────────────────────────────────────────────────────────────
 
-def _check_savable(row, old: dict, *, expected_saved_at: Optional[str], reason: Optional[str]) -> bool:
-    """Refuse a save the tour cannot take; True when the tour is published (the save is a live change)."""
+def _check_savable(row, old: dict, *, expected_saved_at: Optional[str], reason: Optional[str],
+                   two_person: bool = False) -> bool:
+    """Refuse a save the tour cannot take; True when the tour is published (the save is a live change). While the
+    two-person switch is on, a published tour's facts are not saved here: the save would go live with no second
+    person (409 ``facts_two_person``)."""
     if row is None:
         raise WorkspaceError(404, "not_found", "Tour not found")
     if row["entry_origin"] != "manual":
@@ -312,6 +388,9 @@ def _check_savable(row, old: dict, *, expected_saved_at: Optional[str], reason: 
         raise WorkspaceError(409, "facts_changed", "Someone else saved this tour since you opened it: reload it to see "
                              "their changes", {"saved_at": old.get("saved_at")})
     live = state != "draft"
+    if live and two_person:
+        raise WorkspaceError(409, FACTS_TWO_PERSON, "Two-person publishing is on: a change to the facts of a published "
+                             "hand-made tour would go live without a second person, so it cannot be saved here yet")
     if live and not (reason and 3 <= len(reason.strip()) <= 500):
         raise WorkspaceError(422, "reason_required", "This tour is published: say why you change its facts "
                              "(3 to 500 characters)")
@@ -342,16 +421,18 @@ async def _plan_save(pool, row, form: F.FactsIn, stored: dict, old: dict, countr
 async def save_facts(pool, tour_id: str, form: F.FactsIn, *, expected_saved_at: Optional[str], reason: Optional[str],
                      actor: str) -> dict:
     from api.routers.admin_pipeline.tour_detail import _source_fanout_raw, record_raw_revision
+    from api.services import content_publish_gate as gate
 
-    lim = await policy.limits()
-    stored = F.normalize(form)
-    _check_size(stored, lim)
+    lim, opts = await policy.limits(), await policy.form_options()
+    _check_size(F.normalize(form), lim)
     country, _iso2 = _country(form.country)
     async with pool.acquire() as conn:
         async with conn.transaction():
             row = await conn.fetchrow(_TOUR_SQL + " FOR UPDATE OF rt", tour_id)
             old = F.facts_from_row(row) if row is not None else {}
-            live = _check_savable(row, old, expected_saved_at=expected_saved_at, reason=reason)
+            live = _check_savable(row, old, expected_saved_at=expected_saved_at, reason=reason,
+                                  two_person=await gate.switch_on(conn))
+            stored = F.normalize(form, tour_type_label=_tour_type_label(form.tour_type, old, opts))
             new_cols, sup, changed, hist_b, hist_a = await _plan_save(pool, row, form, stored, old, country)
             if not changed:
                 return {"tour_id": tour_id, "saved": False, "saved_at": old.get("saved_at")}
@@ -378,25 +459,73 @@ async def save_facts(pool, tour_id: str, form: F.FactsIn, *, expected_saved_at: 
 
 # ── the publish gate of a hand-made tour ─────────────────────────────────────────────────────────────────────────
 
+# The entry origin read through to_jsonb: NULL before CIS 478 instead of an error, so the probe needs no savepoint and
+# runs on any connection (process_export's own, a publish transaction).
+_ORIGIN_SQL = """
+    SELECT to_jsonb(rt) ->> 'entry_origin' AS origin FROM silver_aa_internal.raw_tours rt WHERE rt.tour_id = $1::uuid
+"""
+
+
+async def _manual_row(conn, tour_id: str):
+    """The tour row when it is a hand-made tour; None for a sheet tour, an unknown id or before CIS 478."""
+    if await conn.fetchval(_ORIGIN_SQL, tour_id) != "manual":
+        return None
+    return await conn.fetchrow(_TOUR_SQL, tour_id)
+
+
+async def required_gaps(conn, tour_id: str, *, wording: Optional[dict] = None, pool=None) -> Optional[list[dict]]:
+    """The missing required items of a hand-made tour ([] = complete); None for any other tour. ``wording`` is the
+    version about to be published (aa_name, aa_summary, aa_itineraries); without it, the open human draft or the live
+    version. ``pool`` reads the supplier view; without it, ``conn`` (a savepoint, fail soft)."""
+    row = await _manual_row(conn, tour_id)
+    if row is None:
+        return None
+    lim = await policy.limits()
+    supplier, _ok = await _supplier_of(pool or _OneConn(conn), row["supplier_id"])
+    w = wording if wording is not None else await wording_of(conn, row["tour_id"])
+    items = F.checklist(F.facts_from_row(row), limits=lim, country_ok=bool(row["country"]), supplier=supplier,
+                        wording=w)
+    return F.missing(items)
+
+
 async def publish_check(pool, conn, tour_id: str) -> None:
     """In the draft publish transaction: a hand-made tour publishes only with its required list complete (409
-    ``required_missing`` with the missing items); a sheet tour is not checked here."""
+    ``required_missing`` with the missing items); a sheet tour is not checked here. process_export checks the same
+    list again on every publish path (:class:`RequiredMissingError`)."""
+    gaps = await required_gaps(conn, tour_id, pool=pool)
+    if gaps:
+        raise WorkspaceError(409, "required_missing", _missing_message(gaps), {"items": _missing_items(gaps)})
+
+
+_FACTS_EDITORS_SQL = """
+    SELECT DISTINCT r.actor
+      FROM silver_aa_internal.raw_tour_revision r
+      LEFT JOIN gold_aa_internal.published_tours pt ON pt.tour_id = r.tour_id
+     WHERE r.tour_id = $1::uuid AND r.source = 'staff_edit'
+       AND (pt.tour_id IS NULL OR r.created_at > pt.updated_at)
+"""
+_CREATOR_SQL = """
+    SELECT a.actor FROM acp_shared.audit_log a
+     WHERE a.action = 'raw_tour.manual_created' AND a.resource_id = $1
+       AND NOT EXISTS (SELECT 1 FROM gold_aa_internal.published_tours pt WHERE pt.tour_id = $2::uuid)
+"""
+
+
+async def facts_editors(conn, tour_id: str) -> list[str]:
+    """The people who wrote a hand-made tour's facts since its last publish (the history rows of its facts saves and
+    supplier links, staff_edit; and its creator while it was never published); [] for any other tour. The draft publish
+    counts them as writers of what goes live (the two-person rule)."""
     import asyncpg
 
+    if await _manual_row(conn, tour_id) is None:
+        return []
     try:
-        async with conn.transaction():   # a savepoint: before CIS 478 the read fails and the publish goes on
-            row = await conn.fetchrow(_TOUR_SQL, tour_id)
-    except asyncpg.exceptions.UndefinedColumnError:
-        return
-    if row is None or row["entry_origin"] != "manual":
-        return
-    lim = await policy.limits()
-    items, _sup = await checklist_for(pool, conn, row, F.facts_from_row(row), limits=lim)
-    gaps = F.missing(items)
-    if gaps:
-        raise WorkspaceError(409, "required_missing", "This hand-made tour is not complete: " + "; ".join(
-            i["message"] for i in gaps), {"items": [{"key": i["key"], "message": i["message"], "params": i["params"]}
-                                                 for i in gaps]})
+        async with conn.transaction():   # a savepoint: a missing history table never fails the publish
+            rows = await conn.fetch(_FACTS_EDITORS_SQL, tour_id)
+            creator = await conn.fetch(_CREATOR_SQL, str(tour_id), tour_id)
+    except (asyncpg.exceptions.UndefinedTableError, asyncpg.exceptions.UndefinedColumnError):
+        return []
+    return sorted({r["actor"] for r in [*rows, *creator] if r["actor"]})
 
 
 # ── supplier links ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -519,5 +648,6 @@ async def apply_suggestions(pool, *, dry_run: bool, reason: str, actor: str) -> 
             "bulk_max": lim.bulk_max, "by_supplier": preview}
 
 
-__all__ = ["WorkspaceError", "apply_suggestions", "checklist_for", "create_tour", "link_tours", "list_manual",
-           "publish_check", "read_tour", "save_facts", "unlinked_report", "wording_of"]
+__all__ = ["FACTS_TWO_PERSON", "RequiredMissingError", "WorkspaceError", "apply_suggestions", "checklist_for",
+           "create_tour", "facts_editors", "link_tours", "list_manual", "publish_check", "read_tour", "required_gaps",
+           "save_facts", "unlinked_report", "wording_of"]

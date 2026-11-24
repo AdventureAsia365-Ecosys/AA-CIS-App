@@ -26,7 +26,7 @@ from fastapi import Body, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from api.routers.admin import verify_admin_secret
-from api.routers.admin_pipeline._publish import enforce_publish_gate, request_actor
+from api.routers.admin_pipeline._publish import enforce_publish_gate, facts_editors, request_actor
 from api.routers.admin_pipeline._shared import logger, router
 from api.routers.admin_pipeline.tour_detail import _record_field_edit_signals
 from api.routers.admin_pipeline.uploads import _lifecycle_http
@@ -278,7 +278,9 @@ async def publish_tour_draft(tour_id: str, request: Request, x_admin_secret: str
                 raise HTTPException(status_code=404, detail="This tour has no open draft")
             await conn.execute(
                 "SELECT 1 AS ok FROM silver_aa_internal.generated_content WHERE id = $1::uuid FOR UPDATE", draft["id"])
-            await enforce_publish_gate(conn, request, editors=_draft_editors(draft))
+            # AA-1148: a hand-made tour's facts writers are writers of what goes live too
+            editors = _draft_editors(draft) + await facts_editors(conn, tour_id)
+            await enforce_publish_gate(conn, request, editors=editors)
             await _hand_made_complete(pool, conn, tour_id)   # AA-1148: the required list of a hand-made tour
             if draft["revalidate_passed"] is not True:
                 raise HTTPException(
@@ -303,6 +305,7 @@ async def publish_tour_draft(tour_id: str, request: Request, x_admin_secret: str
     from services.export.handler import process_export
     from services.tour_lifecycle import LifecycleError
     from services.tour_lifecycle.policy import POLICY_REVIEW_REQUIRED, PolicyReviewRequiredError
+    from services.content_workspace.store import RequiredMissingError
     try:
         exported = await process_export(draft["id"], contract_exit="human_publish",
                                         atomize_created_by="admin:publish_draft", lock_by=actor,
@@ -313,6 +316,8 @@ async def publish_tour_draft(tour_id: str, request: Request, x_admin_secret: str
     except PolicyReviewRequiredError as e:   # AA-1049: elephant riding, the version is now in the Review Queue
         raise HTTPException(status_code=409, detail=f"{e} (v{draft['version_num']} is now in the Review Queue)",
                             headers={"X-Error-Code": POLICY_REVIEW_REQUIRED})
+    except RequiredMissingError as e:   # AA-1148: the required list changed between the check and the publish
+        raise HTTPException(status_code=409, detail=e.detail(), headers={"X-Error-Code": e.code})
     except LifecycleError as e:
         raise _lifecycle_http(e)
     logger.info("tour_draft_published", tour_id=tour_id, version_id=draft["id"], version_num=draft["version_num"],

@@ -5428,10 +5428,8 @@
           "tour_type": {
             "anyOf": [
               {
-                "enum": [
-                  "private",
-                  "join_in"
-                ],
+                "maxLength": 40,
+                "pattern": "^[a-z][a-z0-9_]*$",
                 "type": "string"
               },
               {
@@ -5586,10 +5584,8 @@
           "tour_type": {
             "anyOf": [
               {
-                "enum": [
-                  "private",
-                  "join_in"
-                ],
+                "maxLength": 40,
+                "pattern": "^[a-z][a-z0-9_]*$",
                 "type": "string"
               },
               {
@@ -24933,7 +24929,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Countries, limits and switches of the content workspace",
+        "summary": "Countries, limits, option lists and switches of the content workspace",
         "tags": [
           "admin-content-workspace"
         ]

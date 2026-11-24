@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from api.core.staff_authz import POLICY, ROLE_PERMS, policy_capabilities
 from services.content_workspace import facts as F
 from services.content_workspace import policy
+from services.content_workspace import store
 from services.content_workspace import suppliers as S
 
 LIMITS = policy.Limits(max_days=21, min_inclusions=3, min_exclusions=1, bulk_max=100)
@@ -49,7 +50,7 @@ def test_normalize_trims_dedupes_and_orders_meals():
 
 
 def test_render_gives_the_excel_shaped_text_columns():
-    text = F.render(F.normalize(_form()))
+    text = F.render(F.normalize(_form(), tour_type_label="Private tour"))
     assert text["duration"] == "3 days 2 nights"
     assert text["group_size"] == "2-12 travellers"
     assert text["inclusions"] == "Transport\nEnglish-speaking guide\nEntrance fees"
@@ -57,6 +58,16 @@ def test_render_gives_the_excel_shaped_text_columns():
                                              "Meals: Lunch, Dinner\nOvernight: Quillmoor Riverside Lodge\n")
     assert "Day 3 — Back to the city\nPlaces: Fennel City\nTransfer back." in text["src_itineraries"]
     assert text["src_description"] == "Tour type: Private tour\nGuide languages: English, French"
+
+
+def test_render_uses_the_saved_label_of_the_tour_type():
+    # the label an administrator gave the type when the tour was saved; a code alone falls back to a readable name
+    stored = F.normalize(_form(tour_type="zz_small_group"), tour_type_label="Zz small group (max 8)")
+    assert stored["tour_type_label"] == "Zz small group (max 8)"
+    assert F.render(stored)["src_description"].startswith("Tour type: Zz small group (max 8)\n")
+    bare = F.normalize(_form(tour_type="zz_small_group"))
+    assert F.render(bare)["src_description"].startswith("Tour type: Zz small group\n")
+    assert F.normalize(_form(tour_type=None), tour_type_label="ignored")["tour_type_label"] is None
 
 
 @pytest.mark.parametrize("lo,hi,expected", [(None, None, None), (2, 2, "2 travellers"), (1, None, "from 1 traveller"),
@@ -125,7 +136,9 @@ def test_supplier_item_by_status(status, ok):
 
 def test_form_bounds_are_validated():
     with pytest.raises(ValidationError):
-        _form(tour_type="cruise")
+        _form(tour_type="Cruise!")          # a code: lower-case letters, digits and underscores
+    with pytest.raises(ValidationError):
+        _form(tour_type="z" * 41)
     with pytest.raises(ValidationError):
         _form(inclusions=["x" * 201])
     with pytest.raises(ValidationError):
@@ -212,4 +225,120 @@ def test_limits_read_the_four_keys():
     with patch("shared.settings.aget", aget):
         lim = asyncio.run(policy.limits())
     assert lim.as_dict() == {"max_days": 9, "min_inclusions": 2, "min_exclusions": 0, "bulk_max": 7}
-    assert sorted(seen) == sorted(policy.KEYS)
+    assert sorted(seen) == sorted([policy.MAX_DAYS_KEY, policy.MIN_INCLUSIONS_KEY, policy.MIN_EXCLUSIONS_KEY,
+                                   policy.BULK_MAX_KEY])
+
+
+# ── the option lists (admin data, CIS 478) ────────────────────────────────────────────────────────────────────────
+
+def test_form_options_read_the_three_lists_and_skip_malformed_entries():
+    values = {
+        policy.TOUR_TYPES_KEY: [{"code": "zz_private", "label": "Zz private", "label_vi": "Zz riêng"},
+                                {"code": "zz_join", "label": " Zz   join "}, {"code": "Bad Code", "label": "x"},
+                                {"code": "zz_private", "label": "dup"}, {"code": "zz_nolabel"}, "not an object"],
+        policy.QUICK_INCLUSIONS_KEY: ["Zz boat", "zz BOAT", "", 7, "Zz lunch"],
+        policy.QUICK_EXCLUSIONS_KEY: "not a list",
+    }
+
+    async def aget(key, tenant_id=None):
+        return values[key]
+
+    with patch("shared.settings.aget", aget):
+        opts = asyncio.run(policy.form_options())
+    assert opts.as_dict() == {
+        "tour_types": [{"code": "zz_private", "label": "Zz private", "label_vi": "Zz riêng"},
+                       {"code": "zz_join", "label": "Zz join", "label_vi": "Zz join"}],
+        "quick_inclusions": ["Zz boat", "Zz lunch"], "quick_exclusions": []}
+    assert opts.tour_type("zz_join")["label"] == "Zz join" and opts.tour_type("zz_none") is None
+    assert set(policy.KEYS) >= {policy.TOUR_TYPES_KEY, policy.QUICK_INCLUSIONS_KEY, policy.QUICK_EXCLUSIONS_KEY}
+
+
+OPTS = policy.FormOptions(tour_types=({"code": "zz_private", "label": "Zz private", "label_vi": "Zz riêng"},),
+                          quick_inclusions=(), quick_exclusions=())
+
+
+def test_a_tour_type_must_be_offered_or_already_held():
+    assert store._tour_type_label("zz_private", {}, OPTS) == "Zz private"
+    assert store._tour_type_label(None, {"tour_type": "zz_private"}, OPTS) is None
+    # removed by an administrator since: the tour keeps it, with the label it was saved with
+    held = {"tour_type": "zz_gone", "tour_type_label": "Zz gone"}
+    assert store._tour_type_label("zz_gone", held, OPTS) == "Zz gone"
+    with pytest.raises(store.WorkspaceError) as e:
+        store._tour_type_label("zz_gone", {}, OPTS)
+    assert e.value.status == 422 and e.value.code == "tour_type_unknown" and e.value.extra["allowed"] == ["zz_private"]
+
+
+# ── the required list on every publish path, and the two-person facts rule ───────────────────────────────────────
+
+GAPS = [{"key": "supplier", "message": "Choose the AA supplier from Booking's list", "params": {"status": None},
+         "ok": False, "required": True}]
+
+
+def test_required_missing_error_carries_the_items():
+    err = store.RequiredMissingError("t-zz", "v-zz", GAPS)
+    message = "This hand-made tour is not complete: Choose the AA supplier from Booking's list"
+    assert str(err) == message
+    assert err.detail() == {"code": "required_missing", "message": message,
+                            "items": [{"key": "supplier", "message": "Choose the AA supplier from Booking's list",
+                                       "params": {"status": None}}]}
+
+
+class _Conn:
+    def __init__(self):
+        self.executed = []
+
+    async def execute(self, sql, *args):
+        self.executed.append((sql, args))
+
+
+def test_process_export_guard_refuses_an_incomplete_hand_made_tour():
+    from services.export import handler
+
+    conn = _Conn()
+    row = {"aa_name": "Zz", "aa_summary": "Zz.", "aa_itineraries": "Day 1 — Zz"}
+    with patch.object(store, "required_gaps", side_effect=_async(GAPS)) as gaps:
+        with pytest.raises(store.RequiredMissingError):
+            asyncio.run(handler._required_list_guard(conn, "silver_aa_internal", "v-zz", "t-zz", row))
+    assert gaps.call_args.kwargs["wording"] == {"aa_name": "Zz", "aa_summary": "Zz.", "aa_itineraries": "Day 1 — Zz"}
+    assert len(conn.executed) == 1 and "SET status = 'hitl'" in conn.executed[0][0]
+    for ok in (None, []):                    # a sheet tour, a complete hand-made tour: nothing written
+        conn = _Conn()
+        with patch.object(store, "required_gaps", side_effect=_async(ok)):
+            asyncio.run(handler._required_list_guard(conn, "silver_aa_internal", "v-zz", "t-zz", row))
+        assert conn.executed == []
+
+
+def test_process_export_runs_the_guard_after_the_lock_guard_on_every_exit():
+    import inspect
+
+    from services.export import handler
+
+    src = inspect.getsource(handler.process_export)
+    assert src.index("guard_export(") < src.index("_required_list_guard(") < src.index("_lifecycle_publish(conn")
+
+
+def test_s1_auto_publish_files_an_incomplete_hand_made_tour_for_review():
+    from api.routers.admin_pipeline import _engine
+
+    req = type("Req", (), {"tour_id": "t-zz"})()
+    with patch("services.export.handler.process_export", side_effect=store.RequiredMissingError("t-zz", "v", GAPS)), \
+            patch.object(_engine, "_enqueue_review", side_effect=_async(None)) as enq:
+        asyncio.run(_engine._auto_publish(object(), req, "v-zz", {}))
+    assert enq.call_args.kwargs["failure_summary"].startswith("This hand-made tour is not complete")
+
+
+def test_a_live_facts_save_is_refused_while_two_person_publishing_is_on():
+    row = {"entry_origin": "manual", "source_status": "active", "deleted_at": None, "master_status": "active",
+           "master_deleted_at": None}
+    with pytest.raises(store.WorkspaceError) as e:
+        store._check_savable(row, {}, expected_saved_at=None, reason="zz a good reason", two_person=True)
+    assert e.value.status == 409 and e.value.code == store.FACTS_TWO_PERSON
+    assert store._check_savable(row, {}, expected_saved_at=None, reason="zz a good reason", two_person=False) is True
+    draft = {**row, "master_status": None}    # never published: nobody outside sees it, the autosave goes on
+    assert store._check_savable(draft, {}, expected_saved_at=None, reason=None, two_person=True) is False
+
+
+def _async(value):
+    async def _f(*_a, **_k):
+        return value
+    return _f

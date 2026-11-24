@@ -137,7 +137,8 @@ function Editor({ tourId, view }: { tourId: string | null; view: TourView | null
           onRetry={() => void saver.save()} />} />
       <Notices view={view} writer={writer} status={saver.status} />
       <Layout aside={<Aside view={view} />}>
-        <EditorTabs tourId={tourId} title={title} form={form} set={set} readOnly={readOnly} />
+        <EditorTabs tourId={tourId} title={title} form={form} set={set} readOnly={readOnly}
+          tourTypeLabel={view?.facts.tour_type_label} />
         <SaveBar tourId={tourId} view={view} readOnly={readOnly} form={form} dirty={saver.dirty} status={saver.status}
           reason={reason} setReason={setReason} onCreate={() => void create()}
           onSave={(r) => void saver.save(r).then((ok) => { if (ok) setReason(""); })} />
@@ -216,8 +217,9 @@ function pickerList(data: { available: boolean; items: Supplier[] } | undefined)
   return data.available ? data.items : null;
 }
 
-function EditorTabs({ tourId, title, form, set, readOnly }: {
+function EditorTabs({ tourId, title, form, set, readOnly, tourTypeLabel }: {
   tourId: string | null; title: string; form: FactsForm; set: (p: Partial<FactsForm>) => void; readOnly: boolean;
+  tourTypeLabel?: string | null;
 }) {
   const t = useT(CW);
   const [tab, setTab] = useState("facts");
@@ -228,7 +230,8 @@ function EditorTabs({ tourId, title, form, set, readOnly }: {
   const panes: Record<string, () => React.ReactNode> = {
     facts: () => (
       <FactsSections form={form} set={set} options={options.data} suppliers={pickerList(sup.data)}
-        supplierQuery={supplierQuery} setSupplierQuery={setSupplierQuery} readOnly={readOnly} />),
+        supplierQuery={supplierQuery} setSupplierQuery={setSupplierQuery} readOnly={readOnly}
+        tourTypeLabel={tourTypeLabel} />),
     wording: () => <Wording tourId={id} twoPerson={options.data?.two_person_publish === true} />,
     preview: () => <Preview tourId={tourId} form={form} />,
     history: () => <History tourId={id} />,
@@ -257,6 +260,7 @@ function Notices({ view, writer, status }: { view: TourView | null; writer: bool
       {view?.entry_origin === "sheet" && <div style={box}>{t("readOnlySheet")}</div>}
       {!writer && <div style={box}>{t("readOnlyRole")}</div>}
       {view?.reason_required && view.editable && writer && <div style={box}>{t("liveNote")}</div>}
+      {view?.facts_two_person && writer && <div style={box}>{t("factsTwoPerson")}</div>}
     </>
   );
 }

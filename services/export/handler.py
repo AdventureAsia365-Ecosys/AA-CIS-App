@@ -599,6 +599,30 @@ async def _refuse_policy_review(conn, silver: str, version_id: str, tour_id: str
     raise _lc_policy.PolicyReviewRequiredError(version_id, review_id)
 
 
+async def _required_list_guard(conn, silver: str, version_id: str, tour_id: str, row: dict) -> None:
+    """AA-1148: a hand-made tour (raw_tours.entry_origin 'manual', CIS 478) publishes only with its required list
+    complete, on every exit (S1 auto publish, Review Queue approve, promote, recompose, the draft publish). Checked on
+    the version being published; an incomplete tour's version leaves 'approved' for 'hitl' (as the other refusals do)
+    and RequiredMissingError is raised before any publish write. A sheet tour, and a database before CIS 478, pass."""
+    try:
+        from services.content_workspace import store as _cw
+        gaps = await _cw.required_gaps(conn, tour_id, wording={
+            "aa_name": row.get("aa_name"), "aa_summary": row.get("aa_summary"),
+            "aa_itineraries": row.get("aa_itineraries")})
+    except ImportError:   # the legacy export Lambda package ships without services/content_workspace (or its readers)
+        return
+    if not gaps:
+        return
+    logger.warning("export_refused_required_missing", version_id=version_id, tour_id=tour_id,
+                   missing=[g["key"] for g in gaps])
+    await conn.execute(f"""
+        UPDATE {silver}.generated_content
+        SET status = 'hitl'
+        WHERE id = $1::uuid AND status = 'approved'
+    """, version_id)
+    raise _cw.RequiredMissingError(tour_id, version_id, gaps)
+
+
 async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomize_force: bool = False,
                          atomize_created_by: str = "system:a3_publish", contract_exit: str = "publish",
                          **lock) -> dict:
@@ -615,7 +639,8 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
     run), ``approve`` (Review Queue), ``promote`` (rollback), ``lambda`` (the legacy handler), ``recompose``
     (AA-1049 path A-new: a code-recomposed version of a served Master, ``content_generation/s1_recompose_store``).
     Every caller names its exit (topology test). It never blocks the publish.
-    AA-1146: the hand-edit lock (human_lock.guard_export / after_export; ``lock``: lock_by, lock_reason)."""
+    AA-1146: the hand-edit lock (human_lock.guard_export / after_export; ``lock``: lock_by, lock_reason).
+    AA-1148: the required list of a hand-made tour (:func:`_required_list_guard`, RequiredMissingError)."""
     conn = await asyncpg.connect(get_database_url())
     tenant_slug = os.environ.get("TENANT_SLUG", "aa_internal")
     silver = f"silver_{tenant_slug}"
@@ -671,6 +696,7 @@ async def process_export(version_id: str, *, atomize_dedupe: bool = True, atomiz
         if not src.live:
             await _refuse_not_live(src)
         await _human_lock.guard_export(conn, silver, version_id, str(tour_id), contract_exit)   # AA-1146
+        await _required_list_guard(conn, silver, version_id, str(tour_id), row)                 # AA-1148
 
         # 2. Insert into published catalog (gold). AA-986 L2: through the tour lifecycle service (ADR 0015
         # decision 2, `publish`): the insert, "never two active Masters per key" and the `restored` record of a key

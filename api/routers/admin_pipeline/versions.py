@@ -6,7 +6,7 @@ from fastapi import Header, HTTPException, Request
 from api.routers.admin import verify_admin_secret
 from shared.tour_liveness import SOURCE_NOT_LIVE, SourceNotLiveError, source_not_live_message, source_state
 
-from api.routers.admin_pipeline._publish import enforce_publish_gate, request_actor
+from api.routers.admin_pipeline._publish import enforce_publish_gate, facts_editors, request_actor
 from api.routers.admin_pipeline._shared import _as_list, logger, router
 from api.routers.admin_pipeline.uploads import _lifecycle_http
 
@@ -76,7 +76,8 @@ async def promote_tour_version(
                 detail={"code": "revalidate_required",
                         "message": (f"v{version_num} was edited by hand after its approval: run the checks on it and "
                                     "let them pass before you make it current")})
-        await enforce_publish_gate(conn, request, editors=_version_editors(gc))
+        # AA-1148: a hand-made tour's facts writers are writers of what goes live too
+        await enforce_publish_gate(conn, request, editors=_version_editors(gc) + await facts_editors(conn, tour_id))
         src = await source_state(conn, tour_id)
         if not src.live:
             raise HTTPException(status_code=409, detail=source_not_live_message(src, "promote this version"),
@@ -85,6 +86,7 @@ async def promote_tour_version(
     from services.export.handler import process_export
     from services.tour_lifecycle import LifecycleError
     from services.tour_lifecycle.policy import POLICY_REVIEW_REQUIRED, PolicyReviewRequiredError
+    from services.content_workspace.store import RequiredMissingError
     try:
         exported = await process_export(gc["id"], atomize_dedupe=False, atomize_force=True,
                                         atomize_created_by="admin:promote_version", contract_exit="promote",
@@ -97,6 +99,8 @@ async def promote_tour_version(
     except PolicyReviewRequiredError as e:   # AA-1049: elephant riding, no person approved this version
         raise HTTPException(status_code=409, detail=f"{e} (v{version_num} is now in the Review Queue)",
                             headers={"X-Error-Code": POLICY_REVIEW_REQUIRED})
+    except RequiredMissingError as e:   # AA-1148: a hand-made tour publishes only with its required list complete
+        raise HTTPException(status_code=409, detail=e.detail(), headers={"X-Error-Code": e.code})
     except LifecycleError as e:       # any other refusal of the lifecycle service's publish
         raise _lifecycle_http(e)
     logger.info("tour_version_promoted", tour_id=tour_id, version_num=version_num, version_id=gc["id"],

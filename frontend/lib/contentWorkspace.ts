@@ -12,7 +12,9 @@ export const CW_PAGE = "/admin/content-workspace";
 
 export type Meal = "breakfast" | "lunch" | "dinner";
 export const MEALS: readonly Meal[] = ["breakfast", "lunch", "dinner"];
-export type TourType = "private" | "join_in";
+/** A tour type code of the setting cis.content.manual_tour.tour_types (admin data, not a code list). */
+export type TourType = string;
+export interface TourTypeOption { code: string; label: string; label_vi: string }
 
 export interface DayForm {
   title: string;
@@ -33,7 +35,7 @@ export interface FactsForm {
   exclusions: string[];
   group_min: string;
   group_max: string;
-  tour_type: "" | TourType;
+  tour_type: TourType;        // "" when not chosen
   guide_languages: string[];
   best_time_to_go: string;
 }
@@ -46,6 +48,10 @@ export interface Supplier {
 export interface Options {
   countries: { iso2: string; name: string }[];
   limits: Limits;
+  // Business option lists an administrator edits in Platform > Settings (CIS 478).
+  tour_types: TourTypeOption[];
+  quick_inclusions: string[];
+  quick_exclusions: string[];
   suppliers_available: boolean;
   two_person_publish: boolean;
 }
@@ -56,6 +62,7 @@ export type TourState = "draft" | "live" | "live_changes" | "paused" | "retired"
 export interface StoredFacts {
   name?: string; summary?: string; nights?: number | null; days?: Partial<DayForm>[]; inclusions?: string[];
   exclusions?: string[]; group_min?: number | null; group_max?: number | null; tour_type?: TourType | null;
+  tour_type_label?: string | null;
   guide_languages?: string[]; best_time_to_go?: string; country?: string | null; supplier_id?: string | null;
   saved_at?: string;
 }
@@ -64,6 +71,7 @@ export interface TourView {
   entry_origin: "sheet" | "manual";
   state: TourState;
   editable: boolean;
+  facts_two_person: boolean;  // published + two-person publishing on: facts are read-only here
   reason_required: boolean;
   facts: StoredFacts;
   country_name: string | null;
@@ -131,6 +139,15 @@ export function bodyOf(form: FactsForm): Record<string, unknown> {
     group_min: intOrNull(form.group_min), group_max: intOrNull(form.group_max), tour_type: form.tour_type || null,
     guide_languages: form.guide_languages, best_time_to_go: form.best_time_to_go,
   };
+}
+
+/** The tour type choices of the form: the options in force, plus the type the tour already holds when an
+ * administrator has removed it since (shown with the label it was saved with), so the form never loses it. */
+export function tourTypeChoices(options: TourTypeOption[], current: string, currentLabel: string | null | undefined,
+  lang: string): { value: string; label: string }[] {
+  const out = options.map((o) => ({ value: o.code, label: lang === "vi" ? o.label_vi || o.label : o.label }));
+  if (current && !options.some((o) => o.code === current)) out.push({ value: current, label: currentLabel || current });
+  return out;
 }
 
 /** A stable text of the form, to tell whether it changed since the last save. */

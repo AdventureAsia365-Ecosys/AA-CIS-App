@@ -8,8 +8,10 @@ src_summary, src_description) are rendered from it on every save, in the shapes 
 re-validation, atomize, Booking and TripPlanner read a hand-made tour like any other. The day blocks use the canonical
 "Day N — Title" heading (services/content_generation/day_parse.py).
 
-No DB, no I/O. The limits (most days, fewest inclusions / exclusions) come from the settings registry
-(services/content_workspace/policy.py); the field length bounds below are request size bounds, not policy.
+No DB, no I/O. The limits (most days, fewest inclusions / exclusions) and the tour types come from the settings
+registry (services/content_workspace/policy.py); the field length bounds below are request size bounds, not policy. A
+tour type is stored as its code plus the label it was saved with (``tour_type_label``), so a type an administrator
+later removes or renames never breaks a tour that has it.
 """
 from __future__ import annotations
 
@@ -24,7 +26,6 @@ from services.content_workspace.policy import Limits
 TEXT_SHORT, TEXT_LONG, TEXT_DAY = 200, 2000, 4000
 LIST_ITEMS, DAY_PLACES = 40, 12
 MEALS = ("breakfast", "lunch", "dinner")
-TOUR_TYPES = ("private", "join_in")
 
 
 def _clean(text: Any) -> str:
@@ -70,7 +71,8 @@ class FactsIn(BaseModel):
     exclusions: list[str] = Field(default_factory=list, max_length=LIST_ITEMS)
     group_min: Optional[int] = Field(None, ge=1, le=999)
     group_max: Optional[int] = Field(None, ge=1, le=999)
-    tour_type: Optional[Literal["private", "join_in"]] = None
+    # A code of the tour types setting (checked against the options in force by the store, not here).
+    tour_type: Optional[str] = Field(None, max_length=40, pattern=r"^[a-z][a-z0-9_]*$")
     guide_languages: list[str] = Field(default_factory=list, max_length=12)
     best_time_to_go: str = Field("", max_length=500)
 
@@ -82,16 +84,18 @@ class FactsIn(BaseModel):
         return v
 
 
-def normalize(form: FactsIn) -> dict:
+def normalize(form: FactsIn, *, tour_type_label: Optional[str] = None) -> dict:
     """The stored form (raw_tours.manual_facts, version 1): trimmed text, duplicate list items dropped (case-blind),
-    meals in breakfast-lunch-dinner order."""
+    meals in breakfast-lunch-dinner order; ``tour_type_label`` is the label of the chosen type (the caller resolves it
+    from the options in force)."""
     days = [{"title": _clean(d.title), "places": _clean_list(d.places),
              "meals": [m for m in MEALS if m in set(d.meals)], "overnight": _clean(d.overnight),
              "description": (d.description or "").strip()} for d in form.days]
     return {
         "v": 1, "name": _clean(form.name), "summary": (form.summary or "").strip(), "nights": form.nights,
         "days": days, "inclusions": _clean_list(form.inclusions), "exclusions": _clean_list(form.exclusions),
-        "group_min": form.group_min, "group_max": form.group_max, "tour_type": form.tour_type,
+        "group_min": form.group_min, "group_max": form.group_max, "tour_type": form.tour_type or None,
+        "tour_type_label": (tour_type_label or None) if form.tour_type else None,
         "guide_languages": _clean_list(form.guide_languages), "best_time_to_go": _clean(form.best_time_to_go),
     }
 
@@ -144,7 +148,8 @@ def render(facts: dict) -> dict:
     days = facts.get("days") or []
     extra = []
     if facts.get("tour_type"):
-        extra.append("Tour type: " + ("Private tour" if facts["tour_type"] == "private" else "Join-in group tour"))
+        label = facts.get("tour_type_label") or facts["tour_type"].replace("_", " ").capitalize()
+        extra.append("Tour type: " + label)
     if facts.get("guide_languages"):
         extra.append("Guide languages: " + ", ".join(facts["guide_languages"]))
     return {
@@ -258,7 +263,7 @@ def facts_from_row(row: Any) -> dict:
     return {"v": 1, "name": row["src_name"] or "", "summary": row["src_summary"] or "", "nights": None, "days": [],
             "inclusions": [x for x in (row["inclusions"] or "").splitlines() if x.strip()],
             "exclusions": [x for x in (row["exclusions"] or "").splitlines() if x.strip()],
-            "group_min": None, "group_max": None, "tour_type": None, "guide_languages": [],
+            "group_min": None, "group_max": None, "tour_type": None, "tour_type_label": None, "guide_languages": [],
             "best_time_to_go": row["best_time_to_go"] or ""}
 
 

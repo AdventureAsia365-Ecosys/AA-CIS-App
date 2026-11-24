@@ -5,14 +5,15 @@
 //   3. day cards move (clamped) and duplicate as copies;
 //   4. the unlinked report URL carries its filters;
 //   5. the pages: every content reader opens them (the viewer too, read-only), the tenant desk roles do not; the
-//      editor's write controls follow content.write and "link every suggestion" content.publish.
+//      editor's write controls follow content.write and "link every suggestion" content.publish;
+//   6. the tour type choices come from the options (admin data) and keep a type the tour holds that was removed.
 // Run: npm run test:unit.
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   addItems, bodyOf, duplicateDay, emptyDay, emptyForm, formKey, formOf, missingItems, moveDay, splitItems,
-  stateTone, tourHref, unlinkedUrl,
+  stateTone, tourHref, tourTypeChoices, unlinkedUrl,
 } from "./contentWorkspace.ts";
 import { can, canSeePage } from "./rbac.ts";
 
@@ -80,4 +81,16 @@ test("5. who opens the pages and who writes", () => {
   assert.ok(!can("viewer", "content.write"));
   assert.ok(!can("content", "content.publish"));
   assert.ok(can("content_lead", "content.publish"));
+});
+
+test("6. tour type choices are the options in force, plus the removed type a tour still holds", () => {
+  const opts = [{ code: "zz_small", label: "Zz small group", label_vi: "Zz nhóm nhỏ" },
+    { code: "zz_self", label: "Zz self-guided", label_vi: "" }];
+  assert.deepEqual(tourTypeChoices(opts, "", null, "en"), [{ value: "zz_small", label: "Zz small group" },
+    { value: "zz_self", label: "Zz self-guided" }]);
+  assert.deepEqual(tourTypeChoices(opts, "zz_small", "Zz small group", "vi").map((o) => o.label),
+    ["Zz nhóm nhỏ", "Zz self-guided"]);
+  const kept = tourTypeChoices(opts, "zz_gone", "Zz gone type", "en");
+  assert.deepEqual(kept.at(-1), { value: "zz_gone", label: "Zz gone type" });
+  assert.equal(tourTypeChoices([], "zz_gone", null, "en")[0].label, "zz_gone");
 });

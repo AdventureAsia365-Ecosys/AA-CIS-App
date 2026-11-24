@@ -7,36 +7,32 @@
 import { ArrowDown, ArrowUp, Copy, Plus, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import {
-  Badge, Button, Checkbox, ChipButton, Field, Input, K, Section, Select, Textarea, useT, type Translator,
+  Badge, Button, Checkbox, ChipButton, Field, Input, K, Section, Select, Textarea, useLang, useT, type Translator,
 } from "../../../_kit";
 import {
-  MEALS, addItems, duplicateDay, emptyDay, moveDay, splitItems, usualNights, type DayForm, type FactsForm,
-  type Options, type Supplier,
+  MEALS, addItems, duplicateDay, emptyDay, moveDay, splitItems, tourTypeChoices, usualNights, type DayForm,
+  type FactsForm, type Options, type Supplier,
 } from "@/lib/contentWorkspace";
 import { CW } from "../messages";
 
 type T = Translator<typeof CW.en>;
 type SetForm = (patch: Partial<FactsForm>) => void;
 
-// Common items of an AA program, offered as one-click chips (English: the tour's content language).
-const QUICK_INCLUDED = ["Private transport", "English-speaking guide", "Entrance fees", "Meals as listed",
-  "Accommodation as listed", "Drinking water"];
-const QUICK_EXCLUDED = ["International flights", "Travel insurance", "Drinks", "Tips", "Personal expenses",
-  "Visa fees"];
-
-export function FactsForm({ form, set, options, suppliers, supplierQuery, setSupplierQuery, readOnly }: {
+// The one-click items and the tour types are admin data (Platform > Settings, CIS 478), read from the options.
+export function FactsForm({ form, set, options, suppliers, supplierQuery, setSupplierQuery, readOnly,
+  tourTypeLabel }: {
   form: FactsForm; set: SetForm; options: Options | undefined; suppliers: Supplier[] | null; supplierQuery: string;
-  setSupplierQuery: (q: string) => void; readOnly: boolean;
+  setSupplierQuery: (q: string) => void; readOnly: boolean; tourTypeLabel?: string | null;
 }) {
   const t = useT(CW);
   return (
     <div style={{ display: "grid", gap: 16, gridTemplateColumns: "minmax(0, 1fr)" }}>
       <Basics form={form} set={set} options={options} suppliers={suppliers} supplierQuery={supplierQuery}
-        setSupplierQuery={setSupplierQuery} readOnly={readOnly} t={t} />
+        setSupplierQuery={setSupplierQuery} readOnly={readOnly} t={t} tourTypeLabel={tourTypeLabel} />
       <Days form={form} set={set} maxDays={options?.limits.max_days ?? 0} readOnly={readOnly} t={t} />
-      <ItemList title={t("included")} items={form.inclusions} quick={QUICK_INCLUDED} readOnly={readOnly} t={t}
+      <ItemList title={t("included")} items={form.inclusions} quick={options?.quick_inclusions ?? []} readOnly={readOnly} t={t}
         testId="cw-included" onChange={(inclusions) => set({ inclusions })} />
-      <ItemList title={t("excluded")} items={form.exclusions} quick={QUICK_EXCLUDED} readOnly={readOnly} t={t}
+      <ItemList title={t("excluded")} items={form.exclusions} quick={options?.quick_exclusions ?? []} readOnly={readOnly} t={t}
         testId="cw-excluded" onChange={(exclusions) => set({ exclusions })} />
     </div>
   );
@@ -80,11 +76,13 @@ function NightsField({ value, days, readOnly, t, onChange }: {
   );
 }
 
-function Basics({ form, set, options, suppliers, supplierQuery, setSupplierQuery, readOnly, t }: {
+function Basics({ form, set, options, suppliers, supplierQuery, setSupplierQuery, readOnly, t, tourTypeLabel }: {
   form: FactsForm; set: SetForm; options: Options | undefined; suppliers: Supplier[] | null; supplierQuery: string;
-  setSupplierQuery: (q: string) => void; readOnly: boolean; t: T;
+  setSupplierQuery: (q: string) => void; readOnly: boolean; t: T; tourTypeLabel?: string | null;
 }) {
+  const lang = useLang();
   const days = form.days.length;
+  const types = tourTypeChoices(options?.tour_types ?? [], form.tour_type, tourTypeLabel, lang);
   const grid2: React.CSSProperties = {
     display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
   };
@@ -112,9 +110,8 @@ function Basics({ form, set, options, suppliers, supplierQuery, setSupplierQuery
           <NightsField value={form.nights} days={days} readOnly={readOnly} t={t} onChange={(nights) => set({ nights })} />
           <Field label={t("tourType")}>
             <Select value={form.tour_type} disabled={readOnly} style={{ width: "100%" }}
-              options={[{ value: "", label: t("tourTypeNone") }, { value: "private", label: t("tourPrivate") },
-                { value: "join_in", label: t("tourJoinIn") }]}
-              onChange={(e) => set({ tour_type: e.target.value as FactsForm["tour_type"] })} />
+              options={[{ value: "", label: t("tourTypeNone") }, ...types]}
+              onChange={(e) => set({ tour_type: e.target.value })} />
           </Field>
           <Field label={t("groupMin")}>
             <Input inputMode="numeric" value={form.group_min} disabled={readOnly} maxLength={3}
