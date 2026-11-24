@@ -330,6 +330,20 @@
             "title": "Reason",
             "type": "string"
           },
+          "snooze_hours": {
+            "anyOf": [
+              {
+                "maximum": 168.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "snooze: one of the lengths offered (cis.ops.status_snooze_choices_hours); the end is computed by the API",
+            "title": "Snooze Hours"
+          },
           "until": {
             "anyOf": [
               {
@@ -340,7 +354,7 @@
                 "type": "null"
               }
             ],
-            "description": "snooze / mute: when it ends (ISO with a zone)",
+            "description": "mute, or snooze until tomorrow: when it ends (ISO with a zone)",
             "title": "Until"
           }
         },
@@ -35765,7 +35779,7 @@
     },
     "/admin/overview/status/acks": {
       "post": {
-        "description": "ops.write, never the business owner. The item must be on the status page now (404 otherwise); the reason must\nbe at least ``cis.ops.status_ack_reason_min_chars`` characters; snooze / mute end at ``until`` (at most\n``cis.ops.status_mute_max_days`` ahead), an ack after ``cis.ops.status_ack_hours``. One audit row per write.",
+        "description": "ops.write, never the business owner. The item must be on the status page now (404 otherwise); the reason must\nbe at least ``cis.ops.status_ack_reason_min_chars`` characters; a snooze lasts ``snooze_hours`` (one of\n``cis.ops.status_snooze_choices_hours``) or ends at ``until`` the next morning, a mute at ``until`` (at most\n``cis.ops.status_mute_max_days`` ahead), an ack after ``cis.ops.status_ack_hours``. One audit row per write.",
         "operationId": "post_status_ack_admin_overview_status_acks_post",
         "parameters": [
           {

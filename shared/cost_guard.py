@@ -507,15 +507,19 @@ async def connection_month_spend(conn, connection_keys: list[str]) -> dict[str, 
 
 
 async def connection_budgets(conn, budgets_usd: dict[str, Optional[float]],
-                             policies: Optional[dict] = None) -> dict[str, ConnectionBudget]:
+                             policies: Optional[dict] = None, *,
+                             spent: Optional[dict[str, tuple[float, int]]] = None) -> dict[str, ConnectionBudget]:
     """The budget state of every connection in ``budgets_usd`` ({key: monthly_budget_usd}) that has a budget (None =
-    no budget: left out, never enforced). One query for the spend, one for the policies (when not given)."""
+    no budget: left out, never enforced). One query for the spend, one for the policies (when not given). ``spent``:
+    the caller's own :func:`connection_month_spend` read of these keys (or more), so a reader that needs the spend of
+    every connection scans this month's ledger once (AA-1141)."""
     capped = {k: float(v) for k, v in budgets_usd.items() if v is not None}
     if not capped:
         return {}
     if policies is None:
         policies = await read_cost_policies(conn)
-    spent = await connection_month_spend(conn, sorted(capped))
+    if spent is None:
+        spent = await connection_month_spend(conn, sorted(capped))
     out: dict[str, ConnectionBudget] = {}
     for key, cap in capped.items():
         p = policy_of(policies, key)

@@ -9,6 +9,8 @@ at today's pace (S285 review idea 4, New Relic / Railway style)?
   ceiling (MaxAllocatedStorage) — the real limit, so the level follows it when it is known.
 - **AI caps.** Per LLM connection with a monthly budget (AI gateway › Budgets; the CIS share of the connection the
   CIS gateway enforces), the month-to-date spend as a straight line: the day it reaches the cap, or "not this month".
+  The budget read scans this month's ledger once and is cached ``REFRESH_S`` in Redis (single flight, last good
+  value), so the page's 60 s refresh, an ack POST and the digest reuse it.
 - **GitHub Actions cache.** No source in the database: the cache size is only read by the CI hygiene check on GitHub,
   so the row says "not measured yet" with that reason, never a number.
 
@@ -34,6 +36,7 @@ logger = structlog.get_logger()
 
 STORAGE_TTL_S = 6 * 3600  # technical-constant: cache life of the storage trend read (Redis TTL)
 STORAGE_PERIOD_S = 6 * 3600  # technical-constant: the CloudWatch point of the trend (4 a day)
+REFRESH_S = 900  # technical-constant: the section's refresh time and the cache life of the AI budget read
 KEY_PREFIX = "admin:overview:status"
 NOT_MEASURED = "not_measured"
 ACTIONS_CACHE_REASON = ("No source in the database: the GitHub Actions cache size is read only by the CI hygiene "
@@ -171,10 +174,20 @@ async def _storage(redis: Any, now: datetime, window_days: int) -> dict:
     return out
 
 
-async def _budgets(pool: Any) -> list[dict]:
+async def _budgets(pool: Any, redis: Any) -> dict:
+    """The LLM connection budgets with this month's spend (one month-to-date ledger scan), cached ``REFRESH_S`` in
+    Redis with one computer at a time and the last good value meanwhile, so the 60 s page refresh of every open tab,
+    an ack POST and the daily digest do not scan the ledger each time. Without Redis it is read directly."""
     from api.services.ai_gateway import read_connection_budgets
 
-    return await read_connection_budgets(pool)
+    async def compute() -> dict:
+        return {"status": "ok", "rows": await read_connection_budgets(pool)}
+
+    out = await cache.cached_section(redis, "forecast_budgets", REFRESH_S, compute, needs_cache=False,
+                                     single_flight=True, key_prefix=KEY_PREFIX)
+    out.pop("_cached", None)
+    out.pop("_stale", None)
+    return out
 
 
 async def collect(pool: Any, redis: Any, now: Optional[datetime] = None) -> dict:
@@ -183,7 +196,7 @@ async def collect(pool: Any, redis: Any, now: Optional[datetime] = None) -> dict
     lim = th.forecast()
     window = int(lim["window_days"])
     storage, budgets, latest = await asyncio.gather(
-        _storage(redis, now, window), _budgets(pool),
+        _storage(redis, now, window), _budgets(pool, redis),
         store.latest(pool, ["database"], now - timedelta(days=th.history_days())), return_exceptions=True)
     rows: list[dict] = []
     if isinstance(storage, dict) and storage.get("status") == "ok":
@@ -200,13 +213,15 @@ async def collect(pool: Any, redis: Any, now: Optional[datetime] = None) -> dict
         why = storage.get("message") or storage.get("reason") if isinstance(storage, dict) else type(storage).__name__
         rows.append({"id": "rds_free", "label": "Database free storage", "status": "unavailable",
                      "reason": str(why or "error"), "level": "none"})
-    if isinstance(budgets, list):
-        rows += ai_rows(budgets, now, lim)
+    if isinstance(budgets, dict) and budgets.get("status") == "ok":
+        rows += ai_rows(budgets.get("rows") or [], now, lim)
     else:
-        logger.warning("ops_status_forecast_budgets_failed", error=repr(budgets)[:200])
+        why = (budgets.get("message") or budgets.get("reason")) if isinstance(budgets, dict) \
+            else type(budgets).__name__
+        logger.warning("ops_status_forecast_budgets_failed", error=repr(why)[:200])
         rows.append({"id": "ai", "label": "AI connection caps", "status": "unavailable",
-                     "reason": type(budgets).__name__, "level": "none"})
+                     "reason": str(why or "error"), "level": "none"})
     rows.append(actions_cache_row())
-    return {"status": "ok", "as_of": now.isoformat(), "refresh_s": 900,
+    return {"status": "ok", "as_of": now.isoformat(), "refresh_s": REFRESH_S,
             "data": {"rows": rows, "window_days": window, "warn": lim["warn"], "crit": lim["crit"],
                      "warn_key": lim["warn_key"], "crit_key": lim["crit_key"], "window_key": lim["window_key"]}}

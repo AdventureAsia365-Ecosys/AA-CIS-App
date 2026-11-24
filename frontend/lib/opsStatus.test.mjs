@@ -274,7 +274,7 @@ test("headroom per series against its own limit, the tightest one wins (S289 F1)
 // ── AA-1141 (P1) ───────────────────────────────────────────────────────────────────────────────────────────────────
 import {
   filterChanges, fmtDays, isStale, muteProblem, reasonOk, refreshPause, savedViewQuery, shownAnnotations,
-  snoozeUntil, viewQueryOf, zoomRange,
+  snoozeOptions, snoozeRequest, snoozeUntil, viewQueryOf, zoomRange,
 } from "./opsStatus.ts";
 
 test("AA-1141 view keys: hidden annotation types and the What changed filter live in the URL", () => {
@@ -302,6 +302,17 @@ test("AA-1141 snooze ends 1 h, 4 h or at the morning hour of the next day on the
   assert.equal(Date.parse(snoozeUntil("4h", now, 8)) - now, 4 * 3_600_000);
   const t = new Date(snoozeUntil("tomorrow", now, 8));
   assert.deepEqual([t.getDate(), t.getHours(), t.getMinutes()], [26, 8, 0]);
+});
+
+test("AA-1141 the snooze picker follows the setting; a length goes to the API as hours, tomorrow as an end time", () => {
+  assert.deepEqual(snoozeOptions([4, 1, 4, 12]), ["1h", "4h", "12h", "tomorrow"]);
+  assert.deepEqual(snoozeOptions([]), ["tomorrow"]);
+  assert.deepEqual(snoozeOptions(undefined), ["tomorrow"]);
+  const now = new Date(2026, 10, 25, 22, 30).getTime();
+  assert.equal(Date.parse(snoozeUntil("12h", now, 8)) - now, 12 * 3_600_000);
+  assert.deepEqual(snoozeRequest("12h", now, 8), { snooze_hours: 12 });
+  const r = snoozeRequest("tomorrow", now, 8);
+  assert.ok("until" in r && new Date(r.until).getHours() === 8);
 });
 
 test("AA-1141 mute end time and reason rules", () => {

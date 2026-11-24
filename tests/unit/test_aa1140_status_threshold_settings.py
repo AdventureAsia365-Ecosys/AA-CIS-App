@@ -1,4 +1,4 @@
-"""AA-1140 (S289, the Ecosystem status page; CIS 475, 477; AA-1141 CIS 483) — the thirty-three status page limits are
+"""AA-1140 (S289, the Ecosystem status page; CIS 475, 477; AA-1141 CIS 483) — the thirty-four status page limits are
 compiled with the S285 advisory values as defaults, a plain label and a complete EN + VI guide, maker-checker, and the
 accessors of shared/ops_status_thresholds.py return them in the units the page uses, a critical value never on the
 wrong side of its warn value. No DB."""
@@ -18,6 +18,7 @@ DEFAULTS = {
     t.UPTIME_SLO_PCT: 99.5, t.STALE_FACTOR: 3, t.HISTORY_DAYS: 14, t.GUARD_STALE_HOURS: 30,
     # AA-1141 (CIS 483): ack / snooze / mute, the cost anomaly banner, the capacity forecast
     t.ACK_REASON_MIN_CHARS: 20, t.ACK_HOURS: 24, t.MUTE_MAX_DAYS: 7, t.SNOOZE_TOMORROW_HOUR: 8,
+    t.SNOOZE_CHOICES_HOURS: [1, 4],
     t.COST_ANOMALY_FACTOR: 3, t.COST_ANOMALY_BASELINE_DAYS: 7, t.COST_ANOMALY_FLOOR_USD_H: 0.1,
     t.FORECAST_WINDOW_DAYS: 7, t.FORECAST_WARN_DAYS: 30, t.FORECAST_CRIT_DAYS: 7,
 }
@@ -30,7 +31,10 @@ def test_every_key_is_compiled_with_its_default_and_a_guide():
         assert (d.app, d.area, d.scope_kind, d.enforced, d.approval) == ("cis", "ops", "platform", True,
                                                                          "maker_checker"), key
         assert d.default_value == default and d.label, key
-        assert d.min_value is not None and d.max_value is not None and d.min_value <= default <= d.max_value, key
+        if d.value_type == "list":   # AA-1141: the snooze lengths, each bounded by the allowed values
+            assert d.allowed_values and set(default) <= set(d.allowed_values), key
+        else:
+            assert d.min_value is not None and d.max_value is not None and d.min_value <= default <= d.max_value, key
         guide = settings.guide(key)
         for lang in ("en", "vi"):
             assert all(guide[lang][part] for part in ("what", "raise", "lower", "when", "example")), (key, lang)
@@ -50,6 +54,14 @@ def test_pairs_and_units():
     assert t.min_requests() == 50 and isinstance(t.min_requests(), int)
     assert t.history_days() == 14 and t.uptime_slo_pct() == 99.5 and t.stale_factor() == 3.0
     assert t.guard_stale_hours() == 30.0 and t.lambda_p95_limit_ms() == 6000.0 and t.client_error_warn_pct() == 10.0
+    assert t.snooze_choices_hours() == [1, 4] and t.acks()["snooze_hours"] == [1, 4]
+
+
+def test_snooze_choices_are_sorted_whole_hours_each_once():
+    real = settings.get
+    values = {t.SNOOZE_CHOICES_HOURS: [4, 1, 4, 12]}
+    with patch.object(settings, "get", side_effect=lambda k, *a, **kw: values.get(k, real(k, *a, **kw))):
+        assert t.snooze_choices_hours() == [1, 4, 12]
 
 
 def test_a_critical_value_on_the_wrong_side_falls_back_to_the_warn_value():

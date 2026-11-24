@@ -352,7 +352,10 @@ _ITEM_ID = r"^[A-Za-z0-9_.:@ -]{1,200}$"
 class AckBody(BaseModel):
     item_id: str = Field(..., min_length=1, max_length=200, pattern=_ITEM_ID)
     action: Literal["ack", "snooze", "mute"]
-    until: Optional[datetime] = Field(None, description="snooze / mute: when it ends (ISO with a zone)")
+    until: Optional[datetime] = Field(None, description="mute, or snooze until tomorrow: when it ends (ISO with a "
+                                                        "zone)")
+    snooze_hours: Optional[int] = Field(None, ge=1, le=168, description="snooze: one of the lengths offered "
+                                        "(cis.ops.status_snooze_choices_hours); the end is computed by the API")
     reason: str = Field(..., max_length=2000)
     range: Literal["1h", "6h", "24h", "7d"] = Field("24h", description="the page's range (the item ids depend on it)")
 
@@ -414,7 +417,8 @@ async def _refuse_business_owner(request: Request) -> None:
 @router.post("/status/acks", summary="Acknowledge, snooze or mute one Needs-attention item (audited)")
 async def post_status_ack(body: AckBody, request: Request, x_admin_secret: str = Header(None)):
     """ops.write, never the business owner. The item must be on the status page now (404 otherwise); the reason must
-    be at least ``cis.ops.status_ack_reason_min_chars`` characters; snooze / mute end at ``until`` (at most
+    be at least ``cis.ops.status_ack_reason_min_chars`` characters; a snooze lasts ``snooze_hours`` (one of
+    ``cis.ops.status_snooze_choices_hours``) or ends at ``until`` the next morning, a mute at ``until`` (at most
     ``cis.ops.status_mute_max_days`` ahead), an ack after ``cis.ops.status_ack_hours``. One audit row per write."""
     verify_admin_secret(x_admin_secret)
     await _refuse_business_owner(request)
@@ -431,7 +435,7 @@ async def post_status_ack(body: AckBody, request: Request, x_admin_secret: str =
                                                      "message": "No item with this id on the status page now"})
     try:
         out = await acks.set_ack(pool, item=item, action=body.action, until=body.until, reason=body.reason,
-                                 actor=_actor(request))
+                                 actor=_actor(request), snooze_hours=body.snooze_hours)
     except acks.AckError as e:
         raise HTTPException(status_code=422, detail={"code": e.code, "message": str(e)}) from e
     except asyncpg.exceptions.UndefinedTableError as e:

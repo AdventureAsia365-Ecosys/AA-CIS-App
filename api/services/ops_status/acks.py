@@ -2,9 +2,10 @@
 why, and until when (S285 review idea 2, PagerDuty / Opsgenie style).
 
 - **Ack** sets an item aside for ``cis.ops.status_ack_hours`` (then it counts as open again if it is still there);
-  **Snooze** for 1 h, 4 h or until ``cis.ops.status_snooze_tomorrow_hour`` the next day on the viewer's clock (the page
-  computes that time and sends it); **Mute** until an end time the person picks, at most
-  ``cis.ops.status_mute_max_days`` ahead. A reason of at least ``cis.ops.status_ack_reason_min_chars`` characters is
+  **Snooze** for one of the lengths of ``cis.ops.status_snooze_choices_hours`` (the page sends ``snooze_hours``, the
+  API refuses any other length and computes the end on its own clock) or until ``cis.ops.status_snooze_tomorrow_hour``
+  the next day on the viewer's clock (the page computes that time and sends it as ``until``); **Mute** until an end
+  time the person picks, at most ``cis.ops.status_mute_max_days`` ahead. A reason of at least ``cis.ops.status_ack_reason_min_chars`` characters is
   required for each. Everything ends by itself at ``until``; an item that resolves simply leaves the list.
 - Rows live in ``acp_shared.ops_alert_ack`` (CIS 482); one row of an item is in force at a time (a new ack clears the
   previous one in the same transaction). Every write is also an ``acp_shared.audit_log`` row (``ops_alert_ack`` /
@@ -13,6 +14,8 @@ why, and until when (S285 review idea 2, PagerDuty / Opsgenie style).
   AI10: the business owner reads, never acts on ops); ``can_ack`` tells the page whether to show the buttons.
 - The verdict reads the rows in force (:func:`apply`): the item keeps its place in the list with ``status`` acked /
   snoozed / muted and an ``ack`` block ("Acked by <name> at <time>, until <time>: <reason>"), and leaves the open count.
+  An ack covers the severity it was given at: an item that got worse since (its id is the same, e.g. a health check
+  that went from "not ready" SEV2 to "fails" SEV1) is open again, with an ``escalated`` block naming the old ack.
 
 ``validate`` and ``apply`` are pure and unit-tested; the reads and writes are small (an index on the rows in force).
 """
@@ -27,14 +30,17 @@ from shared import ops_status_thresholds as th
 
 ACTIONS = ("ack", "snooze", "mute")
 STATE_OF = {"ack": "acked", "snooze": "snoozed", "mute": "muted"}
-SNOOZE_HOURS = (1, 4)   # the spec's two fixed snooze choices (S285 review); "until tomorrow" uses a setting
+SEV_RANK = {"sev1": 0, "sev2": 1, "sev3": 2}   # lower is worse (verdict._SEV_RANK)
+# "until tomorrow" ends at the next day's hour on the viewer's clock: at most 47 h ahead on any clock, 48 h with a
+# daylight saving hour, and on a whole quarter hour in UTC (every time zone offset is a multiple of 15 minutes)
+TOMORROW_MAX = timedelta(hours=48)  # technical-constant: the calendar bound of "the next day's hour" on any clock
 AUDIT_SET, AUDIT_CLEARED = "ops_alert_ack", "ops_alert_ack_cleared"
 RESOURCE_TYPE = "ops_alert"
 HISTORY_ROWS = 50  # technical-constant: rows of a read (the recent ack trail on the page)
 NOT_MIGRATED = "the ack table needs database migration 482"
 
 IN_FORCE_SQL = """
-    SELECT ack_id, item_id, action, until, reason, actor, created_at
+    SELECT ack_id, item_id, severity, action, until, reason, actor, created_at
       FROM acp_shared.ops_alert_ack
      WHERE cleared_at IS NULL AND until > $1
      ORDER BY created_at DESC
@@ -74,11 +80,32 @@ def _aware(t: datetime) -> datetime:
     return (t if t.tzinfo else t.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
 
 
-def validate(action: str, until: Optional[datetime], reason: str, now: datetime, rules: dict) -> datetime:
+def _snooze_end(until: Optional[datetime], hours: Optional[int], now: datetime, rules: dict) -> datetime:
+    """The end of a snooze: now + ``hours`` when ``hours`` is one of ``rules["snooze_hours"]``, else ``until`` when it
+    can be "until tomorrow" (after now, at most ``TOMORROW_MAX`` ahead, on a UTC quarter hour). AckError otherwise."""
+    if hours is not None:
+        allowed = [int(h) for h in rules.get("snooze_hours") or []]
+        if int(hours) not in allowed:
+            raise AckError("snooze_not_offered", "Pick one of the snooze lengths offered: "
+                           + ", ".join(f"{h} h" for h in allowed) + (" or " if allowed else "") + "until tomorrow.")
+        return now + timedelta(hours=int(hours))
+    if until is None:
+        raise AckError("until_missing", "Pick when it ends.")
+    end = _aware(until)
+    if end <= now + timedelta(minutes=1):
+        raise AckError("until_past", "The end time must be in the future.")
+    if end > now + TOMORROW_MAX or end.minute % 15 or end.second or end.microsecond:
+        raise AckError("snooze_not_offered", "A snooze ends after one of the lengths offered or tomorrow morning.")
+    return end
+
+
+def validate(action: str, until: Optional[datetime], reason: str, now: datetime, rules: dict,
+             snooze_hours: Optional[int] = None) -> datetime:
     """The end time of an ack / snooze / mute, or AckError. ``rules`` = ``th.acks()``. Pure.
 
-    ack: ``until`` is ignored, the end is now + ack_hours. snooze: ``until`` within 1 h .. (mute_max_days) ahead (the
-    page sends now + 1 h, now + 4 h or the next morning). mute: ``until`` after now and at most mute_max_days ahead."""
+    ack: ``until`` is ignored, the end is now + ack_hours. snooze: ``snooze_hours`` one of the lengths offered (the end
+    is now + that many hours on the server's clock), or ``until`` = the next morning on the viewer's clock (see
+    :func:`_snooze_end`). mute: ``until`` after now and at most mute_max_days ahead."""
     if action not in ACTIONS:
         raise AckError("bad_action", "Pick ack, snooze or mute.")
     text = (reason or "").strip()
@@ -90,6 +117,8 @@ def validate(action: str, until: Optional[datetime], reason: str, now: datetime,
     now = _aware(now)
     if action == "ack":
         return now + timedelta(hours=int(rules["ack_hours"]))
+    if action == "snooze":
+        return _snooze_end(until, snooze_hours, now, rules)
     if until is None:
         raise AckError("until_missing", "Pick when it ends.")
     end = _aware(until)
@@ -130,14 +159,25 @@ def ack_view(r: dict, names: Optional[dict] = None) -> dict:
             "reason": r.get("reason")}
 
 
+def escalated(item: dict, row: dict) -> bool:
+    """The item is worse now than when it was acked (its severity outranks the one stored with the ack). A row without
+    a stored severity is taken as given at the item's own severity. Pure."""
+    was = row.get("severity")
+    return was in SEV_RANK and SEV_RANK.get(item.get("severity"), 9) < SEV_RANK[was]
+
+
 def apply(items: list[dict], acks: dict[str, dict], names: Optional[dict] = None) -> list[dict]:
     """The attention items with their ack in force: ``status`` acked / snoozed / muted and the ``ack`` block. An item
-    the API already counts as acknowledged (a read ops check bell) keeps "acked". Pure."""
+    the API already counts as acknowledged (a read ops check bell) keeps "acked". An item that escalated since its ack
+    (:func:`escalated`) stays open, with ``escalated`` {from, ack}: the ack covered the milder state only. Pure."""
     out = []
     for i in items:
         a = acks.get(i["id"])
         if a is None:
             out.append(i)
+            continue
+        if escalated(i, a):
+            out.append({**i, "escalated": {"from": a["severity"], "ack": ack_view(a, names)}})
             continue
         out.append({**i, "status": STATE_OF[a["action"]], "ack": ack_view(a, names)})
     return out
@@ -182,13 +222,13 @@ async def history(pool: Any, since: datetime) -> list[dict]:
 
 
 async def set_ack(pool: Any, *, item: dict, action: str, until: Optional[datetime], reason: str, actor: str,
-                  now: Optional[datetime] = None) -> dict:
+                  now: Optional[datetime] = None, snooze_hours: Optional[int] = None) -> dict:
     """Write one ack / snooze / mute of ``item`` (an attention item of the status page): validate, clear the one in
     force, insert, audit, in one transaction. AckError on a refused value; UndefinedTableError before CIS 482."""
     from services.acp_shared.audit_log import write_audit_log
 
     now = _aware(now or datetime.now(timezone.utc))
-    end = validate(action, until, reason, now, th.acks())
+    end = validate(action, until, reason, now, th.acks(), snooze_hours)
     text = reason.strip()
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -199,6 +239,7 @@ async def set_ack(pool: Any, *, item: dict, action: str, until: Optional[datetim
             await write_audit_log(conn, tenant_id=None, actor=actor[:64], action=AUDIT_SET,
                                   resource_type=RESOURCE_TYPE, resource_id=item["id"],
                                   details={"ack_id": ack_id, "action": action, "until": end.isoformat(),
+                                           "snooze_hours": snooze_hours,
                                            "reason": text, "severity": item.get("severity"), "app": item.get("app"),
                                            "replaced": [r["ack_id"] for r in cleared]})
     return {"ack_id": ack_id, "item_id": item["id"], "action": action, "state": STATE_OF[action],

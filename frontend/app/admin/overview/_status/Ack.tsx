@@ -1,6 +1,6 @@
 "use client";
-// app/admin/overview/_status/Ack.tsx — AA-1141 (P1 feature 2): Ack / Snooze 1 h, 4 h, until tomorrow / Mute until an
-// end time on one Needs-attention item, with a reason of at least cis.ops.status_ack_reason_min_chars characters, and
+// app/admin/overview/_status/Ack.tsx — AA-1141 (P1 feature 2): Ack / Snooze for one of the lengths of the setting
+// cis.ops.status_snooze_choices_hours or until tomorrow / Mute until an end time on one Needs-attention item, with a reason of at least cis.ops.status_ack_reason_min_chars characters, and
 // the "Acked by … at …, until …" line. POST /api/admin/overview/status/acks (ops.write, never the business owner: the
 // API answers viewer.can_ack, the buttons show only then). Everything ends by itself at its end time; "Back to open"
 // clears it now. Every write is audited by the API. Kit only (ADR 0016).
@@ -12,8 +12,8 @@ import {
   useToast,
 } from "../../../_kit";
 import {
-  SNOOZE_OPTIONS, isoToLocal, localToIso, muteProblem, reasonOk, snoozeUntil, type AckRules, type AttentionItem,
-  type SnoozeOption,
+  isoToLocal, localToIso, muteProblem, reasonOk, snoozeHoursOf, snoozeOptions, snoozeRequest, type AckRules,
+  type AttentionItem, type SnoozeOption,
 } from "@/lib/opsStatus";
 import { rowWrap, small, useST, type ST } from "./ui";
 
@@ -26,10 +26,20 @@ function stateWord(state: string, t: ST): string {
   return t("stAcked");
 }
 
-/** "Snoozed by Zz at 09:10, until 13:10: <reason>" under an item that is set aside. */
+/** "Snoozed by Zz at 09:10, until 13:10: <reason>" under an item that is set aside; under an item that got worse
+ * since it was set aside, "Worse since it was snoozed at SEV3 by Zz at 09:10: open again". */
 export function AckLine({ item }: { item: AttentionItem }) {
   const t = useST();
   const { formatDateTime } = useFormat();
+  const e = item.escalated;
+  if (e) {
+    return (
+      <span style={{ ...small, overflowWrap: "anywhere" }} data-testid={`status-att-${item.id}-escalated`}>
+        {t("ackEscalated", stateWord(e.ack.state, t), e.from.toUpperCase(), e.ack.by_name ?? t("ackSomeone"),
+          formatDateTime(e.ack.at))}
+      </span>
+    );
+  }
   const a = item.ack;
   if (!a) return null;
   return (
@@ -57,7 +67,8 @@ function AckDialog({ item, rules, range, onClose }: {
   const toast = useToast();
   const qc = useQueryClient();
   const [action, setAction] = useState<Action>("ack");
-  const [snooze, setSnooze] = useState<SnoozeOption>("1h");
+  const options = snoozeOptions(rules.snooze_hours);
+  const [snooze, setSnooze] = useState<SnoozeOption>(options[0]);
   const [now] = useState(() => Date.now());
   const [muteAt, setMuteAt] = useState(() => isoToLocal(new Date(now + 24 * 3_600_000).toISOString()));
   const [reason, setReason] = useState("");
@@ -67,11 +78,11 @@ function AckDialog({ item, rules, range, onClose }: {
   const mute = action === "mute" ? muteProblem(muteAt, now, rules.mute_max_days) : null;
   const ready = reasonOk(reason, min) && !mute && !busy;
   const save = async () => {
-    const until = action === "snooze" ? snoozeUntil(snooze, Date.now(), rules.snooze_tomorrow_hour)
-      : action === "mute" ? localToIso(muteAt) : undefined;
+    const end = action === "snooze" ? snoozeRequest(snooze, Date.now(), rules.snooze_tomorrow_hour)
+      : action === "mute" ? { until: localToIso(muteAt) } : {};
     setBusy(true);
     try {
-      await send("/api/admin/overview/status/acks", { item_id: item.id, action, until, reason: reason.trim(),
+      await send("/api/admin/overview/status/acks", { item_id: item.id, action, ...end, reason: reason.trim(),
         range: range === "custom" ? "24h" : range });
       toast.success(t("ackDone"));
       await qc.invalidateQueries({ queryKey: [STATUS_QUERY_KEY] });
@@ -94,8 +105,10 @@ function AckDialog({ item, rules, range, onClose }: {
             { value: "mute", label: t("mute") }]} />
         {action === "snooze" && (
           <SegmentedControl<SnoozeOption> label={t("snooze")} size="sm" testId="status-ack-snooze" value={snooze}
-            onChange={setSnooze} options={SNOOZE_OPTIONS.map((o) => ({ value: o,
-              label: o === "1h" ? t("snooze1h") : o === "4h" ? t("snooze4h") : t("snoozeTomorrow") }))} />
+            onChange={setSnooze} options={options.map((o) => {
+              const h = snoozeHoursOf(o);
+              return { value: o, label: h === null ? t("snoozeTomorrow") : t("snoozeHours", h) };
+            })} />
         )}
         {action === "mute" && (
           <Field label={t("muteUntil")} error={mute && mute !== "missing"

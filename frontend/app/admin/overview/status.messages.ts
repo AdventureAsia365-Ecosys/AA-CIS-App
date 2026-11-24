@@ -232,7 +232,7 @@ export const STATUS = defineMessages(
     // ack / snooze / mute
     stSnoozed: "Snoozed", stMuted: "Muted",
     ack: "Ack", snooze: "Snooze", mute: "Mute", clearAck: "Back to open",
-    snooze1h: "1 h", snooze4h: "4 h", snoozeTomorrow: "Until tomorrow",
+    snoozeHours: (h: number) => `${h} h`, snoozeTomorrow: "Until tomorrow",
     muteUntil: "Mute until",
     reason: "Reason",
     reasonHint: (n: number) => `At least ${n} characters. Kept with the alert and in the audit log.`,
@@ -240,6 +240,8 @@ export const STATUS = defineMessages(
     ackSave: "Save", ackSaving: "Saving…",
     ackLine: (state: string, by: string, at: string, until: string) => `${state} by ${by} at ${at}, until ${until}`,
     ackSomeone: "a staff member",
+    ackEscalated: (state: string, sev: string, by: string, at: string) =>
+      `Worse since it was ${state.toLowerCase()} at ${sev} by ${by} at ${at}: open again`,
     ackDone: "Saved. The alert is set aside until it ends or is cleared.",
     ackCleared: "The alert is open again.",
     ackFailed: (msg: string) => `Not saved: ${msg}`,
@@ -521,7 +523,7 @@ export const STATUS = defineMessages(
     zoomHint: "Kéo ngang trên biểu đồ để phóng to khoảng thời gian đó (khoảng tuỳ chọn; tự làm mới dừng lại).",
     stSnoozed: "Tạm hoãn", stMuted: "Tắt tiếng",
     ack: "Xác nhận", snooze: "Tạm hoãn", mute: "Tắt tiếng", clearAck: "Mở lại",
-    snooze1h: "1 giờ", snooze4h: "4 giờ", snoozeTomorrow: "Tới mai",
+    snoozeHours: (h: number) => `${h} giờ`, snoozeTomorrow: "Tới mai",
     muteUntil: "Tắt tiếng tới",
     reason: "Lý do",
     reasonHint: (n: number) => `Ít nhất ${n} ký tự. Được lưu cùng cảnh báo và trong nhật ký kiểm toán.`,
@@ -529,6 +531,8 @@ export const STATUS = defineMessages(
     ackSave: "Lưu", ackSaving: "Đang lưu…",
     ackLine: (state: string, by: string, at: string, until: string) => `${state} bởi ${by} lúc ${at}, tới ${until}`,
     ackSomeone: "một nhân viên",
+    ackEscalated: (state: string, sev: string, by: string, at: string) =>
+      `Nặng hơn từ khi ${state.toLowerCase()} ở mức ${sev} bởi ${by} lúc ${at}: đang mở lại`,
     ackDone: "Đã lưu. Cảnh báo được gác lại tới khi hết hạn hoặc được mở lại.",
     ackCleared: "Cảnh báo đã mở lại.",
     ackFailed: (msg: string) => `Chưa lưu: ${msg}`,

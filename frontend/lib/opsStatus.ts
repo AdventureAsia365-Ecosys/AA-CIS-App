@@ -27,8 +27,8 @@ export const CHARTS = ["traffic", "errors", "latency", "queue"] as const;
 // AA-1141: the change types drawn on every chart and listed in "What changed" (api/services/ops_status/changes.py)
 export const CHANGE_TYPES = ["deploy", "setting", "migration", "wave", "route"] as const;
 export type ChangeType = (typeof CHANGE_TYPES)[number];
-export const SNOOZE_OPTIONS = ["1h", "4h", "tomorrow"] as const;
-export type SnoozeOption = (typeof SNOOZE_OPTIONS)[number];
+/** A snooze choice: "<hours>h" (one of the setting cis.ops.status_snooze_choices_hours) or "tomorrow". */
+export type SnoozeOption = `${number}h` | "tomorrow";
 export type ChartId = (typeof CHARTS)[number];
 
 // ── API shape ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -53,6 +53,8 @@ export interface AttentionItem {
   id: string; severity: string; app: string; title: string; detail: string; since: string | null; count: number;
   status: string; source: string; links: { label: string; href: string }[];
   msg?: Msg | null; detail_msg?: Msg | null; detail_source?: boolean; ack?: Ack | null;
+  /** AA-1141: the item got worse since it was set aside (`from` = the severity of the ack); it counts as open. */
+  escalated?: { from: string; ack: Ack } | null;
 }
 export interface Verdict {
   status: "ok" | "attention" | "partial" | "unknown"; open: number; attention: AttentionItem[]; unknown: string[];
@@ -132,7 +134,7 @@ export interface PipelineRow { key: string; label: string; refresh_s: number; as
 export interface AckTrailRow extends Ack { id: number; item_id: string; app: string | null; severity: string | null;
   title: string | null; cleared_at: string | null; cleared_by_name: string | null; cleared_reason: string | null }
 export interface AckRules { reason_min_chars: number; ack_hours: number; mute_max_days: number;
-  snooze_tomorrow_hour: number }
+  snooze_hours: number[]; snooze_tomorrow_hour: number }
 export interface SourceRow { section: string; source: string; refresh_s: number; as_of: string | null; state: string;
   reason?: string | null }
 export interface StatusResp {
@@ -585,10 +587,30 @@ export function filterChanges(rows: readonly ChangeRow[], v: Pick<View, "apps" |
   return rows.filter((r) => inApps(r.app, v.apps) && (v.chg.length === 0 || v.chg.includes(r.type)));
 }
 
-/** When a snooze ends: 1 h, 4 h, or `tomorrowHour` o'clock the next day on the viewer's own clock (ISO UTC). */
+/** The snooze choices of the picker: the lengths the setting offers (ascending, each once), then "tomorrow". */
+export function snoozeOptions(hours: readonly number[] | undefined): SnoozeOption[] {
+  const whole = [...new Set((hours ?? []).filter((h) => Number.isInteger(h) && h > 0))].sort((a, b) => a - b);
+  return [...whole.map((h) => `${h}h` as SnoozeOption), "tomorrow"];
+}
+
+/** The hours of a "<hours>h" choice; null for "tomorrow". */
+export function snoozeHoursOf(option: SnoozeOption): number | null {
+  const m = /^(\d+)h$/.exec(option);
+  return m ? Number(m[1]) : null;
+}
+
+/** The snooze part of the ack request: `snooze_hours` for a length (the API computes the end on its own clock and
+ * refuses a length the setting does not offer), `until` for "tomorrow" (the next morning on the viewer's clock). */
+export function snoozeRequest(option: SnoozeOption, nowMs: number, tomorrowHour: number):
+  { snooze_hours: number } | { until: string } {
+  const h = snoozeHoursOf(option);
+  return h !== null ? { snooze_hours: h } : { until: snoozeUntil(option, nowMs, tomorrowHour) };
+}
+
+/** When a snooze ends: after its hours, or `tomorrowHour` o'clock the next day on the viewer's own clock (ISO UTC). */
 export function snoozeUntil(option: SnoozeOption, nowMs: number, tomorrowHour: number): string {
-  if (option === "1h") return new Date(nowMs + 3_600_000).toISOString();
-  if (option === "4h") return new Date(nowMs + 4 * 3_600_000).toISOString();
+  const h = snoozeHoursOf(option);
+  if (h !== null) return new Date(nowMs + h * 3_600_000).toISOString();
   const d = new Date(nowMs);
   d.setDate(d.getDate() + 1);
   d.setHours(tomorrowHour, 0, 0, 0);

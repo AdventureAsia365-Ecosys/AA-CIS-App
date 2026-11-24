@@ -16,7 +16,8 @@ from shared import ops_status_thresholds as th
 
 NOW = datetime(2026, 11, 25, 3, 20, tzinfo=timezone.utc)
 RNG = TimeRange("24h", NOW - timedelta(hours=24), NOW, 3600)
-RULES = {"reason_min_chars": 20, "ack_hours": 24, "mute_max_days": 7, "snooze_tomorrow_hour": 8}
+RULES = {"reason_min_chars": 20, "ack_hours": 24, "mute_max_days": 7, "snooze_hours": [1, 4],
+         "snooze_tomorrow_hour": 8}
 REASON = "zz invented reason for the test"
 _SECRET = "aa1141-test-secret"
 STAFF = "00000000-0000-4000-8000-00000000a141"
@@ -81,6 +82,8 @@ def test_ack_lasts_the_ack_hours_whatever_until_says():
     ("pause", 1, REASON, "bad_action"),
     ("snooze", None, REASON, "until_missing"),
     ("snooze", -1, REASON, "until_past"),
+    ("snooze", 3, REASON, "snooze_not_offered"),          # an until that is no next-morning time (03:20 + 3 h)
+    ("snooze", 49, REASON, "snooze_not_offered"),         # further than any "next day's hour"
     ("mute", 24 * 8, REASON, "until_too_far"),
 ])
 def test_refused_acks(action, until_h, reason, code):
@@ -91,8 +94,37 @@ def test_refused_acks(action, until_h, reason, code):
 
 
 def test_snooze_and_mute_keep_their_end_time():
-    assert acks.validate("snooze", NOW + timedelta(hours=4), REASON, NOW, RULES) == NOW + timedelta(hours=4)
+    tomorrow_8_local = datetime(2026, 11, 26, 1, 0, tzinfo=timezone.utc)   # 08:00 next day at UTC+7
+    assert acks.validate("snooze", tomorrow_8_local, REASON, NOW, RULES) == tomorrow_8_local
     assert acks.validate("mute", NOW + timedelta(days=7), REASON, NOW, RULES) == NOW + timedelta(days=7)
+
+
+@pytest.mark.parametrize("hours,ok", [(1, True), (4, True), (2, False), (12, False)])
+def test_a_snooze_length_must_be_offered_and_ends_on_the_server_clock(hours, ok):
+    if ok:
+        assert acks.validate("snooze", None, REASON, NOW, RULES, snooze_hours=hours) == NOW + timedelta(hours=hours)
+        return
+    with pytest.raises(acks.AckError) as e:
+        acks.validate("snooze", None, REASON, NOW, RULES, snooze_hours=hours)
+    assert e.value.code == "snooze_not_offered" and "1 h, 4 h" in e.value.message
+    assert acks.validate("snooze", None, REASON, NOW, {**RULES, "snooze_hours": [1, 4, 12]},
+                         snooze_hours=12) == NOW + timedelta(hours=12)
+
+
+@pytest.mark.parametrize("until", [
+    datetime(2026, 11, 26, 1, 7, tzinfo=timezone.utc),       # not on a quarter hour: no clock's 08:00
+    datetime(2026, 11, 26, 1, 0, 30, tzinfo=timezone.utc),   # seconds
+    datetime(2026, 11, 27, 4, 0, tzinfo=timezone.utc),       # 48 h 40 min ahead
+])
+def test_until_tomorrow_must_look_like_the_next_morning(until):
+    with pytest.raises(acks.AckError) as e:
+        acks.validate("snooze", until, REASON, NOW, RULES)
+    assert e.value.code == "snooze_not_offered"
+
+
+def test_until_tomorrow_on_a_half_hour_zone_is_accepted():
+    india_8 = datetime(2026, 11, 26, 2, 30, tzinfo=timezone.utc)   # 08:00 next day at UTC+5:30
+    assert acks.validate("snooze", india_8, REASON, NOW, RULES) == india_8
 
 
 def test_in_force_keeps_the_newest_open_row_per_item():
@@ -109,6 +141,31 @@ def test_in_force_keeps_the_newest_open_row_per_item():
 
 def _item(iid: str, sev: str = "sev2") -> dict:
     return verdict._item(iid, sev, "cis", f"zz {iid}")
+
+
+def test_an_ack_does_not_cover_an_item_that_got_worse(monkeypatch):
+    """A SEV2 "not ready" acked for 24 h, then the health check fails (SEV1, same item id): open again, the page says
+    it got worse since the ack, and the verdict is not "ok"."""
+    monkeypatch.setattr(verdict, "_collect", lambda s, t, e: ([_item("health-cis", "sev1")], []))
+    ack = {"health-cis": {"item_id": "health-cis", "severity": "sev2", "action": "ack",
+                          "until": NOW + timedelta(hours=20), "created_at": NOW - timedelta(hours=4),
+                          "reason": REASON, "actor": f"admin:{STAFF}"}}
+    v = verdict.decide({}, {}, [], ack, {STAFF: "Zz Person"})
+    assert v["open"] == 1 and v["set_aside"] == 0 and v["status"] == "attention"
+    item = v["attention"][0]
+    assert item["status"] == "open" and "ack" not in item
+    assert item["escalated"]["from"] == "sev2" and item["escalated"]["ack"]["by_name"] == "Zz Person"
+
+
+@pytest.mark.parametrize("now_sev,acked_sev,covered", [
+    ("sev2", "sev2", True), ("sev3", "sev2", True), ("sev1", "sev3", False), ("sev2", "sev3", False),
+    ("sev1", None, True),
+])
+def test_an_ack_covers_its_own_severity_and_milder(now_sev, acked_sev, covered):
+    row = {"item_id": "x", "severity": acked_sev, "action": "mute", "until": NOW + timedelta(days=1),
+           "created_at": NOW, "reason": REASON, "actor": "admin"}
+    out = acks.apply([_item("x", now_sev)], {"x": row})[0]
+    assert (out["status"] == "muted") is covered and ("escalated" in out) is not covered
 
 
 def test_verdict_sets_acked_items_aside_but_keeps_them_listed(monkeypatch):
@@ -347,6 +404,7 @@ def test_saved_view_query_keeps_only_page_keys():
 def test_threshold_snapshot_carries_the_p1_rules():
     snap = th.snapshot()
     assert snap["acks"]["reason_min_chars"] == 20 and snap["acks"]["ack_hours"] == 24
+    assert snap["acks"]["snooze_hours"] == [1, 4] and snap["acks"]["snooze_hours_key"] == th.SNOOZE_CHOICES_HOURS
     assert snap["cost_anomaly"]["factor"] == 3.0 and snap["cost_anomaly"]["baseline_days"] == 7
     assert snap["forecast"]["warn"] == 30.0 and snap["forecast"]["crit"] == 7.0
 
@@ -386,3 +444,91 @@ def test_ops12_takes_the_status_part_as_an_input():
     from services.reports import generate
 
     assert "OPS-12" in generate.TAKES_INPUTS and ops12.STATUS_INPUT == "status_page"
+
+
+# ── review fix: the AI budget read of the forecast is cached and scans the ledger once ────────────────────────────
+
+class _Redis:
+    """The few async Redis calls the section cache uses, in memory."""
+
+    def __init__(self) -> None:
+        self.d: dict = {}
+
+    async def get(self, k):
+        return self.d.get(k)
+
+    async def set(self, k, v, ex=None, nx=False):
+        if nx and k in self.d:
+            return None
+        self.d[k] = v
+        return True
+
+    async def delete(self, k):
+        self.d.pop(k, None)
+
+
+ZZ_BUDGET = {"connection_key": "zz-conn", "label": "Zz connection", "monthly_budget_usd": 10.0,
+             "month_spent_usd": 2.0, "enabled": True}
+
+
+@pytest.mark.asyncio
+async def test_forecast_budget_read_is_cached_for_the_refresh_time(monkeypatch):
+    from api.services import ai_gateway
+
+    calls = []
+
+    async def read(pool):
+        calls.append(pool)
+        return [ZZ_BUDGET]
+
+    monkeypatch.setattr(ai_gateway, "read_connection_budgets", read)
+    redis = _Redis()
+    first, second = await forecast._budgets("zz-pool", redis), await forecast._budgets("zz-pool", redis)
+    assert first == second == {"status": "ok", "rows": [ZZ_BUDGET]} and len(calls) == 1
+    assert any(":forecast_budgets:" in k for k in redis.d)
+    assert await forecast._budgets("zz-pool", None) == {"status": "ok", "rows": [ZZ_BUDGET]} and len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_forecast_shows_the_ai_row_unavailable_when_the_budget_read_fails(monkeypatch):
+    from api.services import ai_gateway
+
+    async def boom(pool):
+        raise OSError("zz down")
+
+    monkeypatch.setattr(ai_gateway, "read_connection_budgets", boom)
+    monkeypatch.setattr(forecast, "_storage", AsyncMock(return_value={"status": "unavailable", "reason": "zz"}))
+    monkeypatch.setattr(forecast.store, "latest", AsyncMock(return_value=[]))
+    out = await forecast.collect("zz-pool", None, NOW)
+    ai = next(r for r in out["data"]["rows"] if r["id"] == "ai")
+    assert ai["status"] == "unavailable" and out["refresh_s"] == forecast.REFRESH_S
+
+
+@pytest.mark.asyncio
+async def test_connection_budgets_scan_this_months_ledger_once(monkeypatch):
+    from api.services import ai_gateway
+    from shared import cost_guard
+    from shared.llm_client import connections as conn_registry
+
+    conn = MagicMock()
+    pool = MagicMock()
+    pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
+    pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+    reg = MagicMock(connection_key="zz-conn", kind="openai", label="Zz", enabled=True, monthly_budget_usd=10.0)
+    other = MagicMock(connection_key="zz-free", kind="openai", label="Zz free", enabled=True,
+                      monthly_budget_usd=None)
+    monkeypatch.setattr(conn_registry, "fetch_connections", AsyncMock(return_value={"zz-conn": reg,
+                                                                                    "zz-free": other}))
+    monkeypatch.setattr(cost_guard, "read_cost_policies", AsyncMock(return_value={}))
+    scans = []
+
+    async def month_spend(c, keys):
+        scans.append(list(keys))
+        return {"zz-conn": (2.5, 7), "zz-free": (1.0, 3)}
+
+    monkeypatch.setattr(cost_guard, "connection_month_spend", month_spend)
+    rows = await ai_gateway.read_connection_budgets(pool)
+    assert scans == [["zz-conn", "zz-free"]]
+    capped = next(r for r in rows if r["connection_key"] == "zz-conn")
+    assert capped["monthly_budget_usd"] == 10.0 and capped["month_spent_usd"] == 2.5
+    assert next(r for r in rows if r["connection_key"] == "zz-free")["monthly_budget_usd"] is None
