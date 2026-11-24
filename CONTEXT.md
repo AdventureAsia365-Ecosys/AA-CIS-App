@@ -3242,13 +3242,21 @@ good 24 h; `?refresh=1` recomputes the fast tier only when older than 15 s). A f
 `timeout: time_budget`); only a final answer is `unavailable` (`contract_view_missing` for an owner view not applied
 yet, `cognito_session_required`, no tenant pool), a busy catalog gate or any CRM non-200 is `error` (cached 60 s,
 never the last good copy). $0: no model call, no DFS.
-Every number on `/admin/overview` (business view and the CIS sections) names its source in a `SourceHint` (kit
-`InfoTip`); the texts, in plain business words with no table or metric names, live only in
-`frontend/app/admin/overview/_components/sources.ts` (guard `tests/unit/test_aa858_overview_sources.py`; e2e smoke
-`aa858-ops-overview.spec.ts` (e)/(f) checks every `[data-kpi]` tile and `[data-num-col]` column has one). The API's
-`sources` field keeps the engineering detail and is not shown. The ops cards are not polled: their texts say
-"updated on the server every 5 minutes (press Refresh to load the latest)"; the AWS bill part of Cost per app is
-fetched about once a day.
+**Ecosystem status (AA-1140, S289).** `/admin/overview` is the Ecosystem status page (S285 advisory, mockup v2):
+one verdict and its Needs attention list, app tiles, golden-signal charts with deploy ticks, alarm bands, warn /
+critical lines and headroom, the services grid with an uptime strip against the objective, shared resources, job
+queues and the deploy gate, cost of the month, AI gateway spend against caps, the event timeline, delivery, sources
+and freshness. ONE read, `GET /admin/overview/status` (`ops.read`; backend `api/services/ops_status/`, the 5-minute
+sampler job `ops_status_sample` writing `acp_shared.ops_sample` / `ops_event`, CIS 475); every section has its own
+`as_of`, a signal with no source is "not measured yet" (never green), every limit is a `cis.ops.status_*` setting
+(`shared/ops_status_thresholds.py`). Page `frontend/app/admin/overview/page.tsx` + `_status/`, pure helpers and the
+URL view state (range, compare, app / severity / status filters, legends, sorts) in `frontend/lib/opsStatus.ts`; smoke
+`tests/e2e/smoke/aa1140-ecosystem-status.spec.ts`. The old Overview content moved: the pipeline funnel and content
+counts to Data coverage (`data-coverage/ContentPipeline.tsx`), tenant activity and quota outliers to Tenants
+(`tenants/TenantActivity.tsx`, ops.read only), both still from `GET /admin/overview`; cost per app and the paid
+sources were already on Spend. Their numbers keep a `SourceHint` / KpiTile `info` whose texts live only in
+`frontend/app/admin/overview/_components/sources.ts` (guard `tests/unit/test_aa858_overview_sources.py`). The AA-858
+business cards (`overview/_components/`) stay in the repo, rendered nowhere; `GET /admin/overview/ops` stays for them.
 
 | Area | admin | reviewer | content | viewer | tenant |
 |---|---|---|---|---|---|

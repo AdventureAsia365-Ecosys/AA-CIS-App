@@ -16,6 +16,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { ArrowUpRight, Download, RefreshCw } from "lucide-react";
 import Link from "next/link";
+import { ContentPipeline } from "./ContentPipeline";
 import { useEffect, useMemo, useState } from "react";
 import {
   Badge,
@@ -145,6 +146,8 @@ export default function DataCoveragePage() {
           </div>
         </div>
       )}
+      {/* AA-1140: the content pipeline funnel and the content counts moved here from the old Overview */}
+      <ContentPipeline />
     </PageFrame>
   );
 }
