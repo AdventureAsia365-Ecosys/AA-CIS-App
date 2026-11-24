@@ -11,6 +11,7 @@ from unittest.mock import patch
 import pytest
 
 from api.routers import admin, admin_llm_ops, admin_pipeline, jobs_repo
+from api.services import tenant360_lists as t360
 
 AA_INTERNAL = "00000000-0000-0000-0000-000000000001"
 
@@ -149,10 +150,10 @@ async def test_dashboard_model_usage_from_llm_call_log():
 def test_tenant_detail_cost_query_reads_llm_call_log():
     import inspect
     src = inspect.getsource(admin.get_tenant_details)
-    assert "conn.fetchval(TENANT_COST_TOTAL_SQL, tenant_id, is_internal)" in src
-    assert "conn.fetchval(TENANT_COST_WINDOW_SQL, tenant_id, is_internal, _cost_since, _now)" in src
+    assert "conn.fetchval(_t360.TENANT_COST_TOTAL_SQL, tenant_id, is_internal)" in src
+    assert "conn.fetchval(_t360.TENANT_COST_WINDOW_SQL, tenant_id, is_internal, _cost_since, _now)" in src
     # AA-838 (S291): the tenant rows and the internal NULL-tenant rows as two index-friendly branches, no OR
-    for sql in (admin.TENANT_COST_TOTAL_SQL, admin.TENANT_COST_WINDOW_SQL):
+    for sql in (t360.TENANT_COST_TOTAL_SQL, t360.TENANT_COST_WINDOW_SQL):
         assert sql.count("FROM shared.llm_call_log") == 2 and "UNION ALL" in sql
         assert "WHERE tenant_id = $1" in sql and "WHERE $2 AND tenant_id IS NULL" in sql
         assert " OR " not in sql

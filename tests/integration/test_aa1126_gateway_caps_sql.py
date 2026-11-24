@@ -186,7 +186,7 @@ async def test_sargable_today_and_baseline_reads_equal_the_coalesce_reads(conn):
 
 @pytest.mark.asyncio
 async def test_tenant_cost_sums_in_two_branches_equal_the_or_sums(conn):
-    from api.routers import admin
+    from api.services import tenant360_lists as t360
     tenant, internal = "0aa83800-0000-4000-8000-000000000001", "00000000-0000-0000-0000-000000000001"
     for t in (tenant, internal):
         await conn.execute("INSERT INTO shared.tenants (tenant_id, name, slug, posts_per_week) VALUES ($1, $2, $3, 3) "
@@ -201,8 +201,8 @@ async def test_tenant_cost_sums_in_two_branches_equal_the_or_sums(conn):
     for tid in (tenant, internal):
         for is_internal in (False, True):
             old = await conn.fetchval(OLD_TENANT_COST_TOTAL_SQL, tid, is_internal)
-            new = await conn.fetchval(admin.TENANT_COST_TOTAL_SQL, tid, is_internal)
+            new = await conn.fetchval(t360.TENANT_COST_TOTAL_SQL, tid, is_internal)
             assert new == old
             old = await conn.fetchval(OLD_TENANT_COST_WINDOW_SQL, tid, is_internal, since, until)
-            new = await conn.fetchval(admin.TENANT_COST_WINDOW_SQL, tid, is_internal, since, until)
+            new = await conn.fetchval(t360.TENANT_COST_WINDOW_SQL, tid, is_internal, since, until)
             assert new == old

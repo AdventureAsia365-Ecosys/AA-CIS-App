@@ -101,8 +101,8 @@ class Outcome:
     recompute: list = field(default_factory=list)         # [(tour_id, new_status)] for after commit
     extra: dict = field(default_factory=dict)
 
-    def add_recompute(self, tour_id: str, status: str) -> None:
-        if (tour_id, status) not in self.recompute:
+    def add_recompute(self, tour_id: str, status: str, served_only: bool = False) -> None:
+        if (tour_id, status) not in self.recompute and not (served_only and self.before == self.after == (None, None)):
             self.recompute.append((tour_id, status))
 
     def summary(self) -> dict:
@@ -362,16 +362,6 @@ async def _staff_event(conn, event_type: EventType, tour_id: str, tenant_id: str
                                          tenant_id=tenant_id, payload=payload, actor_type="admin")
 
 
-def _key_ever_served(out: Outcome) -> bool:
-    """S291 (AA-1148 follow-up): a source action recomputes only what the tour affected. A key that was never served
-    (no version ever had a Master: no row in v_tour_liveness before or after, e.g. a hand-made tour or an uploaded row
-    that was never published) has no atom in the Score / Route caches, no Segment member, no place in the tour graph
-    and no public trip page, so trashing or restoring it changes nothing served: no platform recompute job (one ran
-    ~50 min on Dev and held a DB Migrate apply). A Master this action switched off still recomputes through
-    _switch_off_dead_masters."""
-    return out.before[0] is not None or out.after[0] is not None
-
-
 # ── source actions ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 async def retire_source(conn, tour_id, *, actor: str = "admin", deleted_by: Optional[str] = None) -> Outcome:
@@ -393,8 +383,7 @@ async def retire_source(conn, tour_id, *, actor: str = "admin", deleted_by: Opti
         await _cascade(conn, out, actor)
         await _staff_event(conn, EventType.SOURCE_TRASHED, out.tour_id, v["tenant_id"],
                            {"tour_name": out.tour_name, "changed_by": actor})
-        if _key_ever_served(out):
-            out.add_recompute(out.tour_id, "trashed")
+        out.add_recompute(out.tour_id, "trashed", served_only=True)  # S291: a key never served has nothing to recompute
     return out
 
 
@@ -429,8 +418,7 @@ async def restore_source(conn, tour_id, *, actor: str = "admin") -> Outcome:
         await _cascade(conn, out, actor)
         await _staff_event(conn, EventType.SOURCE_RESTORED, out.tour_id, v["tenant_id"],
                            {"tour_name": out.tour_name, "changed_by": actor})
-        if _key_ever_served(out):
-            out.add_recompute(out.tour_id, "active" if out.after[0] == "served" else "inactive")
+        out.add_recompute(out.tour_id, "active" if out.after[0] == "served" else "inactive", served_only=True)
     return out
 
 

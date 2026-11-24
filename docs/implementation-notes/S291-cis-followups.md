@@ -19,9 +19,9 @@ one index) and this code PR. The code works with or without 480 (slower without)
   478). The S1 list (`GET /admin/tours`) is unchanged: Rewrite of a hand-made tour stays possible there, as AA-1148
   designed (the export guard and the Review Queue handle it).
 - **Slice 2: the rule is "the key was ever served", not "the tour is hand-made".** `retire_source` / `restore_source`
-  add their recompute only when `v_tour_liveness` has a row for the key before or after the action
-  (`_key_ever_served`: `out.before[0]` or `out.after[0]` is not None, the same test `_cascade` uses for
-  `ever_served`). A never-served key has no atom in the Score / Route caches, no Segment member, no place in the tour
+  add their recompute with `served_only=True` (`Outcome.add_recompute`): it is dropped when `v_tour_liveness` has no
+  row for the key before nor after the action (`before == after == (None, None)`, the same test `_cascade` uses for
+  `ever_served`). Kept inside `add_recompute` so `service.py` stays at its code-health size baseline. A never-served key has no atom in the Score / Route caches, no Segment member, no place in the tour
   graph and no public trip page, so nothing served changes; this covers an uploaded row that was never published too.
   A Master the action switches off still recomputes through `_switch_off_dead_masters` (unchanged). The S290 lesson
   "Trash một tour tay CHƯA từng xuất bản..." now has its guard: `tests/integration/test_aa1148_s291_upload_list_and_trash.py`.
@@ -46,7 +46,8 @@ one index) and this code PR. The code works with or without 480 (slower without)
 - **Slice 4: the baseline already reads `shared.llm_call_daily` for rolled days** (the `rolled` CTE, unchanged). The
   table is near empty on Dev (rollup happens at retention, still dry run), so nothing more to gain there today.
 - **Slice 4: Tenant 360 sums.** `tenant_id = $1 OR ($2 AND tenant_id IS NULL)` became two branches
-  (`TENANT_COST_TOTAL_SQL`, `TENANT_COST_WINDOW_SQL` in `api/routers/admin.py`); the NULL branch carries `$2` as a
+  (`TENANT_COST_TOTAL_SQL`, `TENANT_COST_WINDOW_SQL`, moved to `api/services/tenant360_lists.py` next to the other
+  Tenant 360 statements, which also brings `api/routers/admin.py` back under its size baseline); the NULL branch carries `$2` as a
   one-time filter, so a non-internal tenant reads only its `(tenant_id, created_at)` index range.
 
 ## Changed (against the ask)
