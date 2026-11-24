@@ -105,7 +105,7 @@ async def test_self_approval_when_two_person_is_off_and_the_expiry_window(conn):
         assert e.value.code == "expires_on_too_far"
         row = await ce.propose(pool, _body(ref, days=5), "admin:solo")
         with pytest.raises(ce.ComplianceRefused) as e:
-            await ce.decide(pool, row["exception_id"], "admin:solo", approve=False, note="No")
+            await ce.decide(pool, row["exception_id"], "admin:solo", approve=False, note="Not now")
         assert e.value.code == "withdraw_instead"
         out = await ce.decide(pool, row["exception_id"], "admin:solo", approve=True)
         assert out["state"] == "approved" and out["self_approved"] is True

@@ -141,4 +141,5 @@ async def test_cis_db_reads_the_retention_runs(conn):
     assert rows["retention_live_enabled"]["status"] == "fail"
     assert rows["retention_live_enabled"]["detail"]["never_live_kinds"] == sorted(compliance_db.KINDS[:2])
     new = await compliance.ingest(OneConnPool(conn), list(rows.values()), 72)
-    assert new == 2
+    # AA-1173: + the two catalogue checks and the monthly review check of the same source
+    assert new == 5
