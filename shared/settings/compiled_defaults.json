@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql, 469_aa1171_ops_thresholds_and_recipient_topic.sql, 471_aa1174_compliance_obligations.sql, 472_aa1172_fact_instruction_guard.sql, 474_aa1160_tenant_crm_agency_marker.sql, 475_aa1140_ops_status_samples_and_thresholds.sql, 476_aa1152_tp_agency_price_stale_hours.sql, 477_aa1140_rds_free_storage_pct.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql, 469_aa1171_ops_thresholds_and_recipient_topic.sql, 471_aa1174_compliance_obligations.sql, 472_aa1172_fact_instruction_guard.sql, 474_aa1160_tenant_crm_agency_marker.sql, 475_aa1140_ops_status_samples_and_thresholds.sql, 476_aa1152_tp_agency_price_stale_hours.sql, 477_aa1140_rds_free_storage_pct.sql, 478_aa1148_manual_tours_supplier_link.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -1430,6 +1430,247 @@
    }
   },
   {
+   "key": "cis.content.manual_tour.max_days",
+   "app": "cis",
+   "area": "content",
+   "label": "Hand-made tour: most day cards",
+   "description": "The most day cards a hand-made tour may have in the content workspace (/admin/content-workspace). A form with more days is refused with a plain message, so a typing slip (a tour of 300 days) never reaches the pipeline. Read by services/content_workspace/policy.py.",
+   "value_type": "int",
+   "unit": "days",
+   "min_value": 1,
+   "max_value": 60,
+   "allowed_values": null,
+   "default_value": 21,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many days a tour made by hand in the content workspace may last at most.",
+     "raise": "Higher: longer programs can be entered by hand, but a typing slip in the number of days is caught later.",
+     "lower": "Lower: slips are caught sooner, but a long program has to come in by Excel.",
+     "when": "Raise it when AA sells a program longer than the value; lower it only if long programs never come by hand.",
+     "example": "With the default 21: a 24-day program cannot be made by hand; the form says the most is 21 days."
+    },
+    "vi": {
+     "what": "Tour tạo tay trong khu làm nội dung được dài tối đa bao nhiêu ngày.",
+     "raise": "Cao hơn: nhập tay được chương trình dài hơn, nhưng gõ nhầm số ngày bị phát hiện muộn hơn.",
+     "lower": "Thấp hơn: gõ nhầm bị phát hiện sớm hơn, nhưng chương trình dài phải nhập bằng Excel.",
+     "when": "Tăng khi AA bán chương trình dài hơn giá trị này; chỉ giảm khi không bao giờ nhập tay chương trình dài.",
+     "example": "Với mặc định 21: chương trình 24 ngày không tạo tay được; form báo tối đa 21 ngày."
+    }
+   }
+  },
+  {
+   "key": "cis.content.manual_tour.min_exclusions",
+   "app": "cis",
+   "area": "content",
+   "label": "Hand-made tour: items not included, at least",
+   "description": "How many \"What is not included\" items a hand-made tour needs before it can be published (the required list of the content workspace; the draft publish refuses a tour below it with 409 required_missing). 0 turns the rule off. Read by services/content_workspace/policy.py.",
+   "value_type": "int",
+   "unit": "items",
+   "min_value": 0,
+   "max_value": 20,
+   "allowed_values": null,
+   "default_value": 1,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many items a hand-made tour must list under \"What is not included\" before it can be published.",
+     "raise": "Higher: travellers see more clearly what they pay for themselves, but staff must find more items before publishing.",
+     "lower": "Lower: tours publish with less checking; 0 lets a tour publish with no exclusions at all.",
+     "when": "Raise it if agencies report surprise costs; lower it for programs where almost everything is included.",
+     "example": "With the default 1: a tour that lists no exclusion stays a draft and the required list shows \"Not included: add at least 1 item\"."
+    },
+    "vi": {
+     "what": "Tour tạo tay phải ghi ít nhất bao nhiêu mục trong \"Không bao gồm\" mới được xuất bản.",
+     "raise": "Cao hơn: khách thấy rõ hơn những khoản tự trả, nhưng nhân viên phải tìm thêm mục trước khi xuất bản.",
+     "lower": "Thấp hơn: tour được xuất bản với ít kiểm tra hơn; 0 cho phép xuất bản khi không có mục nào.",
+     "when": "Tăng nếu đại lý báo khách bị bất ngờ về chi phí; giảm cho chương trình gần như trọn gói.",
+     "example": "Với mặc định 1: tour chưa ghi mục không bao gồm nào vẫn là nháp, danh sách bắt buộc hiện \"Không bao gồm: thêm ít nhất 1 mục\"."
+    }
+   }
+  },
+  {
+   "key": "cis.content.manual_tour.min_inclusions",
+   "app": "cis",
+   "area": "content",
+   "label": "Hand-made tour: items included, at least",
+   "description": "How many \"What is included\" items a hand-made tour needs before it can be published (the required list of the content workspace; the draft publish refuses a tour below it with 409 required_missing). 0 turns the rule off. Read by services/content_workspace/policy.py.",
+   "value_type": "int",
+   "unit": "items",
+   "min_value": 0,
+   "max_value": 20,
+   "allowed_values": null,
+   "default_value": 3,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many items a hand-made tour must list under \"What is included\" before it can be published.",
+     "raise": "Higher: tours describe what the price covers in more detail, but staff must enter more items before publishing.",
+     "lower": "Lower: tours publish with less detail; 0 lets a tour publish with no inclusions at all.",
+     "when": "Raise it if agencies ask what a tour covers; lower it for very simple programs such as a single transfer.",
+     "example": "With the default 3: a tour that lists transport and a guide but nothing else stays a draft until a third item (for example entrance fees) is added."
+    },
+    "vi": {
+     "what": "Tour tạo tay phải ghi ít nhất bao nhiêu mục trong \"Bao gồm\" mới được xuất bản.",
+     "raise": "Cao hơn: tour mô tả kỹ hơn giá đã gồm những gì, nhưng nhân viên phải nhập nhiều mục hơn trước khi xuất bản.",
+     "lower": "Thấp hơn: tour được xuất bản với ít chi tiết hơn; 0 cho phép xuất bản khi không có mục nào.",
+     "when": "Tăng nếu đại lý hay hỏi tour gồm những gì; giảm cho chương trình rất đơn giản như một chuyến đưa đón.",
+     "example": "Với mặc định 3: tour chỉ ghi xe và hướng dẫn viên vẫn là nháp cho tới khi thêm mục thứ ba (ví dụ vé tham quan)."
+    }
+   }
+  },
+  {
+   "key": "cis.content.manual_tour.quick_exclusions",
+   "app": "cis",
+   "area": "content",
+   "label": "Hand-made tour: one-click \"not included\" items",
+   "description": "The common \"What is not included\" items the content workspace offers as one-click chips under the list of a hand-made tour (English: the tour's content language). A chip adds its text to raw_tours.exclusions, which customers read after the pipeline, so this is customer-facing wording. Staff can still type any other item. Each item is plain text of at most 200 characters; an empty list shows no chips. Read by services/content_workspace/policy.py.",
+   "value_type": "list",
+   "unit": null,
+   "min_value": null,
+   "max_value": null,
+   "allowed_values": null,
+   "default_value": [
+    "International flights",
+    "Travel insurance",
+    "Drinks",
+    "Tips",
+    "Personal expenses",
+    "Visa fees"
+   ],
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The \"not included\" items staff can add to a hand-made tour with one click.",
+     "raise": "Adding items: staff fill the list faster and in the same words across tours, but a long row of chips is harder to scan.",
+     "lower": "Removing items: fewer chips to read; staff type the removed items by hand when a tour needs them.",
+     "when": "Add an item that staff type on many tours (for example domestic flights); remove one that no AA program uses any more.",
+     "example": "With the default list, one click adds \"Travel insurance\" to the tour's \"What is not included\" list."
+    },
+    "vi": {
+     "what": "Các mục \"Không bao gồm\" nhân viên thêm vào tour tạo tay chỉ bằng một cú bấm.",
+     "raise": "Thêm mục: nhân viên điền nhanh hơn và dùng cùng một cách viết cho mọi tour, nhưng hàng nút dài khó đọc hơn.",
+     "lower": "Bớt mục: ít nút phải đọc hơn; khi tour cần mục đã bỏ thì nhân viên gõ tay.",
+     "when": "Thêm mục nhân viên hay gõ trên nhiều tour (ví dụ vé máy bay nội địa); bỏ mục không chương trình AA nào còn dùng.",
+     "example": "Với danh sách mặc định, một cú bấm thêm \"Travel insurance\" vào danh sách \"Không bao gồm\" của tour."
+    }
+   }
+  },
+  {
+   "key": "cis.content.manual_tour.quick_inclusions",
+   "app": "cis",
+   "area": "content",
+   "label": "Hand-made tour: one-click \"included\" items",
+   "description": "The common \"What is included\" items the content workspace offers as one-click chips under the list of a hand-made tour (English: the tour's content language). A chip adds its text to raw_tours.inclusions, which customers read after the pipeline, so this is customer-facing wording. Staff can still type any other item. Each item is plain text of at most 200 characters; an empty list shows no chips. Read by services/content_workspace/policy.py.",
+   "value_type": "list",
+   "unit": null,
+   "min_value": null,
+   "max_value": null,
+   "allowed_values": null,
+   "default_value": [
+    "Private transport",
+    "English-speaking guide",
+    "Entrance fees",
+    "Meals as listed",
+    "Accommodation as listed",
+    "Drinking water"
+   ],
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The \"included\" items staff can add to a hand-made tour with one click.",
+     "raise": "Adding items: staff fill the list faster and in the same words across tours, but a long row of chips is harder to scan.",
+     "lower": "Removing items: fewer chips to read; staff type the removed items by hand when a tour needs them.",
+     "when": "Add an item that staff type on many tours (for example boat tickets); remove one that no AA program uses any more.",
+     "example": "With the default list, one click adds \"Entrance fees\" to the tour's \"What is included\" list."
+    },
+    "vi": {
+     "what": "Các mục \"Bao gồm\" nhân viên thêm vào tour tạo tay chỉ bằng một cú bấm.",
+     "raise": "Thêm mục: nhân viên điền nhanh hơn và dùng cùng một cách viết cho mọi tour, nhưng hàng nút dài khó đọc hơn.",
+     "lower": "Bớt mục: ít nút phải đọc hơn; khi tour cần mục đã bỏ thì nhân viên gõ tay.",
+     "when": "Thêm mục nhân viên hay gõ trên nhiều tour (ví dụ vé tàu thuyền); bỏ mục không chương trình AA nào còn dùng.",
+     "example": "Với danh sách mặc định, một cú bấm thêm \"Entrance fees\" vào danh sách \"Bao gồm\" của tour."
+    }
+   }
+  },
+  {
+   "key": "cis.content.manual_tour.tour_types",
+   "app": "cis",
+   "area": "content",
+   "label": "Hand-made tour: tour types",
+   "description": "The tour types staff choose from on a hand-made tour, in the order shown: a list of objects {\"code\": lower-case letters, digits and underscores, \"label\": the English name rendered into the tour's source text as \"Tour type: <label>\" (customers can read it after the pipeline), \"label_vi\": optional Vietnamese name for the admin form}. A save accepts only a listed code, or the code the tour already holds; removing a type never breaks a tour that has it (the tour keeps the label it was saved with). Read by services/content_workspace/policy.py.",
+   "value_type": "json",
+   "unit": null,
+   "min_value": null,
+   "max_value": null,
+   "allowed_values": null,
+   "default_value": [
+    {
+     "code": "private",
+     "label": "Private tour",
+     "label_vi": "Tour riêng"
+    },
+    {
+     "code": "join_in",
+     "label": "Join-in group tour",
+     "label_vi": "Tour ghép đoàn"
+    }
+   ],
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The kinds of tour (private, join-in and so on) staff can pick for a tour made by hand.",
+     "raise": "Adding a type: staff can describe more kinds of program (for example small group or self-guided), and the new name reaches the tour text.",
+     "lower": "Removing a type: staff can no longer pick it for a new tour; tours that already have it keep it.",
+     "when": "Add a type when AA starts selling a new kind of program; rename a label to change the words the tour text uses from the next save.",
+     "example": "With the default list, staff pick \"Private tour\" or \"Join-in group tour\", and the tour's source text says \"Tour type: Private tour\"."
+    },
+    "vi": {
+     "what": "Các loại tour (tour riêng, ghép đoàn...) nhân viên chọn được cho tour tạo tay.",
+     "raise": "Thêm loại: nhân viên mô tả được nhiều kiểu chương trình hơn (ví dụ nhóm nhỏ, tự đi), và tên mới đi vào nội dung tour.",
+     "lower": "Bớt loại: không chọn được loại đó cho tour mới nữa; tour đã có loại đó vẫn giữ nguyên.",
+     "when": "Thêm khi AA bắt đầu bán kiểu chương trình mới; đổi nhãn để đổi chữ trong nội dung tour từ lần lưu kế tiếp.",
+     "example": "Với danh sách mặc định, nhân viên chọn \"Private tour\" hoặc \"Join-in group tour\", và nội dung nguồn của tour ghi \"Tour type: Private tour\"."
+    }
+   }
+  },
+  {
    "key": "cis.content.publish_two_person",
    "app": "cis",
    "area": "content",
@@ -1462,6 +1703,42 @@
      "lower": "Tắt: nhân viên nội dung tự xuất bản bản sửa của mình khi bước kiểm tự động đạt; nhanh hơn, không có người đọc thứ hai.",
      "when": "Bật khi ra mắt bản production đầu tiên, hoặc ngay khi có hơn một người sửa tour hằng ngày.",
      "example": "Với mặc định tắt (giai đoạn phát triển), nhân viên nội dung sửa một lỗi chính tả và tự xuất bản; khi bật, trưởng nhóm nội dung xuất bản."
+    }
+   }
+  },
+  {
+   "key": "cis.content.supplier_link.bulk_max",
+   "app": "cis",
+   "area": "content",
+   "label": "Supplier link: most tours in one action",
+   "description": "The most tours one \"Link to supplier\" action of the unlinked tours report may change (the bulk link and the apply of the suggested matches). A larger selection is refused with a plain message; do it in parts. Read by services/content_workspace/policy.py.",
+   "value_type": "int",
+   "unit": "tours",
+   "min_value": 1,
+   "max_value": 500,
+   "allowed_values": null,
+   "default_value": 100,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many tours one bulk \"Link to supplier\" action may change at once.",
+     "raise": "Higher: the old tours are linked in fewer clicks, but a wrong choice changes more tours at once.",
+     "lower": "Lower: a wrong choice touches fewer tours, but linking a large catalogue takes more rounds.",
+     "when": "Raise it for a one-off clean-up of many old tours; lower it again after the clean-up.",
+     "example": "With the default 100: 140 tours of one supplier are linked in two actions, 100 and then 40."
+    },
+    "vi": {
+     "what": "Một lần \"Gắn nhà cung cấp\" hàng loạt được đổi tối đa bao nhiêu tour.",
+     "raise": "Cao hơn: gắn tour cũ ít lần bấm hơn, nhưng chọn nhầm thì đổi nhiều tour cùng lúc.",
+     "lower": "Thấp hơn: chọn nhầm chỉ ảnh hưởng ít tour, nhưng gắn cả danh mục lớn mất nhiều lượt hơn.",
+     "when": "Tăng khi dọn một lần nhiều tour cũ; giảm lại sau khi dọn xong.",
+     "example": "Với mặc định 100: 140 tour của một nhà cung cấp được gắn trong hai lần, 100 rồi 40."
     }
    }
   },
