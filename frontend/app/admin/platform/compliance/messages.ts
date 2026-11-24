@@ -57,6 +57,7 @@ export const COMPLIANCE = defineMessages(
     ingestMissing: "Nothing published yet: the file appears after the first run of the root Compliance evidence workflow.",
     ingestUnavailable: "The evidence file could not be read; the scores use the evidence already stored.",
     ingestInvalid: "The evidence file was refused (wrong format); the scores use the evidence already stored.",
+    ingestSuperseded: "Not read: the sealed daily bundle replaces the published file.",
     dropped: (n: number) => `${n} results were dropped (see the API answer for the reasons).`,
     // controls
     filterFramework: "Framework",
@@ -210,6 +211,7 @@ export const COMPLIANCE = defineMessages(
     ingestMissing: "Chưa có gì được đăng: tệp xuất hiện sau lần chạy đầu của workflow Compliance evidence ở repo gốc.",
     ingestUnavailable: "Không đọc được tệp bằng chứng; điểm dùng bằng chứng đã lưu.",
     ingestInvalid: "Tệp bằng chứng bị từ chối (sai định dạng); điểm dùng bằng chứng đã lưu.",
+    ingestSuperseded: "Không đọc: gói niêm phong hằng ngày thay cho tệp đã đăng.",
     dropped: (n: number) => `${n} kết quả bị bỏ (xem lý do trong phản hồi API).`,
     filterFramework: "Khung",
     allFrameworks: "Mọi khung",

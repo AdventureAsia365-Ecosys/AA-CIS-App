@@ -73,7 +73,7 @@ export interface LiveSourceState {
 }
 
 export interface IngestState {
-  state: "ok" | "missing" | "unavailable" | "invalid" | "skipped";
+  state: "ok" | "missing" | "unavailable" | "invalid" | "skipped" | "superseded";
   read_at?: string;
   rows?: number;
   new?: number;

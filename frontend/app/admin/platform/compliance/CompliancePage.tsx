@@ -135,6 +135,7 @@ function ingestText(state: IngestState | null, t: CT): string | null {
   if (state.state === "ok") return t("ingestOk", state.rows ?? 0, state.new ?? 0);
   if (state.state === "missing") return t("ingestMissing");
   if (state.state === "invalid") return t("ingestInvalid");
+  if (state.state === "superseded") return t("ingestSuperseded");
   return t("ingestUnavailable");
 }
 

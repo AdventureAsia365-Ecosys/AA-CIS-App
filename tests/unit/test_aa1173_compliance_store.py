@@ -148,3 +148,46 @@ def test_sync_sealed_without_storage_is_unavailable():
         raise RuntimeError("no credentials")
     out = asyncio.run(compliance._sync_sealed(object(), boom, NOW))
     assert {v["state"] for v in out.values()} == {"unavailable"} and set(out) == set(store.SOURCES)
+
+
+# ── the phase 1 docs reader file never overrides sealed evidence (S290 review) ──────────────────────────────────────
+
+
+def test_sealed_sources_match_the_store():
+    assert compliance.SEALED_SOURCES == store.SOURCES
+    assert compliance.DOCS_READER_SOURCE in store.SOURCES
+
+
+def _docs_reader(raw: bytes | None, sealed: dict):
+    ingest = AsyncMock(return_value=1)
+    with patch.object(compliance, "_read_published", lambda factory: raw), patch.object(compliance, "ingest", ingest), \
+            patch.object(compliance, "_validity_hours", AsyncMock(return_value=48)):
+        out = asyncio.run(compliance._sync_docs_reader(object(), lambda: None, NOW, sealed))
+    return out, ingest
+
+
+def test_a_docs_reader_file_claiming_a_sealed_aws_source_is_refused():
+    # an overwritten docs reader file says aws_nightly passes; nothing of it may reach compliance.evidence
+    out, ingest = _docs_reader(bundle_bytes("aws_nightly"), {"aws_nightly": {"state": "ok"}})
+    assert out["state"] == "invalid" and "root_daily" in out["detail"]
+    assert not ingest.await_count
+
+
+def test_the_docs_reader_file_is_not_read_once_the_sealed_root_daily_is_ok():
+    def never(factory):
+        raise AssertionError("the docs reader file must not be read")
+    with patch.object(compliance, "_read_published", never):
+        out = asyncio.run(compliance._sync_docs_reader(object(), lambda: None, NOW, {"root_daily": {"state": "ok"}}))
+    assert out["state"] == "superseded"
+
+
+@pytest.mark.parametrize("sealed_state", ["missing", "unavailable", "broken"])
+def test_the_docs_reader_root_daily_file_is_still_read_while_nothing_sealed_is_ok(sealed_state):
+    out, ingest = _docs_reader(bundle_bytes("root_daily"), {"root_daily": {"state": sealed_state}})
+    assert out["state"] == "ok" and out["rows"] == 1 and ingest.await_count == 1
+    assert all(r.get("object_key") is None for r in ingest.await_args.args[1])
+
+
+def test_latest_query_prefers_a_sealed_row_for_sealed_sources():
+    sql = " ".join(compliance.SQL_LATEST.split())
+    assert "ORDER BY check_id, (object_key IS NULL AND source = ANY($1::text[])), collected_at DESC" in sql

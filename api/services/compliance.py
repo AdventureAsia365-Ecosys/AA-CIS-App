@@ -49,9 +49,13 @@ the docs reader file (page load, cached; Refresh) first reads the newest sealed 
 ingests it with ``object_key`` / ``object_sha256`` on each row (``sealed`` in the answer: per source ok | missing |
 unavailable | invalid | broken). A bundle that does not match its manifest is refused whole (state ``broken``, logged
 at error): nothing of it is ingested. The docs reader file is still read after it (phase 1 path, kept until the root
-workflow stops writing it); the unique key makes the second copy of the same run add nothing. ``cis_db`` is now
-collected daily by the job compliance_db_checks (services/jobs/compliance_db_checks_job.py), so the heartbeat applies
-to it; the weekly Prowler scan is graded by its validity window only (a weekly source is never "silent" after 36 h).
+workflow stops writing it), but it can never override sealed evidence (the Docs sync role can overwrite it): it may
+only carry source ``root_daily`` (any other source = state ``invalid``, nothing ingested), it is not read at all once
+the sealed ``root_daily`` is ``ok`` (state ``superseded``), and SQL_LATEST takes, per check, a sealed row
+(``object_key`` set) before any unsealed row of a sealed source, so an older or rewritten unsealed copy never wins.
+``cis_db`` is now collected daily by the job compliance_db_checks (services/jobs/compliance_db_checks_job.py), so the
+heartbeat applies to it; the weekly Prowler scan is graded by its validity window only (a weekly source is never
+"silent" after 36 h).
 Exceptions (api/services/compliance_exceptions.py) never raise a score: a control with an approved, unexpired exception
 keeps its state and carries ``exception`` (the page shows "accepted risk").
 """
@@ -87,6 +91,10 @@ LIVE_SOURCES = ("cis_db", "crm_ops")
 # the heartbeat applies to these only: a source collected on demand has no schedule, and the weekly Prowler scan is
 # graded by its own validity window (AA-1173: cis_db is collected daily by the job compliance_db_checks)
 SCHEDULED_SOURCES = frozenset({"root_daily", "aws_nightly", "cis_db"})
+# AA-1173: the only source the phase 1 docs reader file may carry (the root daily workflow); the sealed sources
+# themselves are compliance_store.SOURCES
+DOCS_READER_SOURCE = "root_daily"
+SEALED_SOURCES = ("root_daily", "aws_nightly", "prowler_weekly")   # = compliance_store.SOURCES (a unit test pins it)
 STATUSES = ("pass", "fail", "error", "stale", "manual")
 _SOURCE = re.compile(r"^[a-z][a-z0-9_]{1,40}$")
 _CHECK_ID = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
@@ -246,24 +254,33 @@ async def _sync_published(pool: Any, refresh: bool, client_factory: Optional[Cal
         now = now or datetime.now(timezone.utc)
         state: dict[str, Any] = {"read_at": now.isoformat(), "object": OBJECT_NAME}
         state["sealed"] = await _sync_sealed(pool, client_factory or docs_reader._s3_client, now)
-        try:
-            raw = await asyncio.to_thread(_read_published, client_factory or docs_reader._s3_client)
-        except Exception as err:   # storage
-            logger.warning("compliance_evidence_read_failed", error=type(err).__name__)
-            raw, state["state"] = None, "unavailable"
-        if raw is None and "state" not in state:
-            state["state"] = "missing"
-        if raw is not None:
-            try:
-                rows, dropped = parse_bundle(raw, now)
-            except ValueError as err:
-                state.update(state="invalid", detail=str(err))
-            else:
-                source = rows[0]["source"] if rows else None
-                hours = await _validity_hours(source) if source else None
-                state.update(state="ok", rows=len(rows), new=await ingest(pool, rows, hours), dropped=dropped)
+        state.update(await _sync_docs_reader(pool, client_factory, now, state["sealed"]))
         _cache["state"], _cache["at"] = state, time.monotonic()
         return state
+
+
+async def _sync_docs_reader(pool: Any, client_factory: Optional[Callable[[], Any]], now: datetime,
+                            sealed: dict) -> dict:
+    """The phase 1 docs reader file (mutable: the Docs sync role can overwrite it). Not read once the sealed root_daily
+    is ok (the sealed copy covers that run); refused whole when it claims any source but root_daily."""
+    if sealed.get(DOCS_READER_SOURCE, {}).get("state") == "ok":
+        return {"state": "superseded", "detail": f"the sealed {DOCS_READER_SOURCE} bundle is read instead"}
+    try:
+        raw = await asyncio.to_thread(_read_published, client_factory or docs_reader._s3_client)
+    except Exception as err:   # noqa: BLE001 - storage
+        logger.warning("compliance_evidence_read_failed", error=type(err).__name__)
+        return {"state": "unavailable"}
+    if raw is None:
+        return {"state": "missing"}
+    try:
+        rows, dropped = parse_bundle(raw, now)
+    except ValueError as err:
+        return {"state": "invalid", "detail": str(err)}
+    if any(r["source"] != DOCS_READER_SOURCE for r in rows):
+        logger.error("compliance_docs_reader_wrong_source", source=rows[0]["source"])
+        return {"state": "invalid", "detail": f"the docs reader file may only carry source {DOCS_READER_SOURCE}"}
+    hours = await _validity_hours(DOCS_READER_SOURCE) if rows else None
+    return {"state": "ok", "rows": len(rows), "new": await ingest(pool, rows, hours), "dropped": dropped}
 
 
 async def _sync_sealed(pool: Any, client_factory: Callable[[], Any], now: datetime) -> dict:
@@ -374,11 +391,13 @@ SQL_FRAMEWORKS = ("SELECT framework, kind, title, jurisdiction, citation, source
 SQL_CONTROLS = ("SELECT control_id, title, intent, domain, owner_role, frequency, test_type, checks, scope, active, "
                 "updated_at FROM compliance.control ORDER BY control_id")
 SQL_MAPPINGS = "SELECT control_id, framework, ref, coverage, note FROM compliance.requirement_mapping"
+# per check, a sealed row (object_key set) wins over every unsealed row of a sealed source ($1 = SEALED_SOURCES),
+# whatever its date: an unsealed root_daily row (phase 1 docs reader copy) only counts while nothing is sealed
 SQL_LATEST = """
 SELECT DISTINCT ON (check_id) check_id, source, status, collected_at, valid_until, collector, collector_version,
        run_ref, summary, detail, link, object_key, object_sha256
   FROM compliance.evidence
- ORDER BY check_id, collected_at DESC, evidence_id DESC
+ ORDER BY check_id, (object_key IS NULL AND source = ANY($1::text[])), collected_at DESC, evidence_id DESC
 """
 SQL_LAST_SEEN = "SELECT source, max(collected_at) AS last_seen, count(*) AS n FROM compliance.evidence GROUP BY source"
 SQL_UPSERT_SNAPSHOT = """
@@ -426,7 +445,7 @@ async def _state(conn: Any) -> dict:
         "requirements": [_row(r) for r in await conn.fetch(SQL_REQUIREMENTS)],
         "controls": [_row(r) for r in await conn.fetch(SQL_CONTROLS)],
         "mappings": [_row(r) for r in await conn.fetch(SQL_MAPPINGS)],
-        "latest": {r["check_id"]: _row(r) for r in await conn.fetch(SQL_LATEST)},
+        "latest": {r["check_id"]: _row(r) for r in await conn.fetch(SQL_LATEST, list(SEALED_SOURCES))},
         "sources": {r["source"]: {"last_seen": r["last_seen"], "n": r["n"]} for r in await conn.fetch(SQL_LAST_SEEN)},
     }
 

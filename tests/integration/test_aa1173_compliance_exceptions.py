@@ -8,7 +8,7 @@ import json
 import os
 import sys
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -147,3 +147,30 @@ async def test_collect_reads_the_live_catalog(conn):
         assert rows[cid]["detail"]["tables"] > 100   # every app schema of the replay was read
     # the rows are what the table accepts
     assert await compliance.ingest(OneConnPool(conn), list(rows.values()), 72) == len(rows)
+
+
+def _evidence(source: str, check_id: str, status: str, hours_ago: int, sealed: bool) -> dict:
+    key = f"evidence/{source}/bundles/2026/11/24/{hours_ago:02d}Z-1.json"
+    return {"source": source, "check_id": check_id, "status": status,
+            "collected_at": NOW.replace(microsecond=0) - timedelta(hours=hours_ago), "collector": "invented collector",
+            "collector_version": "abc1234", "run_ref": f"invented run {hours_ago}", "summary": None, "detail": {},
+            "link": None, "object_key": key if sealed else None, "object_sha256": "a" * 64 if sealed else None}
+
+
+@pytest.mark.asyncio
+async def test_latest_prefers_a_sealed_row_over_a_newer_unsealed_one(conn):
+    # S290 review: an unsealed row of a sealed source (a rewritten phase 1 docs reader copy) must not override the
+    # sealed evidence, even when it is newer; an unsealed root_daily row still counts while nothing of it is sealed,
+    # and an unsealed source (cis_db) keeps "newest wins"
+    pool = OneConnPool(conn)
+    await compliance.ingest(pool, [_evidence("aws_nightly", "ex_sealed_probe", "fail", 5, True),
+                                   _evidence("aws_nightly", "ex_sealed_probe", "pass", 1, False),
+                                   _evidence("root_daily", "ex_unsealed_probe", "pass", 3, False),
+                                   _evidence("cis_db", "ex_live_probe", "fail", 4, False),
+                                   _evidence("cis_db", "ex_live_probe", "pass", 2, False)], 72)
+    latest = (await compliance._state(conn))["latest"]
+    assert latest["ex_sealed_probe"]["status"] == "fail" and latest["ex_sealed_probe"]["object_key"]
+    assert latest["ex_unsealed_probe"]["status"] == "pass" and latest["ex_unsealed_probe"]["object_key"] is None
+    assert latest["ex_live_probe"]["status"] == "pass"
+    await compliance.ingest(pool, [_evidence("root_daily", "ex_unsealed_probe", "fail", 2, True)], 72)
+    assert (await compliance._state(conn))["latest"]["ex_unsealed_probe"]["status"] == "fail"
