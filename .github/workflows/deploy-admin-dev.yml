@@ -16,6 +16,9 @@ name: Deploy Admin Dev
 #   visual-production  visual.yml job `deployed` on the pages the push changed (github.event.before...sha), signed in.
 #                      Report-only.
 # Per-PR checks need no deployment: Visual (next start) is the required per-PR UI check (root ADR 0019 d23 R7).
+# AA-1119: a red `verify` or `smoke-production` after a successful deploy rolls the service back to the revision it ran
+# before this deploy (`rollback`, refused when that revision is unknown or unsafe) and opens or comments on the
+# deploy-smoke-red issue (`report`); the next verified deploy closes it. The run stays red.
 #
 # Configuration (GitHub environment `dev`):
 #   secrets.AWS_ROLE_ARN    the CIS deploy role (shared with Deploy Dev; AA-CIS-Infra cicd_split.tf
@@ -109,6 +112,8 @@ jobs:
     environment: dev
     outputs:
       running: ${{ steps.running.outputs.running }}
+      # AA-1119: the revision the service ran before this deploy (empty = unknown or unsafe: never rolled back).
+      previous_td: ${{ steps.before.outputs.previous_td }}
     env:
       PUBLIC_SENTRY_DSN: ${{ vars.ADMIN_PUBLIC_SENTRY_DSN }}
     steps:
@@ -142,6 +147,15 @@ jobs:
             docker push "$IMAGE"
           fi
           echo "DEPLOY_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      # AA-1119 (S282 audit R32): record what runs now, before update-service, so a red post-deploy check can roll
+      # back to it. Empty when the service is not settled or runs a Terraform template revision (then `rollback`
+      # never acts).
+      - name: Record the revision before this deploy (rollback target)
+        id: before
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/ecs_smoke_rollback.py previous --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --container "$CONTAINER" >> "$GITHUB_OUTPUT"
 
       - name: Register task definition (new image) and update service
         run: |
@@ -252,6 +266,107 @@ jobs:
       sha: ${{ github.sha }}
       base_sha: ${{ github.event_name == 'push' && github.event.before || '' }}
     secrets: inherit
+
+  # AA-1119 (S282 audit R32): a red post-deploy check must not leave the bad build serving. When `verify` or `smoke-production`
+  # failed after a successful deploy, move the service back to the revision recorded before the deploy
+  # (.github/scripts/ecs_smoke_rollback.py, the unattended form of root runbook docs/ops/runbooks/rollback-ecs.md). It
+  # refuses, changing nothing, when that revision is unknown or unsafe (template revision, image gone from ECR, a
+  # deployment in progress, the service moved since). The run stays red either way (`result`); `report` opens the
+  # issue. Visual is report-only and never triggers it. Fix forward on main; the next deploy registers a fresh revision.
+  rollback:
+    name: Roll back after a red post-deploy check
+    needs: [deploy, verify, smoke-production]
+    if: >-
+      always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+      && needs.deploy.result == 'success' && needs.deploy.outputs.running == 'true'
+      && (needs.verify.result == 'failure' || needs.smoke-production.result == 'failure')
+    runs-on: ubuntu-latest
+    environment: dev
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      outcome: ${{ steps.rollback.outputs.outcome }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+
+      - name: Roll back to the revision before this deploy
+        id: rollback
+        env:
+          PREVIOUS_TD: ${{ needs.deploy.outputs.previous_td }}
+        run: |
+          set -uo pipefail
+          python3 .github/scripts/ecs_smoke_rollback.py rollback --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" \
+            --container "$CONTAINER" --repository "$ECR_REPOSITORY" --previous "$PREVIOUS_TD" \
+            --deployed-tag "dev-${GITHUB_SHA}" --apply 2> /tmp/rollback.log
+          status=$?
+          cat /tmp/rollback.log
+          case "$status" in
+            0) outcome="rolled back to ${PREVIOUS_TD}" ;;
+            3) outcome="not rolled back (refused: $(grep -m1 '^REFUSED' /tmp/rollback.log | cut -c1-200))" ;;
+            *) outcome="rollback FAILED (exit $status)" ;;
+          esac
+          echo "outcome=$outcome" >> "$GITHUB_OUTPUT"
+          echo "- $outcome" >> "$GITHUB_STEP_SUMMARY"
+          # Refused is a safe outcome (nothing changed); a failed rollback is red.
+          [ "$status" = 0 ] || [ "$status" = 3 ]
+
+  # AA-1119: one open issue labelled deploy-smoke-red per workflow while its post-deploy checks are red on main (opened,
+  # then commented on), closed by the next verified deploy. Same pattern as AA-CIS-App's nightly-red issue. Only this
+  # job writes, and only issues; no checkout.
+  report:
+    name: Report a red post-deploy check (issue)
+    needs: [deploy, verify, smoke-production, rollback]
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.deploy.result == 'success' && needs.deploy.outputs.running == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TITLE: "Deploy Admin Dev: post-deploy check is red"
+      VERIFY: ${{ needs.verify.result }}
+      SMOKE: ${{ needs.smoke-production.result }}
+      OUTCOME: ${{ needs.rollback.outputs.outcome || needs.rollback.result }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Open, comment on or close the deploy-smoke-red issue
+        run: |
+          set -euo pipefail
+          N=$(gh issue list --label deploy-smoke-red --state open --limit 50 --json number,title \
+            | jq -r --arg t "$TITLE" '[.[] | select(.title == $t)][0].number // empty')
+          if [ "$VERIFY" = "success" ] && [ "$SMOKE" = "success" ]; then
+            if [ -n "$N" ]; then
+              gh issue close "$N" --comment "Verified again on ${GITHUB_SHA::7}: $RUN_URL"
+              echo "- post-deploy checks green: closed #$N" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            exit 0
+          fi
+          BODY="Deploy Admin Dev on \`${GITHUB_SHA::7}\`: verify **$VERIFY**, smoke-production **$SMOKE**. Rollback: ${OUTCOME:-not run}.
+          Run: $RUN_URL
+
+          Read the failed job first. A rollback leaves main ahead of what runs: fix forward (revert or fix on main).
+          Runbook: docs/ops/runbooks/rollback-ecs.md in the root repo. The next verified deploy closes this issue."
+          if [ -n "$N" ]; then
+            gh issue comment "$N" --body "$BODY"
+          else
+            gh label create deploy-smoke-red --color B60205 --force \
+              --description "A post-deploy verify or smoke is red on main (deploy workflows, AA-1119)"
+            N=$(gh issue create --title "$TITLE" --label deploy-smoke-red --body "$BODY" | sed -nE 's#.*/issues/([0-9]+)$#\1#p')
+          fi
+          echo "::warning::post-deploy check red: issue #$N (label deploy-smoke-red)"
+          echo "- post-deploy check red: issue #$N (label deploy-smoke-red)" >> "$GITHUB_STEP_SUMMARY"
 
   result:
     name: Deploy Admin Dev result
