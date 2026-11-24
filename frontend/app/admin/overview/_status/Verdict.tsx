@@ -11,6 +11,7 @@ import {
 } from "@/lib/opsStatus";
 import { ChipFilter, ClampText, SortSelect, rowWrap, small, sortOptions, useST, type ST } from "./ui";
 import { useWords, type StatusWords } from "./words";
+import { AssistButton, AssistSignals } from "./Assist";
 
 const SORT_DEFAULT = "severity:desc";
 
@@ -40,7 +41,7 @@ function ItemDetail({ item, w }: { item: AttentionItem; w: StatusWords }) {
     testId={`status-att-${item.id}-detail`} />;
 }
 
-function ItemRow({ item }: { item: AttentionItem }) {
+function ItemRow({ item, range }: { item: AttentionItem; range: string }) {
   const t = useST();
   const w = useWords();
   const { formatDateTime } = useFormat();
@@ -54,6 +55,9 @@ function ItemRow({ item }: { item: AttentionItem }) {
         <span style={{ fontWeight: 600, color: K.ink, overflowWrap: "anywhere", minWidth: 0 }}
           data-testid={`status-att-${item.id}-title`}>{w.text(item.msg, item.title)}</span>
         {item.status !== "open" && <Badge tone="info" dot={false}>{t("stAcked")}</Badge>}
+        <span style={{ marginLeft: "auto" }}>
+          <AssistButton itemId={item.id} title={w.text(item.msg, item.title)} range={range} />
+        </span>
       </div>
       <ItemDetail item={item} w={w} />
       <div style={{ ...rowWrap, ...small }}>
@@ -131,11 +135,12 @@ export function VerdictCard({ verdict, view, setView }: {
             </span>
           </div>
           <div role="list" style={{ display: "grid", gap: 8 }} data-testid="status-attention">
-            {rows.map((i) => <ItemRow key={i.id} item={i} />)}
+            {rows.map((i) => <ItemRow key={i.id} item={i} range={view.range} />)}
             {rows.length === 0 && <span style={small}>{t("noAttention")}</span>}
           </div>
         </>
       )}
+      <AssistSignals attentionIds={verdict.attention.map((i) => i.id)} range={view.range} />
       <Resolved items={verdict.resolved} />
     </Section>
   );

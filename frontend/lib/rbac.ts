@@ -357,6 +357,9 @@ export const API_READ_RULES: { prefix: string; caps: readonly Capability[]; role
   // AA-992 — backend /admin/data-coverage (counts of every stage, CRM included): admin only, re-checked by the backend
   // (staff_policy, capability ops.read).
   { prefix: "data-coverage", caps: ["ops.read"], roles: ["admin"] },
+  // AA-1154 — backend /admin/ops-assist/* (the assistant's evidence, action cards and catalogue): admin only, re-checked
+  // by the backend (staff_policy, capability ops.read).
+  { prefix: "ops-assist", caps: ["ops.read"], roles: ["admin"] },
   // AA-1003 — backend /admin/reports/* (report register, runs and their output, generate now): admin only, re-checked
   // by the backend (staff_policy, ops.read / ops.write).
   { prefix: "reports", caps: ["ops.read"], roles: ["admin"] },
