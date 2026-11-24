@@ -20,7 +20,7 @@ the legal document checks of the root collector (graded on pages past their own 
 and ``APPLICABILITY_REVIEW_MAX_AGE_DAYS`` (display only: when a verdict of the applicability matrix shows "Review due").
 ``CAMPAIGN_CONSENT_WINDOW_DAYS`` is the window the CRM counts sends over (a query parameter the CRM caps).
 
-AA-1173 (S290, CIS 481) adds the phase 2-3 keys: the validity of the two Infra sources sealed in the Object Lock
+AA-1173 (S290, CIS 478) adds the phase 2-3 keys: the validity of the two Infra sources sealed in the Object Lock
 evidence bucket (``aws_nightly``: the nightly AWS read-only checks; ``prowler_weekly``: the weekly Prowler scan), the
 failing critical / high Prowler findings the scan check tolerates, the longest an exception may run (checked at
 proposal and at approval) and the age of the newest monthly posture review the review check accepts.
@@ -31,8 +31,8 @@ from __future__ import annotations
 VALIDITY_HOURS = {"root_daily": "cis.compliance.validity_hours.root_daily",
                   "cis_db": "cis.compliance.validity_hours.cis_db",      # AA-1174 (471)
                   "crm_ops": "cis.compliance.validity_hours.crm_ops",    # AA-1174 (471)
-                  "aws_nightly": "cis.compliance.validity_hours.aws_nightly",        # AA-1173 (481)
-                  "prowler_weekly": "cis.compliance.validity_hours.prowler_weekly"}  # AA-1173 (481)
+                  "aws_nightly": "cis.compliance.validity_hours.aws_nightly",        # AA-1173 (478)
+                  "prowler_weekly": "cis.compliance.validity_hours.prowler_weekly"}  # AA-1173 (478)
 HEARTBEAT_HOURS = "cis.compliance.collector_heartbeat_hours"
 PARTIAL_WEIGHT = "cis.compliance.partial_weight"
 DRILL_MAX_AGE_DAYS = "cis.compliance.drill_max_age_days"
@@ -49,7 +49,7 @@ CONSENT_CAPTURE_MAX_AGE_DAYS = "cis.compliance.consent_capture_max_age_days"
 CAMPAIGN_CONSENT_VIOLATIONS_MAX = "cis.compliance.campaign_consent_violations_max"
 CAMPAIGN_CONSENT_WINDOW_DAYS = "cis.compliance.campaign_consent_window_days"
 APPLICABILITY_REVIEW_MAX_AGE_DAYS = "cis.compliance.applicability_review_max_age_days"
-# AA-1173 (CIS 481)
+# AA-1173 (CIS 478)
 PROWLER_CRITICAL_HIGH_MAX = "cis.compliance.prowler_critical_high_max"
 EXCEPTION_MAX_DAYS = "cis.compliance.exception_max_days"
 REVIEW_MAX_AGE_DAYS = "cis.compliance.review_max_age_days"
@@ -73,7 +73,7 @@ FACT_LIMITS = {
     "retention_live_enabled": ("live_last_date", RETENTION_LIVE_MAX_AGE_DAYS, "age_days"),
     "consent_capture_present": ("last_date", CONSENT_CAPTURE_MAX_AGE_DAYS, "age_days"),
     "campaign_consent_enforced": ("violations", CAMPAIGN_CONSENT_VIOLATIONS_MAX, "max"),
-    # AA-1173 (481)
+    # AA-1173 (478)
     "prowler_critical_high": ("critical_high", PROWLER_CRITICAL_HIGH_MAX, "max"),
     "monthly_review_recent": ("last_date", REVIEW_MAX_AGE_DAYS, "age_days"),
 }
@@ -83,6 +83,6 @@ ALL_466 = ("cis.compliance.validity_hours.root_daily", HEARTBEAT_HOURS, PARTIAL_
 ALL_471 = (VALIDITY_HOURS["cis_db"], VALIDITY_HOURS["crm_ops"], LEGAL_DOCS_OVERDUE_MAX, ERASURE_DRILL_MAX_AGE_DAYS,
            RETENTION_RUN_MAX_AGE_DAYS, RETENTION_LIVE_MAX_AGE_DAYS, CONSENT_CAPTURE_MAX_AGE_DAYS,
            CAMPAIGN_CONSENT_VIOLATIONS_MAX, CAMPAIGN_CONSENT_WINDOW_DAYS, APPLICABILITY_REVIEW_MAX_AGE_DAYS)
-ALL_481 = (VALIDITY_HOURS["aws_nightly"], VALIDITY_HOURS["prowler_weekly"], PROWLER_CRITICAL_HIGH_MAX,
+ALL_478 = (VALIDITY_HOURS["aws_nightly"], VALIDITY_HOURS["prowler_weekly"], PROWLER_CRITICAL_HIGH_MAX,
            EXCEPTION_MAX_DAYS, REVIEW_MAX_AGE_DAYS)
-ALL = ALL_466 + ALL_471 + ALL_481
+ALL = ALL_466 + ALL_471 + ALL_478

@@ -1,6 +1,6 @@
-"""AA-1173 (S290) — CIS 481: compliance.exception (maker-checker, expiry, transition-only), compliance.review
+"""AA-1173 (S290) — CIS 478: compliance.exception (maker-checker, expiry, transition-only), compliance.review
 (append-only, one per month), the sealed-object columns of compliance.evidence and five cis.compliance.* settings
-(conftest replays 481 with the other files). Registered; the exception CHECKs and the guard trigger (no delete, no edit of
+(conftest replays 478 with the other files). Registered; the exception CHECKs and the guard trigger (no delete, no edit of
 the proposal, only valid moves, the proposer approves only as a recorded self-approval); the review is append-only and
 unique per month; the evidence object CHECKs; cis_app DML only, nothing for aa_app_user; the five settings equal the
 compiled defaults with a complete guide; a re-run changes nothing. Invented ids (EX- control, ex_ check). Runs in a
@@ -19,9 +19,9 @@ from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 from shared import settings  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-M481 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
-                    "481_aa1173_compliance_exceptions_reviews.sql")
-KEYS_481 = ("cis.compliance.validity_hours.aws_nightly", "cis.compliance.validity_hours.prowler_weekly",
+M478 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations",
+                    "478_aa1173_compliance_exceptions_reviews.sql")
+KEYS_478 = ("cis.compliance.validity_hours.aws_nightly", "cis.compliance.validity_hours.prowler_weekly",
             "cis.compliance.prowler_critical_high_max", "cis.compliance.exception_max_days",
             "cis.compliance.review_max_age_days")
 REASON = "An invented reason that is long enough to pass the check."
@@ -53,8 +53,8 @@ async def _exception(conn, ref="EX-IAM-01", by="admin:maker"):
 
 
 @pytest.mark.asyncio
-async def test_481_registered(conn):
-    assert await conn.fetchval("SELECT version AS ok FROM shared.schema_versions WHERE version = '481'") == "481"
+async def test_478_registered(conn):
+    assert await conn.fetchval("SELECT version AS ok FROM shared.schema_versions WHERE version = '478'") == "478"
     tables = {r["relname"] for r in await conn.fetch(
         "SELECT c.relname FROM pg_class c WHERE c.relnamespace = 'compliance'::regnamespace AND c.relkind = 'r'")}
     assert {"exception", "review"} <= tables
@@ -148,9 +148,9 @@ async def test_grants(conn):
 async def test_settings_are_the_compiled_defaults(conn):
     rows = {r["key"]: r for r in await conn.fetch(
         "SELECT key, default_value, enforced, area, label, approval, shared.setting_guide_complete(guide) AS guided "
-        "FROM shared.setting_definition WHERE key = ANY($1::text[])", list(KEYS_481))}
-    assert set(rows) == set(KEYS_481)
-    for key in KEYS_481:
+        "FROM shared.setting_definition WHERE key = ANY($1::text[])", list(KEYS_478))}
+    assert set(rows) == set(KEYS_478)
+    for key in KEYS_478:
         assert json.loads(rows[key]["default_value"]) == settings.definition(key).default_value, key
         assert rows[key]["enforced"] is True and rows[key]["area"] == "compliance", key
         assert rows[key]["guided"] is True and rows[key]["label"] == settings.definition(key).label, key
@@ -159,7 +159,7 @@ async def test_settings_are_the_compiled_defaults(conn):
 
 @pytest.mark.asyncio
 async def test_rerun_changes_nothing(conn):
-    body = open(M481, encoding="utf-8").read().replace("BEGIN;", "", 1).rsplit("COMMIT;", 1)[0]
+    body = open(M478, encoding="utf-8").read().replace("BEGIN;", "", 1).rsplit("COMMIT;", 1)[0]
     before = await conn.fetchval("SELECT count(*) AS n FROM shared.setting_definition")
     await conn.execute(body)
     assert await conn.fetchval("SELECT count(*) AS n FROM shared.setting_definition") == before
