@@ -44,7 +44,9 @@ check for AA-CIS-App.
 
 ## Should know
 
-- Tests: `tests/unit/test_s291_pg_connection.py` (statement texts, rollback depth, the six pools) and
+- Tests: `tests/unit/test_s291_pg_connection.py` (statement texts, rollback depth, the six pools, and an AST guard:
+  every `create_pool` named `cis-api` / `cis-worker` / `cis-job` under `api/`, `services/`, `shared/` passes the
+  connection class) and
   `tests/integration/test_s291_pg_connection_pg.py` (rollback semantics on PostgreSQL).
 - Live check after deploy: `pg_stat_statements` rows for role `cis_app` (and the tenant role) whose query starts with
   `SAVEPOINT` / `RELEASE` / `ROLLBACK TO` stop growing; new ones read `cis_sp_<n>`.

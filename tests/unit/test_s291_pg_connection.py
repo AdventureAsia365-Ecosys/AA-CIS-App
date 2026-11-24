@@ -5,7 +5,9 @@ PostgreSQL side (rollback semantics) is in tests/integration/test_s291_pg_connec
 
 from __future__ import annotations
 
+import ast
 import inspect
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -123,3 +125,36 @@ def test_the_api_tenant_and_worker_pools_use_the_connection_class() -> None:
                    inspect.getsource(worker), inspect.getsource(handler.open_job_pool),
                    inspect.getsource(jev_gates.assess_rows_standalone), inspect.getsource(grounding._judge_all)):
         assert "connection_class=StableSavepointConnection" in source
+
+
+STEADY_POOLS = ("cis-api", "cis-worker", "cis-job")   # application_name of the pools that run on every request / job
+
+
+def _application_name(call: ast.Call) -> str | None:
+    for kw in call.keywords:
+        if kw.arg == "server_settings" and isinstance(kw.value, ast.Dict):
+            for k, v in zip(kw.value.keys, kw.value.values):
+                if isinstance(k, ast.Constant) and k.value == "application_name" and isinstance(v, ast.Constant):
+                    return str(v.value)
+    return None
+
+
+def test_every_steady_pool_in_the_code_uses_the_connection_class() -> None:
+    """Guard (S291 fix pass): a new `cis-api` / `cis-worker` / `cis-job` pool must name savepoints by depth too; the
+    first cut missed the three `cis-job` pools because it listed pools by hand."""
+    root = Path(__file__).resolve().parents[2]
+    found: list[str] = []
+    missing: list[str] = []
+    for top in ("api", "services", "shared"):
+        for path in sorted((root / top).rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                        and node.func.attr == "create_pool" and _application_name(node) in STEADY_POOLS):
+                    continue
+                where = f"{path.relative_to(root)}:{node.lineno}"
+                found.append(where)
+                if not any(kw.arg == "connection_class" for kw in node.keywords):
+                    missing.append(where)
+    assert len(found) >= 5, found   # api main, worker, export job pool, jev gates, grounding
+    assert not missing, f"steady pools without connection_class=StableSavepointConnection: {missing}"
