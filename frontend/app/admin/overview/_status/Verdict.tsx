@@ -9,7 +9,8 @@ import {
   APP_LABEL, ITEM_STATES, SEVERITIES, countBy, filterAttention, levelTone, parseSort, severityRank, sortRows,
   verdictHeadline, withSort, type AttentionItem, type Verdict as V, type View, type SetView,
 } from "@/lib/opsStatus";
-import { ChipFilter, SortSelect, rowWrap, small, sortOptions, useST, type ST } from "./ui";
+import { ChipFilter, ClampText, SortSelect, rowWrap, small, sortOptions, useST, type ST } from "./ui";
+import { useWords, type StatusWords } from "./words";
 
 const SORT_DEFAULT = "severity:desc";
 
@@ -31,8 +32,17 @@ function sortValue(col: string) {
   };
 }
 
+/** The detail line: built from fields (EN / VI), or outside free text shown as written with its source named. */
+function ItemDetail({ item, w }: { item: AttentionItem; w: StatusWords }) {
+  if (item.detail_msg) return <span style={small}>{w.text(item.detail_msg, item.detail)}</span>;
+  if (!item.detail) return null;
+  return <ClampText text={item.detail} label={item.detail_source ? w.source(item.source) : null}
+    testId={`status-att-${item.id}-detail`} />;
+}
+
 function ItemRow({ item }: { item: AttentionItem }) {
   const t = useST();
+  const w = useWords();
   const { formatDateTime } = useFormat();
   return (
     <div role="listitem" data-testid={`status-att-${item.id}`}
@@ -40,17 +50,18 @@ function ItemRow({ item }: { item: AttentionItem }) {
         background: K.card, minWidth: 0 }}>
       <div style={rowWrap}>
         <Badge tone={levelTone(item.severity) as Tone}>{item.severity.toUpperCase()}</Badge>
-        <Badge tone="neutral" dot={false}>{APP_LABEL[item.app] ?? item.app}</Badge>
-        <span style={{ fontWeight: 600, color: K.ink, overflowWrap: "anywhere", minWidth: 0 }}>{item.title}</span>
+        <Badge tone="neutral" dot={false}>{w.app(item.app)}</Badge>
+        <span style={{ fontWeight: 600, color: K.ink, overflowWrap: "anywhere", minWidth: 0 }}
+          data-testid={`status-att-${item.id}-title`}>{w.text(item.msg, item.title)}</span>
         {item.status !== "open" && <Badge tone="info" dot={false}>{t("stAcked")}</Badge>}
       </div>
-      {item.detail && <div style={{ ...small, overflowWrap: "anywhere" }}>{item.detail}</div>}
+      <ItemDetail item={item} w={w} />
       <div style={{ ...rowWrap, ...small }}>
         {item.since && <span>{t("since", formatDateTime(item.since))}</span>}
         {item.count > 1 && <span>{t("times", item.count)}</span>}
-        {item.source && <span>· {item.source}</span>}
+        {item.source && <span>· {t("sourceName", item.source)}</span>}
         {item.links.map((l) => (
-          <Link key={l.href} href={l.href} style={{ color: K.accentDeep, fontWeight: 600 }}>{l.label}</Link>
+          <Link key={l.href} href={l.href} style={{ color: K.accentDeep, fontWeight: 600 }}>{t("linkName", l.label)}</Link>
         ))}
       </div>
     </div>
@@ -59,6 +70,7 @@ function ItemRow({ item }: { item: AttentionItem }) {
 
 function Resolved({ items }: { items: V["resolved"] }) {
   const t = useST();
+  const w = useWords();
   const { formatDateTime } = useFormat();
   if (items.length === 0) return null;
   return (
@@ -66,7 +78,7 @@ function Resolved({ items }: { items: V["resolved"] }) {
       <summary style={{ ...small, cursor: "pointer" }}>{t("resolved", items.length)}</summary>
       <ul style={{ margin: "6px 0 0", paddingLeft: 18, ...small }}>
         {items.map((r) => (
-          <li key={r.id}>{r.text} · {formatDateTime(r.t)} – {formatDateTime(r.t2)}</li>
+          <li key={r.id}>{w.text(r.msg, r.text)} · {formatDateTime(r.t)} – {formatDateTime(r.t2)}</li>
         ))}
       </ul>
     </details>

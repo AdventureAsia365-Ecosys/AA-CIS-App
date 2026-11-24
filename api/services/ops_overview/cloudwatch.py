@@ -289,7 +289,7 @@ def fetch_alarms(client: Any, env: str, tags: Optional[dict[str, dict]] = None) 
                 since = a.get("StateUpdatedTimestamp")
                 bucket["firing"].append({
                     "name": name, "severity": t.get("Severity"),
-                    "description": (a.get("AlarmDescription") or "")[:300],
+                    "description": a.get("AlarmDescription") or "",  # at most 1024 characters (AWS)
                     "since": since.isoformat() if hasattr(since, "isoformat") else since,
                 })
             elif state == "INSUFFICIENT_DATA":

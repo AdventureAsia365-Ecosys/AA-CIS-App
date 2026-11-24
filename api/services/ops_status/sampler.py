@@ -15,8 +15,9 @@ One tick, each part on its own (a failing part is named in the result, the other
   (``ended_at``) on the first tick that no longer sees it firing.
 - ``health``: the public health + readiness checks of CIS, Booking and the partner CRM (``platform_apps``, 2 s).
 - ``queue``: the capacity-aware backlog of ``shared.job`` (``shared/jobs/backlog.py``, the jobs_starved rule).
-- ``database``: the busiest login role against its CONNECTION LIMIT, ``max(age(datfrozenxid))`` and all sessions
-  against ``max_connections``.
+- ``database``: the busiest login role against its CONNECTION LIMIT, ``max(age(datfrozenxid))``, all sessions
+  against ``max_connections`` and the instance's allocated storage (RDS DescribeDBInstances, free, the existing
+  ``rds:DescribeDBInstances`` grant): the free storage tile judges free space as a share of it (CIS 477).
 
 Sample states: ok, warn, degraded, down, unknown (did not answer). For the uptime strip ok and warn count as up,
 degraded and down as down, unknown as not measured. Never raises; $0 (free control-plane reads and DB queries).
@@ -29,6 +30,8 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 import structlog
+
+from api.services.issue_refs import clean, clip_words
 
 logger = structlog.get_logger()
 
@@ -154,7 +157,7 @@ def deploy_events(app: str, role: str, name: str, svc: dict) -> list[dict]:
         if rollout == "FAILED":
             out.append({"kind": "rollout_failed", "severity": "sev2", "app": app, "subject": name,
                         "title": f"Rollout failed: {name} (rev {rev})"[:300],
-                        "detail": str(d.get("rolloutStateReason") or "")[:1000] or None,
+                        "detail": clip_words(str(d.get("rolloutStateReason") or ""), 1000) or None,
                         "occurred_at": ended or created, "ended_at": None,
                         "dedupe_key": f"rollout_failed:{did}"[:300], "details": {"revision": rev}})
     return out
@@ -187,7 +190,7 @@ def alarm_firing(alarms: dict) -> list[dict]:
     for app, bucket in (alarms or {}).items():
         for f in bucket.get("firing") or []:
             out.append({"name": f.get("name"), "app": app, "severity": f.get("severity"), "since": f.get("since"),
-                        "description": (f.get("description") or "")[:200]})
+                        "description": clean(f.get("description"), 1000) or ""})
     return sorted(out, key=lambda f: str(f.get("name")))
 
 
@@ -408,7 +411,23 @@ async def queue_part(pool, at: datetime, job_id: Optional[str], out: dict) -> No
     out["queue_samples"] = await _write_samples(pool, [(at, "queue", "shared.job", "cis", state, value)], job_id)
 
 
-async def database_part(pool, at: datetime, job_id: Optional[str], out: dict) -> None:
+def rds_storage(env: str, client: Any = None) -> dict:
+    """Sync (run it in a thread): {allocated_gib, max_allocated_gib} of the shared instance from one
+    DescribeDBInstances (free); None values when RDS does not answer (the tile then uses the GiB fallback)."""
+    from api.services.ops_overview import cloudwatch
+    from api.services.ops_status.cw_series import db_instance
+
+    try:
+        client = client or cloudwatch.aws_client("rds")
+        db = client.describe_db_instances(DBInstanceIdentifier=db_instance(env))["DBInstances"][0]
+    except Exception as e:  # noqa: BLE001 — the database sample is written without the size
+        logger.warning("ops_status_rds_describe_failed", error=type(e).__name__)
+        return {"allocated_gib": None, "max_allocated_gib": None}
+    return {"allocated_gib": db.get("AllocatedStorage"), "max_allocated_gib": db.get("MaxAllocatedStorage")}
+
+
+async def database_part(pool, at: datetime, job_id: Optional[str], out: dict, env: str = "dev",
+                        rds_client: Any = None) -> None:
     from api.core.ops_metrics_sampler import ROLE_CONNECTIONS_SQL, role_samples
     from shared import ops_status_thresholds as th
     from shared.ops_checks import XID_AGE_SQL
@@ -429,12 +448,13 @@ async def database_part(pool, at: datetime, job_id: Optional[str], out: dict) ->
              "roles": {r["role"]: r["pct"] for r in roles},
              "xid_age": int(xid) if xid is not None else None,
              "sessions": sess["sessions"] if sess else None,
-             "max_connections": sess["max_connections"] if sess else None}
+             "max_connections": sess["max_connections"] if sess else None,
+             **await asyncio.to_thread(rds_storage, env, rds_client)}
     out["database_samples"] = await _write_samples(pool, [(at, "database", "rds", "shared", state, value)], job_id)
 
 
 async def tick(pool, at: datetime, job_id: Optional[str] = None, *, env: Optional[str] = None,
-               ecs_client: Any = None, cw_client: Any = None, http_client: Any = None,
+               ecs_client: Any = None, cw_client: Any = None, http_client: Any = None, rds_client: Any = None,
                part_timeout_s: float = 30.0) -> dict:
     """One sampler tick at ``at`` (the 5-minute bucket). Never raises: ``<part>_error`` names a failed part."""
     from api.services.ops_overview import cloudwatch
@@ -446,7 +466,7 @@ async def tick(pool, at: datetime, job_id: Optional[str] = None, *, env: Optiona
         "alarms": lambda: alarms_part(pool, env, at, job_id, out, cw_client),
         "health": lambda: health_part(pool, at, job_id, out, http_client),
         "queue": lambda: queue_part(pool, at, job_id, out),
-        "database": lambda: database_part(pool, at, job_id, out),
+        "database": lambda: database_part(pool, at, job_id, out, env, rds_client),
     }
     for name, part in parts.items():
         try:

@@ -38,13 +38,16 @@ export interface Section<T> {
 export interface RangeInfo { key: string; start: string; end: string; step_s: number; span_s: number }
 export interface Limit { warn?: number | null; crit?: number | null; warn_key?: string; crit_key?: string; dir?: string;
   value?: number; key?: string }
+/** A text the API sends as structured fields (S289): the page words it in EN or VI (lib/opsStatusText.ts). */
+export interface Msg { key: string; [field: string]: unknown }
 export interface AttentionItem {
   id: string; severity: string; app: string; title: string; detail: string; since: string | null; count: number;
   status: string; source: string; links: { label: string; href: string }[];
+  msg?: Msg | null; detail_msg?: Msg | null; detail_source?: boolean;
 }
 export interface Verdict {
   status: "ok" | "attention" | "partial" | "unknown"; open: number; attention: AttentionItem[]; unknown: string[];
-  resolved: { id: string; app: string | null; text: string; t: string; t2: string | null }[];
+  resolved: { id: string; app: string | null; text: string; msg?: Msg | null; t: string; t2: string | null }[];
   chips: { alarms_firing: number; open_alerts: number; deploy_gate: "open" | "closed" | null;
     deploy_gate_blocked_by: string[] };
 }
@@ -67,13 +70,17 @@ export interface Signals { status: string; reason?: string; message?: string; as
   previous?: { status: string; apps?: Record<string, SignalApp>; range: RangeInfo } }
 export interface RuntimeRow {
   kind: string; subject: string; app: string; role: string; state: string; reason?: string | null;
+  reason_code?: string | null;
   running?: number | null; desired?: number | null; rollout?: string | null; version?: string | null;
   sampled_at?: string; cells?: string[]; uptime_pct?: number | null; budget_left_pct?: number | null;
   below_slo?: boolean;
 }
 export interface ResourceTile { id: string; label: string; unit?: string; series: (number | null)[];
   latest?: number | null; worst?: number | null; warn?: number | null; crit?: number | null; dir?: string;
-  warn_key?: string; crit_key?: string; level: string; note?: string | null; capacity?: number; status?: string }
+  warn_key?: string; crit_key?: string; level: string; note?: string | null; capacity?: number; status?: string;
+  // free storage (CIS 477): limits as a share of the allocated storage, or the GiB fallback while it is unknown
+  basis?: "pct" | "gib"; warn_pct?: number | null; crit_pct?: number | null; allocated_gib?: number | null;
+  max_allocated_gib?: number | null; latest_pct?: number | null }
 export interface Queue { id: string; name: string; app: string; status: string; reason?: string; queued?: number;
   running?: number; failed?: number; oldest_wait_min?: number; workers?: number | null; level?: string;
   series_wait_min?: (number | null)[] | null; failed_window?: string }
@@ -88,7 +95,7 @@ export interface Ai { day: string; apps: AiApp[]; near_pct: number; crm_note: st
 export interface Cost { month: string; spent_usd: number; ai_usd: number; aws_usd: number; forecast_usd: number;
   budget_usd: number | null; forecast_pct_of_budget: number | null; headroom_usd: number | null }
 export interface EventRow { id: string; t: string; t2: string | null; lane: string; kind: string; severity: string;
-  app: string; text: string; detail?: string | null; open: boolean }
+  app: string; text: string; detail?: string | null; open: boolean; msg?: Msg | null; detail_source?: boolean }
 export interface Delivery { repos: { id: string; label: string; main: string; red_hours?: number | null }[];
   repos_note: string | null; guards: { key: string; label: string; state: string; detail?: string; day?: string }[] }
 export interface SourceRow { section: string; source: string; refresh_s: number; as_of: string | null; state: string;

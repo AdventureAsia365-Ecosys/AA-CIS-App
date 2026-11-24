@@ -36,6 +36,7 @@ from typing import Any, Optional
 
 import structlog
 
+from api.services.issue_refs import clean
 from api.services.ops_overview import cache
 from api.services.ops_status import cw_series, sections, store, verdict
 from api.services.ops_status.ranges import RangeError, TimeRange, resolve
@@ -153,7 +154,7 @@ async def _health(pool: Any, now: datetime) -> dict[str, dict]:
     fresh_after = store.fresh_since(now)
     rows = await store.latest(pool, ["app_health"], now - timedelta(days=th.history_days()))
     return {r["subject"]: {"state": r["state"] if r["sampled_at"] >= fresh_after else "no_sample",
-                           "reason": r["value"].get("reason"), "sampled_at": r["sampled_at"].isoformat()}
+                           "reason": clean(r["value"].get("reason"), 300), "sampled_at": r["sampled_at"].isoformat()}
             for r in rows}
 
 

@@ -7,10 +7,18 @@ worker); SEV2 = a critical limit is crossed, a page-severity alarm fires, a roll
 SEV3 = a warn limit, a ticket alarm, an ops check bell, a guard that did not run, a red main branch. Each row says what,
 since when, how often, and links the page or runbook that resolves it. The limits are the page's settings
 (``shared/ops_status_thresholds.py``); the sections already coloured each value (level ok / warn / crit).
+
+Language (S289 live check): every item carries ``msg`` (and ``detail_msg`` when its detail is built from numbers), a
+key with the structured fields (app, value, limit, unit, ...) the page words in English or Vietnamese; ``title`` and
+``detail`` stay as the English fallback. A detail that is outside free text (an alarm description, an ECS rollout
+reason, an ops check message) has ``detail_source`` true: the page shows it as written, labelled, never translated.
+That text reaches here already without tracker IDs (``sections.event_rows``, :mod:`api.services.issue_refs`).
 """
 from __future__ import annotations
 
 from typing import Any, Optional
+
+from api.services.issue_refs import strip_issue_refs
 
 RUNBOOK_INCIDENT = "/admin/docs?path=docs/ops/incident-response.md"
 RUNBOOK_ROLLBACK = "/admin/docs?path=docs/ops/runbooks/rollback-ecs.md"
@@ -28,9 +36,13 @@ LEVEL_SEV = {"crit": "sev2", "warn": "sev3"}
 
 def _item(iid: str, sev: str, app: str, title: str, detail: str = "", *, since: Optional[str] = None,
           count: int = 1, links: Optional[list[tuple[str, str]]] = None, source: str = "",
-          status: str = "open") -> dict:
+          status: str = "open", msg: Optional[dict] = None, detail_msg: Optional[dict] = None,
+          detail_source: bool = False) -> dict:
+    # the last net: no tracker ID in a title or detail, whatever source it came from
+    title, detail = strip_issue_refs(title), strip_issue_refs(detail)
     return {"id": iid, "severity": sev, "app": app, "title": title, "detail": detail, "since": since, "count": count,
-            "status": status, "source": source,
+            "status": status, "source": source, "msg": msg or {"key": "other"}, "detail_msg": detail_msg,
+            "detail_source": bool(detail_source and detail),
             "links": [{"label": label, "href": href} for label, href in (links or [])]}
 
 
@@ -42,73 +54,102 @@ def _fmt_ms(v: Optional[float]) -> str:
     return "–" if v is None else (f"{v / 1000:.2f} s" if v >= 1000 else f"{v:.0f} ms")
 
 
+def health_items(app: str, label: str, h: dict) -> list[dict]:
+    """The health check row of one app (SEV1 down, SEV2 not ready); the check's reason is outside text. Pure."""
+    if h.get("state") == "down":
+        return [_item(f"health-{app}", "sev1", app, f"{label} health check fails", h.get("reason") or "",
+                      since=h.get("sampled_at"), source="health check", msg={"key": "health_down", "app": app},
+                      detail_source=True,
+                      links=[("App health", PAGES["apps"]), ("Incident response", RUNBOOK_INCIDENT)])]
+    if h.get("state") == "degraded":
+        return [_item(f"health-{app}", "sev2", app, f"{label} is not ready", h.get("reason") or "",
+                      since=h.get("sampled_at"), source="health check", msg={"key": "health_degraded", "app": app},
+                      detail_source=True, links=[("App health", PAGES["apps"])])]
+    return []
+
+
+def _of_requests(part: Any, whole: Any) -> dict:
+    return {"key": "of_requests", "n": part, "total": whole}
+
+
+def traffic_items(app: str, label: str, t: dict, th: dict) -> list[dict]:
+    """5xx, p95 and 4xx rows of one app's traffic over the range. Pure."""
+    out = []
+    er, p = th["error_rate_pct"], th["p95_ms"]
+    if t.get("errors_level") in LEVEL_SEV:
+        lv = t["errors_level"]
+        lim = er["crit"] if lv == "crit" else er["warn"]
+        out.append(_item(f"errors-{app}", LEVEL_SEV[lv], app,
+                         f"{label}: {t['error_rate_pct']:g} % server errors, limit {lim:g} %",
+                         f"{t.get('errors')} of {t.get('requests')} requests in the range", source="CloudWatch",
+                         msg={"key": "errors", "app": app, "value": t["error_rate_pct"], "limit": lim, "unit": "%"},
+                         detail_msg=_of_requests(t.get("errors"), t.get("requests")),
+                         links=[("App health", PAGES["apps"]), ("Rollback runbooks", RUNBOOK_ROLLBACK)]))
+    if t.get("p95_level") in LEVEL_SEV:
+        lv = t["p95_level"]
+        if app == "tripplanner":
+            lim, sev = th["lambda_p95_limit_ms"]["warn"], "sev3"
+        else:
+            lim, sev = (p["crit"] if lv == "crit" else p["warn"]), LEVEL_SEV[lv]
+        out.append(_item(f"p95-{app}", sev, app, f"{label} is slow: p95 {_fmt_ms(t.get('p95_ms'))}, limit "
+                         f"{_fmt_ms(lim)}", "", source="CloudWatch",
+                         msg={"key": "p95", "app": app, "value": t.get("p95_ms"), "limit": lim, "unit": "ms"},
+                         links=[("App health", PAGES["apps"])]))
+    if t.get("client_errors_level") == "warn":
+        lim = th["client_error_warn_pct"]["warn"]
+        out.append(_item(f"4xx-{app}", "sev3", app,
+                         f"{label}: {t['client_error_rate_pct']:g} % client errors, limit {lim:g} %",
+                         f"{t.get('client_errors')} of {t.get('requests')} requests", source="CloudWatch",
+                         msg={"key": "client_errors", "app": app, "value": t["client_error_rate_pct"], "limit": lim,
+                              "unit": "%"},
+                         detail_msg=_of_requests(t.get("client_errors"), t.get("requests")),
+                         links=[("App health", PAGES["apps"])]))
+    return out
+
+
 def app_items(apps: list[dict], th: dict) -> list[dict]:
     out = []
     for a in apps:
-        app, label = a["app"], a["label"]
-        h = a.get("health") or {}
-        if h.get("state") == "down":
-            out.append(_item(f"health-{app}", "sev1", app, f"{label} health check fails",
-                             h.get("reason") or "", since=h.get("sampled_at"), source="health check",
-                             links=[("App health", PAGES["apps"]), ("Incident response", RUNBOOK_INCIDENT)]))
-        elif h.get("state") == "degraded":
-            out.append(_item(f"health-{app}", "sev2", app, f"{label} is not ready", h.get("reason") or "",
-                             since=h.get("sampled_at"), source="health check", links=[("App health", PAGES["apps"])]))
+        out += health_items(a["app"], a["label"], a.get("health") or {})
         t = a.get("traffic") or {}
-        if t.get("status") != "ok":
-            continue
-        er, p = th["error_rate_pct"], th["p95_ms"]
-        if t.get("errors_level") in LEVEL_SEV:
-            lv = t["errors_level"]
-            lim = er["crit"] if lv == "crit" else er["warn"]
-            out.append(_item(f"errors-{app}", LEVEL_SEV[lv], app,
-                             f"{label}: {t['error_rate_pct']:g} % server errors, limit {lim:g} %",
-                             f"{t.get('errors')} of {t.get('requests')} requests in the range", source="CloudWatch",
-                             links=[("App health", PAGES["apps"]), ("Rollback runbooks", RUNBOOK_ROLLBACK)]))
-        if t.get("p95_level") in LEVEL_SEV:
-            lv = t["p95_level"]
-            if app == "tripplanner":
-                lim, sev = th["lambda_p95_limit_ms"]["warn"], "sev3"
-            else:
-                lim, sev = (p["crit"] if lv == "crit" else p["warn"]), LEVEL_SEV[lv]
-            out.append(_item(f"p95-{app}", sev, app, f"{label} is slow: p95 {_fmt_ms(t.get('p95_ms'))}, limit "
-                             f"{_fmt_ms(lim)}", "", source="CloudWatch", links=[("App health", PAGES["apps"])]))
-        if t.get("client_errors_level") == "warn":
-            out.append(_item(f"4xx-{app}", "sev3", app,
-                             f"{label}: {t['client_error_rate_pct']:g} % client errors, limit "
-                             f"{th['client_error_warn_pct']['warn']:g} %",
-                             f"{t.get('client_errors')} of {t.get('requests')} requests", source="CloudWatch",
-                             links=[("App health", PAGES["apps"])]))
+        if t.get("status") == "ok":
+            out += traffic_items(a["app"], a["label"], t, th)
     return out
 
 
 def runtime_items(rows: list[dict]) -> list[dict]:
     out = []
+    sev_of = {"down": "sev1", "degraded": "sev2"}
     for r in rows:
-        if r.get("kind") != "ecs_service":
+        if r.get("kind") != "ecs_service" or r.get("state") not in sev_of:
             continue
-        if r.get("state") == "down":
-            out.append(_item(f"svc-{r['subject']}", "sev1", r.get("app") or "shared", f"{r['subject']}: "
-                             f"{r.get('reason') or 'down'}", "", since=r.get("sampled_at"), source="ECS",
-                             links=[("App health", PAGES["apps"]), ("Rollback runbooks", RUNBOOK_ROLLBACK)]))
-        elif r.get("state") == "degraded":
-            out.append(_item(f"svc-{r['subject']}", "sev2", r.get("app") or "shared", f"{r['subject']}: "
-                             f"{r.get('reason') or 'degraded'}", "", since=r.get("sampled_at"), source="ECS",
-                             links=[("App health", PAGES["apps"]), ("Rollback runbooks", RUNBOOK_ROLLBACK)]))
+        state = r["state"]
+        out.append(_item(f"svc-{r['subject']}", sev_of[state], r.get("app") or "shared",
+                         f"{r['subject']}: {r.get('reason') or state}", "", since=r.get("sampled_at"), source="ECS",
+                         msg={"key": "service", "subject": r["subject"], "state": state,
+                              "code": r.get("reason_code"), "running": r.get("running"),
+                              "desired": r.get("desired")},
+                         links=[("App health", PAGES["apps"]), ("Rollback runbooks", RUNBOOK_ROLLBACK)]))
     return out
 
 
 def alarm_items(events: list[dict]) -> list[dict]:
+    """Open alarm and failed rollout events; their detail (the alarm description, the ECS reason) is outside text,
+    already without tracker IDs. Pure."""
     out = []
     for e in events:
-        if e.get("kind") == "alarm" and e.get("open"):
+        if not e.get("open"):
+            continue
+        detail = e.get("detail") or ""
+        if e.get("kind") == "alarm":
             out.append(_item(f"alarm-{e['id']}", e["severity"] if e["severity"] in _SEV_RANK else "sev3",
-                             e.get("app") or "shared", e["text"], e.get("detail") or "", since=e["t"],
-                             source="CloudWatch alarm", links=[("Alerts catalogue", PAGES["alerts"]),
-                                                               ("Incident response", RUNBOOK_INCIDENT)]))
-        elif e.get("kind") == "rollout_failed" and e.get("open"):
-            out.append(_item(f"rollout-{e['id']}", "sev2", e.get("app") or "shared", e["text"], e.get("detail") or "",
-                             since=e["t"], source="ECS", links=[("Rollback runbooks", RUNBOOK_ROLLBACK)]))
+                             e.get("app") or "shared", e["text"], detail, since=e["t"], source="CloudWatch alarm",
+                             msg=e.get("msg"), detail_source=True,
+                             links=[("Alerts catalogue", PAGES["alerts"]), ("Incident response", RUNBOOK_INCIDENT)]))
+        elif e.get("kind") == "rollout_failed":
+            out.append(_item(f"rollout-{e['id']}", "sev2", e.get("app") or "shared", e["text"], detail,
+                             since=e["t"], source="ECS", msg=e.get("msg"), detail_source=True,
+                             links=[("Rollback runbooks", RUNBOOK_ROLLBACK)]))
     return out
 
 
@@ -126,6 +167,7 @@ def check_items(events: list[dict]) -> list[dict]:
             continue
         by_check[key] = _item(f"check-{key}", "sev3", e.get("app") or "cis", e["text"], e.get("detail") or "",
                               since=e["t"], source="Ops check", status="open" if e.get("open") else "acked",
+                              msg=e.get("msg"), detail_source=True,
                               links=[("Alerts catalogue", PAGES["alerts"]), ("Settings", PAGES["settings"])])
     return list(by_check.values())
 
@@ -138,13 +180,36 @@ def queue_items(queues: list[dict], th: dict) -> list[dict]:
             continue
         if qu.get("workers") == 0:
             out.append(_item(f"queue-{qu['id']}", "sev1", qu["app"], f"{qu['name']}: no live worker",
-                             "Queued jobs cannot start.", source="job runner", links=[("Jobs", PAGES["jobs"])]))
+                             "Queued jobs cannot start.", source="job runner", links=[("Jobs", PAGES["jobs"])],
+                             msg={"key": "queue_no_worker", "name": qu["name"]},
+                             detail_msg={"key": "queue_no_worker_detail"}))
         elif qu.get("level") in LEVEL_SEV:
             lim = q["crit"] if qu["level"] == "crit" else q["warn"]
             out.append(_item(f"queue-{qu['id']}", LEVEL_SEV[qu["level"]], qu["app"],
                              f"{qu['name']}: oldest job waiting {qu.get('oldest_wait_min'):g} min, limit {lim:g} min",
-                             "", source="job runner", links=[("Jobs", PAGES["jobs"])]))
+                             "", source="job runner", links=[("Jobs", PAGES["jobs"])],
+                             msg={"key": "queue_wait", "name": qu["name"], "value": qu.get("oldest_wait_min"),
+                                  "limit": lim, "unit": "min"}))
     return out
+
+
+def _resource_msg(t: dict, lv: str, lim: float) -> dict:
+    msg = {"key": "resource", "tile": t["id"], "value": t.get("latest"), "unit": t.get("unit"), "limit": lim,
+           "dir": t.get("dir"), "level": lv}
+    if t.get("basis") == "pct":   # free storage against a share of the allocated storage (CIS 477)
+        msg.update({"value_pct": t.get("latest_pct"), "limit_pct": t.get("crit_pct" if lv == "crit" else "warn_pct"),
+                    "allocated_gib": t.get("allocated_gib")})
+    return msg
+
+
+def _resource_title(t: dict, lv: str, lim: float) -> str:
+    word = "at or below" if t.get("dir") == "below" else "at or above"
+    which = "critical" if lv == "crit" else "warn"
+    if t.get("basis") == "pct":
+        share = t.get("crit_pct" if lv == "crit" else "warn_pct")
+        return (f"{t['label']} {t.get('latest')} GiB ({t.get('latest_pct')} % of {t.get('allocated_gib'):g} GiB), "
+                f"{word} the {which} limit {share:g} % ({lim:g} GiB)")
+    return f"{t['label']} {t.get('latest')} {t.get('unit')}, {word} the {which} limit {lim:g}"
 
 
 def resource_items(tiles: list[dict]) -> list[dict]:
@@ -156,44 +221,60 @@ def resource_items(tiles: list[dict]) -> list[dict]:
         lim = t.get("crit") if lv == "crit" else t.get("warn")
         if lim is None:   # a capacity tile (ECS tasks below the desired count): no limit, the note says why
             out.append(_item(f"res-{t['id']}", LEVEL_SEV[lv], "shared", f"{t['label']}: {t.get('note') or ''}",
-                             "", source="ECS", links=[("App health", PAGES["apps"])]))
+                             "", source="ECS", links=[("App health", PAGES["apps"])],
+                             msg={"key": "ecs_tasks", "running": t.get("latest"), "desired": t.get("capacity")}))
             continue
-        word = "at or below" if t.get("dir") == "below" else "at or above"
-        out.append(_item(f"res-{t['id']}", LEVEL_SEV[lv], "shared", f"{t['label']} {t.get('latest')} {t.get('unit')}, "
-                         f"{word} the {'critical' if lv == 'crit' else 'warn'} limit {lim:g}",
-                         t.get("note") or "", source="database", links=[("Database operations", RUNBOOK_DB)]))
+        out.append(_item(f"res-{t['id']}", LEVEL_SEV[lv], "shared", _resource_title(t, lv, lim),
+                         t.get("note") or "", source="database", links=[("Database operations", RUNBOOK_DB)],
+                         msg=_resource_msg(t, lv, lim)))
     return out
 
 
 def ai_items(apps: list[dict]) -> list[dict]:
     out = []
     for a in apps:
+        spend = {"key": "ai_spend", "spent": a.get("spent_usd"), "cap": a.get("cap_usd")}
         if a.get("level") == "crit":
             out.append(_item(f"ai-{a['app']}", "sev2", a["app"], f"AI spend of {a['app']} reached its daily cap",
                              f"{a['spent_usd']} of {a['cap_usd']} USD today (UTC)", source="AI gateway",
+                             msg={"key": "ai_cap", "app": a["app"]}, detail_msg=spend,
                              links=[("AI gateway", PAGES["ai"])]))
         elif a.get("level") == "warn":
             out.append(_item(f"ai-{a['app']}", "sev3", a["app"], f"AI spend of {a['app']} at {a['used_pct']:g} % of "
                              f"its daily cap", f"{a['spent_usd']} of {a['cap_usd']} USD today (UTC)",
-                             source="AI gateway", links=[("AI gateway", PAGES["ai"])]))
+                             source="AI gateway", msg={"key": "ai_near", "app": a["app"], "value": a["used_pct"]},
+                             detail_msg=spend, links=[("AI gateway", PAGES["ai"])]))
+    return out
+
+
+def guard_items(guards: list[dict]) -> list[dict]:
+    out = []
+    for g in guards:
+        if g.get("state") == "failed":
+            out.append(_item(f"guard-{g['key']}", "sev2", "shared", f"Nightly {g['label']} failed",
+                             f"Value {g.get('value')} on {g.get('day')}", source="nightly probe",
+                             msg={"key": "guard_failed", "name": g["label"]},
+                             detail_msg={"key": "guard_value", "value": g.get("value"), "day": g.get("day")},
+                             links=[("Reports", PAGES["reports"])]))
+        elif g.get("state") == "missing":
+            age = g.get("age_h")
+            out.append(_item(f"guard-{g['key']}", "sev3", "shared", f"Nightly {g['label']} did not run",
+                             g.get("detail") or (f"Last result {age} h ago" if age else ""),
+                             source="nightly probe", msg={"key": "guard_missing", "name": g["label"]},
+                             detail_msg=None if g.get("detail") or not age else {"key": "guard_age", "hours": age},
+                             links=[("Reports", PAGES["reports"])]))
     return out
 
 
 def delivery_items(data: dict) -> list[dict]:
-    out = []
-    for g in data.get("guards") or []:
-        if g.get("state") == "failed":
-            out.append(_item(f"guard-{g['key']}", "sev2", "shared", f"Nightly {g['label']} failed",
-                             f"Value {g.get('value')} on {g.get('day')}", source="nightly probe",
-                             links=[("Reports", PAGES["reports"])]))
-        elif g.get("state") == "missing":
-            out.append(_item(f"guard-{g['key']}", "sev3", "shared", f"Nightly {g['label']} did not run",
-                             g.get("detail") or (f"Last result {g.get('age_h')} h ago" if g.get("age_h") else ""),
-                             source="nightly probe", links=[("Reports", PAGES["reports"])]))
+    out = guard_items(data.get("guards") or [])
     for r in data.get("repos") or []:
         if r.get("main") == "red":
+            hours = r.get("red_hours")
             out.append(_item(f"main-{r['id']}", "sev3", "shared", f"{r['label']}: main branch is red",
-                             f"Red for {r.get('red_hours')} h" if r.get("red_hours") else "", source="CI",
+                             f"Red for {hours} h" if hours else "", source="CI",
+                             msg={"key": "main_red", "name": r["label"]},
+                             detail_msg={"key": "red_for", "hours": hours} if hours else None,
                              links=[("Delivery", PAGES["delivery"])]))
     return out
 
@@ -257,7 +338,8 @@ def decide(sections: dict[str, Any], th: dict, events: list[dict]) -> dict:
     items, unknown = _collect(sections, th, events)
     items.sort(key=lambda i: (_SEV_RANK.get(i["severity"], 9), i["status"] != "open", i.get("since") or ""))
     open_items = [i for i in items if i["status"] == "open"]
-    resolved = [{"id": e["id"], "app": e.get("app"), "text": e["text"], "t": e["t"], "t2": e.get("t2")}
+    resolved = [{"id": e["id"], "app": e.get("app"), "text": e["text"], "msg": e.get("msg"), "t": e["t"],
+                 "t2": e.get("t2")}
                 for e in events if e.get("kind") in ("alarm", "service_down", "rollout_failed") and e.get("t2")]
     jobs = sections.get("jobs")
     gate = (jobs or {}).get("data", {}).get("deploy_gate", {}) if _ok(jobs) else {}

@@ -21,12 +21,14 @@ Sources (no new cross-app grant, no new paid service):
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
 import asyncpg
 import structlog
 
+from api.services.issue_refs import clean
 from api.services.ops_status import store
 from api.services.ops_status.ranges import TimeRange
 from shared import ops_status_thresholds as th
@@ -170,6 +172,25 @@ def app_tiles(series: dict, cards: dict[str, dict], acts: dict, health: dict[str
 
 # ── runtimes (services and data) ───────────────────────────────────────────────────────────────────────────────
 
+def service_reason_code(kind: str, v: dict) -> Optional[str]:
+    """The reason of an ECS service sample as a code the page words in its language (the sampler's English reason
+    stays as the fallback): scaled_to_zero, none_running, rollout_failed, below_desired, rollout_in_progress, running.
+    None for another kind or a sample without counts. Pure."""
+    desired, running = v.get("desired"), v.get("running")
+    if kind != "ecs_service" or desired is None or running is None:
+        return None
+    rollout = v.get("rollout")
+    if desired == 0:
+        return "scaled_to_zero"
+    if running == 0:
+        return "none_running"
+    if rollout == "FAILED":
+        return "rollout_failed"
+    if running < desired:
+        return "below_desired"
+    return "rollout_in_progress" if rollout == "IN_PROGRESS" else "running"
+
+
 def runtime_rows(samples: list[dict], latest: list[dict], rng: TimeRange, slo: float, now: datetime,
                  fresh_after: datetime) -> list[dict]:
     """The services grid: one row per ECS service and health check, with its latest state and the uptime strip.
@@ -185,7 +206,8 @@ def runtime_rows(samples: list[dict], latest: list[dict], rng: TimeRange, slo: f
         rows.append({
             "kind": last["kind"], "subject": last["subject"], "app": last["app"] or v.get("app"),
             "role": v.get("role") or ("health check" if last["kind"] == "app_health" else last["kind"]),
-            "state": "no_sample" if stale else last["state"], "reason": v.get("reason"),
+            "state": "no_sample" if stale else last["state"], "reason": clean(v.get("reason"), 300),
+            "reason_code": service_reason_code(last["kind"], v),
             "running": v.get("running"), "desired": v.get("desired"), "pending": v.get("pending"),
             "rollout": v.get("rollout"), "task_definition": v.get("task_definition"),
             "version": v.get("image_tag") or v.get("git_sha"), "sampled_at": last["sampled_at"].isoformat(),
@@ -225,6 +247,22 @@ async def runtimes(pool: Any, rng: TimeRange, now: datetime) -> dict:
 MAX_CONNECTIONS_SQL = "SELECT current_setting('max_connections')::int AS n"
 
 
+def free_storage_tile(tile: Any, free_gib: list, db_value: Optional[dict]) -> dict:
+    """The free storage tile: FreeStorageSpace in GiB against a share of the allocated storage (CIS 477, from the
+    sampler's fresh database row), or the CIS 475 GiB fallback while the size is unknown. The tile carries the share,
+    the size and the latest free share so the page can say "warn 20 % = 4 GiB of 20 GiB". Pure but for settings."""
+    v = db_value or {}
+    alloc = v.get("allocated_gib")
+    lim = th.rds_free_storage(alloc)
+    out = tile("free_storage", "Free storage", "GiB", free_gib, lim, "min")
+    out.update({"basis": lim["basis"], "warn_pct": lim.get("warn_pct"), "crit_pct": lim.get("crit_pct"),
+                "allocated_gib": lim.get("allocated_gib"), "max_allocated_gib": v.get("max_allocated_gib") if alloc
+                else None})
+    out["latest_pct"] = (round(100.0 * out["latest"] / alloc, 1)
+                         if lim["basis"] == "pct" and out["latest"] is not None else None)
+    return out
+
+
 async def resources(pool: Any, series: dict, rng: TimeRange, now: datetime) -> dict:
     db_rows = await store.samples(pool, ["database", "queue"], rng)
     latest = {(r["kind"], r["subject"]): r for r in await store.latest(pool, ["database", "ecs_service"],
@@ -253,7 +291,7 @@ async def resources(pool: Any, series: dict, rng: TimeRange, now: datetime) -> d
         conn_pct = [None if v is None or not max_conn else round(100.0 * v / max_conn, 1) for v in rds["connections"]]
         tiles.append(tile("connections", "Database connections", "% of max", conn_pct, th.rds_connections_pct(), "max",
                           note=f"max_connections {max_conn}" if max_conn else None))
-        tiles.append(tile("free_storage", "Free storage", "GiB", rds["free_gib"], th.rds_free_storage_gib(), "min"))
+        tiles.append(free_storage_tile(tile, rds["free_gib"], (latest.get(("database", "rds")) or {}).get("value")))
     else:
         for tid, label in (("cpu", "Database CPU"), ("connections", "Database connections"),
                            ("free_storage", "Free storage")):
@@ -294,14 +332,14 @@ JOBS_RANGE_SQL = """
 """
 FAILING_KINDS_SQL = """
     SELECT kind, count(*)::int AS n, max(finished_at) AS last_at,
-           (array_agg(left(coalesce(error, ''), 160) ORDER BY finished_at DESC))[1] AS last_error
+           (array_agg(left(coalesce(error, ''), 600) ORDER BY finished_at DESC))[1] AS last_error
       FROM shared.job
      WHERE status = 'failed' AND finished_at >= $1 AND finished_at < $2
      GROUP BY kind ORDER BY n DESC, kind LIMIT 8
 """
 FAILURES_BY_HOUR_SQL = """
     SELECT kind, date_trunc('hour', finished_at) AS hour, count(*)::int AS n,
-           (array_agg(left(coalesce(error, ''), 160) ORDER BY finished_at DESC))[1] AS last_error
+           (array_agg(left(coalesce(error, ''), 600) ORDER BY finished_at DESC))[1] AS last_error
       FROM shared.job
      WHERE status = 'failed' AND finished_at >= $1 AND finished_at < $2
      GROUP BY kind, 2 ORDER BY 2 DESC LIMIT 200
@@ -364,7 +402,7 @@ async def jobs(pool: Any, rng: TimeRange, authorization: Optional[str]) -> dict:
         gate_view = {"safe_to_deploy": None, "blocked_by": [], "error": type(e).__name__}
     return ok({"queues": [shared_q, booking_q, crm_q], "deploy_gate": gate_view,
                "failing_kinds": [{"kind": r["kind"], "n": r["n"], "last_at": r["last_at"].isoformat(),
-                                  "last_error": r["last_error"] or None, "queue": "shared.job"} for r in failing]},
+                                  "last_error": clean(r["last_error"], 500), "queue": "shared.job"} for r in failing]},
               60)
 
 
@@ -500,27 +538,72 @@ def _payload(v: Any) -> dict:
     return store._json(v)
 
 
+_TASKS_RE = re.compile(r"(\d+) of (\d+) tasks running")
+_LANE = {"deploy": "deploy", "rollout_failed": "deploy", "alarm": "alarm", "service_down": "service"}
+
+
+def service_down_msg(subject: str, title: str) -> dict:
+    """The structured text of a service_down event (its stored title is the sampler's English "<name>: <reason>").
+    Pure."""
+    m = _TASKS_RE.search(title or "")
+    if m:
+        return {"key": "service_down", "subject": subject, "running": int(m.group(1)), "desired": int(m.group(2))}
+    return {"key": "service_down", "subject": subject, "zero": "scaled to zero" in (title or "")}
+
+
+def ops_event_msg(e: dict) -> dict:
+    """{key, ...fields}: the page builds the event's text from these in its own language (the English ``text`` is
+    the fallback). Pure."""
+    d = e.get("details") or {}
+    subject = e.get("subject") or ""
+    kind = e["kind"]
+    if kind == "deploy":
+        return {"key": "deploy", "subject": subject, "rev": d.get("revision"), "tag": d.get("image_tag"),
+                "rollout": (d.get("rollout") or "").lower() or None}
+    if kind == "rollout_failed":
+        return {"key": "rollout_failed", "subject": subject, "rev": d.get("revision")}
+    if kind == "alarm":
+        return {"key": "alarm", "name": subject}
+    if kind == "service_down":
+        return service_down_msg(subject, e.get("title") or "")
+    return {"key": "other"}
+
+
+def _ops_event_row(e: dict) -> dict:
+    deploy = e["kind"] == "deploy"
+    return {"id": f"e{e['event_id']}", "t": e["occurred_at"].isoformat(),
+            "t2": e["ended_at"].isoformat() if e.get("ended_at") else None, "lane": _LANE.get(e["kind"], "service"),
+            "kind": e["kind"], "severity": e["severity"], "app": e.get("app") or "shared",
+            "text": clean(e["title"], 300) or e["kind"], "msg": ops_event_msg(e),
+            # outside free text (alarm description, ECS rollout reason): shown as written, no tracker IDs
+            "detail": None if deploy else clean(e.get("detail")), "detail_source": not deploy and bool(e.get("detail")),
+            "open": e.get("ended_at") is None and not deploy}
+
+
+def _bell_row(b: dict) -> dict:
+    p = _payload(b["payload"])
+    name = clean(p.get("title"), 200) or str(b["entity_id"])
+    return {"id": f"n{b['id']}", "t": b["created_at"].isoformat(), "t2": None, "lane": "check", "kind": "check",
+            "severity": "sev3", "app": _check_app(str(b.get("entity_id") or "")), "text": f"Ops check: {name}",
+            "msg": {"key": "check", "name": name}, "detail": clean(p.get("message")),
+            "detail_source": bool(p.get("message")), "open": not b["is_read"], "check": b.get("entity_id")}
+
+
+def _failure_row(f: dict) -> dict:
+    return {"id": f"j{f['kind']}:{f['hour'].isoformat()}", "t": f["hour"].isoformat(), "t2": None, "lane": "job",
+            "kind": "job_failures", "severity": "sev3", "app": "cis",
+            "text": f"{f['n']} job{'s' if f['n'] != 1 else ''} failed: {f['kind']}",
+            "msg": {"key": "job_failures", "n": f["n"], "kind": f["kind"]},
+            "detail": clean(f.get("last_error"), 500), "detail_source": bool(f.get("last_error")), "open": False}
+
+
 def event_rows(ops_events: list[dict], bells: list[dict], failures: list[dict]) -> list[dict]:
-    """The timeline rows: lane deploy | alarm | check | job | service. Pure."""
-    out = []
-    for e in ops_events:
-        lane = {"deploy": "deploy", "rollout_failed": "deploy", "alarm": "alarm", "service_down": "service"}.get(
-            e["kind"], "service")
-        out.append({"id": f"e{e['event_id']}", "t": e["occurred_at"].isoformat(),
-                    "t2": e["ended_at"].isoformat() if e.get("ended_at") else None, "lane": lane, "kind": e["kind"],
-                    "severity": e["severity"], "app": e.get("app") or "shared", "text": e["title"],
-                    "detail": e.get("detail"), "open": e.get("ended_at") is None and e["kind"] != "deploy"})
-    for b in bells:
-        p = _payload(b["payload"])
-        out.append({"id": f"n{b['id']}", "t": b["created_at"].isoformat(), "t2": None, "lane": "check",
-                    "kind": "check", "severity": "sev3", "app": _check_app(str(b.get("entity_id") or "")),
-                    "text": f"Ops check: {p.get('title') or b['entity_id']}", "detail": (p.get("message") or "")[:300],
-                    "open": not b["is_read"], "check": b.get("entity_id")})
-    for f in failures:
-        out.append({"id": f"j{f['kind']}:{f['hour'].isoformat()}", "t": f["hour"].isoformat(), "t2": None,
-                    "lane": "job", "kind": "job_failures", "severity": "sev3", "app": "cis",
-                    "text": f"{f['n']} job{'s' if f['n'] != 1 else ''} failed: {f['kind']}",
-                    "detail": f.get("last_error") or None, "open": False})
+    """The timeline rows: lane deploy | alarm | check | job | service. Each row has its structured ``msg`` (the page
+    words it in EN or VI); outside free text (``detail`` with ``detail_source``) is shown as written, without tracker
+    IDs and never cut mid-word. Pure."""
+    out = [_ops_event_row(e) for e in ops_events]
+    out += [_bell_row(b) for b in bells]
+    out += [_failure_row(f) for f in failures]
     return sorted(out, key=lambda r: r["t"], reverse=True)
 
 

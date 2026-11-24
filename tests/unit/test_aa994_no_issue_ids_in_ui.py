@@ -1,4 +1,5 @@
-"""AA-994 — user-visible text never carries an internal Linear issue ID (AA-123).
+"""AA-994 — user-visible text never carries an internal tracker ID (Linear AA-123; S289: also the CRM backlog CRM-14
+and the Jira KAN-20 / PR-27 / CON-3 keys).
 
 Admins, tenants and Ms. Thư read the pages; an issue ID tells them nothing. IDs stay in code comments, tests and
 commit text. Two scans:
@@ -19,7 +20,8 @@ from pathlib import Path
 from tests.unit.ui_text_scan import python_ui_strings, ts_hits
 
 REPO = Path(__file__).resolve().parents[2]
-ISSUE_ID = re.compile(r"(?<![A-Za-z0-9])AA-[0-9]+")
+# The tracker prefixes of api/services/issue_refs.py (the runtime strip of outside text, e.g. alarm descriptions).
+ISSUE_ID = re.compile(r"(?<![A-Za-z0-9])(?:AA|CRM|KAN|PR|CON)-[0-9]+")
 
 FRONTEND_ROOTS = ("frontend/app", "frontend/lib", "frontend/components")
 SKIPPED_DIRS = {"node_modules", ".next"}
@@ -37,8 +39,9 @@ SERVICE_MODULES = (
     "shared/jobs/registry.py",                      # retired kinds: the cancelled row's error on Jobs
 )
 
-# Module-level tables whose text no page renders: the machine-caller allowlist names who calls each route.
-CODE_ONLY_TABLES = frozenset({"MACHINE_ROUTES"})
+# Module-level tables whose text no page renders: the machine-caller allowlist names who calls each route; PARTS maps
+# a report ID (EX-03, CRM-04: report codes, not tracker IDs) to the CRM contract parts it reads.
+CODE_ONLY_TABLES = frozenset({"MACHINE_ROUTES", "PARTS"})
 
 
 def _frontend_files():
@@ -95,6 +98,16 @@ def test_the_lexer_keeps_text_and_drops_comments(tmp_path):
     hits = ts_hits(f, ISSUE_ID, tmp_path)
     assert [h.split(":")[1] for h in hits] == ["3", "5", "6"], hits
     assert all("AA-1" not in h and "AA-4" not in h and "AA-7" not in h for h in hits)
+
+
+def test_the_pattern_matches_every_tracker_but_not_product_names():
+    from api.services.issue_refs import TRACKERS
+
+    assert {p for p in ("AA", "CRM", "KAN", "PR", "CON")} == set(TRACKERS)
+    for hit in ("AA-942", "(CRM-14, V1)", "KAN-20", "PR-27", "CON-3"):
+        assert ISSUE_ID.search(hit), hit
+    for clean in ("AA-Booking API", "AA-CIS api", "aa-cis-dev-db", "Runbook CIS-08", "EVENT-0087", "SPR-1"):
+        assert not ISSUE_ID.search(clean), clean
 
 
 def test_python_scan_skips_what_is_never_shown(tmp_path):

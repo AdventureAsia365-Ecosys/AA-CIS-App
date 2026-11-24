@@ -9,22 +9,24 @@ import { Line, LineChart, ReferenceLine, ResponsiveContainer, YAxis } from "rech
 import { Badge, DataTable, K, useLang, type ColumnDef, type Tone } from "../../../_kit";
 import { useChartColors } from "../../../_kit/useTheme";
 import {
-  APP_LABEL, fmtNum, fmtPct, headroom, inApps, levelTone, sortingParam, tableSorting, withSort, yTop, type Ai,
+  fmtNum, fmtPct, headroom, inApps, levelTone, sortingParam, tableSorting, withSort, yTop, type Ai,
   type AiConn, type Cost, type Jobs, type Queue, type ResourceTile, type Section, type View, type SetView,
 } from "@/lib/opsStatus";
 import { fmtCount, fmtUsd } from "@/lib/numberFormat";
+import { freeLimitText } from "@/lib/opsStatusText";
 import { Card, NotMeasured, WhenUp, levelColor, num, rowWrap, small, useST, type ST } from "./ui";
+import { useWords, type StatusWords } from "./words";
 
 const link = { ...small, color: K.accentDeep, fontWeight: 600 } as const;
 
 // ── jobs ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-function queueColumns(t: ST): ColumnDef<Queue>[] {
+function queueColumns(t: ST, w: StatusWords): ColumnDef<Queue>[] {
   const n = (v: number | undefined) => (v == null ? "—" : fmtCount(v));
   return [
     { id: "queue", header: t("colQueue"), accessorFn: (q) => q.name,
       cell: ({ row }) => <span style={{ display: "grid" }}><code>{row.original.name}</code>
-        <span style={small}>{APP_LABEL[row.original.app]}</span></span> },
+        <span style={small}>{w.app(row.original.app)}</span></span> },
     { id: "state", header: t("colState"), accessorFn: (q) => q.status, enableSorting: false,
       cell: ({ row }) => row.original.status === "ok" ? <Badge tone={levelTone(row.original.level) as Tone}>
         {row.original.level}</Badge> : <NotMeasured reason={row.original.reason} /> },
@@ -60,6 +62,7 @@ function FailingKinds({ jobs, t }: { jobs: Jobs; t: ST }) {
 
 export function JobsCard({ section, view, setView }: { section: Section<Jobs>; view: View; setView: SetView }) {
   const t = useST();
+  const w = useWords();
   return (
     <Card title={t("jobsTitle")} testId="status-jobs" asOf={section.as_of}
       actions={<Link href="/admin/jobs" style={link}>{t("lJobs")}</Link>}>
@@ -67,7 +70,7 @@ export function JobsCard({ section, view, setView }: { section: Section<Jobs>; v
         {(jobs) => (
           <>
             <DataTable<Queue> tableId="status-queues" data={jobs.queues.filter((q) => inApps(q.app, view.apps))}
-              columns={queueColumns(t)} getRowId={(q) => q.id} searchable={false} paginate={false} compact
+              columns={queueColumns(t, w)} getRowId={(q) => q.id} searchable={false} paginate={false} compact
               tableMinWidth={620} sorting={tableSorting(view.sort.q)}
               onSortingChange={(s) => setView((v) => ({ sort: withSort(v.sort, "q", sortingParam(s)) }))} />
             <div style={rowWrap} data-testid="status-gate">
@@ -107,28 +110,51 @@ function Spark({ tile }: { tile: ResourceTile }) {
   );
 }
 
+/** The limit lines under a tile: "warn 20 % = 4 GiB" on the free storage share (CIS 477), else "warn 70". */
+function limitText(tile: ResourceTile, t: ST): string {
+  const pct = tile.basis === "pct";
+  const line = (v: number | null | undefined, share: number | null | undefined) =>
+    pct ? freeLimitText(share, v) : fmtNum(v);
+  return [tile.warn != null ? ` · ${t("warnLine", line(tile.warn, tile.warn_pct))}` : "",
+    tile.crit != null ? ` · ${t("critLine", line(tile.crit, tile.crit_pct))}` : ""].join("");
+}
+
+/** Free storage: the latest share and the allocated size (autoscaling maximum), or why fixed GiB limits apply. */
+function FreeNote({ tile }: { tile: ResourceTile }) {
+  const t = useST();
+  if (tile.id !== "free_storage" || tile.status === "unavailable") return null;
+  if (tile.basis !== "pct") return tile.basis === "gib" ? <span style={small}>{t("freeFallback")}</span> : null;
+  const size = `${fmtNum(tile.allocated_gib)} GiB`;
+  const of = tile.max_allocated_gib ? t("freeAllocMax", size, `${fmtNum(tile.max_allocated_gib)} GiB`)
+    : t("freeAlloc", size);
+  return <span style={small} data-testid="status-res-free-note">{fmtPct(tile.latest_pct, 1)} {of}</span>;
+}
+
 function ResourceBox({ tile }: { tile: ResourceTile }) {
   const t = useST();
+  const w = useWords();
   const room = headroom(tile.latest, tile.warn ?? tile.crit, tile.dir);
   const down = tile.status === "unavailable";
+  const note = tile.id === "ecs" && tile.capacity != null && tile.latest != null
+    ? t("whyRunning", String(tile.latest), String(tile.capacity)) : tile.note;
   return (
     <div data-testid={`status-res-${tile.id}`} style={{ border: `1px solid ${K.line}`, borderRadius: 8,
       padding: "10px 12px", display: "grid", gap: 4, minWidth: 0, background: K.card }}>
       <span style={{ ...rowWrap, justifyContent: "space-between" }}>
-        <span style={{ fontSize: 12, fontWeight: 600, color: K.ink }}>{tile.label}</span>
+        <span style={{ fontSize: 12, fontWeight: 600, color: K.ink }}>{w.tile(tile)}</span>
         <Badge tone={levelTone(tile.level) as Tone}>{tile.level === "none" ? t("notMeasured") : tile.level}</Badge>
       </span>
       {down ? <NotMeasured reason={null} /> : (
         <span style={{ ...num, fontSize: 18, fontWeight: 600, color: levelColor(tile.level) }}>
-          {fmtNum(tile.latest)} <span style={small}>{tile.unit}</span></span>)}
+          {fmtNum(tile.latest)} <span style={small}>{w.unit(tile)}</span></span>)}
       <Spark tile={tile} />
       <span style={small}>
         {tile.worst != null && t("latestWorst", fmtNum(tile.latest), fmtNum(tile.worst))}
-        {tile.warn != null && ` · ${t("warnLine", fmtNum(tile.warn))}`}
-        {tile.crit != null && ` · ${t("critLine", fmtNum(tile.crit))}`}
+        {limitText(tile, t)}
         {room != null && ` · ${t("headroom", fmtNum(room))}`}
       </span>
-      {tile.note && <span style={{ ...small, overflowWrap: "anywhere" }}>{tile.note}</span>}
+      <FreeNote tile={tile} />
+      {note && <span style={{ ...small, overflowWrap: "anywhere" }}>{note}</span>}
     </div>
   );
 }
@@ -196,11 +222,12 @@ export function CostCard({ section }: { section: Section<Cost> }) {
 // ── AI gateway ──────────────────────────────────────────────────────────────────────────────────────────────────
 
 function CapBar({ a, near, t, lang }: { a: Ai["apps"][number]; near: number; t: ST; lang: "en" | "vi" }) {
+  const w = useWords();
   const used = Math.min(100, a.used_pct ?? 0);
   return (
     <div style={{ display: "grid", gap: 3 }} data-testid={`status-ai-${a.app}`}>
       <span style={{ ...rowWrap, ...small }}>
-        <b style={{ color: K.ink }}>{APP_LABEL[a.app] ?? a.app}</b>
+        <b style={{ color: K.ink }}>{w.app(a.app)}</b>
         <span style={num}>{a.spent_usd == null ? t("notMeasured") : fmtUsd(a.spent_usd, lang)}</span>
         <span>/ {a.cap_usd == null ? t("noCap") : fmtUsd(a.cap_usd, lang)}</span>
         {a.used_pct != null && <span style={{ color: levelColor(a.level) }}>{fmtPct(a.used_pct, 0)}</span>}
@@ -228,6 +255,7 @@ function connColumns(t: ST, lang: "en" | "vi"): ColumnDef<AiConn>[] {
 
 export function AiCard({ section, view, setView }: { section: Section<Ai>; view: View; setView: SetView }) {
   const t = useST();
+  const w = useWords();
   const lang = useLang();
   return (
     <Card title={t("aiTitle")} testId="status-ai" asOf={section.as_of}
@@ -239,7 +267,7 @@ export function AiCard({ section, view, setView }: { section: Section<Ai>; view:
               <div style={{ fontWeight: 600, fontSize: 12, color: K.ink }}>{t("aiByApp")}</div>
               {ai.apps.filter((a) => inApps(a.app, view.apps)).map((a) => (
                 <CapBar key={a.app} a={a} near={ai.near_pct} t={t} lang={lang} />))}
-              {ai.crm_note && <NotMeasured reason={`${APP_LABEL.crm}: ${ai.crm_note}`} />}
+              {ai.crm_note && <NotMeasured reason={`${w.app("crm")}: ${ai.crm_note}`} />}
             </div>
             <div style={{ display: "grid", gap: 8, alignContent: "start", minWidth: 0 }}>
               <div style={{ fontWeight: 600, fontSize: 12, color: K.ink }}>{t("aiByConn")}</div>
