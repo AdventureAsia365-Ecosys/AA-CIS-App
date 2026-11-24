@@ -96,9 +96,7 @@ The AA-832 chain (EventBridge -> ops-probe Lambda -> admin POST -> shared.job ->
   `tenant_erasure` (the jobs created) or `tenant_erasure_error`.
 - AA-1140: each tick queues the Ecosystem status sampler once per 5-minute bucket (services/jobs/ops_status_sample_job
   .tick_part, $0). Field `ops_status_sample` (the job id, when created) or `ops_status_sample_error`.
-- AA-1173: each tick queues the read-only compliance DB checks once per UTC day from 03:00 UTC
-  (services/jobs/compliance_db_checks_job.tick_part, $0; COMPLIANCE_DB_CHECKS=off stops it). Field
-  `compliance_db_checks` (the job id, when created) or `compliance_db_checks_error`.
+- AA-1173: the daily compliance DB checks job (compliance_db_checks_job.tick_part); `compliance_db_checks[_error]`.
 - AA-845: every JEV_CREDIT_CHECK_EVERY_S (shared/jev_credit.py, 30 min) the loop also runs the Jev low-credit
   check (estimated TypeSafe credit below the threshold -> throttled bell + operator e-mail). It runs after the
   tick, outside sample_once, under its own PART_TIMEOUT_S, and logs its own line (`jev_credit_low_checked` /
@@ -661,9 +659,7 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
 
     from services.jobs.ops_status_sample_job import tick_part as _ops_status_tick  # AA-1140, one INSERT per bucket
     await _guarded_part(_ops_status_tick(pool, kinds, ts, out), out, "ops_status_sample_error", timeout=5.0)
-
-    # AA-1173: at most one idempotent INSERT a day (the read-only compliance DB checks, $0), same short budget
-    from services.jobs.compliance_db_checks_job import tick_part as _compliance_db_tick
+    from services.jobs.compliance_db_checks_job import tick_part as _compliance_db_tick  # AA-1173, one INSERT a day
     await _guarded_part(_compliance_db_tick(pool, kinds, ts, out), out, "compliance_db_checks_error", timeout=5.0)
 
     try:

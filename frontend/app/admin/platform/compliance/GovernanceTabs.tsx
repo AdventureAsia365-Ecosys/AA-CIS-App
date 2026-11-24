@@ -107,25 +107,38 @@ function ProposeModal({ open, onClose, maxDays, t }: { open: boolean; onClose: (
   );
 }
 
-export function ExceptionsTab() {
-  const t = useGT();
-  const qc = useQueryClient();
-  const toast = useToast();
-  const { formatDate, formatDateTime } = useFormat();
-  const [proposing, setProposing] = useState(false);
-  const [decision, setDecision] = useState<Decision>(null);
-  const q = useQuery({ queryKey: [...KEY, "exceptions"], queryFn: () => apiGet<ExceptionsResp>(EXCEPTIONS_PATH),
-    staleTime: 30_000, retry: false });
-  const rows = useMemo(() => sortExceptions(q.data?.exceptions ?? []), [q.data]);
-  const viewer = q.data?.viewer ?? null;
-  const twoPerson = q.data?.two_person_approval ?? true;
-  const decide = useMutation({
-    mutationFn: ({ id, action, note }: { id: number; action: string; note: string }) =>
-      apiSend<ExceptionRow>(`${EXCEPTIONS_PATH}/${id}/${action}`, { body: { note: note || null } }),
-    onSuccess: () => { toast.success(t("done")); setDecision(null); },
-    onSettled: () => void qc.invalidateQueries({ queryKey: KEY }),
-  });
-  const columns: ColumnDef<ExceptionRow, unknown>[] = [
+type ExceptionsView = { rows: ExceptionRow[]; viewer: string | null; twoPerson: boolean };
+
+function exceptionsView(data: ExceptionsResp | undefined): ExceptionsView {
+  if (!data) return { rows: [], viewer: null, twoPerson: true };
+  return { rows: sortExceptions(data.exceptions), viewer: data.viewer, twoPerson: data.two_person_approval };
+}
+
+type Fmt = ReturnType<typeof useFormat>;
+
+function ExceptionActions({ r, view, onDecide, t }: {
+  r: ExceptionRow; view: ExceptionsView; onDecide: (d: Decision) => void; t: GT;
+}) {
+  const can = exceptionActions(r, view.viewer, view.twoPerson);
+  const own = r.status === "proposed" && view.viewer === r.proposed_by;
+  return (
+    <WriteOnly>
+      <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap" }}>
+        {can.approve && <Button size="sm" variant="primary" testId={`exception-approve-${r.exception_id}`}
+          onClick={() => onDecide({ row: r, action: "approve" })}>{t("approve")}</Button>}
+        {can.reject && <Button size="sm" variant="secondary"
+          onClick={() => onDecide({ row: r, action: "reject" })}>{t("reject")}</Button>}
+        {can.revoke && <Button size="sm" variant="ghost" testId={`exception-revoke-${r.exception_id}`}
+          onClick={() => onDecide({ row: r, action: "revoke" })}>{own ? t("withdraw") : t("revoke")}</Button>}
+      </span>
+    </WriteOnly>
+  );
+}
+
+function exceptionColumns(t: GT, fmt: Fmt, view: ExceptionsView,
+  onDecide: (d: Decision) => void): ColumnDef<ExceptionRow, unknown>[] {
+  const { formatDate, formatDateTime } = fmt;
+  return [
     { id: "id", header: t("colId"), accessorKey: "exception_id",
       cell: ({ row: { original: r } }) => <span style={{ fontFamily: mono, fontSize: 12 }}>{r.exception_id}</span> },
     { id: "subject", header: t("colSubject"),
@@ -144,55 +157,74 @@ export function ExceptionsTab() {
       cell: ({ row: { original: r } }) => <span style={small}>{formatDate(r.expires_on)}
         {r.state === "approved" ? ` · ${t("daysLeft", r.days_left)}` : ""}</span> },
     { id: "proposed", header: t("colProposed"),
-      cell: ({ row: { original: r } }) => <span style={small}>{who(r.proposed_by, viewer, t)} ·{" "}
+      cell: ({ row: { original: r } }) => <span style={small}>{who(r.proposed_by, view.viewer, t)} ·{" "}
         {formatDateTime(r.proposed_at)}</span> },
     { id: "decided", header: t("colDecided"),
-      cell: ({ row: { original: r } }) => <span style={small}>{who(r.revoked_by ?? r.decided_by, viewer, t)}
+      cell: ({ row: { original: r } }) => <span style={small}>{who(r.revoked_by ?? r.decided_by, view.viewer, t)}
         {r.revoke_note || r.decision_note ? ` · ${r.revoke_note ?? r.decision_note}` : ""}</span> },
     { id: "actions", header: t("colActions"),
-      cell: ({ row: { original: r } }) => {
-        const can = exceptionActions(r, viewer, twoPerson);
-        const own = r.status === "proposed" && viewer === r.proposed_by;
-        return (
-          <WriteOnly>
-            <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap" }}>
-              {can.approve && <Button size="sm" variant="primary" testId={`exception-approve-${r.exception_id}`}
-                onClick={() => setDecision({ row: r, action: "approve" })}>{t("approve")}</Button>}
-              {can.reject && <Button size="sm" variant="secondary"
-                onClick={() => setDecision({ row: r, action: "reject" })}>{t("reject")}</Button>}
-              {can.revoke && <Button size="sm" variant="ghost" testId={`exception-revoke-${r.exception_id}`}
-                onClick={() => setDecision({ row: r, action: "revoke" })}>{own ? t("withdraw") : t("revoke")}</Button>}
-            </span>
-          </WriteOnly>
-        );
-      } },
+      cell: ({ row: { original: r } }) => <ExceptionActions r={r} view={view} onDecide={onDecide} t={t} /> },
   ];
+}
+
+const DECISION_TITLE = { approve: "approveTitle", reject: "rejectTitle", revoke: "revokeTitle" } as const;
+
+// Mounted only while a decision is open (the parent renders it when `decision` is set).
+function DecisionModal({ decision, onClose, t }: { decision: NonNullable<Decision>; onClose: () => void; t: GT }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const { formatDate } = useFormat();
+  const { row, action } = decision;
+  const approve = action === "approve";
+  const decide = useMutation({
+    mutationFn: (note: string) =>
+      apiSend<ExceptionRow>(`${EXCEPTIONS_PATH}/${row.exception_id}/${action}`, { body: { note: note || null } }),
+    onSuccess: () => { toast.success(t("done")); onClose(); },
+    onSettled: () => void qc.invalidateQueries({ queryKey: KEY }),
+  });
+  return (
+    <ConfirmModal open onClose={() => { if (!decide.isPending) onClose(); }} title={t(DECISION_TITLE[action])}
+      body={approve ? t("approveBody", row.subject_ref, formatDate(row.expires_on)) : `${row.subject_ref} — ${row.title}`}
+      confirmLabel={t(action)} destructive={!approve}
+      reason={{ label: approve ? t("noteLabel") : t("reasonRequired"), required: !approve, maxLength: 1000 }}
+      busy={decide.isPending} error={decide.error ? (decide.error as Error).message : null}
+      onConfirm={(note) => decide.mutate(note)} testId="compliance-exception-decision" />
+  );
+}
+
+function ExceptionsSummary({ d, t }: { d: ExceptionsResp; t: GT }) {
+  const c = d.counts;
+  return (
+    <p style={{ ...small, margin: "0 0 8px" }}>
+      {d.two_person_approval ? t("selfApprovalOff") : t("selfApprovalOn")}{" "}
+      {t("counts", c.proposed ?? 0, c.approved ?? 0, c.expired ?? 0)}</p>
+  );
+}
+
+export function ExceptionsTab() {
+  const t = useGT();
+  const fmt = useFormat();
+  const [proposing, setProposing] = useState(false);
+  const [decision, setDecision] = useState<Decision>(null);
+  const q = useQuery({ queryKey: [...KEY, "exceptions"], queryFn: () => apiGet<ExceptionsResp>(EXCEPTIONS_PATH),
+    staleTime: 30_000, retry: false });
   const d = q.data;
-  const titleOf = (a: string) => a === "approve" ? t("approveTitle") : a === "reject" ? t("rejectTitle") : t("revokeTitle");
+  const view = useMemo(() => exceptionsView(d), [d]);
+  const columns = useMemo(() => exceptionColumns(t, fmt, view, setDecision), [t, fmt, view]);
   return (
     <div style={grid} data-testid="compliance-exceptions">
       {q.error && <ErrorState message={`${t("loadError")}: ${(q.error as Error).message}`} onRetry={() => void q.refetch()} />}
       <Section title={t("tabExceptions")} description={d ? t("exceptionsIntro", d.max_days) : undefined}
         actions={<WriteOnly><Button size="sm" variant="primary" onClick={() => setProposing(true)} disabled={!d}
           testId="compliance-exception-propose">{t("propose")}</Button></WriteOnly>}>
-        {d && <p style={{ ...small, margin: "0 0 8px" }}>
-          {d.two_person_approval ? t("selfApprovalOff") : t("selfApprovalOn")} {t("counts", d.counts.proposed ?? 0,
-            d.counts.approved ?? 0, d.counts.expired ?? 0)}</p>}
-        <DataTable<ExceptionRow> tableId="compliance-exceptions" data={rows} columns={columns}
+        {d && <ExceptionsSummary d={d} t={t} />}
+        <DataTable<ExceptionRow> tableId="compliance-exceptions" data={view.rows} columns={columns}
           getRowId={(r) => String(r.exception_id)} loading={q.isLoading} paginate={false} searchable
           tableMinWidth={1100} enableCsv csvFilename="compliance-exceptions.csv" emptyTitle={t("noExceptions")} />
       </Section>
       {d && <ProposeModal open={proposing} onClose={() => setProposing(false)} maxDays={d.max_days} t={t} />}
-      <ConfirmModal open={!!decision} onClose={() => { if (!decide.isPending) { setDecision(null); decide.reset(); } }}
-        title={decision ? titleOf(decision.action) : ""}
-        body={decision?.action === "approve" ? t("approveBody", decision.row.subject_ref,
-          formatDate(decision.row.expires_on)) : decision ? `${decision.row.subject_ref} — ${decision.row.title}` : null}
-        confirmLabel={decision ? t(decision.action) : undefined} destructive={decision?.action !== "approve"}
-        reason={decision ? { label: decision.action === "approve" ? t("noteLabel") : t("reasonRequired"),
-          required: decision.action !== "approve", maxLength: 1000 } : undefined}
-        busy={decide.isPending} error={decide.error ? (decide.error as Error).message : null}
-        onConfirm={(note) => decision && decide.mutate({ id: decision.row.exception_id, action: decision.action, note })}
-        testId="compliance-exception-decision" />
+      {decision && <DecisionModal key={`${decision.row.exception_id}-${decision.action}`} decision={decision}
+        onClose={() => setDecision(null)} t={t} />}
     </div>
   );
 }
@@ -203,36 +235,73 @@ function scoresLine(r: ReviewRow): string {
   return (r.summary.frameworks ?? []).map((f) => `${f.framework} ${fmtPct(f.weighted_pct)}`).join(" · ") || "—";
 }
 
-export function ReviewsTab() {
-  const t = useGT();
-  const qc = useQueryClient();
-  const toast = useToast();
-  const { formatDate, formatDateTime } = useFormat();
-  const [open, setOpen] = useState(false);
-  const [notes, setNotes] = useState("");
-  const [actions, setActions] = useState("");
-  const q = useQuery({ queryKey: [...KEY, "reviews"], queryFn: () => apiGet<ReviewsResp>(REVIEWS_PATH),
-    staleTime: 30_000, retry: false });
-  const record = useMutation({
-    mutationFn: () => apiSend<ReviewRow>(REVIEWS_PATH, { body: { notes: notes.trim(),
-      actions: actions.trim() || null } }),
-    onSuccess: () => { toast.success(t("recorded")); setOpen(false); setNotes(""); setActions(""); },
-    onSettled: () => void qc.invalidateQueries({ queryKey: KEY }),
-  });
-  const d = q.data;
-  const month = d ? d.current_period.slice(0, 7) : "";
-  const columns: ColumnDef<ReviewRow, unknown>[] = [
+function reviewColumns(t: GT, fmt: Fmt): ColumnDef<ReviewRow, unknown>[] {
+  return [
     { id: "period", header: t("colPeriod"), accessorKey: "period",
       cell: ({ row: { original: r } }) => <span style={{ fontFamily: mono, fontSize: 12 }}>{r.period.slice(0, 7)}</span> },
     { id: "reviewer", header: t("colReviewer"), accessorKey: "reviewed_by",
       cell: ({ row: { original: r } }) => <span style={small}>{r.reviewed_by.replace(/^admin:/, "").slice(0, 8)}</span> },
     { id: "reviewed", header: t("colReviewed"), accessorKey: "reviewed_at",
-      cell: ({ row: { original: r } }) => <span style={small}>{formatDateTime(r.reviewed_at)}</span> },
+      cell: ({ row: { original: r } }) => <span style={small}>{fmt.formatDateTime(r.reviewed_at)}</span> },
     { id: "scores", header: t("colScores"), cell: ({ row: { original: r } }) => <span style={small}>{scoresLine(r)}</span> },
     { id: "notes", header: t("colNotes"), accessorKey: "notes",
       cell: ({ row: { original: r } }) => <span style={{ ...small, whiteSpace: "pre-wrap" }}>{r.notes}
         {r.actions ? `\n→ ${r.actions}` : ""}</span> },
   ];
+}
+
+function RecordReviewModal({ period, onClose, t }: { period: string; onClose: () => void; t: GT }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const { formatDate } = useFormat();
+  const [notes, setNotes] = useState("");
+  const [actions, setActions] = useState("");
+  const record = useMutation({
+    mutationFn: () => apiSend<ReviewRow>(REVIEWS_PATH, { body: { notes: notes.trim(),
+      actions: actions.trim() || null } }),
+    onSuccess: () => { toast.success(t("recorded")); onClose(); },
+    onSettled: () => void qc.invalidateQueries({ queryKey: KEY }),
+  });
+  return (
+    <Modal open onClose={record.isPending ? () => undefined : onClose} title={t("recordTitle")}
+      width={560} pinFooter testId="compliance-review-form"
+      footer={<span style={{ display: "inline-flex", gap: 8 }}>
+        <Button variant="ghost" onClick={onClose} disabled={record.isPending}>{t("cancel")}</Button>
+        <Button variant="primary" onClick={() => record.mutate()} testId="compliance-review-submit"
+          disabled={notes.trim().length < 20 || record.isPending}>{t("recordReview")}</Button>
+      </span>}>
+      <div style={grid}>
+        {record.error && <ErrorState message={(record.error as Error).message} />}
+        <p style={{ ...small, margin: 0 }}>{t("snapshotNote")} {formatDate(period)}</p>
+        <Field label={t("notes")} required hint={t("notesHint")}>
+          <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={4000} rows={5} />
+        </Field>
+        <Field label={t("actions")} hint={t("actionsHint")}>
+          <Textarea value={actions} onChange={(e) => setActions(e.target.value)} maxLength={4000} rows={3} />
+        </Field>
+      </div>
+    </Modal>
+  );
+}
+
+function ReviewStatus({ d, t }: { d: ReviewsResp; t: GT }) {
+  const month = d.current_period.slice(0, 7);
+  return (
+    <p style={{ ...small, margin: "0 0 8px" }}>
+      <Badge tone={d.current_recorded ? "success" : "warning"}>
+        {d.current_recorded ? t("currentRecorded", month) : t("currentMissing", month)}</Badge></p>
+  );
+}
+
+export function ReviewsTab() {
+  const t = useGT();
+  const fmt = useFormat();
+  const [open, setOpen] = useState(false);
+  const q = useQuery({ queryKey: [...KEY, "reviews"], queryFn: () => apiGet<ReviewsResp>(REVIEWS_PATH),
+    staleTime: 30_000, retry: false });
+  const d = q.data;
+  const columns = useMemo(() => reviewColumns(t, fmt), [t, fmt]);
+  const reviews = useMemo(() => d?.reviews ?? [], [d]);
   return (
     <div style={grid} data-testid="compliance-reviews">
       {q.error && <ErrorState message={`${t("reviewsLoadError")}: ${(q.error as Error).message}`}
@@ -240,31 +309,12 @@ export function ReviewsTab() {
       <Section title={t("recordTitle")} description={d ? t("reviewsIntro", d.max_age_days) : undefined}
         actions={<WriteOnly><Button size="sm" variant="primary" onClick={() => setOpen(true)}
           disabled={!d || d.current_recorded} testId="compliance-review-record">{t("recordReview")}</Button></WriteOnly>}>
-        {d && <p style={{ ...small, margin: "0 0 8px" }}>
-          <Badge tone={d.current_recorded ? "success" : "warning"}>{d.current_recorded ? t("currentRecorded", month)
-            : t("currentMissing", month)}</Badge></p>}
-        <DataTable<ReviewRow> tableId="compliance-reviews" data={d?.reviews ?? []} columns={columns}
+        {d && <ReviewStatus d={d} t={t} />}
+        <DataTable<ReviewRow> tableId="compliance-reviews" data={reviews} columns={columns}
           getRowId={(r) => String(r.review_id)} loading={q.isLoading} paginate={false} searchable={false}
           tableMinWidth={900} enableCsv csvFilename="compliance-reviews.csv" emptyTitle={t("noReviews")} />
       </Section>
-      <Modal open={open} onClose={record.isPending ? () => undefined : () => setOpen(false)} title={t("recordTitle")}
-        width={560} pinFooter testId="compliance-review-form"
-        footer={<span style={{ display: "inline-flex", gap: 8 }}>
-          <Button variant="ghost" onClick={() => setOpen(false)} disabled={record.isPending}>{t("cancel")}</Button>
-          <Button variant="primary" onClick={() => record.mutate()} testId="compliance-review-submit"
-            disabled={notes.trim().length < 20 || record.isPending}>{t("recordReview")}</Button>
-        </span>}>
-        <div style={grid}>
-          {record.error && <ErrorState message={(record.error as Error).message} />}
-          <p style={{ ...small, margin: 0 }}>{t("snapshotNote")} {d ? formatDate(d.current_period) : ""}</p>
-          <Field label={t("notes")} required hint={t("notesHint")}>
-            <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={4000} rows={5} />
-          </Field>
-          <Field label={t("actions")} hint={t("actionsHint")}>
-            <Textarea value={actions} onChange={(e) => setActions(e.target.value)} maxLength={4000} rows={3} />
-          </Field>
-        </div>
-      </Modal>
+      {open && d && <RecordReviewModal period={d.current_period} onClose={() => setOpen(false)} t={t} />}
     </div>
   );
 }

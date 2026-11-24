@@ -214,12 +214,14 @@ async def approve_exception(request: Request, exception_id: int = Path(..., ge=1
 
 
 @router.post("/exceptions/{exception_id}/reject", summary="Reject an open compliance exception (checker)")
-async def reject_exception(request: Request, exception_id: int = Path(..., ge=1), body: ComplianceDecisionBody = Body(...)):
+async def reject_exception(request: Request, exception_id: int = Path(..., ge=1),
+                           body: ComplianceDecisionBody = Body(...)):
     return await _decide(request, exception_id, "reject", body)
 
 
 @router.post("/exceptions/{exception_id}/revoke", summary="Revoke an approved exception or withdraw an open one")
-async def revoke_exception(request: Request, exception_id: int = Path(..., ge=1), body: ComplianceDecisionBody = Body(...)):
+async def revoke_exception(request: Request, exception_id: int = Path(..., ge=1),
+                           body: ComplianceDecisionBody = Body(...)):
     return await _decide(request, exception_id, "revoke", body)
 
 
