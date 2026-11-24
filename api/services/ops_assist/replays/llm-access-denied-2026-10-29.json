@@ -1,0 +1,111 @@
+{
+  "title": "AI account refused every Bedrock model (29/10/2026), replayed on today's routes",
+  "what_happened": "On 29/10/2026 Bedrock refused model access for the LLM account at account level (Error 002): first the OpenAI models, then every model. No alert fired; the cause was found hours later after model-by-model checks. This replay puts the same refusal on today's primary Bedrock account (acc1) with today's routes: Claude = Anthropic API, then acc1, then acc3; GPT = acc1, then acc3, then the OpenAI API. acc3 keeps its known refusals of the GPT models.",
+  "source": "/admin/docs?path=docs/ops/postmortems/2026-10-29-acc3-bedrock-access-refusal.md",
+  "expected": {
+    "first_action": "llm_probe",
+    "actions": ["llm_probe", "observe", "wave_pause", "route_save", "retry_llm_denied", "aws_support_case"],
+    "not_proposed": ["connection_disable", "anomaly_breaker_reset"],
+    "risk": {"observe": "R0", "llm_probe": "R1", "wave_pause": "R2", "route_save": "R3", "retry_llm_denied": "R3",
+             "aws_support_case": "R4"}
+  },
+  "snapshot": {
+    "as_of": "2026-10-29T08:30:00+00:00",
+    "range": "24h",
+    "item_id": "llm-conn-acc1",
+    "window": {"since": "2026-10-29T08:00:00+00:00", "minutes": 30},
+    "changes_window": {"since": "2026-10-29T06:30:00+00:00", "minutes": 120},
+    "status": null,
+    "item": null,
+    "connections": [
+      {"connection_key": "anthropic-direct", "kind": "anthropic", "label": "Anthropic API", "enabled": true,
+       "status": "ok", "open_models": 0, "known_refused_models": [], "last_ok_at": "2026-10-29T08:29:10+00:00",
+       "last_error_at": null, "last_error_class": null, "failure_domain": null,
+       "circuit": {"model_key": "*", "state": "closed", "refusing": false, "error_class": null, "open_until": null,
+                   "opened_at": null, "models": []}},
+      {"connection_key": "acc1", "kind": "bedrock", "label": "acc1", "enabled": true, "status": "open",
+       "open_models": 2, "known_refused_models": [], "last_ok_at": "2026-10-29T06:48:00+00:00",
+       "last_error_at": "2026-10-29T06:50:00+00:00", "last_error_class": "access_denied", "failure_domain": null,
+       "circuit": {"model_key": "*", "state": "open", "refusing": true, "error_class": "access_denied",
+                   "open_until": "2026-10-29T08:45:00+00:00", "opened_at": "2026-10-29T06:52:00+00:00",
+                   "models": ["gpt-5.6-luna", "gpt-6-luna"]}},
+      {"connection_key": "acc3", "kind": "bedrock", "label": "acc3", "enabled": true, "status": "ok",
+       "open_models": 0, "known_refused_models": ["gpt-5.6-luna", "gpt-6-luna"],
+       "last_ok_at": "2026-10-29T08:12:00+00:00", "last_error_at": null, "last_error_class": null,
+       "failure_domain": null,
+       "circuit": {"model_key": "*", "state": "closed", "refusing": false, "error_class": null, "open_until": null,
+                   "opened_at": null, "models": []}},
+      {"connection_key": "openai-direct", "kind": "openai", "label": "OpenAI API", "enabled": true, "status": "ok",
+       "open_models": 0, "known_refused_models": [], "last_ok_at": "2026-10-29T08:29:40+00:00",
+       "last_error_at": null, "last_error_class": null, "failure_domain": null,
+       "circuit": {"model_key": "*", "state": "closed", "refusing": false, "error_class": null, "open_until": null,
+                   "opened_at": null, "models": []}},
+      {"connection_key": "acc2", "kind": "bedrock", "label": "acc2", "enabled": true, "status": "ok",
+       "open_models": 0, "known_refused_models": [], "last_ok_at": "2026-10-29T08:28:00+00:00",
+       "last_error_at": null, "last_error_class": null, "failure_domain": null,
+       "circuit": {"model_key": "*", "state": "closed", "refusing": false, "error_class": null, "open_until": null,
+                   "opened_at": null, "models": []}}
+    ],
+    "calls": {
+      "acc1": {"ok": 0, "refused": 12, "error": 0, "access_refused": 12, "classes": {"access_denied": 12},
+               "refused_models": ["gpt-5.6-luna", "gpt-6-luna"], "refused_by_model": {"gpt-5.6-luna": 3, "gpt-6-luna": 9},
+               "models": ["gpt-5.6-luna", "gpt-6-luna"], "cost_usd": 0.0},
+      "acc3": {"ok": 0, "refused": 12, "error": 0, "access_refused": 12, "classes": {"access_denied": 12},
+               "refused_models": ["gpt-5.6-luna", "gpt-6-luna"], "refused_by_model": {"gpt-5.6-luna": 3, "gpt-6-luna": 9},
+               "models": ["gpt-5.6-luna", "gpt-6-luna"], "cost_usd": 0.0},
+      "openai-direct": {"ok": 12, "refused": 0, "error": 0, "access_refused": 0, "classes": {},
+                        "refused_models": [], "refused_by_model": {}, "models": ["gpt-5.6-luna", "gpt-6-luna"],
+                        "cost_usd": 0.36},
+      "anthropic-direct": {"ok": 10, "refused": 0, "error": 0, "access_refused": 0, "classes": {},
+                           "refused_models": [], "refused_by_model": {}, "models": ["haiku-5-5", "sonnet-5-5"],
+                           "cost_usd": 0.21},
+      "acc2": {"ok": 30, "refused": 0, "error": 0, "access_refused": 0, "classes": {}, "refused_models": [],
+               "refused_by_model": {}, "models": ["cohere-embed-v4"], "cost_usd": 0.003}
+    },
+    "spend": {
+      "openai-direct": {"window_usd": 0.36, "per_hour_usd": 0.72, "baseline_hour_usd": 0.02},
+      "anthropic-direct": {"window_usd": 0.21, "per_hour_usd": 0.42, "baseline_hour_usd": 0.3},
+      "acc2": {"window_usd": 0.003, "per_hour_usd": 0.006, "baseline_hour_usd": 0.006}
+    },
+    "routes": {
+      "version": 30, "updated_at": "2026-10-28T03:00:00+00:00", "order_mode": "model_first",
+      "stages": [
+        {"stage": "t2_judge", "role": "judge", "is_active": true, "chain": ["gpt-6-luna", "sonnet-5-5"]},
+        {"stage": "t7_debate_judge", "role": "judge", "is_active": true, "chain": ["gpt-6-luna", "sonnet-5-5"]},
+        {"stage": "t10_judge", "role": "judge", "is_active": true, "chain": ["gpt-6-luna"]},
+        {"stage": "s1_judge", "role": "judge", "is_active": true, "chain": ["gpt-6-luna"]},
+        {"stage": "t9_faq_answer_fit", "role": "validate", "is_active": true, "chain": ["gpt-5.6-luna"]},
+        {"stage": "s1_generate", "role": "writer", "is_active": true, "chain": ["sonnet-5-5"]},
+        {"stage": "t2_generate", "role": "writer", "is_active": true, "chain": ["sonnet-5-5"]},
+        {"stage": "t9_write", "role": "writer", "is_active": true, "chain": ["sonnet-5-5"]},
+        {"stage": "a3_place_card", "role": "writer", "is_active": true, "chain": ["haiku-5-5"]}
+      ],
+      "provider_order": [
+        {"model_key": "gpt-5.6-luna", "deployments": [
+          {"connection_key": "acc1", "priority": 10, "enabled": true, "connection_enabled": true},
+          {"connection_key": "acc3", "priority": 20, "enabled": true, "connection_enabled": true},
+          {"connection_key": "openai-direct", "priority": 30, "enabled": true, "connection_enabled": true}]},
+        {"model_key": "gpt-6-luna", "deployments": [
+          {"connection_key": "acc1", "priority": 10, "enabled": true, "connection_enabled": true},
+          {"connection_key": "acc3", "priority": 20, "enabled": true, "connection_enabled": true},
+          {"connection_key": "openai-direct", "priority": 30, "enabled": true, "connection_enabled": true}]},
+        {"model_key": "haiku-5-5", "deployments": [
+          {"connection_key": "anthropic-direct", "priority": 10, "enabled": true, "connection_enabled": true},
+          {"connection_key": "acc1", "priority": 20, "enabled": true, "connection_enabled": true},
+          {"connection_key": "acc3", "priority": 30, "enabled": true, "connection_enabled": true}]},
+        {"model_key": "sonnet-5-5", "deployments": [
+          {"connection_key": "anthropic-direct", "priority": 10, "enabled": true, "connection_enabled": true},
+          {"connection_key": "acc1", "priority": 20, "enabled": true, "connection_enabled": true},
+          {"connection_key": "acc3", "priority": 30, "enabled": true, "connection_enabled": true}]}
+      ]
+    },
+    "route_versions": [],
+    "jobs": {"denied": [{"kind": "t2_rewrite", "n": 3}, {"kind": "s1_rewrite", "n": 2}], "stuck": [], "queues": []},
+    "waves": [{"id": "00000000-0000-4000-8000-000000001029", "name": "replay wave", "paused": false, "tours": 38,
+               "created_at": "2026-10-29T02:40:00+00:00"}],
+    "probe": {"switch_on": false, "last": null},
+    "changes": [],
+    "history": {},
+    "unavailable": {}
+  }
+}

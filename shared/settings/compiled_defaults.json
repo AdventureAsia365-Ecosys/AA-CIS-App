@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql, 469_aa1171_ops_thresholds_and_recipient_topic.sql, 471_aa1174_compliance_obligations.sql, 472_aa1172_fact_instruction_guard.sql, 474_aa1160_tenant_crm_agency_marker.sql, 475_aa1140_ops_status_samples_and_thresholds.sql, 476_aa1152_tp_agency_price_stale_hours.sql, 477_aa1140_rds_free_storage_pct.sql, 478_aa1148_manual_tours_supplier_link.sql, 479_aa1173_compliance_exceptions_reviews.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql, 469_aa1171_ops_thresholds_and_recipient_topic.sql, 471_aa1174_compliance_obligations.sql, 472_aa1172_fact_instruction_guard.sql, 474_aa1160_tenant_crm_agency_marker.sql, 475_aa1140_ops_status_samples_and_thresholds.sql, 476_aa1152_tp_agency_price_stale_hours.sql, 477_aa1140_rds_free_storage_pct.sql, 478_aa1148_manual_tours_supplier_link.sql, 479_aa1173_compliance_exceptions_reviews.sql, 481_aa1154_ops_assist_settings.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -3801,6 +3801,330 @@
      "lower": "Cảnh báo tới sớm hơn, kể cả những ngày lẽ ra vẫn dưới trần.",
      "when": "Giảm khi app chạm trần mà gần như không được báo trước; tăng khi những ngày bận bình thường gây cảnh báo.",
      "example": "Với mặc định 80 % và ngân sách 5 USD mỗi ngày, cảnh báo bật khi đã chi 4 USD."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.assist_card_ttl_min",
+   "app": "cis",
+   "area": "ops",
+   "label": "Assistant: card lifetime (minutes)",
+   "description": "On the CIS admin assistant (Ecosystem status page, Actions on a Needs-attention row; api/services/ops_assist/) a set of action cards is valid for this many minutes after its evidence was read; afterwards the panel locks it and asks to analyse again, so nobody acts on stale evidence. The S285 advisory sets 30 minutes. Default 30.",
+   "value_type": "int",
+   "unit": "minutes",
+   "min_value": 5,
+   "max_value": 240,
+   "allowed_values": null,
+   "default_value": 30,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How long a set of action cards stays usable before the page asks to read the evidence again.",
+     "raise": "Cards stay usable longer, with a higher chance the situation already changed.",
+     "lower": "Cards expire sooner and the evidence is read again more often.",
+     "when": "Lower it during a fast-moving incident; raise it for slow problems such as a cost drift.",
+     "example": "With the default 30, cards read at 10:02 expire at 10:32."
+    },
+    "vi": {
+     "what": "Bộ thẻ hành động dùng được bao lâu trước khi trang yêu cầu đọc lại bằng chứng.",
+     "raise": "Thẻ dùng được lâu hơn, nhưng dễ tình hình đã đổi.",
+     "lower": "Thẻ hết hạn sớm hơn và bằng chứng được đọc lại thường hơn.",
+     "when": "Giảm khi sự cố diễn biến nhanh; tăng cho vấn đề chậm như chi phí trôi dần.",
+     "example": "Với mặc định 30, thẻ đọc lúc 10:02 hết hạn lúc 10:32."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.assist_changes_window_min",
+   "app": "cis",
+   "area": "ops",
+   "label": "Assistant: what changed window (minutes)",
+   "description": "On the CIS admin assistant (Ecosystem status page, Actions on a Needs-attention row; api/services/ops_assist/) the \"what changed\" evidence lists the ops events (deploys, failed rollouts, alarms, service drops in acp_shared.ops_event) and the AI route versions saved in this many minutes before now. The S285 advisory reads 2 hours. Default 120.",
+   "value_type": "int",
+   "unit": "minutes",
+   "min_value": 15,
+   "max_value": 1440,
+   "allowed_values": null,
+   "default_value": 120,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How far back the assistant looks for recent changes: deploys, alarms and AI route versions.",
+     "raise": "A slower cause (a deploy hours ago) still shows, but the list gets longer.",
+     "lower": "A shorter list of the latest changes; an older cause may be missed.",
+     "when": "Raise it when problems appear long after a change; lower it if the list is too long to read.",
+     "example": "With the default 120, at 10:30 the list shows changes since 08:30."
+    },
+    "vi": {
+     "what": "Trợ lý nhìn lại bao xa để tìm thay đổi gần đây: deploy, cảnh báo và phiên bản route AI.",
+     "raise": "Nguyên nhân chậm (deploy vài giờ trước) vẫn hiện, nhưng danh sách dài hơn.",
+     "lower": "Danh sách ngắn gồm thay đổi mới nhất; nguyên nhân cũ hơn có thể bị bỏ sót.",
+     "when": "Tăng khi lỗi xuất hiện lâu sau một thay đổi; giảm nếu danh sách quá dài để đọc.",
+     "example": "Với mặc định 120, lúc 10:30 danh sách hiện thay đổi từ 08:30."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.assist_evidence_window_min",
+   "app": "cis",
+   "area": "ops",
+   "label": "Assistant: evidence window (minutes)",
+   "description": "On the CIS admin assistant (Ecosystem status page, Actions on a Needs-attention row; api/services/ops_assist/) the evidence collector reads the AI gateway ledger (shared.llm_call_log: refused calls and spend per connection) and the failed jobs of this many minutes before now. The S285 advisory reads 30 minutes. Default 30.",
+   "value_type": "int",
+   "unit": "minutes",
+   "min_value": 5,
+   "max_value": 240,
+   "allowed_values": null,
+   "default_value": 30,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many minutes of recent AI calls and job failures the assistant reads as evidence.",
+     "raise": "More calls in the sample and steadier numbers, but an old problem that already ended can still look open.",
+     "lower": "Only the latest minutes count, so a short burst decides the cards; small samples give rougher numbers.",
+     "when": "Raise it when the platform is quiet and few calls happen; lower it during a busy wave.",
+     "example": "With the default 30, a card at 10:30 counts the refused calls made since 10:00."
+    },
+    "vi": {
+     "what": "Số phút gần nhất mà trợ lý đọc lời gọi AI và job lỗi để làm bằng chứng.",
+     "raise": "Mẫu nhiều lời gọi hơn và số ổn định hơn, nhưng một lỗi đã hết vẫn có thể trông như đang mở.",
+     "lower": "Chỉ tính những phút mới nhất, một đợt lỗi ngắn quyết định thẻ; mẫu nhỏ cho số thô hơn.",
+     "when": "Tăng khi hệ thống vắng và ít lời gọi; giảm khi đang chạy wave đông.",
+     "example": "Với mặc định 30, thẻ lúc 10:30 đếm các lời gọi bị từ chối từ 10:00."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.assist_history_min_n",
+   "app": "cis",
+   "area": "ops",
+   "label": "Assistant: outcomes needed before a history confidence",
+   "description": "On the CIS admin assistant (Ecosystem status page, Actions on a Needs-attention row; api/services/ops_assist/) a prediction shows its history confidence (\"right k of n\") only once this action type has at least this many measured outcomes; below it the card says \"not enough data\". The S285 advisory sets 5. Default 5.",
+   "value_type": "int",
+   "unit": "outcomes",
+   "min_value": 3,
+   "max_value": 100,
+   "allowed_values": null,
+   "default_value": 5,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many measured results an action type needs before its cards show \"right k of n times\".",
+     "raise": "The history number appears later but means more.",
+     "lower": "The history number appears sooner but may mislead with few results.",
+     "when": "Keep the default until an action type has a few months of results.",
+     "example": "With the default 5, an action with 4 measured results still shows \"not enough data\"."
+    },
+    "vi": {
+     "what": "Số kết quả đã đo mà một loại hành động cần trước khi thẻ hiện \"đúng k trên n lần\".",
+     "raise": "Con số lịch sử hiện muộn hơn nhưng đáng tin hơn.",
+     "lower": "Con số lịch sử hiện sớm hơn nhưng có thể gây hiểu nhầm khi ít kết quả.",
+     "when": "Giữ mặc định cho tới khi một loại hành động có vài tháng kết quả.",
+     "example": "Với mặc định 5, hành động có 4 kết quả đã đo vẫn hiện \"chưa đủ dữ liệu\"."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.assist_reason_min_chars",
+   "app": "cis",
+   "area": "ops",
+   "label": "Assistant: shortest reason for an R3 card",
+   "description": "On the CIS admin assistant (Ecosystem status page, Actions on a Needs-attention row; api/services/ops_assist/) an R3 card (loosens a limit, costs money, wide scope or hard to undo) asks the person who acts for a written reason of at least this many characters; the API the card calls keeps its own approval rule (tech lead decision AI7: no new approval layer). Default 20.",
+   "value_type": "int",
+   "unit": "characters",
+   "min_value": 10,
+   "max_value": 500,
+   "allowed_values": null,
+   "default_value": 20,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The shortest written reason a high-risk (R3) action card asks for before its action is taken.",
+     "raise": "Longer reasons, better records, a little slower in an incident.",
+     "lower": "Faster to act, with thinner records of why.",
+     "when": "Keep the tech lead's 20 unless audits show reasons that say too little.",
+     "example": "With the default 20, \"acc1 refused, testing\" (21 characters) is accepted."
+    },
+    "vi": {
+     "what": "Độ dài tối thiểu của lý do viết tay mà thẻ rủi ro cao (R3) yêu cầu trước khi thực hiện.",
+     "raise": "Lý do dài hơn, hồ sơ rõ hơn, chậm hơn một chút khi có sự cố.",
+     "lower": "Thực hiện nhanh hơn, hồ sơ lý do sơ sài hơn.",
+     "when": "Giữ mức 20 của tech lead trừ khi audit thấy lý do quá sơ sài.",
+     "example": "Với mặc định 20, \"acc1 refused, testing\" (21 ký tự) được chấp nhận."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.assist_refused_trigger_calls",
+   "app": "cis",
+   "area": "ops",
+   "label": "Assistant: refused calls that open an AI access signal",
+   "description": "On the CIS admin assistant (Ecosystem status page, Actions on a Needs-attention row; api/services/ops_assist/) an AI connection whose calls were refused at account level (error class access_denied, credential or quota_exhausted) at least this many times inside the evidence window opens an \"AI access refused\" signal with its action cards, even before its connection circuit opens. An open connection circuit always opens the signal. Default 3.",
+   "value_type": "int",
+   "unit": "calls",
+   "min_value": 1,
+   "max_value": 1000,
+   "allowed_values": null,
+   "default_value": 3,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many account-level refusals on one AI connection make the assistant raise a signal before the circuit breaker does.",
+     "raise": "Fewer early signals, but a refused account is noticed later.",
+     "lower": "Earlier signals, but a single refused model may raise one that is not an account problem.",
+     "when": "Lower it when the platform calls little and every refusal matters; raise it if one refused model keeps raising signals.",
+     "example": "With the default 3, three refused calls on one connection in the window raise the signal."
+    },
+    "vi": {
+     "what": "Số lần bị từ chối ở cấp tài khoản trên một kết nối AI để trợ lý báo trước khi circuit breaker mở.",
+     "raise": "Ít báo sớm hơn, nhưng tài khoản bị từ chối được phát hiện muộn hơn.",
+     "lower": "Báo sớm hơn, nhưng một model bị từ chối riêng lẻ cũng có thể gây báo nhầm.",
+     "when": "Giảm khi hệ thống ít gọi và lần từ chối nào cũng quan trọng; tăng nếu một model bị từ chối cứ gây báo.",
+     "example": "Với mặc định 3, ba lời gọi bị từ chối trên một kết nối trong cửa sổ sẽ mở tín hiệu."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.assist_small_money_usd",
+   "app": "cis",
+   "area": "ops",
+   "label": "Assistant: most an R1 action may cost",
+   "description": "On the CIS admin assistant (Ecosystem status page, Actions on a Needs-attention row; api/services/ops_assist/) an action whose estimated cost is at most this amount counts as \"0 USD or a few cents\" on the money axis of the risk rule (R1 at most); a higher or unknown paid cost raises it to R3. Default 0.10 USD.",
+   "value_type": "usd",
+   "unit": "USD",
+   "min_value": 0,
+   "max_value": 10,
+   "allowed_values": null,
+   "default_value": 0.1,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The most an action may cost and still count as low risk on money.",
+     "raise": "More paid actions count as low risk and need no written reason.",
+     "lower": "Even small paid actions count as high risk and ask for a reason.",
+     "when": "Keep it near the cost of one connection probe run; lower it if the monthly AI cap is tight.",
+     "example": "With the default 0.10 USD, a probe run estimated at 0.02 USD stays R1."
+    },
+    "vi": {
+     "what": "Mức chi tối đa của một hành động mà vẫn được coi là rủi ro thấp về tiền.",
+     "raise": "Nhiều hành động tốn tiền hơn được coi là rủi ro thấp và không cần ghi lý do.",
+     "lower": "Cả hành động tốn ít tiền cũng bị coi là rủi ro cao và phải ghi lý do.",
+     "when": "Giữ gần chi phí một lượt probe kết nối; giảm nếu trần chi AI hằng tháng đang chặt.",
+     "example": "Với mặc định 0,10 USD, một lượt probe ước 0,02 USD vẫn là R1."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.assist_spend_spike_factor",
+   "app": "cis",
+   "area": "ops",
+   "label": "Assistant: AI spend spike factor",
+   "description": "On the CIS admin assistant (Ecosystem status page, Actions on a Needs-attention row; api/services/ops_assist/) an AI connection whose spend per hour inside the evidence window is at least this many times its median hourly spend of the last 7 days opens an \"AI spend spike\" signal. The same median is the baseline of the \"if we do nothing\" cost on every AI card. Default 3.",
+   "value_type": "numeric",
+   "unit": "x",
+   "min_value": 1.5,
+   "max_value": 20,
+   "allowed_values": null,
+   "default_value": 3,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many times its usual hourly spend an AI connection must reach before the assistant calls it a spend spike.",
+     "raise": "Only big jumps raise a signal; a slow rise goes unnoticed longer.",
+     "lower": "Smaller jumps raise a signal, including normal busy hours of a wave.",
+     "when": "Raise it while waves run often; lower it when spend is flat and any jump is suspect.",
+     "example": "With the default 3, a connection that usually spends 0.20 USD an hour raises a signal at 0.60 USD an hour."
+    },
+    "vi": {
+     "what": "Chi phí theo giờ của một kết nối AI phải gấp bao nhiêu lần mức thường ngày để trợ lý coi là tăng đột biến.",
+     "raise": "Chỉ bước nhảy lớn mới báo; tăng chậm bị bỏ qua lâu hơn.",
+     "lower": "Bước nhảy nhỏ cũng báo, kể cả giờ bận bình thường của một wave.",
+     "when": "Tăng khi wave chạy thường xuyên; giảm khi chi phí đều và bước nhảy nào cũng đáng ngờ.",
+     "example": "Với mặc định 3, kết nối thường tốn 0,20 USD một giờ sẽ báo khi lên 0,60 USD một giờ."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.assist_wide_scope_stages",
+   "app": "cis",
+   "area": "ops",
+   "label": "Assistant: stages that make an action wide",
+   "description": "On the CIS admin assistant (Ecosystem status page, Actions on a Needs-attention row; api/services/ops_assist/) an action on an AI connection or route that serves at least this many active stages has a wide scope, which raises its risk to R3 (the scope axis of the risk rule: one job, one wave, one stage, one app, every app). Default 5.",
+   "value_type": "int",
+   "unit": "stages",
+   "min_value": 1,
+   "max_value": 100,
+   "allowed_values": null,
+   "default_value": 5,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many AI stages an action must touch before the assistant treats it as wide and high risk (R3).",
+     "raise": "Fewer actions count as high risk and fewer ask for a written reason.",
+     "lower": "More actions count as high risk and ask for a written reason.",
+     "when": "Lower it when most stages share one connection; raise it if small route changes keep showing as R3.",
+     "example": "With the default 5, switching off a connection that serves 13 stages is R3."
+    },
+    "vi": {
+     "what": "Số stage AI mà một hành động phải chạm tới để trợ lý coi là phạm vi rộng và rủi ro cao (R3).",
+     "raise": "Ít hành động bị coi là rủi ro cao và ít phải ghi lý do.",
+     "lower": "Nhiều hành động bị coi là rủi ro cao và phải ghi lý do.",
+     "when": "Giảm khi phần lớn stage dùng chung một kết nối; tăng nếu thay đổi route nhỏ cứ hiện R3.",
+     "example": "Với mặc định 5, tắt một kết nối phục vụ 13 stage là R3."
     }
    }
   },

@@ -609,11 +609,11 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/waves/{wave_id}/close"): any_of(OPS_WRITE, WAVE_RUN),
     ("POST", "/admin/waves/{wave_id}/pause"): any_of(OPS_WRITE, WAVE_RUN),    # AA-1025 H2: bulk jobs wait in the queue
     ("POST", "/admin/waves/{wave_id}/resume"): any_of(OPS_WRITE, WAVE_RUN),   # AA-1025 H2
-    ("POST", "/admin/waves/check"): OPS_WRITE,
-    ("GET", "/admin/waves"): any_of(OPS_READ, WAVE_RUN),
+    ("POST", "/admin/waves/check"): OPS_WRITE, ("GET", "/admin/waves"): any_of(OPS_READ, WAVE_RUN),
     ("GET", "/admin/waves/{wave_id}/report"): any_of(OPS_READ, WAVE_RUN),   # incl. the wave's LLM cost
     # ── admin_overview — whole-system snapshot incl. spend (admin-only page; CI smoke = machine)
-    ("GET", "/admin/overview"): OPS_READ,
+    ("GET", "/admin/overview"): OPS_READ, **{("GET", "/admin/ops-assist/" + p): OPS_READ for p in (  # AA-1154 A0:
+        "catalog", "signals", "items/{item_id}/cards", "replays", "replays/{case}")},  # the assistant, read-only
     ("GET", "/admin/overview/ops"): OPS_READ, ("GET", "/admin/overview/status"): OPS_READ,  # AA-858, AA-1140 status
     ("GET", "/admin/my-work/summary"): any_of(REVIEW_ACT, CONTENT_WRITE, QUALITY_WRITE),  # AA-1156 My work (per tile)
     ("GET", "/admin/data-coverage"): OPS_READ,  # AA-992 data coverage counts, incl. CRM over crm.ops.v1 (admin-only)
