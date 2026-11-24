@@ -1,5 +1,5 @@
 """AA-1141 — CIS 482 + 483 on a real Postgres (conftest replays every migration): the ack and saved view tables with
-their constraints and grants (482), the ten P1 settings of the Ecosystem status page equal to the compiled defaults
+their constraints and grants (482), the eleven P1 settings of the Ecosystem status page equal to the compiled defaults
 with a complete guide (483), values outside their bounds refused, a re-run of 483 changes nothing. Runs in a
 transaction that is rolled back; invented values only."""
 import json
@@ -34,6 +34,7 @@ EXPECTED = {
     th.ACK_HOURS: (24, "int", "hours", (1, 168)),
     th.MUTE_MAX_DAYS: (7, "int", "days", (1, 30)),
     th.SNOOZE_TOMORROW_HOUR: (8, "int", "hour", (0, 23)),
+    th.SNOOZE_CHOICES_HOURS: ([1, 4], "list", "hours", (None, None)),
     th.COST_ANOMALY_FACTOR: (3, "numeric", "x", (1.5, 50)),
     th.COST_ANOMALY_BASELINE_DAYS: (7, "int", "days", (1, 30)),
     th.COST_ANOMALY_FLOOR_USD_H: (0.1, "usd", "USD/hour", (0, 100)),
@@ -85,11 +86,13 @@ async def test_a_value_must_stay_inside_its_bounds(conn):
     for key, bad in ((th.ACK_REASON_MIN_CHARS, "9"), (th.ACK_HOURS, "0"), (th.ACK_HOURS, "169"),
                      (th.MUTE_MAX_DAYS, "31"), (th.SNOOZE_TOMORROW_HOUR, "24"), (th.COST_ANOMALY_FACTOR, "1.2"),
                      (th.COST_ANOMALY_BASELINE_DAYS, "0"), (th.COST_ANOMALY_FLOOR_USD_H, "101"),
-                     (th.FORECAST_WINDOW_DAYS, "31"), (th.FORECAST_CRIT_DAYS, "181"), (th.FORECAST_WARN_DAYS, '"30"')):
+                     (th.FORECAST_WINDOW_DAYS, "31"), (th.FORECAST_CRIT_DAYS, "181"), (th.FORECAST_WARN_DAYS, '"30"'),
+                     (th.SNOOZE_CHOICES_HOURS, "[1, 5]"), (th.SNOOZE_CHOICES_HOURS, "4")):
         with pytest.raises(asyncpg.exceptions.CheckViolationError):
             async with conn.transaction():
                 await conn.fetchval(INS, key, bad)
     assert await conn.fetchval(INS, th.FORECAST_WARN_DAYS, "45") is not None
+    assert await conn.fetchval(INS, th.SNOOZE_CHOICES_HOURS, "[1, 4, 12]") is not None
 
 
 @pytest.mark.asyncio

@@ -5749,6 +5749,56 @@
    }
   },
   {
+   "key": "cis.ops.status_snooze_choices_hours",
+   "app": "cis",
+   "area": "ops",
+   "label": "Status page: snooze lengths offered (hours)",
+   "description": "On the Ecosystem status page (/admin/overview, api/services/ops_status/) the Snooze picker of a Needs-attention item offers these lengths in hours, each one of 1, 2, 3, 4, 6, 8, 12, 24, 48 or 72, next to \"until tomorrow\" (cis.ops.status_snooze_tomorrow_hour). The API refuses a snooze whose end time is none of them (POST /admin/overview/status/acks). An empty list leaves only \"until tomorrow\". Default [1, 4].",
+   "value_type": "list",
+   "unit": "hours",
+   "min_value": null,
+   "max_value": null,
+   "allowed_values": [
+    1,
+    2,
+    3,
+    4,
+    6,
+    8,
+    12,
+    24,
+    48,
+    72
+   ],
+   "default_value": [
+    1,
+    4
+   ],
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The snooze lengths, in hours, the page offers when someone snoozes an alert (\"until tomorrow\" is always offered too).",
+     "raise": "Longer choices let an alert stay quiet for most of a shift; a problem that drags on is seen again later.",
+     "lower": "Short choices only: a snoozed alert comes back soon and must be snoozed again if it is still expected.",
+     "when": "Match the choices to how long typical known noise lasts, for example a deploy or a planned wave.",
+     "example": "With the default [1, 4], the picker offers 1 h, 4 h and until tomorrow; adding 12 offers a 12 h snooze too."
+    },
+    "vi": {
+     "what": "Các độ dài tạm hoãn (giờ) mà trang đưa ra khi ai đó tạm hoãn một cảnh báo (luôn có thêm \"tới mai\").",
+     "raise": "Lựa chọn dài hơn cho phép cảnh báo im gần hết một ca; vấn đề kéo dài được thấy lại muộn hơn.",
+     "lower": "Chỉ lựa chọn ngắn: cảnh báo tạm hoãn quay lại sớm và phải tạm hoãn lại nếu vẫn còn.",
+     "when": "Chọn theo thời gian mà nhiễu đã biết thường kéo dài, ví dụ một lần deploy hay một wave đã lên kế hoạch.",
+     "example": "Với mặc định [1, 4], trang đưa ra 1 giờ, 4 giờ và tới mai; thêm 12 thì có thêm tạm hoãn 12 giờ."
+    }
+   }
+  },
+  {
    "key": "cis.ops.status_snooze_tomorrow_hour",
    "app": "cis",
    "area": "ops",
