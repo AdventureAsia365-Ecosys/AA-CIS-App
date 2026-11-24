@@ -10,12 +10,11 @@ import { Badge, DataTable, K, useLang, type ColumnDef, type Tone } from "../../.
 import { useChartColors } from "../../../_kit/useTheme";
 import {
   APP_LABEL, fmtNum, fmtPct, headroom, inApps, levelTone, sortingParam, tableSorting, withSort, yTop, type Ai,
-  type AiConn, type Cost, type Jobs, type Queue, type ResourceTile, type Section, type View,
+  type AiConn, type Cost, type Jobs, type Queue, type ResourceTile, type Section, type View, type SetView,
 } from "@/lib/opsStatus";
 import { fmtCount, fmtUsd } from "@/lib/numberFormat";
 import { Card, NotMeasured, WhenUp, levelColor, num, rowWrap, small, useST, type ST } from "./ui";
 
-type SetView = (v: Partial<View>) => void;
 const link = { ...small, color: K.accentDeep, fontWeight: 600 } as const;
 
 // ── jobs ────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -70,7 +69,7 @@ export function JobsCard({ section, view, setView }: { section: Section<Jobs>; v
             <DataTable<Queue> tableId="status-queues" data={jobs.queues.filter((q) => inApps(q.app, view.apps))}
               columns={queueColumns(t)} getRowId={(q) => q.id} searchable={false} paginate={false} compact
               tableMinWidth={620} sorting={tableSorting(view.sort.q)}
-              onSortingChange={(s) => setView({ sort: withSort(view.sort, "q", sortingParam(s)) })} />
+              onSortingChange={(s) => setView((v) => ({ sort: withSort(v.sort, "q", sortingParam(s)) }))} />
             <div style={rowWrap} data-testid="status-gate">
               <span style={small}>{t("gate")}:</span>
               {jobs.deploy_gate.safe_to_deploy == null ? <NotMeasured reason={null} />
@@ -247,7 +246,7 @@ export function AiCard({ section, view, setView }: { section: Section<Ai>; view:
               <DataTable<AiConn> tableId="status-ai-conn" data={ai.connections} columns={connColumns(t, lang)}
                 getRowId={(c) => c.key} searchable={false} paginate={false} compact
                 sorting={tableSorting(view.sort.conn)}
-                onSortingChange={(s) => setView({ sort: withSort(view.sort, "conn", sortingParam(s)) })} />
+                onSortingChange={(s) => setView((v) => ({ sort: withSort(v.sort, "conn", sortingParam(s)) }))} />
             </div>
           </div>
         )}

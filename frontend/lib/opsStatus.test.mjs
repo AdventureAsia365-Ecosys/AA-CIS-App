@@ -10,7 +10,7 @@ import {
   latest, levelTone, localToIso, nextSort, onlyHidden, parseHidden, parseSort, parseView, peak, queueSeries,
   runtimeMatches, sectionDown, shortSha, shownSeries, signalSeries, sortRows, statusQuery, toggleHidden,
   unmeasuredApps, viewParams, yTop, fmtMs, fmtPct, ageMinutes, tableSorting, sortingParam, withSort,
-  previousRequests, deltaPct, verdictHeadline,
+  previousRequests, deltaPct, verdictHeadline, nextViewQuery, resetViewQuery, flipChip, tightestHeadroom,
 } from "./opsStatus.ts";
 
 const FRONTEND = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -219,4 +219,54 @@ test("verdict headline: green only when ok and nothing missing; partial and unkn
   assert.deepEqual(verdictHeadline({ status: "unknown", unknown: ["signals", "runtimes"] }),
     { key: "verdictUnknown", tone: "neutral" });
   assert.deepEqual(verdictHeadline({ status: "attention", unknown: ["ai"] }), { key: "needYou", tone: "danger" });
+});
+
+test("view writes start from the URL as it is now: two quick chip clicks both count (S289 F2)", () => {
+  // The page writes nextViewQuery(location.search, change) synchronously; a change built from the view of the last
+  // render (the old bug) dropped the first of two quick clicks.
+  let url = "range=6h&other=keep";
+  const click = (app) => { url = nextViewQuery(url, (v) => ({ apps: flipChip(v.apps, app) })); };
+  click("cis");
+  click("booking"); // no re-render in between
+  assert.equal(new URLSearchParams(url).get("apps"), "cis,booking");
+  click("cis");
+  assert.equal(new URLSearchParams(url).get("apps"), "booking");
+  assert.equal(new URLSearchParams(url).get("range"), "6h");
+  assert.equal(new URLSearchParams(url).get("other"), "keep", "keys the page does not own are kept");
+  // legends and sorts of different tables accumulate the same way
+  url = nextViewQuery(url, (v) => ({ hide: { ...v.hide, latency: ["tripplanner"] } }));
+  url = nextViewQuery(url, (v) => ({ hide: { ...v.hide, errors: ["cis"] } }));
+  assert.equal(new URLSearchParams(url).get("hide"), "latency:tripplanner,errors:cis");
+  url = nextViewQuery(url, (v) => ({ sort: withSort(v.sort, "svc", "uptime:desc") }));
+  url = nextViewQuery(url, (v) => ({ sort: withSort(v.sort, "ev", "t:asc") }));
+  assert.equal(new URLSearchParams(url).get("sort"), "svc:uptime:desc,ev:t:asc");
+  // a plain object change still works; a default value removes its key
+  assert.equal(nextViewQuery("range=6h&page=3", { range: "24h" }), "");
+  assert.equal(resetViewQuery("range=6h&apps=cis&other=keep"), "other=keep");
+  assert.deepEqual(flipChip(["a"], "b"), ["a", "b"]);
+  assert.deepEqual(flipChip(["a", "b"], "a"), ["b"]);
+});
+
+test("headroom per series against its own limit, the tightest one wins (S289 F1)", () => {
+  const api = { warn: 1500, crit: 3000 };
+  const lambda = { warn: 6000 };
+  const series = [
+    { id: "cis", label: "CIS", values: [300, 409, null] },
+    { id: "tripplanner", label: "TripPlanner", values: [2167, 900] },
+    { id: "booking", label: "Booking", values: [120, 200] },
+  ];
+  const limitFor = (id) => (id === "tripplanner" ? lambda : api);
+  const h = tightestHeadroom(series, limitFor);
+  assert.equal(h.id, "cis");
+  assert.equal(h.worst, 409);
+  assert.equal(h.latest, 409);
+  assert.equal(h.room, 1091, "never TripPlanner's 2.17 s against the 1.5 s API limit (-668 ms)");
+  // one limit for all series: the old reading, kept when every series shares the limit
+  assert.equal(tightestHeadroom(series, () => api).room, -667);
+  // a series without a limit is left out; no limit at all -> null (requests per minute)
+  assert.equal(tightestHeadroom(series, (id) => (id === "tripplanner" ? null : api)).id, "cis");
+  assert.equal(tightestHeadroom(series, () => null), null);
+  assert.equal(tightestHeadroom([{ id: "x", label: "X", values: [null] }], () => api), null);
+  // a floor: the lowest value counts
+  assert.equal(tightestHeadroom([{ id: "f", label: "F", values: [40, 25] }], () => ({ warn: 20, dir: "below" })).room, 5);
 });

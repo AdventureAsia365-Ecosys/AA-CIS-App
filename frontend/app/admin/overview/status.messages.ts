@@ -68,6 +68,9 @@ export const STATUS = defineMessages(
     ready: "Ready",
     workers: "Workers",
     health: "Health",
+    healthNoCheck: "TripPlanner runs on Lambda and Vercel; the 5-minute sampler checks the health of CIS, Booking "
+      + "and the partner CRM only.",
+    healthNoSample: "No health check sample in the history window yet.",
     fewRequests: "too few requests to judge",
     vsPrevious: "vs previous period",
     // signals
@@ -81,6 +84,7 @@ export const STATUS = defineMessages(
     warnLine: (v: string) => `warn ${v}`,
     critLine: (v: string) => `critical ${v}`,
     headroom: (v: string) => `Headroom ${v}`,
+    headroomOf: (v: string, series: string) => `Headroom ${v} (${series}, the closest to its limit)`,
     noHeadroom: "Headroom: no value",
     peakNow: (latest: string, peak: string) => `Latest ${latest} · peak ${peak}`,
     only: "only",
@@ -203,6 +207,9 @@ export const STATUS = defineMessages(
     ready: "Sẵn sàng",
     workers: "Worker",
     health: "Sức khoẻ",
+    healthNoCheck: "TripPlanner chạy trên Lambda và Vercel; bộ lấy mẫu 5 phút chỉ kiểm sức khoẻ của CIS, Booking "
+      + "và CRM đối tác.",
+    healthNoSample: "Chưa có mẫu kiểm sức khoẻ nào trong khoảng lịch sử.",
     fewRequests: "quá ít lượt gọi để đánh giá",
     vsPrevious: "so với kỳ trước",
     signalsTitle: "Tín hiệu vàng",
@@ -216,6 +223,7 @@ export const STATUS = defineMessages(
     warnLine: (v: string) => `cảnh báo ${v}`,
     critLine: (v: string) => `nghiêm trọng ${v}`,
     headroom: (v: string) => `Còn trống ${v}`,
+    headroomOf: (v: string, series: string) => `Còn trống ${v} (${series}, sát ngưỡng của nó nhất)`,
     noHeadroom: "Còn trống: chưa có giá trị",
     peakNow: (latest: string, peak: string) => `Mới nhất ${latest} · cao nhất ${peak}`,
     only: "chỉ",

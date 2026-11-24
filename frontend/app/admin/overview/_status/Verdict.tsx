@@ -7,7 +7,7 @@ import Link from "next/link";
 import { Badge, K, Section, TONE, useFormat, type Tone } from "../../../_kit";
 import {
   APP_LABEL, ITEM_STATES, SEVERITIES, countBy, filterAttention, levelTone, parseSort, severityRank, sortRows,
-  verdictHeadline, withSort, type AttentionItem, type Verdict as V, type View,
+  verdictHeadline, withSort, type AttentionItem, type Verdict as V, type View, type SetView,
 } from "@/lib/opsStatus";
 import { ChipFilter, SortSelect, rowWrap, small, sortOptions, useST, type ST } from "./ui";
 
@@ -86,7 +86,7 @@ function Chips({ v, t }: { v: V; t: ST }) {
 }
 
 export function VerdictCard({ verdict, view, setView }: {
-  verdict: V; view: View; setView: (v: Partial<View>) => void;
+  verdict: V; view: View; setView: SetView;
 }) {
   const t = useST();
   const h = headline(verdict, t);
@@ -106,14 +106,14 @@ export function VerdictCard({ verdict, view, setView }: {
       {verdict.attention.length > 0 && (
         <>
           <div style={rowWrap}>
-            <ChipFilter label={t("severity")} testId="status-sev" value={view.sev} onChange={(s) => setView({ sev: s })}
+            <ChipFilter label={t("severity")} testId="status-sev" value={view.sev} onChange={(f) => setView((v) => ({ sev: f(v.sev) }))}
               options={SEVERITIES.map((s) => ({ value: s, label: s.toUpperCase(), count: sev[s] ?? 0 }))} />
-            <ChipFilter label={t("status")} testId="status-st" value={view.st} onChange={(s) => setView({ st: s })}
+            <ChipFilter label={t("status")} testId="status-st" value={view.st} onChange={(f) => setView((v) => ({ st: f(v.st) }))}
               options={ITEM_STATES.map((s) => ({ value: s, label: s === "open" ? t("stOpen") : t("stAcked"),
                 count: st[s] ?? 0 }))} />
             <span style={{ marginLeft: "auto" }}>
               <SortSelect label={t("sortBy")} value={`${sort.col}:${sort.dir}`}
-                onChange={(s) => setView({ sort: withSort(view.sort, "att", s === SORT_DEFAULT ? "" : s) })}
+                onChange={(s) => setView((v) => ({ sort: withSort(v.sort, "att", s === SORT_DEFAULT ? "" : s) }))}
                 options={sortOptions([{ col: "severity", label: t("sortSeverity") }, { col: "since",
                   label: t("sortSince") }, { col: "app", label: t("sortApp") }])} />
             </span>

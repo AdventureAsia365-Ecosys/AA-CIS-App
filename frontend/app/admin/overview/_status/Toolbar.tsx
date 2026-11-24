@@ -8,11 +8,10 @@ import { useState } from "react";
 import { Button, Input, K, SegmentedControl, Switch, useFormat } from "../../../_kit";
 import {
   APP_LABEL, RANGE_KEYS, STATUS_APPS, customProblem, isoToLocal, localToIso, type RangeInfo, type RangeKey,
-  type View,
+  type View, type SetView,
 } from "@/lib/opsStatus";
 import { ChipFilter, rowWrap, small, useST, type ST } from "./ui";
 
-type SetView = (v: Partial<View>) => void;
 
 function stepText(stepS: number): string {
   if (stepS >= 3600) return `${stepS / 3600} h`;
@@ -105,7 +104,7 @@ export function Toolbar({ view, setView, range, historyDays, dirty, onReset }: {
           onApply={(from, to) => { setCustom(false); setView({ range: "custom", from, to }); }} />
       )}
       <div style={rowWrap}>
-        <ChipFilter label={t("apps")} options={apps} value={view.apps} onChange={(a) => setView({ apps: a })}
+        <ChipFilter label={t("apps")} options={apps} value={view.apps} onChange={(f) => setView((v) => ({ apps: f(v.apps) }))}
           testId="status-apps" />
         {view.apps.length > 0 && <span style={small}>{t("filteredNote")}</span>}
         <span style={{ ...rowWrap, marginLeft: "auto" }}>

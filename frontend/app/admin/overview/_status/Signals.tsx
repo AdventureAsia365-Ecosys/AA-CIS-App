@@ -12,9 +12,9 @@ import {
 import { CHART_TOOLTIP, Checkbox, DataTable, K, LinkButton, useLang, type ColumnDef } from "../../../_kit";
 import { useChartColors } from "../../../_kit/useTheme";
 import {
-  chartRows, fmtMs, fmtNum, fmtPct, headroom, inApps, latest, onlyHidden, peak, queueSeries, shownSeries,
-  signalSeries, tickLabel, toggleHidden, unmeasuredApps, yTop, APP_LABEL, type ChartId, type Jobs, type Limit,
-  type Series, type Signals, type StatusResp, type View,
+  chartRows, fmtMs, fmtNum, fmtPct, inApps, latest, onlyHidden, peak, queueSeries, shownSeries, signalSeries,
+  tickLabel, tightestHeadroom, toggleHidden, unmeasuredApps, yTop, APP_LABEL, type ChartId, type Jobs, type Limit,
+  type Series, type Signals, type StatusResp, type View, type SetView,
 } from "@/lib/opsStatus";
 import { Card, NotMeasured, rowWrap, small, useST, type ST } from "./ui";
 
@@ -26,26 +26,29 @@ type Colors = Record<keyof typeof COLOR_VARS, string>;
 interface ChartSpec {
   id: ChartId; title: string; sub?: string; series: Series[]; limit?: Limit | null; extra?: { y: number; label: string };
   fmt: (v: number | null | undefined) => string; missing: string[];
+  /** The limit of one series when the series of this chart do not share one (p95: TripPlanner has its own). */
+  limitFor?: (seriesId: string) => Limit | null | undefined;
 }
+type OnHidden = (update: (current: string[]) => string[]) => void;
 
 function seriesColor(c: Colors, id: string): string {
   return (c as Record<string, string>)[id] ?? c.deploy;
 }
 
-function Legend({ spec, hidden, onHidden }: { spec: ChartSpec; hidden: string[]; onHidden: (h: string[]) => void }) {
+function Legend({ spec, hidden, onHidden }: { spec: ChartSpec; hidden: string[]; onHidden: OnHidden }) {
   const t = useST();
   const all = spec.series.map((s) => s.id);
   return (
     <div style={rowWrap} role="group" aria-label={spec.title} data-testid={`status-legend-${spec.id}`}>
       {spec.series.map((s) => (
         <span key={s.id} style={{ ...rowWrap, gap: 4 }}>
-          <Checkbox checked={!hidden.includes(s.id)} onChange={() => onHidden(toggleHidden(hidden, s.id))}
+          <Checkbox checked={!hidden.includes(s.id)} onChange={() => onHidden((h) => toggleHidden(h, s.id))}
             label={s.label} />
-          <LinkButton size="sm" tone="muted" onClick={() => onHidden(onlyHidden(all, hidden, s.id))}
+          <LinkButton size="sm" tone="muted" onClick={() => onHidden((h) => onlyHidden(all, h, s.id))}
             ariaLabel={`${t("only")} ${s.label}`}>{t("only")}</LinkButton>
         </span>
       ))}
-      {hidden.length > 0 && <LinkButton size="sm" onClick={() => onHidden([])}>{t("showAll")}</LinkButton>}
+      {hidden.length > 0 && <LinkButton size="sm" onClick={() => onHidden(() => [])}>{t("showAll")}</LinkButton>}
       {spec.missing.map((a) => <NotMeasured key={a} reason={APP_LABEL[a]} />)}
     </div>
   );
@@ -60,15 +63,24 @@ function limitText(spec: ChartSpec, t: ST): string {
   return parts.map((p) => ` · ${p}`).join("");
 }
 
+/** Latest and peak of the series with the least headroom against its own limit, its headroom and name; without any
+ *  limit (requests per minute) the latest and peak of every shown series and "no value". */
 function HeadroomLine({ spec, shown, t }: { spec: ChartSpec; shown: Series[]; t: ST }) {
-  const values = shown.flatMap((s) => [...s.values]);
+  const tight = tightestHeadroom(shown, spec.limitFor ?? (() => spec.limit));
+  if (tight) {
+    return (
+      <div style={small} data-testid={`status-headroom-${spec.id}`}>
+        {t("peakNow", spec.fmt(tight.latest), spec.fmt(tight.worst))}
+        {" · "}{t("headroomOf", spec.fmt(tight.room), tight.label)}
+        {limitText(spec, t)}
+      </div>
+    );
+  }
   const last = Math.max(...shown.map((s) => latest(s.values) ?? -Infinity));
-  const top = peak(values);
-  const room = headroom(top, spec.limit?.warn ?? spec.limit?.crit, spec.limit?.dir);
   return (
     <div style={small} data-testid={`status-headroom-${spec.id}`}>
-      {t("peakNow", spec.fmt(Number.isFinite(last) ? last : null), spec.fmt(top))}
-      {" · "}{room == null ? t("noHeadroom") : t("headroom", spec.fmt(room))}
+      {t("peakNow", spec.fmt(Number.isFinite(last) ? last : null), spec.fmt(peak(shown.flatMap((s) => [...s.values]))))}
+      {" · "}{t("noHeadroom")}
       {limitText(spec, t)}
     </div>
   );
@@ -110,7 +122,7 @@ function chartTop(spec: ChartSpec, shown: Series[]): number {
 }
 
 function Chart({ spec, rows, hidden, onHidden, sig, view, c, spanS }: {
-  spec: ChartSpec; rows: Record<string, number | null>[]; hidden: string[]; onHidden: (h: string[]) => void;
+  spec: ChartSpec; rows: Record<string, number | null>[]; hidden: string[]; onHidden: OnHidden;
   sig: Signals; view: View; c: Colors; spanS: number;
 }) {
   const t = useST();
@@ -158,14 +170,16 @@ function specs(data: StatusResp, view: View, t: ST): ChartSpec[] {
   const th = data.thresholds;
   const jobs = data.sections.jobs.data as Jobs | undefined;
   const missing = unmeasuredApps(sig, view.apps);
-  const lam = th.lambda_p95_limit_ms?.warn;
+  const lamLimit = th.lambda_p95_limit_ms ?? null;
+  const lam = lamLimit?.warn;
+  const apiP95 = thresholds(th, "p95_ms");
   return [
     { id: "traffic", title: t("trafficTitle"), sub: t("trafficSub"), series: signalSeries(sig, "rate_per_min", view.apps),
       limit: null, fmt: (v) => fmtNum(v, 1), missing },
     { id: "errors", title: t("errorsTitle"), series: signalSeries(sig, "error_pct", view.apps),
       limit: thresholds(th, "error_rate_pct"), fmt: (v) => fmtPct(v, 2), missing },
     { id: "latency", title: t("latencyTitle"), series: signalSeries(sig, "p95_ms", view.apps),
-      limit: thresholds(th, "p95_ms"), fmt: fmtMs, missing,
+      limit: apiP95, fmt: fmtMs, missing, limitFor: (id) => (id === "tripplanner" ? lamLimit : apiP95),
       extra: lam != null && inApps("tripplanner", view.apps) ? { y: lam, label: t("lambdaLimit", fmtMs(lam)) } : undefined },
     { id: "queue", title: t("queueTitle"), series: queueSeries(jobs, view.apps), limit: thresholds(th, "queue_wait_min"),
       fmt: (v) => fmtNum(v, 1), missing: (jobs?.queues ?? []).filter((q) => !q.series_wait_min && inApps(q.app, view.apps))
@@ -200,13 +214,14 @@ function TableView({ data, all }: { data: StatusResp; all: ChartSpec[] }) {
 }
 
 export function SignalsCard({ data, view, setView }: {
-  data: StatusResp; view: View; setView: (v: Partial<View>) => void;
+  data: StatusResp; view: View; setView: SetView;
 }) {
   const t = useST();
   const c = useChartColors(COLOR_VARS) as Colors;
   const sig = data.sections.signals;
   const all = specs(data, view, t);
-  const setHidden = (id: ChartId, h: string[]) => setView({ hide: { ...view.hide, [id]: h } });
+  const setHidden = (id: ChartId, f: (cur: string[]) => string[]) =>
+    setView((v) => ({ hide: { ...v.hide, [id]: f(v.hide[id] ?? []) } }));
   return (
     <Card title={t("signalsTitle")} testId="status-signals" asOf={sig.as_of}>
       <div style={small}>{t("signalsNote")}</div>
