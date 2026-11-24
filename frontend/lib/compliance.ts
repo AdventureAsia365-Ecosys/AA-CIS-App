@@ -8,6 +8,9 @@ export const CONTROLS_PATH = "/api/admin/platform/compliance/controls";
 export const REFRESH_PATH = "/api/admin/platform/compliance/refresh";
 export const OBLIGATIONS_PATH = "/api/admin/platform/compliance/obligations";
 export const SETTINGS_HREF = "/admin/platform/settings?app=cis&area=compliance";
+// AA-1173: exceptions (maker-checker) and the monthly posture review
+export const EXCEPTIONS_PATH = "/api/admin/platform/compliance/exceptions";
+export const REVIEWS_PATH = "/api/admin/platform/compliance/reviews";
 
 export type Tone = "neutral" | "accent" | "success" | "warning" | "danger" | "info" | "purple";
 export type CheckStateName = "pass" | "fail" | "error" | "stale" | "manual" | "missing";
@@ -78,6 +81,20 @@ export interface IngestState {
   detail?: string;
   reason?: string;
   live?: Record<string, LiveSourceState>;
+  /** AA-1173: the sealed sources read from the Object Lock evidence bucket. */
+  sealed?: Record<string, SealedState>;
+}
+
+/** AA-1173: one sealed source (its newest bundle, checked against its hash-chained manifest). */
+export interface SealedState {
+  state: "ok" | "missing" | "unavailable" | "invalid" | "broken";
+  rows?: number;
+  new?: number;
+  chain?: "linked" | "first";
+  object?: string;
+  sha256?: string;
+  created_at?: string | null;
+  detail?: string;
 }
 
 /** AA-1174: a framework row of compliance.framework as the API returns it (names come from the table). */
@@ -103,6 +120,15 @@ export interface OverviewResp {
   register: { requirements: number; controls: number; mappings: number; laws?: number; obligations?: number };
   ingest: IngestState | null;
   framework_info?: FrameworkInfo[];
+  exceptions_active?: { controls: string[]; total: number };
+}
+
+/** AA-1173: an approved, unexpired exception on a control or check (accepted risk; never raises a score). */
+export interface ActiveException {
+  exception_id: number;
+  title: string;
+  expires_on: string;
+  risk_level: RiskLevel;
 }
 
 export interface ControlRow {
@@ -118,6 +144,7 @@ export interface ControlRow {
   frameworks: Record<string, number>;
   checks: CheckView[];
   last_evidence_at: string | null;
+  exception?: ActiveException | null;
 }
 
 export interface ControlsResp {
@@ -138,6 +165,8 @@ export interface EvidenceRow {
   summary: string | null;
   detail: Record<string, unknown>;
   link: string | null;
+  object_key?: string | null;
+  object_sha256?: string | null;
 }
 
 export interface ControlDetail extends Omit<ControlRow, "frameworks" | "checks" | "last_evidence_at"> {
@@ -406,4 +435,100 @@ export function skipReason(reason: string | null | undefined, http?: number | nu
   if (http === 401) return "unauthorized";
   if (http === 403) return "forbidden";
   return "unknown";
+}
+
+// ── AA-1173: exceptions and monthly reviews ─────────────────────────────────────────────────────────────────────────
+
+export type RiskLevel = "low" | "medium" | "high";
+export type ExceptionState = "proposed" | "approved" | "expired" | "rejected" | "revoked";
+export type SubjectKind = "control" | "check" | "vulnerability";
+
+export interface ExceptionRow {
+  exception_id: number;
+  subject_kind: SubjectKind;
+  subject_ref: string;
+  title: string;
+  reason: string;
+  compensating: string | null;
+  risk_level: RiskLevel;
+  status: "proposed" | "approved" | "rejected" | "revoked";
+  state: ExceptionState;
+  days_left: number;
+  proposed_by: string;
+  proposed_at: string;
+  expires_on: string;
+  decided_by: string | null;
+  decided_at: string | null;
+  decision_note: string | null;
+  self_approved: boolean;
+  revoked_by: string | null;
+  revoked_at: string | null;
+  revoke_note: string | null;
+}
+
+export interface ExceptionsResp {
+  exceptions: ExceptionRow[];
+  counts: Record<ExceptionState, number>;
+  max_days: number;
+  two_person_approval: boolean;
+  /** The caller's actor id when signed in with a company account (marks "your" proposals); null otherwise. */
+  viewer: string | null;
+}
+
+export interface ReviewRow {
+  review_id: number;
+  kind: "monthly_posture";
+  period: string;
+  summary: { frameworks?: { framework: string; strict_pct: number | null; weighted_pct: number | null }[];
+    controls?: Record<string, number>; checks?: Record<string, number>; exceptions?: Record<string, number>;
+    collectors_down?: string[] } & Record<string, unknown>;
+  notes: string;
+  actions: string | null;
+  reviewed_by: string;
+  reviewed_at: string;
+}
+
+export interface ReviewsResp {
+  reviews: ReviewRow[];
+  current_period: string;
+  current_recorded: boolean;
+  max_age_days: number;
+}
+
+export function exceptionTone(state: string | null | undefined): Tone {
+  return state === "approved" ? "success" : state === "proposed" ? "info" : state === "expired" ? "warning"
+    : state === "rejected" || state === "revoked" ? "neutral" : "neutral";
+}
+
+export function riskTone(level: string | null | undefined): Tone {
+  return level === "high" ? "danger" : level === "medium" ? "warning" : "neutral";
+}
+
+/** Open proposals first, then approved by nearest expiry, then the rest newest first. Pure. */
+export function sortExceptions(rows: ExceptionRow[]): ExceptionRow[] {
+  const rank: Record<ExceptionState, number> = { proposed: 0, approved: 1, expired: 2, rejected: 3, revoked: 4 };
+  return [...rows].sort((a, b) => rank[a.state] - rank[b.state]
+    || (a.state === "approved" ? a.expires_on.localeCompare(b.expires_on) : b.proposed_at.localeCompare(a.proposed_at))
+    || a.exception_id - b.exception_id);
+}
+
+/** The latest expiry the form may offer: today + max_days, as YYYY-MM-DD (UTC). Pure. */
+export function maxExpiry(today: string, maxDays: number): string {
+  const d = new Date(`${today}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + Math.max(1, Math.floor(maxDays)));
+  return d.toISOString().slice(0, 10);
+}
+
+/** What the current session may do with an exception (the backend re-checks every rule). Pure. */
+export function exceptionActions(row: ExceptionRow, actor: string | null, twoPerson: boolean):
+  { approve: boolean; reject: boolean; revoke: boolean } {
+  const own = !!actor && actor === row.proposed_by;
+  if (row.status === "proposed") return { approve: !own || !twoPerson, reject: !own, revoke: true };
+  if (row.status === "approved") return { approve: false, reject: false, revoke: true };
+  return { approve: false, reject: false, revoke: false };
+}
+
+/** A sealed source line's tone. Pure. */
+export function sealedTone(state: string | null | undefined): Tone {
+  return state === "ok" ? "success" : state === "broken" ? "danger" : state === "missing" ? "neutral" : "warning";
 }

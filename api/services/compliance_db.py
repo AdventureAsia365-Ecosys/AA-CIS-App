@@ -22,22 +22,45 @@ Checks (ids stay stable: AA-1173 moves the collection into a worker job without 
 detail holds kind names, counts and dates only (no job payload, no personal data); the link is the root retention and
 erasure run log on GitHub. Read as cis_app (the role of the API; shared.job is its own table). A database error gives
 ``error`` rows, never an exception (the page still loads).
+
+AA-1173 (S290, phase 2): the job compliance_db_checks (services/jobs/compliance_db_checks_job.py) collects this source
+once a day on the worker (the Refresh action still may), and three more checks join it:
+
+  db_rls_policies          the X2 RLS catalogue rules (shared/compliance/rls_catalogue_rules.py, a byte copy of the CIS
+                           CI guard tests/integration/rls_catalogue_rules.py, also run by AA-CIS-Infra on the nightly
+                           schema dump) over the LIVE catalog of every app schema (CIS, Booking, TripPlanner, CRM):
+                           rules a b c d t (a tenant_id table without RLS + an app.tenant_id policy, a policy TO
+                           PUBLIC, the old GUC, a GUC outside NULLIF, an unconditional policy). pass = no finding off
+                           the shared allowlist (the allowlist is the reviewed exception path; a security invariant, no
+                           threshold). detail: counts per rule and up to 50 object keys (schema.table[:policy]).
+  db_grants                the same rules p g e (a grant to PUBLIC, a grant to another owner's role, a foreign key
+                           across owners). pass = none off the allowlist.
+  monthly_review_recent    fact ``last_date`` = the day of the newest Security posture monthly review
+                           (compliance.review, CIS 481); CIS grades its age against
+                           cis.compliance.review_max_age_days. No review yet = ``fail`` (no date to grade).
+
+The catalog reads only pg_catalog views every role may read (pg_class, pg_attribute, pg_policies, aclexplode of the
+ACLs), so cis_app sees the RLS state of booking.*, tripplanner.* and crm.* without any grant on their tables (root
+advisory section 4 C.4). Policy expressions are read to evaluate the rules, never stored: detail keeps object names.
 """
 from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 import structlog
 
 from services.retention.policy import SPECS
+from shared.compliance import rls_catalogue_rules as rls
 
 logger = structlog.get_logger()
 
 SOURCE = "cis_db"
 COLLECTOR = "cis api (compliance_db)"
 LINK = "https://github.com/AdventureAsia365-Ecosys/AA-Ecosys/blob/master/docs/legal/retention-log.md"
+LINK_SCHEMA = ("https://github.com/AdventureAsia365-Ecosys/AA-Ecosys/blob/master/docs/architecture/"
+               "db-schema-reference.md")
 KINDS = tuple(SPECS)
 DRY_RUN_WINDOW_DAYS = 30   # technical-constant: the DRY RUN share shown in detail (display only, never graded)
 _SHA = re.compile(r"^[0-9a-f]{7,40}$")
@@ -60,6 +83,12 @@ SELECT kind,
  GROUP BY kind
 """
 
+RLS_RULES = ("a", "b", "c", "d", "t")
+GRANT_RULES = ("p", "g", "e")
+MAX_KEYS = 50   # technical-constant: object keys listed in detail (the 8 KiB detail cap)
+SQL_LAST_REVIEW = "SELECT max(reviewed_at) AS last FROM compliance.review WHERE kind = 'monthly_posture'"
+
+
 def _version() -> str | None:
     try:
         from api.core.readiness import git_sha   # noqa: PLC0415 - the running image's SHA (IPE: re-runnable code)
@@ -70,9 +99,10 @@ def _version() -> str | None:
     return sha if isinstance(sha, str) and _SHA.fullmatch(sha) else None
 
 
-def _row(check_id: str, status: str, summary: str, detail: dict, now: datetime) -> dict:
+def _row(check_id: str, status: str, summary: str, detail: dict, now: datetime,
+         link: Optional[str] = LINK) -> dict:
     return {"source": SOURCE, "check_id": check_id, "status": status, "collected_at": now, "collector": COLLECTOR,
-            "collector_version": _version(), "run_ref": None, "summary": summary[:300], "detail": detail, "link": LINK}
+            "collector_version": _version(), "run_ref": None, "summary": summary[:300], "detail": detail, "link": link}
 
 
 def evaluate(rows: list[dict], now: datetime) -> list[dict]:
@@ -111,12 +141,75 @@ def evaluate(rows: list[dict], now: datetime) -> list[dict]:
     return [runs, lives]
 
 
+def _asyncpg_sql(sql: str) -> str:
+    return sql.replace("%(schemas)s", "$1")
+
+
+async def read_catalog(conn: Any) -> dict:
+    """The rules' input (a format-2 dump subset) from the live catalog (pg_catalog reads only)."""
+    rows = {"schemas": [dict(r) for r in await conn.fetch(rls.CATALOG_SQL["schemas"])]}
+    names = [s["schema"] for s in rows["schemas"]]
+    for key, sql in rls.CATALOG_SQL.items():
+        if key != "schemas":
+            rows[key] = [dict(r) for r in await conn.fetch(_asyncpg_sql(sql), names)]
+    return rls.dump_from_rows(rows)
+
+
+def evaluate_catalog(dump: dict, now: datetime, allowlist: Optional[dict] = None) -> list[dict]:
+    """The two catalogue rows (pure): RLS policies and grants, each pass when no finding is off the allowlist."""
+    result = rls.check(dump, allowlist)
+    out = []
+    for check_id, rules, what in (("db_rls_policies", RLS_RULES, "RLS policy"),
+                                  ("db_grants", GRANT_RULES, "grant or ownership")):
+        bad = [f for f in result.violations if f.rule in rules]
+        accepted = [f for f, _ in result.allowlisted if f.rule in rules]
+        by_rule = {r: sum(1 for f in bad if f.rule == r) for r in rules}
+        detail = {"schemas": len(dump.get("schemas", [])),
+                  "tables": sum(len(v) for v in dump.get("relations", {}).values()),
+                  "violations": len(bad), "by_rule": by_rule, "allowlisted": len(accepted),
+                  "keys": sorted(f"{f.rule}:{f.key}" for f in bad)[:MAX_KEYS]}
+        if bad:
+            out.append(_row(check_id, "fail", f"{len(bad)} {what} finding(s) off the allowlist "
+                            f"({', '.join(f'{r} {n}' for r, n in by_rule.items() if n)})", detail, now, LINK_SCHEMA))
+        else:
+            out.append(_row(check_id, "pass", f"no {what} finding off the allowlist ({len(accepted)} allowlisted, "
+                            f"{detail['tables']} relations read)", detail, now, LINK_SCHEMA))
+    return out
+
+
+def evaluate_review(last: Optional[datetime], now: datetime) -> dict:
+    if last is None:
+        return _row("monthly_review_recent", "fail", "no Security posture monthly review recorded yet", {}, now, None)
+    day = last.date().isoformat()
+    return _row("monthly_review_recent", "pass", f"newest monthly review {day}", {"last_date": day}, now, None)
+
+
+CATALOG_CHECKS = ("db_rls_policies", "db_grants")
+
+
 async def collect(pool: Any, now: datetime) -> list[dict]:
     try:
         async with pool.acquire() as conn:
             rows = [dict(r) for r in await conn.fetch(SQL_RETENTION, list(KINDS), DRY_RUN_WINDOW_DAYS)]
+        out = evaluate(rows, now)
     except Exception as err:   # noqa: BLE001 - an error result, never a page error
         logger.warning("compliance_db_collect_failed", error=type(err).__name__)
         summary = f"the CIS database could not be read ({type(err).__name__})"
-        return [_row(cid, "error", summary, {}, now) for cid in ("retention_runs_recent", "retention_live_enabled")]
-    return evaluate(rows, now)
+        out = [_row(cid, "error", summary, {}, now) for cid in ("retention_runs_recent", "retention_live_enabled")]
+    try:
+        async with pool.acquire() as conn:
+            dump = await read_catalog(conn)
+        out += evaluate_catalog(dump, now)
+    except Exception as err:   # noqa: BLE001
+        logger.warning("compliance_db_catalog_failed", error=type(err).__name__)
+        out += [_row(cid, "error", f"the catalog could not be read ({type(err).__name__})", {}, now)
+                for cid in CATALOG_CHECKS]
+    try:
+        async with pool.acquire() as conn:
+            last = await conn.fetchval(SQL_LAST_REVIEW)
+        out.append(evaluate_review(last, now))
+    except Exception as err:   # noqa: BLE001 - CIS 481 not applied yet, or the table unreadable
+        logger.warning("compliance_db_review_failed", error=type(err).__name__)
+        out.append(_row("monthly_review_recent", "error",
+                        f"the review record could not be read ({type(err).__name__})", {}, now))
+    return out

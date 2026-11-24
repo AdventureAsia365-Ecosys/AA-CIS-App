@@ -161,14 +161,20 @@ def test_score_settings_read_the_compliance_keys():
               "cis.compliance.legal_docs_overdue_max": 0, "cis.compliance.erasure_drill_max_age_days": 180,
               "cis.compliance.retention_run_max_age_days": 3, "cis.compliance.retention_live_max_age_days": 7,
               "cis.compliance.consent_capture_max_age_days": 90,
-              "cis.compliance.campaign_consent_violations_max": 0}
+              "cis.compliance.campaign_consent_violations_max": 0,
+              # AA-1173 (CIS 481)
+              "cis.compliance.validity_hours.aws_nightly": 48, "cis.compliance.validity_hours.prowler_weekly": 216,
+              "cis.compliance.prowler_critical_high_max": 0, "cis.compliance.review_max_age_days": 40}
 
     async def aget(key, tenant_id=None):
         return values[key]
     with patch.object(compliance.settings, "aget", aget):
         s = asyncio.run(compliance.score_settings())
         refs = asyncio.run(compliance.reference_scores())
-    assert s.validity_hours == {"root_daily": 72, "cis_db": 72, "crm_ops": 48}
+    assert s.validity_hours == {"root_daily": 72, "cis_db": 72, "crm_ops": 48, "aws_nightly": 48,
+                                "prowler_weekly": 216}
+    assert s.fact_limits["prowler_critical_high"] == ("critical_high", 0.0, "max")
+    assert s.fact_limits["monthly_review_recent"] == ("last_date", 40.0, "age_days")
     assert s.heartbeat_hours == 36 and s.partial_weight == 0.5
     assert s.fact_limits["legal_dpa_reviewed"] == ("overdue", 0.0, "max")
     assert s.fact_limits["campaign_consent_enforced"] == ("violations", 0.0, "max")

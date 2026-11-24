@@ -580,6 +580,11 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/platform/catalogue"): OPS_READ, ("GET", "/admin/platform/delivery"): OPS_READ,  # AA-1106, AA-1108
     **{("GET", "/admin/platform/compliance" + p): COMPLIANCE_READ for p in ("", "/controls", "/controls/{control_id}", "/obligations")},  # noqa: E501 — AA-1174 /obligations
     ("POST", "/admin/platform/compliance/refresh"): COMPLIANCE_WRITE,   # AA-1170 (Refresh re-reads the evidence)
+    # AA-1173: exceptions (maker-checker) and the monthly posture review
+    **{("GET", "/admin/platform/compliance" + p): COMPLIANCE_READ for p in ("/exceptions", "/reviews")},
+    **{("POST", "/admin/platform/compliance" + p): COMPLIANCE_WRITE
+       for p in ("/exceptions", "/exceptions/{exception_id}/approve", "/exceptions/{exception_id}/reject",
+                 "/exceptions/{exception_id}/revoke", "/reviews")},
     # ── admin_photos — Drive sync + assignment (Photos page, admin-only)
     ("POST", "/admin/photos/sync"): PHOTOS_WRITE,
     ("POST", "/admin/photos/sync/schedule"): PHOTOS_WRITE,   # AA-844, daily (MACHINE_ROUTES)

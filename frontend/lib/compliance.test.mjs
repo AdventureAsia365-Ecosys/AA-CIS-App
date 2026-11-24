@@ -9,6 +9,7 @@ import {
   FRAMEWORKS, checkTone, controlTone, deltaToReference, fmtPct, frameworkList, frameworkName, inFramework, isLegal,
   lawsWithItems, obligationTone, pivotApplicability, refreshCounts, safeLink, safeSourceLink, sortControls,
   skipReason, sortObligations, trendSeries, verdictTone,
+  exceptionActions, exceptionTone, maxExpiry, riskTone, sealedTone, sortExceptions,
 } from "./compliance.ts";
 import { readFileSync } from "node:fs";
 
@@ -147,4 +148,45 @@ test("no page text claims legal compliance and the page says it is not legal adv
   const text = readFileSync(new URL("../app/admin/platform/compliance/messages.ts", import.meta.url), "utf8");
   assert.ok(!/\b(compliant|complies|in compliance)\b/i.test(text));
   assert.match(text, /notLegalAdvice: "Readiness, not legal advice\./);
+});
+
+// ── AA-1173: exceptions, reviews, sealed evidence ───────────────────────────────────────────────────────────────────
+
+const exc = (id, state, extra = {}) => ({
+  exception_id: id, subject_kind: "control", subject_ref: `EX-IAM-0${id}`, title: "Invented", reason: "x".repeat(20),
+  compensating: null, risk_level: "low", status: state === "expired" ? "approved" : state, state, days_left: 10,
+  proposed_by: "admin:maker", proposed_at: `2026-11-0${id}T00:00:00Z`, expires_on: `2026-12-0${id}`,
+  decided_by: null, decided_at: null, decision_note: null, self_approved: false, revoked_by: null, revoked_at: null,
+  revoke_note: null, ...extra,
+});
+
+test("exceptions: open first, then approved by nearest expiry, then the rest newest first", () => {
+  const rows = [exc(1, "revoked"), exc(2, "approved", { expires_on: "2026-12-20" }), exc(3, "proposed"),
+    exc(4, "approved", { expires_on: "2026-12-05" }), exc(5, "expired")];
+  assert.deepEqual(sortExceptions(rows).map((r) => r.exception_id), [3, 4, 2, 5, 1]);
+});
+
+test("exceptions: maker-checker actions follow two-person approval", () => {
+  const open = exc(1, "proposed");
+  assert.deepEqual(exceptionActions(open, "admin:checker", true), { approve: true, reject: true, revoke: true });
+  assert.deepEqual(exceptionActions(open, "admin:maker", true), { approve: false, reject: false, revoke: true });
+  assert.deepEqual(exceptionActions(open, "admin:maker", false), { approve: true, reject: false, revoke: true });
+  assert.deepEqual(exceptionActions(exc(2, "approved"), "admin:maker", true), { approve: false, reject: false, revoke: true });
+  assert.deepEqual(exceptionActions(exc(3, "revoked"), "admin:checker", false), { approve: false, reject: false, revoke: false });
+});
+
+test("exceptions: the latest expiry, tones", () => {
+  assert.equal(maxExpiry("2026-12-01", 90), "2027-03-01");
+  assert.equal(maxExpiry("2026-12-01", 0), "2026-12-02");
+  assert.equal(exceptionTone("approved"), "success");
+  assert.equal(exceptionTone("expired"), "warning");
+  assert.equal(riskTone("high"), "danger");
+  assert.equal(sealedTone("ok"), "success");
+  assert.equal(sealedTone("broken"), "danger");
+  assert.equal(sealedTone("missing"), "neutral");
+});
+
+test("the governance messages have every Vietnamese string", async () => {
+  const src = readFileSync(new URL("../app/admin/platform/compliance/governance.messages.ts", import.meta.url), "utf8");
+  assert.ok(src.includes("tabExceptions: \"Ngoại lệ\""));
 });
