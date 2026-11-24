@@ -16,6 +16,7 @@ import structlog
 
 from api.routers.v1_notifications import router as v1_notifications_router
 from api.routers._served import tour_not_served_handler
+from shared.pg_connection import StableSavepointConnection
 from shared.tour_liveness import TourNotServedError
 from services.acp_shared.atom_replaced import AtomReplaced
 from api.routers.auth import (
@@ -170,6 +171,9 @@ async def lifespan(app: FastAPI):
         # AA-824: one application_name per pool, so pg_stat_activity / pg_stat_statements show who
         # holds the connections on the shared RDS (data standards C2.2).
         server_settings={"application_name": "cis-api"},
+        # S291 (C4.3, AA-838): savepoints named by depth, not by asyncpg's counter, so pg_stat_statements keeps a
+        # handful of SAVEPOINT texts (shared/pg_connection.py).
+        connection_class=StableSavepointConnection,
     )
     # AA-859 wave 4 (S247) — timed acquires on the main pool: `aa859_main_pool_wait` (only waits >= 50 ms),
     # per-interval peak in-use / max wait on the gauge line, and a default acquire timeout

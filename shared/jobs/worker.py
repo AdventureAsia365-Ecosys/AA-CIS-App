@@ -33,6 +33,7 @@ from shared.cost_guard import BudgetExceeded
 from shared.llm_client import call_log, capacity, run_cap
 from shared.llm_client.errors import LLM_ACCESS_DENIED_REASON, LLMAccessDenied, is_llm_access_denied, stage_disabled_in
 from shared.llm_client.tenant_budget import approval_stop_in
+from shared.pg_connection import StableSavepointConnection
 from shared.sentry_init import release  # AA-884: APP_GIT_SHA of this image, written to shared.job_worker
 
 from . import lanes, queue
@@ -751,7 +752,9 @@ async def _main() -> None:
     asyncio.get_running_loop().set_default_executor(
         ThreadPoolExecutor(max_workers=2 * slots, thread_name_prefix="job"))
     pool = await asyncpg.create_pool(get_database_url(), min_size=1, max_size=max(5, slots + 2),
-                                     server_settings={"application_name": "cis-worker"})  # AA-824
+                                     server_settings={"application_name": "cis-worker"},  # AA-824
+                                     # S291: depth-named savepoints (shared/pg_connection.py)
+                                     connection_class=StableSavepointConnection)
     redis = None
     if os.environ.get("REDIS_HOST"):
         import redis.asyncio as aioredis

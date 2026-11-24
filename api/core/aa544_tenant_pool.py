@@ -83,6 +83,7 @@ import asyncpg
 import structlog
 
 from api.core.redis_client import REDIS_RETRIES, REDIS_SOCKET_CONNECT_TIMEOUT_S, REDIS_SOCKET_TIMEOUT_S
+from shared.pg_connection import StableSavepointConnection
 from fastapi import HTTPException, Request
 
 logger = structlog.get_logger()
@@ -228,6 +229,7 @@ async def create_tenant_pool() -> Optional[asyncpg.Pool]:
             dsn, min_size=TENANT_POOL_MIN_SIZE, max_size=TENANT_POOL_MAX_SIZE,
             max_inactive_connection_lifetime=TENANT_POOL_IDLE_LIFETIME_S,
             server_settings=dict(TENANT_POOL_SERVER_SETTINGS),
+            connection_class=StableSavepointConnection,  # S291: depth-named savepoints (shared/pg_connection.py)
         )
     except Exception as e:
         logger.error("aa544_tenant_pool_create_failed", error=repr(e))
