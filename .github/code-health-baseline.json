@@ -484,7 +484,6 @@
   "frontend/app/admin/master-content/page.tsx::MasterContentPageInner.rowActions": 23,
   "frontend/app/admin/master-content/page.tsx::VersionCompareModal.cellVal": 20,
   "frontend/app/admin/master-content/page.tsx::VersionCompareModal.map()#3": 50,
-  "frontend/app/admin/overview/page.tsx::OverviewPage": 35,
   "frontend/app/admin/photos/page.tsx::PhotosPage": 23,
   "frontend/app/admin/photos/page.tsx::PhotosPage.map()#6": 13,
   "frontend/app/admin/places/LinesTab.tsx::LinesTab": 24,

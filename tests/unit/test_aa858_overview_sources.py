@@ -67,8 +67,11 @@ def test_every_overview_card_imports_its_sources():
         src = (OVERVIEW / "_components" / f"{name}.tsx").read_text(encoding="utf-8")
         assert 'from "./sources"' in src, f"{name} must take its source texts from sources.ts"
         assert "source={source}" not in src, f"{name} must not show the backend's engineering source string"
-    page = (OVERVIEW / "page.tsx").read_text(encoding="utf-8")
-    assert 'from "./_components/sources"' in page
+    # AA-1140: the old Overview's content blocks moved to Data coverage and Tenants; they keep the source texts.
+    admin = OVERVIEW.parent
+    for rel in ("data-coverage/ContentPipeline.tsx", "tenants/TenantActivity.tsx"):
+        src = (admin / rel).read_text(encoding="utf-8")
+        assert 'from "../overview/_components/sources"' in src, f"{rel} must take its source texts from sources.ts"
 
 
 def test_info_tip_is_accessible():

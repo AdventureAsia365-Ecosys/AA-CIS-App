@@ -29,9 +29,8 @@ function code(rel) {
 
 // ── F1 ───────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-test("F1: the Overview renders its alerts through AlertList (no inline one-line row left)", () => {
+test("F1: no inline one-line alert row on the Overview (AA-1140: alerts are the status page's attention list)", () => {
   const page = code("overview/page.tsx");
-  assert.match(page, /<AlertList alerts=\{data\.alerts\} \/>/);
   assert.doesNotMatch(page, /data\.alerts\.map\(/, "the old nowrap alert row is back in page.tsx");
 });
 
