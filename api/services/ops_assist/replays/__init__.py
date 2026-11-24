@@ -14,14 +14,20 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 
 
+def _files() -> dict[str, Path]:
+    return {p.stem: p for p in HERE.glob("*.json")}
+
+
 def cases() -> list[str]:
-    return sorted(p.stem for p in HERE.glob("*.json"))
+    return sorted(_files())
 
 
 def load(case: str) -> dict:
-    if case not in cases():
+    # The path comes from the folder listing, never from the caller's text: an unknown case is a KeyError.
+    path = _files().get(case)
+    if path is None:
         raise KeyError(case)
-    return json.loads((HERE / f"{case}.json").read_text(encoding="utf-8"))
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def index() -> list[dict]:
