@@ -20,7 +20,9 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Suspense, useEffect, useState, useSyncExternalStore } from "react";
-import { Button, ErrorState, LoadingScreen, PageFrame, PageHeader, apiGet, useFormat, useUrlFilters } from "../../_kit";
+import {
+  Button, ErrorState, LoadingScreen, PageFrame, PageHeader, ToastProvider, apiGet, useFormat, useUrlFilters,
+} from "../../_kit";
 import { usePathname } from "next/navigation";
 import {
   RESET_VIEW, nextViewQuery, parseView, refreshPause, resetViewQuery, statusQuery, type SetView, type StatusResp,
@@ -173,8 +175,11 @@ function StatusPage() {
 export default function OverviewPage() {
   // useSearchParams (the view in the URL) needs a Suspense boundary for `next build`.
   return (
-    <Suspense fallback={null}>
-      <StatusPage />
-    </Suspense>
+    // AA-1141: the ack and saved-view controls raise toasts, so the page needs the kit's ToastProvider.
+    <ToastProvider>
+      <Suspense fallback={null}>
+        <StatusPage />
+      </Suspense>
+    </ToastProvider>
   );
 }
