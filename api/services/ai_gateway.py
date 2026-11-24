@@ -1424,16 +1424,16 @@ async def _read_spend_budgets(pool) -> dict:
     return {"rows": rows, "spent_today": spent, "kind_spent_today": kind_spent, "names": names}
 
 
-async def _read_connection_budgets(pool) -> list[dict]:
+async def read_connection_budgets(pool) -> list[dict]:   # also the Ecosystem status capacity forecast (AA-1141)
     from shared import cost_guard
     from shared.llm_client import connections as conn_registry
 
     async with pool.acquire() as conn:
         registry = await conn_registry.fetch_connections(conn)
         policies = await cost_guard.read_cost_policies(conn)
+        spend = await cost_guard.connection_month_spend(conn, sorted(registry))   # one ledger scan (AA-1141)
         monthly = await cost_guard.connection_budgets(
-            conn, {k: c.monthly_budget_usd for k, c in registry.items()}, policies)
-        spend = await cost_guard.connection_month_spend(conn, sorted(registry))
+            conn, {k: c.monthly_budget_usd for k, c in registry.items()}, policies, spent=spend)
     connections = [{"connection_key": c.connection_key, "kind": c.kind, "label": c.label, "enabled": c.enabled,
                     "account_id": c.resolved_account_id() if c.kind == "bedrock" else None}
                    for c in registry.values()]
@@ -1563,7 +1563,7 @@ async def read_budgets(pool, *, now: Optional[datetime] = None) -> dict:
 
     (sb, sb_err), (conns, conns_err), (tenants, tenants_err), (central, central_err) = await asyncio.gather(
         _guard("Spend budgets", lambda: _read_spend_budgets(pool)),
-        _guard("LLM connection budgets", lambda: _read_connection_budgets(pool)),
+        _guard("LLM connection budgets", lambda: read_connection_budgets(pool)),
         _guard("Tenant AI budgets", lambda: tenant_ai_budget.read_tier(pool, now=now)),
         _guard("Central LLM budgets", lambda: _read_central(pool, now=now)),
     )

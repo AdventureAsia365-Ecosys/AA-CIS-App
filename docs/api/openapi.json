@@ -295,6 +295,77 @@
         "title": "AccountPagination",
         "type": "object"
       },
+      "AckBody": {
+        "properties": {
+          "action": {
+            "enum": [
+              "ack",
+              "snooze",
+              "mute"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "item_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:@ -]{1,200}$",
+            "title": "Item Id",
+            "type": "string"
+          },
+          "range": {
+            "default": "24h",
+            "description": "the page's range (the item ids depend on it)",
+            "enum": [
+              "1h",
+              "6h",
+              "24h",
+              "7d"
+            ],
+            "title": "Range",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "title": "Reason",
+            "type": "string"
+          },
+          "snooze_hours": {
+            "anyOf": [
+              {
+                "maximum": 168.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "snooze: one of the lengths offered (cis.ops.status_snooze_choices_hours); the end is computed by the API",
+            "title": "Snooze Hours"
+          },
+          "until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "mute, or snooze until tomorrow: when it ends (ISO with a zone)",
+            "title": "Until"
+          }
+        },
+        "required": [
+          "item_id",
+          "action",
+          "reason"
+        ],
+        "title": "AckBody",
+        "type": "object"
+      },
       "AddOnIn": {
         "properties": {
           "plan_key": {
@@ -2786,6 +2857,24 @@
           "subject_key"
         ],
         "title": "ClaimLabelBody",
+        "type": "object"
+      },
+      "ClearBody": {
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "title": "ClearBody",
         "type": "object"
       },
       "ComplianceDecisionBody": {
@@ -14517,6 +14606,26 @@
           "captions"
         ],
         "title": "VideoUrls",
+        "type": "object"
+      },
+      "ViewBody": {
+        "properties": {
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "query": {
+            "additionalProperties": true,
+            "title": "Query",
+            "type": "object"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ViewBody",
         "type": "object"
       },
       "WaveCreate": {
@@ -35663,6 +35772,371 @@
           }
         },
         "summary": "Ecosystem status: verdict, apps, signals, runtimes, jobs, AI, cost, events",
+        "tags": [
+          "admin-overview"
+        ]
+      }
+    },
+    "/admin/overview/status/acks": {
+      "post": {
+        "description": "ops.write, never the business owner. The item must be on the status page now (404 otherwise); the reason must\nbe at least ``cis.ops.status_ack_reason_min_chars`` characters; a snooze lasts ``snooze_hours`` (one of\n``cis.ops.status_snooze_choices_hours``) or ends at ``until`` the next morning, a mute at ``until`` (at most\n``cis.ops.status_mute_max_days`` ahead), an ack after ``cis.ops.status_ack_hours``. One audit row per write.",
+        "operationId": "post_status_ack_admin_overview_status_acks_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AckBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Acknowledge, snooze or mute one Needs-attention item (audited)",
+        "tags": [
+          "admin-overview"
+        ]
+      }
+    },
+    "/admin/overview/status/acks/{item_id}/clear": {
+      "post": {
+        "description": "ops.write, never the business owner. 404 when nothing is in force for the item.",
+        "operationId": "post_status_ack_clear_admin_overview_status_acks__item_id__clear_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9_.:@ -]{1,200}$",
+              "title": "Item Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClearBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "End the ack, snooze or mute of one item now (audited)",
+        "tags": [
+          "admin-overview"
+        ]
+      }
+    },
+    "/admin/overview/views": {
+      "get": {
+        "operationId": "get_status_views_admin_overview_views_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "The caller's saved views of the status page",
+        "tags": [
+          "admin-overview"
+        ]
+      },
+      "post": {
+        "operationId": "post_status_view_admin_overview_views_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ViewBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Save (or replace by name) one view of the status page",
+        "tags": [
+          "admin-overview"
+        ]
+      }
+    },
+    "/admin/overview/views/{view_id}": {
+      "delete": {
+        "operationId": "delete_status_view_admin_overview_views__view_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "view_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "View Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete one of the caller's saved views",
         "tags": [
           "admin-overview"
         ]

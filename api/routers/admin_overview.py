@@ -21,9 +21,15 @@ Only the per-country funnel (section 1) needs new SQL, because no existing endpo
 from __future__ import annotations
 
 import json
+from datetime import datetime
+from typing import Literal, Optional
+from uuid import UUID
 
+import asyncpg
 import structlog
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Request
+from pydantic import BaseModel, Field
+
 from api.core.staff_authz import staff_policy
 
 from api.routers.admin import verify_admin_secret
@@ -331,6 +337,173 @@ async def get_ecosystem_status(
     try:
         return await ops_status.build_status(request.app.state.pool, getattr(request.app.state, "redis", None),
                                              range_key=range_, start=from_, end=to, compare=compare,
-                                             authorization=relay_authorization(request))
+                                             authorization=relay_authorization(request),
+                                             can_ack=await _can_ack(request))
     except ops_status.RangeError as e:
         raise HTTPException(status_code=422, detail={"code": "bad_range", "message": str(e)}) from e
+
+
+# ── AA-1141 (P1): ack / snooze / mute of a Needs-attention item, and saved views ─────────────────────────────────────
+
+ACK_ROUTE = "/admin/overview/status/acks"
+_ITEM_ID = r"^[A-Za-z0-9_.:@ -]{1,200}$"
+
+
+class AckBody(BaseModel):
+    item_id: str = Field(..., min_length=1, max_length=200, pattern=_ITEM_ID)
+    action: Literal["ack", "snooze", "mute"]
+    until: Optional[datetime] = Field(None, description="mute, or snooze until tomorrow: when it ends (ISO with a "
+                                                        "zone)")
+    snooze_hours: Optional[int] = Field(None, ge=1, le=168, description="snooze: one of the lengths offered "
+                                        "(cis.ops.status_snooze_choices_hours); the end is computed by the API")
+    reason: str = Field(..., max_length=2000)
+    range: Literal["1h", "6h", "24h", "7d"] = Field("24h", description="the page's range (the item ids depend on it)")
+
+
+class ClearBody(BaseModel):
+    reason: Optional[str] = Field(None, max_length=2000)
+
+
+class ViewBody(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    query: dict = Field(default_factory=dict)
+
+
+def _actor(request: Request) -> str:
+    from api.core.tenant_scope import staff_id_of
+
+    sid = staff_id_of(request)
+    return f"admin:{sid}" if sid else "admin"
+
+
+async def _business_owner_state(request: Request) -> Optional[bool]:
+    """Is the caller the business owner (``shared.admin_users.is_business_owner``)? None when it cannot be read: the
+    page then hides the buttons and a write is refused (fail closed, unlike the assistant's read-only Summary rule)."""
+    from api.core.tenant_scope import staff_id_of
+    from api.services.ops_assist.evidence import BUSINESS_OWNER_SQL
+
+    sid = staff_id_of(request)
+    if not sid:
+        return False
+    try:
+        return bool(await request.app.state.pool.fetchval(BUSINESS_OWNER_SQL, sid))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("ops_status_business_owner_read_failed", error=repr(e)[:200])
+        return None
+
+
+async def _can_ack(request: Request) -> bool:
+    """The caller may ack (the page shows the buttons): the ack route's policy passes for this principal (ops.write,
+    not read-only, not a view-as session, not a read-only E2E identity) and the caller is not the business owner."""
+    from api.core.staff_authz import denial_reason, principal_from_role, request_staff_identity
+
+    principal = principal_from_role(request.headers.get("x-admin-role"), request_staff_identity(request))
+    if principal.kind != "staff" or denial_reason(principal, "POST", ACK_ROUTE) is not None:
+        return False
+    return await _business_owner_state(request) is False
+
+
+async def _refuse_business_owner(request: Request) -> None:
+    state = await _business_owner_state(request)
+    if state is None:
+        raise HTTPException(status_code=503, detail={"code": "staff_unknown",
+                                                     "message": "Your staff record could not be read; try again"})
+    if state:
+        raise HTTPException(status_code=403, detail={"code": "business_owner_reads_only",
+                                                     "message": "The business owner reads the status page; the "
+                                                                "people on duty acknowledge alerts"})
+
+
+@router.post("/status/acks", summary="Acknowledge, snooze or mute one Needs-attention item (audited)")
+async def post_status_ack(body: AckBody, request: Request, x_admin_secret: str = Header(None)):
+    """ops.write, never the business owner. The item must be on the status page now (404 otherwise); the reason must
+    be at least ``cis.ops.status_ack_reason_min_chars`` characters; a snooze lasts ``snooze_hours`` (one of
+    ``cis.ops.status_snooze_choices_hours``) or ends at ``until`` the next morning, a mute at ``until`` (at most
+    ``cis.ops.status_mute_max_days`` ahead), an ack after ``cis.ops.status_ack_hours``. One audit row per write."""
+    verify_admin_secret(x_admin_secret)
+    await _refuse_business_owner(request)
+    from api.services.ops_assist.evidence import find_item
+    from api.services.ops_status import acks
+    from api.services.platform_apps import relay_authorization
+
+    pool = request.app.state.pool
+    status = await ops_status.build_status(pool, getattr(request.app.state, "redis", None), range_key=body.range,
+                                           authorization=relay_authorization(request))
+    item = find_item(status, body.item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail={"code": "no_such_item",
+                                                     "message": "No item with this id on the status page now"})
+    try:
+        out = await acks.set_ack(pool, item=item, action=body.action, until=body.until, reason=body.reason,
+                                 actor=_actor(request), snooze_hours=body.snooze_hours)
+    except acks.AckError as e:
+        raise HTTPException(status_code=422, detail={"code": e.code, "message": str(e)}) from e
+    except asyncpg.exceptions.UndefinedTableError as e:
+        raise HTTPException(status_code=503, detail={"code": "not_migrated", "message": acks.NOT_MIGRATED}) from e
+    logger.info("ops_status_ack", item_id=body.item_id, action=body.action, until=out["until"])
+    return out
+
+
+@router.post("/status/acks/{item_id}/clear", summary="End the ack, snooze or mute of one item now (audited)")
+async def post_status_ack_clear(body: ClearBody, request: Request,
+                                item_id: str = Path(..., pattern=_ITEM_ID),
+                                x_admin_secret: str = Header(None)):
+    """ops.write, never the business owner. 404 when nothing is in force for the item."""
+    verify_admin_secret(x_admin_secret)
+    await _refuse_business_owner(request)
+    from api.services.ops_status import acks
+
+    try:
+        out = await acks.clear(request.app.state.pool, item_id=item_id, actor=_actor(request), reason=body.reason)
+    except asyncpg.exceptions.UndefinedTableError as e:
+        raise HTTPException(status_code=503, detail={"code": "not_migrated", "message": acks.NOT_MIGRATED}) from e
+    if out is None:
+        raise HTTPException(status_code=404, detail={"code": "nothing_in_force",
+                                                     "message": "Nothing is set aside for this item now"})
+    logger.info("ops_status_ack_cleared", item_id=item_id)
+    return out
+
+
+def _own_staff_id(request: Request) -> str:
+    from api.core.tenant_scope import staff_id_of
+
+    sid = staff_id_of(request)
+    if not sid:
+        raise HTTPException(status_code=403, detail={"code": "no_staff_id",
+                                                     "message": "Saved views need a signed-in staff member"})
+    return sid
+
+
+@router.get("/views", summary="The caller's saved views of the status page")
+async def get_status_views(request: Request, x_admin_secret: str = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    from api.services.ops_status import views
+
+    return await views.list_views(request.app.state.pool, _own_staff_id(request))
+
+
+@router.post("/views", summary="Save (or replace by name) one view of the status page")
+async def post_status_view(body: ViewBody, request: Request, x_admin_secret: str = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    from api.services.ops_status import views
+
+    try:
+        return await views.save_view(request.app.state.pool, _own_staff_id(request), body.name, body.query)
+    except views.ViewError as e:
+        raise HTTPException(status_code=422, detail={"code": e.code, "message": str(e)}) from e
+    except asyncpg.exceptions.UndefinedTableError as e:
+        raise HTTPException(status_code=503, detail={"code": "not_migrated", "message": views.NOT_MIGRATED}) from e
+
+
+@router.delete("/views/{view_id}", summary="Delete one of the caller's saved views")
+async def delete_status_view(request: Request, view_id: UUID, x_admin_secret: str = Header(None)):
+    verify_admin_secret(x_admin_secret)
+    from api.services.ops_status import views
+
+    try:
+        gone = await views.delete_view(request.app.state.pool, _own_staff_id(request), str(view_id))
+    except asyncpg.exceptions.UndefinedTableError as e:
+        raise HTTPException(status_code=503, detail={"code": "not_migrated", "message": views.NOT_MIGRATED}) from e
+    if gone is None:
+        raise HTTPException(status_code=404, detail={"code": "no_such_view", "message": "No such view of yours"})
+    return {"deleted": str(view_id)}

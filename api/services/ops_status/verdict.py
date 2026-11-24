@@ -279,6 +279,45 @@ def delivery_items(data: dict) -> list[dict]:
     return out
 
 
+def forecast_items(rows: list[dict]) -> list[dict]:
+    """AA-1141: a capacity forecast at or under its critical days left is a SEV3 item (warn stays on the card). Pure."""
+    out = []
+    for r in rows:
+        if r.get("level") != "crit":
+            continue
+        days = r.get("days_left")
+        if r["id"] == "rds_free":
+            title = f"Database storage fills in about {days:g} days at the current pace"
+            link = ("Database operations", RUNBOOK_DB)
+        else:
+            title = f"AI connection {r.get('label')} reaches its monthly cap in about {days:g} days"
+            link = ("AI gateway budgets", PAGES["ai"] + "?tab=budgets")
+        out.append(_item(f"forecast-{r['id']}", "sev3", "shared", title, "", source="capacity forecast",
+                         msg={"key": "forecast", "tile": r["id"], "label": r.get("label"), "days": days},
+                         links=[link, ("Settings", PAGES["settings"])]))
+    return out
+
+
+def anomaly_items(rows: list[dict]) -> list[dict]:
+    """AA-1141: one SEV3 item per app x provider x route whose AI spend of an hour is abnormal (the newest hour of the
+    group; the banner lists every flagged hour). Pure."""
+    seen: dict[str, dict] = {}
+    for r in rows:
+        iid = f"anomaly-{r['app']}-{r['route']}"
+        if iid in seen and seen[iid]["since"] >= r["hour"]:
+            continue
+        times = f"{r['times_median']:g} x its median hour" if r.get("times_median") else "above the floor"
+        seen[iid] = _item(iid, "sev3", r["app"] if r["app"] in ("cis", "tripplanner", "booking", "crm") else "shared",
+                          f"AI spend {r['usd']:g} USD in one hour on {r['route']} ({times})",
+                          f"Median hour {r['median_usd_h']:g} USD, limit {r['threshold_usd']:g} USD",
+                          since=r["hour"], source="AI gateway",
+                          msg={"key": "anomaly", "app": r["app"], "route": r["route"], "value": r["usd"],
+                               "median": r["median_usd_h"], "times": r.get("times_median"),
+                               "limit": r["threshold_usd"]},
+                          links=[("AI gateway", PAGES["ai"]), ("Spend", PAGES["spend"])])
+    return list(seen.values())
+
+
 def _runtimes_measured(rt: Optional[dict]) -> bool:
     """The runtimes section counts only with at least one ECS service sampled recently: before the sampler's first
     tick, or while the worker is down, every row reads no_sample and nothing about the services was measured."""
@@ -295,6 +334,11 @@ _SECTION_ITEMS = (
     ("jobs", lambda d, th: queue_items(d["queues"], th)),
     ("resources", lambda d, th: resource_items(d["tiles"])),
     ("ai", lambda d, th: ai_items(d["apps"])),
+)
+# AA-1141: advisory sections (not core: a missing one is not listed in ``unknown``)
+_EXTRA_ITEMS = (
+    ("forecast", lambda d: forecast_items(d.get("rows") or [])),
+    ("anomaly", lambda d: anomaly_items(d.get("rows") or [])),
 )
 
 
@@ -316,6 +360,10 @@ def _collect(sections: dict[str, Any], th: dict, events: list[dict]) -> tuple[li
     dl = sections.get("delivery")
     if _ok(dl):
         items += delivery_items(dl["data"])
+    for name, build in _EXTRA_ITEMS:
+        sec = sections.get(name)
+        if _ok(sec):
+            items += build(sec["data"])
     return items, [c for c in CORE if c in unknown]
 
 
@@ -328,15 +376,24 @@ def overall(open_count: int, unknown: list[str]) -> str:
     return "unknown" if set(MAIN) <= set(unknown) else "partial"
 
 
-def decide(sections: dict[str, Any], th: dict, events: list[dict]) -> dict:
+def decide(sections: dict[str, Any], th: dict, events: list[dict], acks: Optional[dict[str, dict]] = None,
+           names: Optional[dict] = None) -> dict:
     """{status: ok | attention | partial | unknown, open, attention[], resolved[], chips, unknown[]}.
 
     A signal that was not measured is never counted as healthy: ``ok`` only when every core source answered
     (``CORE``: the CloudWatch signals, the app tiles, a fresh runtimes sample, jobs, resources, AI). With nothing
     open, a missing core source gives ``partial`` (the page shows a neutral headline naming it), both ``MAIN``
-    sources missing ``unknown``. Open items always win (``attention``): what was measured and is broken is shown."""
+    sources missing ``unknown``. Open items always win (``attention``): what was measured and is broken is shown.
+
+    AA-1141: ``acks`` {item_id: row in force} (``acks.read_in_force``) marks an item acked / snoozed / muted with its
+    ``ack`` block; such an item stays in the list but leaves the open count (an all-acked page reads "ok" when every
+    core source answered, the acked items still listed)."""
+    from api.services.ops_status import acks as ack_mod
+
     items, unknown = _collect(sections, th, events)
-    items.sort(key=lambda i: (_SEV_RANK.get(i["severity"], 9), i["status"] != "open", i.get("since") or ""))
+    items = ack_mod.apply(items, acks or {}, names)
+    # open items first (by severity), then the ones set aside (acked, snoozed, muted, a read bell)
+    items.sort(key=lambda i: (i["status"] != "open", _SEV_RANK.get(i["severity"], 9), i.get("since") or ""))
     open_items = [i for i in items if i["status"] == "open"]
     resolved = [{"id": e["id"], "app": e.get("app"), "text": e["text"], "msg": e.get("msg"), "t": e["t"],
                  "t2": e.get("t2")}
@@ -346,6 +403,7 @@ def decide(sections: dict[str, Any], th: dict, events: list[dict]) -> dict:
     firing = sum(1 for e in events if e.get("kind") == "alarm" and e.get("open"))
     return {"status": overall(len(open_items), unknown), "open": len(open_items), "attention": items,
             "resolved": resolved[:20], "unknown": unknown,
+            "set_aside": len(items) - len(open_items),
             "chips": {"alarms_firing": firing, "open_alerts": len(open_items),
                       "deploy_gate": None if not gate else ("open" if gate.get("safe_to_deploy") else "closed"),
                       "deploy_gate_blocked_by": gate.get("blocked_by") or []}}

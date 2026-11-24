@@ -5,22 +5,25 @@
 // ticks and alarm bands from the sampler's events, a headroom line under each chart, legend tick boxes per chart
 // (show / hide, only this one, show all) kept in the URL, and a table view of every value per step.
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   CartesianGrid, Line, LineChart, ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import { CHART_TOOLTIP, Checkbox, DataTable, K, LinkButton, useLang, type ColumnDef } from "../../../_kit";
 import { useChartColors } from "../../../_kit/useTheme";
 import {
-  chartRows, fmtMs, fmtNum, fmtPct, inApps, latest, onlyHidden, peak, queueSeries, shownSeries, signalSeries,
-  tickLabel, tightestHeadroom, toggleHidden, unmeasuredApps, yTop, APP_LABEL, type ChartId, type Jobs, type Limit,
-  type Series, type Signals, type StatusResp, type View, type SetView,
+  CHANGE_TYPES, chartRows, fmtMs, fmtNum, fmtPct, flipChip, inApps, latest, onlyHidden, peak, queueSeries,
+  shownAnnotations, shownSeries, signalSeries, tickLabel, tightestHeadroom, toggleHidden, unmeasuredApps, yTop,
+  zoomRange, APP_LABEL, type Annotation, type ChartId, type Jobs, type Limit, type Series, type Signals,
+  type StatusResp, type View, type SetView,
 } from "@/lib/opsStatus";
 import { Card, NotMeasured, rowWrap, small, useST, type ST } from "./ui";
+import { CHANGE_DASH, CHANGE_LETTER, typeLabel } from "./Changes";
 
 const COLOR_VARS = { cis: "--aa-accent", tripplanner: "--aa-info", booking: "--aa-purple", crm: "--aa-green",
   shared: "--aa-accent", warn: "--aa-amber", crit: "--aa-red", axis: "--aa-muted", grid: "--aa-line",
-  deploy: "--aa-slate" } as const;
+  deploy: "--aa-slate", setting: "--aa-info", migration: "--aa-purple", wave: "--aa-green", route: "--aa-accent-deep",
+} as const;
 type Colors = Record<keyof typeof COLOR_VARS, string>;
 
 interface ChartSpec {
@@ -86,20 +89,40 @@ function HeadroomLine({ spec, shown, t }: { spec: ChartSpec; shown: Series[]; t:
   );
 }
 
-function Marks({ sig, apps, c, top }: { sig: Signals; apps: string[]; c: Colors; top: number }) {
-  const deploys = (sig.deploys ?? []).filter((d) => inApps(d.app, apps));
-  const bands = (sig.alarm_bands ?? []).filter((b) => inApps(b.app, apps));
+/** Alarm bands and the change annotations (AA-1141): one vertical line per change, its type told by a letter on top
+ *  and a line pattern (and a colour), hidden types left out (`ann` in the URL). Before AA-1141 only deploys. */
+function Marks({ sig, view, c, top }: { sig: Signals; view: View; c: Colors; top: number }) {
+  const bands = (sig.alarm_bands ?? []).filter((b) => inApps(b.app, view.apps));
+  const marks: Annotation[] = sig.annotations
+    ? shownAnnotations(sig.annotations, view)
+    : (sig.deploys ?? []).filter((d) => inApps(d.app, view.apps)).map((d) => ({ id: `${d.t}${d.app}`, t: d.t,
+      type: "deploy", app: d.app, text: d.text }));
   return (
     <>
       {bands.map((b) => (
         <ReferenceArea key={`b${b.start}${b.text}`} x1={Date.parse(b.start)} x2={b.end ? Date.parse(b.end) : undefined}
           y1={0} y2={top} fill={c.crit} fillOpacity={0.08} ifOverflow="hidden" />
       ))}
-      {deploys.map((d) => (
-        <ReferenceLine key={`d${d.t}${d.app}`} x={Date.parse(d.t)} stroke={seriesColor(c, d.app)}
-          strokeDasharray="2 3" ifOverflow="hidden" />
+      {marks.map((a) => (
+        <ReferenceLine key={`a${a.id}`} x={Date.parse(a.t)} stroke={(c as Record<string, string>)[a.type] ?? c.deploy}
+          strokeDasharray={CHANGE_DASH[a.type] ?? "2 3"} ifOverflow="hidden"
+          label={{ value: CHANGE_LETTER[a.type] ?? "?", position: "top", fontSize: 9, fill: c.axis }} />
       ))}
     </>
+  );
+}
+
+/** The annotation type tick boxes (one row for every chart). */
+function AnnotationLegend({ view, setView, counts }: { view: View; setView: SetView; counts: Record<string, number> }) {
+  const t = useST();
+  return (
+    <div style={rowWrap} role="group" aria-label={t("annLegend")} data-testid="status-ann-legend">
+      <span style={small}>{t("annLegend")}:</span>
+      {CHANGE_TYPES.map((k) => (
+        <Checkbox key={k} checked={!view.ann.includes(k)} onChange={() => setView((v) => ({ ann: flipChip(v.ann, k) }))}
+          label={`${CHANGE_LETTER[k]} · ${typeLabel(k, t)} (${counts[k] ?? 0})`} />
+      ))}
+    </div>
   );
 }
 
@@ -121,12 +144,23 @@ function chartTop(spec: ChartSpec, shown: Series[]): number {
     [spec.limit?.warn, spec.limit?.crit, spec.extra?.y]);
 }
 
-function Chart({ spec, rows, hidden, onHidden, sig, view, c, spanS }: {
+function Chart({ spec, rows, hidden, onHidden, sig, view, setView, c, spanS }: {
   spec: ChartSpec; rows: Record<string, number | null>[]; hidden: string[]; onHidden: OnHidden;
-  sig: Signals; view: View; c: Colors; spanS: number;
+  sig: Signals; view: View; setView: SetView; c: Colors; spanS: number;
 }) {
   const t = useST();
   const lang = useLang();
+  // AA-1141: drag across the chart to zoom: the dragged span becomes a custom range (auto refresh stops)
+  const [drag, setDrag] = useState<{ a: number; b: number } | null>(null);
+  const at = (st: { activeLabel?: unknown } | null | undefined): number | null => {
+    const v = Number(st?.activeLabel);
+    return Number.isFinite(v) ? v : null;
+  };
+  const endDrag = () => {
+    const z = drag ? zoomRange(drag.a, drag.b) : null;
+    setDrag(null);
+    if (z) setView({ range: "custom", from: z.from, to: z.to });
+  };
   const shown = shownSeries(spec.series, hidden);
   const top = chartTop(spec, shown);
   const prev = view.compare ? shown.filter((s) => s.previous) : [];
@@ -137,7 +171,10 @@ function Chart({ spec, rows, hidden, onHidden, sig, view, c, spanS }: {
       <Legend spec={spec} hidden={hidden} onHidden={onHidden} />
       <div style={{ height: 200 }}>
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={rows} margin={{ top: 6, right: 8, left: 0, bottom: 0 }}>
+          <LineChart data={rows} margin={{ top: 14, right: 8, left: 0, bottom: 0 }}
+            onMouseDown={(st) => { const a = at(st); if (a != null) setDrag({ a, b: a }); }}
+            onMouseMove={(st) => { const b = at(st); if (drag && b != null) setDrag({ ...drag, b }); }}
+            onMouseUp={endDrag} onMouseLeave={() => setDrag(null)}>
             <CartesianGrid stroke={c.grid} strokeDasharray="3 3" vertical={false} />
             <XAxis dataKey="t" type="number" scale="time" domain={["dataMin", "dataMax"]} tick={{ fontSize: 10,
               fill: c.axis }} tickFormatter={(v: number) => tickLabel(v, spanS, lang)} minTickGap={40} />
@@ -145,7 +182,9 @@ function Chart({ spec, rows, hidden, onHidden, sig, view, c, spanS }: {
               tickFormatter={(v: number) => fmtNum(v, 1)} />
             <Tooltip {...CHART_TOOLTIP} labelFormatter={(v) => tickLabel(Number(v), spanS, lang)}
               formatter={(v) => spec.fmt(typeof v === "number" ? v : null)} />
-            <Marks sig={sig} apps={view.apps} c={c} top={top} />
+            <Marks sig={sig} view={view} c={c} top={top} />
+            {drag && drag.a !== drag.b && <ReferenceArea x1={drag.a} x2={drag.b} y1={0} y2={top} fill={c.axis}
+              fillOpacity={0.12} ifOverflow="hidden" />}
             <Limits spec={spec} c={c} top={top} />
             {shown.map((s) => (
               <Line key={s.id} dataKey={s.id} name={s.label} stroke={seriesColor(c, s.id)} strokeWidth={1.5}
@@ -213,6 +252,12 @@ function TableView({ data, all }: { data: StatusResp; all: ChartSpec[] }) {
   );
 }
 
+function annCounts(sig: Signals, view: View): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const a of sig.annotations ?? []) if (inApps(a.app, view.apps)) out[a.type] = (out[a.type] ?? 0) + 1;
+  return out;
+}
+
 export function SignalsCard({ data, view, setView }: {
   data: StatusResp; view: View; setView: SetView;
 }) {
@@ -223,13 +268,16 @@ export function SignalsCard({ data, view, setView }: {
   const setHidden = (id: ChartId, f: (cur: string[]) => string[]) =>
     setView((v) => ({ hide: { ...v.hide, [id]: f(v.hide[id] ?? []) } }));
   return (
-    <Card title={t("signalsTitle")} testId="status-signals" asOf={sig.as_of}>
+    <Card title={t("signalsTitle")} testId="status-signals" asOf={sig.as_of} refreshS={sig.refresh_s}>
       <div style={small}>{t("signalsNote")}</div>
       {sig.status !== "ok" && <NotMeasured reason={sig.message ?? sig.reason} testId="status-signals-down" />}
+      <AnnotationLegend view={view} setView={setView} counts={annCounts(sig, view)} />
+      <span style={small}>{t("annShape")} {t("zoomHint")}</span>
       <div style={{ display: "grid", gap: 18, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))" }}>
         {all.map((spec) => (
           <Chart key={spec.id} spec={spec} hidden={view.hide[spec.id] ?? []} onHidden={(h) => setHidden(spec.id, h)}
-            rows={chartRows(data.buckets, spec.series)} sig={sig} view={view} c={c} spanS={data.range.span_s} />
+            rows={chartRows(data.buckets, spec.series)} sig={sig} view={view} setView={setView} c={c}
+            spanS={data.range.span_s} />
         ))}
       </div>
       <TableView data={data} all={all} />

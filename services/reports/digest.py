@@ -67,6 +67,7 @@ HTTP_TIMEOUT_S = 2.0
 RECONCILE_DAYS = 3               # AA-642 (S263 L2): the reconcile's own default window
 BALANCE_PROVIDERS = ("typesafe", "dataforseo", "geoapify")
 REFUSING_STATES = ("access_denied", "quota_exhausted", "unconfigured")
+STATUS_INPUT = "status_page"   # AA-1141: the render input of the status page part (api/services/ops_status/digest)
 DIGEST_KPIS = ("K-LLM-COST-DAY", "K-LLM-FALLBACK-24H", "K-JOB-FAIL", "K-JOB-QUEUEAGE", "K-DATA-PROBES",
                "K-DATA-STALE", "K-DATA-LIVENESS")
 
@@ -542,6 +543,7 @@ def render_digest(reg: Registry, report: Report, day: date, facts: dict, kpi_row
           f"ICT day {day.isoformat()}; live checks at {generated_at.strftime('%Y-%m-%d %H:%M UTC')}. "
           "A digest, not an alarm: urgent signals still page in real time.", ""]
     md += ["## Needs a look", ""] + ([f"- {i}" for i in items] or ["- Nothing: all green."]) + [""]
+    md += status_section(facts)
 
     md += ["## Apps", ""]
     if apps:
@@ -623,6 +625,16 @@ def render_digest(reg: Registry, report: Report, day: date, facts: dict, kpi_row
                                  for r in flagged] or ["- No report overdue or failed."]) + [""]
     summary = headline[:1000]
     return Rendered(summary, output, "\n".join(md))
+
+
+def status_section(facts: dict) -> list[str]:
+    """AA-1141: the same verdict as the Ecosystem status page, with links to its views (absent from a digest written
+    before it, or rendered without the part). Pure."""
+    if STATUS_INPUT not in facts:
+        return []
+    from api.services.ops_status.digest import markdown
+
+    return markdown(facts.get(STATUS_INPUT))
 
 
 def render_balances(b: Optional[dict]) -> list[str]:
@@ -721,7 +733,10 @@ def render_providers(llm: dict) -> list[str]:
     return md
 
 
-async def render(conn, reg: Registry, report: Report, first: date, last: date, now: datetime) -> Rendered:
+async def render(conn, reg: Registry, report: Report, first: date, last: date, now: datetime,
+                 inputs: Optional[dict] = None) -> Rendered:
     facts = await collect(conn, reg, last, now)
+    # AA-1141: the status page's own verdict, built by run_report on the job's pool (status_part in the inputs)
+    facts[STATUS_INPUT] = (inputs or {}).get(STATUS_INPUT)
     rows = await store.kpi_series(conn, list(DIGEST_KPIS), last - timedelta(days=SPEND_MEDIAN_DAYS), last)
     return render_digest(reg, report, last, facts, rows, now)

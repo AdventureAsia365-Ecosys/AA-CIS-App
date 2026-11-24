@@ -20,6 +20,16 @@ time and degrade on their own (S285 advisory phase 1-2, mockup v2 approved 19/11
 - ``events``   the timeline (deploys, alarms, service drops, ops check bells, job failures);
 - ``delivery`` main branch state per repo and the nightly guards.
 
+AA-1141 (P1, S291) adds, all free:
+- ``changes``  "What changed": deploys, setting changes, migrations, waves and route control versions of the range
+               (:mod:`.changes`), also drawn as typed annotations on every chart (``signals.annotations``);
+- ``forecast`` capacity forecast: days until RDS storage, each AI connection's monthly cap (the Actions cache has no
+               source: not measured) reach their limit (:mod:`.forecast`);
+- ``anomaly``  AI cost anomaly by app x provider x route: an hour above N x its median hour (:mod:`.anomaly`);
+- ``acks``     ack / snooze / mute in force on the attention items, the recent trail and the rules (:mod:`.acks`);
+               ``viewer.can_ack`` says whether this caller may act (ops.write, never the business owner);
+- ``pipelines`` freshness of the background producers (sampler, digest, probes, delivery summary, schema dump).
+
 ``verdict`` (``verdict.decide``) turns them into one sentence and the Needs attention list; ``thresholds`` lists every
 limit with its settings key (``shared/ops_status_thresholds.py``, CIS 475) so the page draws it and links Settings;
 ``sources`` gives each section's source, refresh time, ``as_of`` and whether it is stale (older than
@@ -39,7 +49,9 @@ import structlog
 
 from api.services.issue_refs import clean
 from api.services.ops_overview import cache
-from api.services.ops_status import cw_series, sections, session_checks, store, verdict
+from api.services.ops_status import (
+    acks, anomaly, changes, cw_series, forecast, pipelines, sections, session_checks, store, verdict,
+)
 from api.services.ops_status.ranges import RangeError, TimeRange, resolve
 from shared import ops_status_thresholds as th
 
@@ -62,6 +74,10 @@ SOURCES = {
     "cost": "The Spend page forecast: LLM gateway estimates and stored Cost Explorer snapshots",
     "events": "Sampler events (deploys, alarms, service drops), ops check bells and failed jobs of the range",
     "delivery": "The published delivery summary (CI and deploys of the six repos) and the nightly probe results",
+    "changes": "Sampler deploy events, approved setting values, shared.schema_versions, rerun waves and route control "
+               "versions of this range",
+    "forecast": "CloudWatch RDS free storage trend (cached 6 h), the AI connection budgets and their month to date",
+    "anomaly": "The hourly AI usage rollup (shared.ai_usage_hourly): the last two hours against the median hour",
 }
 
 
@@ -203,7 +219,7 @@ def freshness(name: str, section: dict, now: datetime, factor: float) -> dict:
 
 async def build_status(pool: Any, redis: Any = None, *, range_key: Optional[str] = None, start: Optional[str] = None,
                        end: Optional[str] = None, compare: bool = False, authorization: Optional[str] = None,
-                       now: Optional[datetime] = None) -> dict:
+                       now: Optional[datetime] = None, can_ack: bool = False) -> dict:
     """The whole page. RangeError on a range the page cannot show (the router answers 422)."""
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     rng = range_of(range_key, start, end, now)
@@ -216,19 +232,25 @@ async def build_status(pool: Any, redis: Any = None, *, range_key: Optional[str]
         _signals(redis, rng), _signals(redis, prev, previous=True) if prev else none(), _cards(pool, redis),
         sections.run("activity", sections.activity(pool, rng)), _health(pool, now))
     run = sections.run
-    rt, res, jobs, ai, cost, ev_src, dl = await asyncio.gather(
+    rt, res, jobs, ai, cost, ev_src, dl, chg, fc, an, ack_rows, ack_trail = await asyncio.gather(
         run("runtimes", sections.runtimes(pool, rng, now)),
         run("resources", sections.resources(pool, sig, rng, now)),
         run("jobs", sections.jobs(pool, rng, authorization)),
         run("ai", sections.ai(pool, rng, now, authorization)),
         run("cost", _cost(redis, pool, now)),
         sections.run("events", _events(pool, rng)),
-        run("delivery", sections.delivery(pool, now)))
+        run("delivery", sections.delivery(pool, now)),
+        run("changes", _changes(pool, rng, now)),
+        run("forecast", forecast.collect(pool, redis, now)),
+        run("anomaly", anomaly.collect(pool, redis, now)),
+        _guarded(acks.read_in_force(pool, now), ({}, {})),
+        _guarded(acks.history(pool, rng.start), []))
     events_rows = ev_src.get("data", []) if ev_src.get("status") == "ok" else []
     apps = sections.ok(sections.app_tiles(sig, cards, acts if isinstance(acts, dict) and "status" not in acts else {},
                                           health), 300, as_of=_as_of(sig, now))
     secs = {"signals": {**series_view(sig, rng), "refresh_s": SIGNALS_TTL_S}, "apps": apps, "runtimes": rt,
-            "resources": res, "jobs": jobs, "ai": ai, "cost": cost, "events": ev_src, "delivery": dl}
+            "resources": res, "jobs": jobs, "ai": ai, "cost": cost, "events": ev_src, "delivery": dl,
+            "changes": chg, "forecast": fc, "anomaly": an}
     if prev is not None:
         secs["signals"]["previous"] = {**series_view(sig_prev or {}, prev), "range": prev.as_dict()}
     deploys = [e for e in events_rows if e["lane"] == "deploy"]
@@ -236,19 +258,46 @@ async def build_status(pool: Any, redis: Any = None, *, range_key: Optional[str]
              for e in events_rows if e["kind"] == "alarm"]
     secs["signals"]["deploys"] = [{"t": e["t"], "app": e["app"], "text": e["text"]} for e in deploys]
     secs["signals"]["alarm_bands"] = bands
+    secs["signals"]["annotations"] = annotations(chg)
     thresholds = th.snapshot()
     factor = th.stale_factor()
+    in_force, names = ack_rows
     return {
         "generated_at": now.isoformat(),
         "environment": cw_series.cloudwatch.environment(),
         "range": rng.as_dict(),
         "previous": prev.as_dict() if prev else None,
         "buckets": [b.isoformat() for b in rng.buckets()],
-        "verdict": verdict.decide(secs, thresholds, events_rows),
+        "verdict": verdict.decide(secs, thresholds, events_rows, in_force, names),
         "thresholds": thresholds,
         "sections": secs,
         "sources": [freshness(k, v, now, factor) for k, v in secs.items()],
+        "pipelines": await pipelines.collect(pool, dl, now, factor),
+        "acks": {"rules": thresholds["acks"], "recent": ack_trail},
+        "viewer": {"can_ack": bool(can_ack)},
     }
+
+
+def annotations(chg: dict) -> list[dict]:
+    """The chart markers of the range: one per change (time, type, app, short title). Pure."""
+    if not isinstance(chg, dict) or chg.get("status") != "ok":
+        return []
+    return [{"t": r["t"], "type": r["type"], "app": r["app"], "text": r["title"], "id": r["id"]}
+            for r in (chg.get("data") or {}).get("rows") or [] if r.get("t")]
+
+
+async def _guarded(coro: Any, fallback: Any) -> Any:
+    try:
+        return await coro
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:  # noqa: BLE001 — acks are an overlay: the page still answers without them
+        logger.warning("ops_status_acks_failed", error=repr(e)[:200])
+        return fallback
+
+
+async def _changes(pool: Any, rng: TimeRange, now: datetime) -> dict:
+    return sections.ok(await changes.collect(pool, rng), 300, as_of=now)
 
 
 def _as_of(sig: dict, now: datetime) -> datetime:

@@ -506,16 +506,16 @@ async def connection_month_spend(conn, connection_keys: list[str]) -> dict[str, 
     return {r["account"]: (float(r["spent"] or 0.0), int(r["calls"] or 0)) for r in rows}
 
 
-async def connection_budgets(conn, budgets_usd: dict[str, Optional[float]],
-                             policies: Optional[dict] = None) -> dict[str, ConnectionBudget]:
-    """The budget state of every connection in ``budgets_usd`` ({key: monthly_budget_usd}) that has a budget (None =
-    no budget: left out, never enforced). One query for the spend, one for the policies (when not given)."""
+async def connection_budgets(conn, budgets_usd: dict[str, Optional[float]], policies: Optional[dict] = None, *,
+                             spent: Optional[dict] = None) -> dict[str, ConnectionBudget]:
+    """The budget state of each connection of ``budgets_usd`` ({key: budget USD}) with a budget (None: left out). One
+    query for the spend (none with ``spent``, the caller's connection_month_spend: AA-1141), one for the policies."""
     capped = {k: float(v) for k, v in budgets_usd.items() if v is not None}
     if not capped:
         return {}
     if policies is None:
         policies = await read_cost_policies(conn)
-    spent = await connection_month_spend(conn, sorted(capped))
+    spent = spent if spent is not None else await connection_month_spend(conn, sorted(capped))
     out: dict[str, ConnectionBudget] = {}
     for key, cap in capped.items():
         p = policy_of(policies, key)

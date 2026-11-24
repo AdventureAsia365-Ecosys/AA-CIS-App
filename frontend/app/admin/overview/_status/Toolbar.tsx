@@ -4,13 +4,14 @@
 // compare with the previous period, the app filter (every section but shared platform rows), copy link, reset view.
 // The view lives in the URL (lib/opsStatus.ts parseView / viewParams), so a copied link opens the same view.
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Button, Input, K, SegmentedControl, Switch, useFormat } from "../../../_kit";
 import {
   APP_LABEL, RANGE_KEYS, STATUS_APPS, customProblem, isoToLocal, localToIso, type RangeInfo, type RangeKey,
   type View, type SetView,
 } from "@/lib/opsStatus";
 import { ChipFilter, rowWrap, small, useST, type ST } from "./ui";
+import { SavedViews } from "./Views";
 
 
 function stepText(stepS: number): string {
@@ -73,9 +74,9 @@ function CopyLink() {
   return <Button size="sm" variant="secondary" onClick={copy}>{copied ? t("copied") : t("copyLink")}</Button>;
 }
 
-export function Toolbar({ view, setView, range, historyDays, dirty, onReset }: {
+export function Toolbar({ view, setView, range, historyDays, dirty, onReset, applyQuery, refresh }: {
   view: View; setView: SetView; range: RangeInfo | undefined; historyDays: number | null; dirty: boolean;
-  onReset: () => void;
+  onReset: () => void; applyQuery: (qs: string) => void; refresh?: ReactNode;
 }) {
   const t = useST();
   const [custom, setCustom] = useState(false);
@@ -98,6 +99,7 @@ export function Toolbar({ view, setView, range, historyDays, dirty, onReset }: {
           <span style={small}>{t("compare")}</span>
         </span>
         <RangeRead range={range} />
+        {refresh}
       </div>
       {custom && (
         <CustomRange view={view} historyDays={historyDays} onCancel={() => setCustom(false)}
@@ -108,6 +110,7 @@ export function Toolbar({ view, setView, range, historyDays, dirty, onReset }: {
           testId="status-apps" />
         {view.apps.length > 0 && <span style={small}>{t("filteredNote")}</span>}
         <span style={{ ...rowWrap, marginLeft: "auto" }}>
+          <SavedViews apply={applyQuery} />
           {dirty && <Button size="sm" variant="ghost" onClick={onReset}>{t("resetView")}</Button>}
           <CopyLink />
         </span>

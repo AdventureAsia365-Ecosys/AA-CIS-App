@@ -33,7 +33,7 @@ Scope addition of S267: the AI gateway Guide tab renders the one prose source of
     `access_state` and `last_probe_at`); falls back to the route-control deployment rows before CIS 367.
   - register: `connections.fetch_connections(conn, llm_only=False)`, every kind (LLM, Jev, DataForSEO, Geoapify,
     guardrails), reduced to names and states (`REGISTER_FIELDS` + served roles, credential source, deployment counts).
-  - caps: `ai_gateway._read_connection_budgets` (the Budgets tab's connection tier) without `account_id`.
+  - caps: `ai_gateway.read_connection_budgets` (the Budgets tab's connection tier) without `account_id`.
   - coverage: `stage_coverage.read` reduced to the stage lines and the `disabled` list.
   - Each source runs under `ai_gateway._guard`: one failure leaves its table empty and adds `{source, error}` with the
     generic public text (no exception text reaches the client).

@@ -14,7 +14,7 @@ import {
 } from "@/lib/opsStatus";
 import { fmtCount, fmtUsd } from "@/lib/numberFormat";
 import { freeLimitText } from "@/lib/opsStatusText";
-import { Card, NotMeasured, WhenUp, levelColor, num, rowWrap, small, useST, type ST } from "./ui";
+import { Card, LevelGlyph, NotMeasured, WhenUp, levelColor, num, rowWrap, small, useST, type ST } from "./ui";
 import { useWords, type StatusWords } from "./words";
 
 const link = { ...small, color: K.accentDeep, fontWeight: 600 } as const;
@@ -36,7 +36,7 @@ function queueColumns(t: ST, w: StatusWords): ColumnDef<Queue>[] {
     { id: "failed", header: t("colFailed"), accessorFn: (q) => q.failed ?? null, cell: ({ row }) => n(row.original.failed) },
     { id: "wait", header: t("colWait"), accessorFn: (q) => q.oldest_wait_min ?? null,
       cell: ({ row }) => <span style={{ color: levelColor(row.original.level) }}>
-        {row.original.oldest_wait_min == null ? "—" : `${fmtNum(row.original.oldest_wait_min)} min`}</span> },
+        <LevelGlyph level={row.original.level} />{row.original.oldest_wait_min == null ? "—" : `${fmtNum(row.original.oldest_wait_min)} min`}</span> },
     { id: "workers", header: t("workers"), accessorFn: (q) => q.workers ?? null,
       cell: ({ row }) => row.original.workers ?? "—" },
   ];
@@ -64,7 +64,7 @@ export function JobsCard({ section, view, setView }: { section: Section<Jobs>; v
   const t = useST();
   const w = useWords();
   return (
-    <Card title={t("jobsTitle")} testId="status-jobs" asOf={section.as_of}
+    <Card title={t("jobsTitle")} testId="status-jobs" asOf={section.as_of} refreshS={section.refresh_s}
       actions={<Link href="/admin/jobs" style={link}>{t("lJobs")}</Link>}>
       <WhenUp section={section}>
         {(jobs) => (
@@ -146,7 +146,7 @@ function ResourceBox({ tile }: { tile: ResourceTile }) {
       </span>
       {down ? <NotMeasured reason={null} /> : (
         <span style={{ ...num, fontSize: 18, fontWeight: 600, color: levelColor(tile.level) }}>
-          {fmtNum(tile.latest)} <span style={small}>{w.unit(tile)}</span></span>)}
+          <LevelGlyph level={tile.level} />{fmtNum(tile.latest)} <span style={small}>{w.unit(tile)}</span></span>)}
       <Spark tile={tile} />
       <span style={small}>
         {tile.worst != null && t("latestWorst", fmtNum(tile.latest), fmtNum(tile.worst))}
@@ -159,16 +159,43 @@ function ResourceBox({ tile }: { tile: ResourceTile }) {
   );
 }
 
+/** AA-1141 (WCAG): the table view of the tiles' sparklines: latest, worst, limits and level in words. */
+function TilesTable({ tiles }: { tiles: ResourceTile[] }) {
+  const t = useST();
+  const w = useWords();
+  const columns: ColumnDef<ResourceTile>[] = [
+    { id: "tile", header: t("colTile"), accessorFn: (x) => w.tile(x) },
+    { id: "now", header: t("colNow"), accessorFn: (x) => x.latest ?? null,
+      cell: ({ row }) => `${fmtNum(row.original.latest)} ${w.unit(row.original)}` },
+    { id: "worst", header: t("colWorst"), accessorFn: (x) => x.worst ?? null, cell: ({ row }) => fmtNum(row.original.worst) },
+    { id: "warn", header: t("colWarn"), accessorFn: (x) => x.warn ?? null, cell: ({ row }) => fmtNum(row.original.warn) },
+    { id: "crit", header: t("colCrit"), accessorFn: (x) => x.crit ?? null, cell: ({ row }) => fmtNum(row.original.crit) },
+    { id: "level", header: t("colLevel"), accessorFn: (x) => x.level,
+      cell: ({ row }) => <Badge tone={levelTone(row.original.level) as Tone}>{row.original.level === "none"
+        ? t("notMeasured") : row.original.level}</Badge> },
+  ];
+  return (
+    <details data-testid="status-resources-table">
+      <summary style={{ ...small, cursor: "pointer" }}>{t("tableOfTiles")}</summary>
+      <DataTable<ResourceTile> tableId="status-resources-table" data={tiles} columns={columns}
+        getRowId={(x) => x.id} searchable={false} paginate={false} compact tableMinWidth={560} />
+    </details>
+  );
+}
+
 export function ResourcesCard({ section }: { section: Section<{ tiles: ResourceTile[] }> }) {
   const t = useST();
   return (
-    <Card title={t("resourcesTitle")} testId="status-resources" asOf={section.as_of}>
+    <Card title={t("resourcesTitle")} testId="status-resources" asOf={section.as_of} refreshS={section.refresh_s}>
       <WhenUp section={section}>
         {(d) => (
           <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 200px), 1fr))" }}>
             {d.tiles.map((x) => <ResourceBox key={x.id} tile={x} />)}
           </div>
         )}
+      </WhenUp>
+      <WhenUp section={section}>
+        {(d) => <TilesTable tiles={d.tiles} />}
       </WhenUp>
     </Card>
   );
@@ -197,7 +224,7 @@ export function CostCard({ section }: { section: Section<Cost> }) {
   const lang = useLang();
   const usd = (v: number | null | undefined) => (v == null ? "—" : fmtUsd(v, lang));
   return (
-    <Card title={t("costTitle")} testId="status-cost" asOf={section.as_of}
+    <Card title={t("costTitle")} testId="status-cost" asOf={section.as_of} refreshS={section.refresh_s}
       actions={<Link href="/admin/spend?tab=apps" style={link}>{t("lSpend")}</Link>}>
       <WhenUp section={section}>
         {(c) => (
@@ -230,9 +257,10 @@ function CapBar({ a, near, t, lang }: { a: Ai["apps"][number]; near: number; t: 
         <b style={{ color: K.ink }}>{w.app(a.app)}</b>
         <span style={num}>{a.spent_usd == null ? t("notMeasured") : fmtUsd(a.spent_usd, lang)}</span>
         <span>/ {a.cap_usd == null ? t("noCap") : fmtUsd(a.cap_usd, lang)}</span>
-        {a.used_pct != null && <span style={{ color: levelColor(a.level) }}>{fmtPct(a.used_pct, 0)}</span>}
+        {a.used_pct != null && <span style={{ color: levelColor(a.level) }}><LevelGlyph level={a.level} />
+          {fmtPct(a.used_pct, 0)}</span>}
       </span>
-      <span style={{ position: "relative", height: 8, borderRadius: 4, background: K.line }}>
+      <span aria-hidden style={{ position: "relative", height: 8, borderRadius: 4, background: K.line }}>
         <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${used}%`, borderRadius: 4,
           background: levelColor(a.level) === K.ink ? K.accent : levelColor(a.level) }} />
         {a.cap_usd != null && <span style={{ position: "absolute", top: -2, bottom: -2, width: 2, left: `${near}%`,
@@ -258,7 +286,7 @@ export function AiCard({ section, view, setView }: { section: Section<Ai>; view:
   const w = useWords();
   const lang = useLang();
   return (
-    <Card title={t("aiTitle")} testId="status-ai" asOf={section.as_of}
+    <Card title={t("aiTitle")} testId="status-ai" asOf={section.as_of} refreshS={section.refresh_s}
       actions={<Link href="/admin/ai-gateway" style={link}>{t("lAi")}</Link>}>
       <WhenUp section={section}>
         {(ai) => (

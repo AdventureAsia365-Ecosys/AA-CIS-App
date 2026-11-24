@@ -405,8 +405,7 @@ POLICY: dict[tuple[str, str], Any] = {
         ("GET", "subscription"), ("PUT", "entitlement-overrides/{feature_key}"),
         ("DELETE", "entitlement-overrides/{feature_key}"), ("GET", "quote"),
         ("GET", "billing-details"), ("PUT", "billing-details"), ("PUT", "subscriptions/{product}/terms"))},
-    # AA-1035: field-level in the route (finance: plan_tier / is_active only; customer_success: every other field;
-    # admin.py _require_tenant_patch)
+    # AA-1035: field-level in the route (admin.py _require_tenant_patch: finance plan_tier / is_active, CS the rest)
     ("PATCH", "/admin/tenants/{tenant_id}"): any_of(TENANT_WRITE, BILLING_WRITE, TENANT_BOOK_WRITE),
     ("GET", "/admin/tenants/{tenant_id}/usage"): _TENANT_BILLING_READ,
     # AA-1037 (root ADR 0019 d9 "Screens now"): Tenant 360 › Billing › Booking invoices, the agency's billing status
@@ -562,8 +561,7 @@ POLICY: dict[tuple[str, str], Any] = {
     # AA-814 — platform Facts Entries (every tenant's T9 seed reads them); reads open to every staff role
     ("POST", "/admin/facts"): QUALITY_WRITE, ("PATCH", "/admin/facts/{fact_id}"): QUALITY_WRITE,
     ("DELETE", "/admin/facts/{fact_id}"): QUALITY_WRITE,
-    # AA-1091 — AA Catalogue › Reference prices (the customer-service team's CIS page; customer_success has no
-    # content.read, so every read has an entry too)
+    # AA-1091 — AA Catalogue › Reference prices (customer_success has no content.read: every read has an entry)
     ("GET", "/admin/reference-prices"): REFERENCE_PRICE_READ,
     ("GET", "/admin/reference-prices/export"): REFERENCE_PRICE_READ,
     ("GET", "/admin/reference-prices/{source_key}/history"): REFERENCE_PRICE_READ,
@@ -615,6 +613,8 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/overview"): OPS_READ, **{("GET", "/admin/ops-assist/" + p): OPS_READ for p in (  # AA-1154 A0:
         "catalog", "signals", "items/{item_id}/cards", "replays", "replays/{case}")},  # the assistant, read-only
     ("GET", "/admin/overview/ops"): OPS_READ, ("GET", "/admin/overview/status"): OPS_READ,  # AA-858, AA-1140 status
+    **{("POST", "/admin/overview/status/acks" + p): OPS_WRITE for p in ("", "/{item_id}/clear")},  # AA-1141 ack
+    **{(m, "/admin/overview/views" + p): OPS_READ for m, p in (("GET", ""), ("POST", ""), ("DELETE", "/{view_id}"))},
     ("GET", "/admin/my-work/summary"): any_of(REVIEW_ACT, CONTENT_WRITE, QUALITY_WRITE),  # AA-1156 My work (per tile)
     ("GET", "/admin/data-coverage"): OPS_READ,  # AA-992 data coverage counts, incl. CRM over crm.ops.v1 (admin-only)
     # ── admin_reports (AA-1003) — report register, runs, generate now (admin-only page)

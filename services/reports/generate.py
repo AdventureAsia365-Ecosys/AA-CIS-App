@@ -327,10 +327,11 @@ async def _register(conn, reg: Registry, report: Report, first: date, last: date
 Renderer = Callable[..., Awaitable[Rendered]]
 
 
-async def _digest(conn, reg: Registry, report: Report, first: date, last: date, now: datetime) -> Rendered:
+async def _digest(conn, reg: Registry, report: Report, first: date, last: date, now: datetime,
+                  inputs: Optional[dict] = None) -> Rendered:
     from services.reports import digest      # lazy: digest imports this module
 
-    return await digest.render(conn, reg, report, first, last, now)
+    return await digest.render(conn, reg, report, first, last, now, inputs)
 
 
 async def _money_week(conn, reg: Registry, report: Report, first: date, last: date, now: datetime) -> Rendered:
@@ -419,7 +420,7 @@ RENDERERS: dict[str, Renderer] = {"EX-04": _scorecard, "EX-06": _register, "OPS-
                                   **{rid: _b2b_ops for rid in ("FI-08", "BK-03", "FI-07")},
                                   **{rid: _partners for rid in ("EX-03", "EX-07", "CRM-04")}}
 # The renderers that also take the run's captured `inputs` (the job payload).
-TAKES_INPUTS = frozenset({"EX-03", "EX-07", "CRM-04"})
+TAKES_INPUTS = frozenset({"EX-03", "EX-07", "CRM-04", "OPS-12"})   # OPS-12: the status page part (AA-1141)
 
 
 def default_period(report: Report, now: Optional[datetime] = None) -> tuple[date, date]:

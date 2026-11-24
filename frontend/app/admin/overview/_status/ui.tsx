@@ -2,9 +2,9 @@
 // app/admin/overview/_status/ui.tsx — AA-1140: small shared pieces of the Ecosystem status page (kit only): the card
 // frame with its own "as of" time, the grey "not measured yet" chip, level badges, chip filters and a sort picker.
 
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Badge, ChipButton, K, LinkButton, Section, Select, useFormat, useT, type Tone } from "../../../_kit";
-import { flipChip, levelTone, sectionDown, type Section as Sec } from "@/lib/opsStatus";
+import { flipChip, isStale, levelTone, sectionDown, type Section as Sec } from "@/lib/opsStatus";
 import { STATUS } from "../status.messages";
 
 export function useST() {
@@ -17,22 +17,34 @@ export const small = { fontSize: 12, color: K.muted, lineHeight: 1.45 } as const
 export const rowWrap = { display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" } as const;
 export const num = { fontVariantNumeric: "tabular-nums" } as const;
 
-/** One card of the page: kit Section with the section's own "as of" time at the right of the header. */
-export function Card({ title, testId, asOf, actions, children, stale }: {
+/** AA-1141: the page's freshness rule (cis.ops.status_stale_factor) and the clock of the last answer, so every card
+ *  can grey its own "as of" chip once it is older than factor x its refresh time. */
+export const Freshness = createContext<{ factor: number | null; nowMs: number }>({ factor: null, nowMs: 0 });
+
+/** One card of the page: kit Section with the section's own "as of" chip at the right of the header (AA-1141: grey
+ *  "stale" once older than cis.ops.status_stale_factor x the section's refresh time, said in words, not by colour). */
+export function Card({ title, testId, asOf, actions, children, stale, refreshS }: {
   title: ReactNode; testId: string; asOf?: string | null; actions?: ReactNode; children: ReactNode; stale?: boolean;
+  refreshS?: number | null;
 }) {
   const t = useST();
   const { formatDateTime } = useFormat();
+  const fresh = useContext(Freshness);
+  const old = stale || isStale(asOf, refreshS, fresh.factor, fresh.nowMs);
   const head = (
     <span style={rowWrap}>
-      {asOf && <span style={small} data-testid={`${testId}-asof`}>{t("asOf", formatDateTime(asOf))}</span>}
-      {stale && <Badge tone="neutral">{t("stale")}</Badge>}
+      {asOf && (
+        <span data-testid={`${testId}-asof`} title={old && fresh.factor ? t("staleNote", fresh.factor) : undefined}
+          style={{ ...small, padding: "1px 8px", borderRadius: 999, border: `1px solid ${K.line}`,
+            background: old ? K.line : "transparent" }}>
+          {t("asOf", formatDateTime(asOf))}{old ? ` · ${t("stale")}` : ""}
+        </span>)}
       {actions}
     </span>
   );
   return (
     <Section title={title} actions={head} testId={testId}
-      style={{ minWidth: 0, opacity: stale ? 0.7 : 1 }} bodyStyle={{ display: "grid", gap: 12, minWidth: 0 }}>
+      style={{ minWidth: 0, opacity: old ? 0.7 : 1 }} bodyStyle={{ display: "grid", gap: 12, minWidth: 0 }}>
       {children}
     </Section>
   );
@@ -71,6 +83,20 @@ export function WhenUp<T>({ section, testId, children }: {
 
 export function LevelBadge({ level, children }: { level: string | null | undefined; children: ReactNode }) {
   return <Badge tone={levelTone(level) as Tone}>{children}</Badge>;
+}
+
+/** AA-1141 (WCAG 2.2 AA 1.4.1): a level is never said by colour alone. A short glyph with the level in words for
+ *  screen readers and as a tooltip, placed next to every value that is coloured by its level. */
+export function LevelGlyph({ level }: { level: string | null | undefined }) {
+  const t = useST();
+  const tone = levelTone(level);
+  if (tone !== "danger" && tone !== "warning") return null;
+  const word = tone === "danger" ? t("lvCrit") : t("lvWarn");
+  return (
+    <span role="img" aria-label={word} title={word} style={{ marginRight: 4, fontSize: "0.85em" }}>
+      {tone === "danger" ? "✖" : "▲"}
+    </span>
+  );
 }
 
 /** A colour for a value next to a level (ink when fine or unknown). */

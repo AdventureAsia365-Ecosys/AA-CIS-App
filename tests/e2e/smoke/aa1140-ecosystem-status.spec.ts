@@ -15,10 +15,12 @@
 import { test, expect, chromium } from '@playwright/test';
 import { ADMIN_STATE, baseUrl, installBypassRoute, isAdminRun } from './smoke-helpers';
 
-const SECTIONS = ['signals', 'apps', 'runtimes', 'resources', 'jobs', 'ai', 'cost', 'events', 'delivery'] as const;
+// AA-1141 (P1): + changes (What changed), forecast (capacity), anomaly (AI cost anomaly)
+const SECTIONS = ['signals', 'apps', 'runtimes', 'resources', 'jobs', 'ai', 'cost', 'events', 'delivery', 'changes',
+  'forecast', 'anomaly'] as const;
 const CARDS = ['status-verdict', 'status-apps-card', 'status-signals', 'status-services', 'status-jobs',
   'status-resources', 'status-cost', 'status-delivery', 'status-ai', 'status-events', 'status-sources',
-  'status-drill'] as const;
+  'status-drill', 'status-changes', 'status-forecast'] as const;
 const STATES = ['ok', 'unavailable', 'not_measured'];
 
 test.describe('AA-1140 — Ecosystem status', { tag: '@staff' }, () => {
@@ -139,6 +141,42 @@ test.describe('AA-1140 — Ecosystem status', { tag: '@staff' }, () => {
       expect(ai, 'AI estimate').not.toBeNull();
       expect(onBill, 'AI already on the AWS bill').not.toBeNull();
       expect(total, 'Total').toBe((aws ?? 0) + (ai as number) - (onBill as number));
+    } finally {
+      await context.close();
+    }
+  });
+
+  test('(g) AA-1141 P1: annotations, what changed, ack rights, freshness footer, saved views, refresh pause', async ({
+    browser }) => {
+    const context = await browser.newContext({ baseURL: baseUrl(), storageState: ADMIN_STATE,
+      viewport: { width: 1440, height: 900 } });
+    await installBypassRoute(context);
+    const page = await context.newPage();
+    try {
+      const statusResp = page.waitForResponse((r) => r.url().includes('/api/admin/overview/status'), { timeout: 45000 });
+      await page.goto('/admin/overview', { waitUntil: 'domcontentloaded' });
+      const body = await (await statusResp).json();
+      expect(typeof body.viewer?.can_ack).toBe('boolean');
+      expect(typeof body.acks?.rules?.reason_min_chars).toBe('number');
+      expect(Array.isArray(body.sections.signals.annotations)).toBe(true);
+      expect(body.pipelines.map((r: { key: string }) => r.key).sort()).toEqual(
+        ['delivery', 'digest', 'guards', 'sampler', 'schema_dump']);
+      await expect(page.getByTestId('status-ann-legend')).toBeVisible({ timeout: 30000 });
+      await expect(page.getByTestId('status-changes')).toBeVisible();
+      await expect(page.getByTestId('status-forecast')).toBeVisible();
+      await expect(page.getByTestId('status-pipelines')).toBeVisible();
+      await expect(page.getByTestId('status-refresh-chip')).toBeVisible();
+      await expect(page.getByTestId('status-verdict-title')).toHaveAttribute('aria-live', 'polite');
+      if (!body.viewer.can_ack) {
+        // a read-only identity (the E2E admin) or the business owner: no ack buttons anywhere
+        await expect(page.locator('[data-testid$="-ack-btn"]')).toHaveCount(0);
+      }
+      // the What changed type chip writes chg= into the URL
+      await page.getByTestId('status-chg-filter').getByRole('button').first().click();
+      await expect(page).toHaveURL(/chg=deploy/);
+      // the pause chip pauses auto refresh
+      await page.getByTestId('status-refresh-chip').getByRole('button').click();
+      await expect(page.getByTestId('status-refresh-chip')).toContainText(/Paused/);
     } finally {
       await context.close();
     }
