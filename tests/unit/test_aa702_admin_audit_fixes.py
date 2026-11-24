@@ -149,8 +149,13 @@ async def test_dashboard_model_usage_from_llm_call_log():
 def test_tenant_detail_cost_query_reads_llm_call_log():
     import inspect
     src = inspect.getsource(admin.get_tenant_details)
-    assert "FROM shared.llm_call_log" in src
-    assert "WHERE tenant_id = $1 OR ($2 AND tenant_id IS NULL)" in src
+    assert "conn.fetchval(TENANT_COST_TOTAL_SQL, tenant_id, is_internal)" in src
+    assert "conn.fetchval(TENANT_COST_WINDOW_SQL, tenant_id, is_internal, _cost_since, _now)" in src
+    # AA-838 (S291): the tenant rows and the internal NULL-tenant rows as two index-friendly branches, no OR
+    for sql in (admin.TENANT_COST_TOTAL_SQL, admin.TENANT_COST_WINDOW_SQL):
+        assert sql.count("FROM shared.llm_call_log") == 2 and "UNION ALL" in sql
+        assert "WHERE tenant_id = $1" in sql and "WHERE $2 AND tenant_id IS NULL" in sql
+        assert " OR " not in sql
 
 
 # ── 8. job dedup matches a NULL batch (AA-1024 A2: model_tier left the key) ─────────────────────────────

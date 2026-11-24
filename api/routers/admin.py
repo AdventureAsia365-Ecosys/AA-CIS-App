@@ -897,6 +897,29 @@ async def get_tenant_audit(
 
 # ── GET /admin/tenants/{id}/details — 4-tab detail view ─────────────────────
 
+# AA-702 / AA-718: a tenant's real LLM spend from shared.llm_call_log (same source as External Spend), all time and in
+# the rolling 30-day window [$3, $4). Internal work is logged both as NULL and as the aa_internal UUID, so the internal
+# tenant ($2 true) also counts the rows without a tenant. AA-838 (S291, C4.3 W48 finding 3): two disjoint branches
+# (tenant_id = $1 / tenant_id IS NULL, the second skipped unless $2) instead of `tenant_id = $1 OR ($2 AND tenant_id IS
+# NULL)`, whose OR kept the (tenant_id, created_at) index out and scanned the ledger (~13,000 blocks a call). Same
+# rows, same sum (a NULL-tenant row never equals $1).
+TENANT_COST_TOTAL_SQL = """
+    SELECT COALESCE(SUM(c.usd), 0) FROM (
+        SELECT SUM(cost_usd) AS usd FROM shared.llm_call_log WHERE tenant_id = $1
+        UNION ALL
+        SELECT SUM(cost_usd) FROM shared.llm_call_log WHERE $2 AND tenant_id IS NULL
+    ) c
+"""
+TENANT_COST_WINDOW_SQL = """
+    SELECT COALESCE(SUM(c.usd), 0) FROM (
+        SELECT SUM(cost_usd) AS usd FROM shared.llm_call_log
+         WHERE tenant_id = $1 AND created_at >= $3 AND created_at < $4
+        UNION ALL
+        SELECT SUM(cost_usd) FROM shared.llm_call_log
+         WHERE $2 AND tenant_id IS NULL AND created_at >= $3 AND created_at < $4
+    ) c
+"""
+
 
 @router.get("/tenants/{tenant_id}/details", summary="Tenant 4-tab detail view", dependencies=TENANT_SCOPED)
 async def get_tenant_details(
@@ -974,22 +997,13 @@ async def get_tenant_details(
 
         # AA-702: real LLM spend from shared.llm_call_log (same source as External Spend). The old
         # pipeline_runs sum only saw the legacy S1 batch path, so tenants showed $0.000. Internal
-        # work is logged both as NULL and as the aa_internal UUID.
-        total_cost = await conn.fetchval("""
-            SELECT COALESCE(SUM(cost_usd), 0)
-            FROM shared.llm_call_log
-            WHERE tenant_id = $1 OR ($2 AND tenant_id IS NULL)
-        """, tenant_id, is_internal)
+        # work is logged both as NULL and as the aa_internal UUID (TENANT_COST_TOTAL_SQL).
+        total_cost = await conn.fetchval(TENANT_COST_TOTAL_SQL, tenant_id, is_internal)
 
         # AA-718 bug 2: a windowed cost (rolling 30d, UTC) that reconciles with External Spend's
         # own 30-day window, alongside the all-time figure above. External Spend buckets by
         # created_at in [now-30d, now) over the same llm_call_log — matching that here.
-        cost_window = await conn.fetchval("""
-            SELECT COALESCE(SUM(cost_usd), 0)
-            FROM shared.llm_call_log
-            WHERE (tenant_id = $1 OR ($2 AND tenant_id IS NULL))
-              AND created_at >= $3 AND created_at < $4
-        """, tenant_id, is_internal, _cost_since, _now)
+        cost_window = await conn.fetchval(TENANT_COST_WINDOW_SQL, tenant_id, is_internal, _cost_since, _now)
 
         # v_tenant_monthly_usage has one row per tenant per billing_month;
         # ORDER BY DESC so we always get the current/most-recent month.

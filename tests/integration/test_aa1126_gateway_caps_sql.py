@@ -5,7 +5,7 @@ everything runs in a transaction that is rolled back."""
 import json
 import os
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import asyncpg
 import pytest
@@ -41,9 +41,11 @@ async def conn():
     c = await asyncpg.connect(DSN)
     tr = c.transaction()
     await tr.start()
+    ab.invalidate()                         # evaluate reads the median through the per-process cache (S291)
     try:
         yield c
     finally:
+        ab.invalidate()
         await tr.rollback()
         await c.close()
 
@@ -102,3 +104,105 @@ async def test_the_run_spend_of_a_job_an_eval_run_and_an_adhoc_stage(conn):
     await _row(conn, day=TODAY, hour=8, cost=4.0, stage="adhoc_aa1126_probe")      # before this process started
     ad = run_cap.Run("adhoc", "stage", "adhoc_aa1126_probe", stage="adhoc_aa1126_probe", since=_ts(TODAY, 9))
     assert await run_cap.read_spend(conn, ad) == pytest.approx(0.25)
+
+
+# ── AA-838 (S291, C4.3 W48 finding 3): the sargable reads return what the coalesce reads returned ─────────────────
+
+_OLD_APP = "coalesce(l.app, l.quality_signal ->> 'app', 'cis')"
+OLD_TODAY_SQL = f"""
+    SELECT coalesce(sum(l.cost_usd), 0)::float AS usd
+      FROM shared.llm_call_log l
+     WHERE l.created_at >= $1 AND {_OLD_APP} = $2
+"""
+OLD_BASELINE_SQL = f"""
+    WITH days AS (
+        SELECT generate_series($1::date, $2::date - 1, interval '1 day')::date AS day
+    ), rolled AS (
+        SELECT d.day, sum(d.cost_usd)::float AS usd
+          FROM shared.llm_call_daily d
+         WHERE d.day >= $1 AND d.day < $2 AND d.app = $3
+         GROUP BY 1
+    ), raw AS (
+        SELECT (l.created_at AT TIME ZONE 'UTC')::date AS day, coalesce(sum(l.cost_usd), 0)::float AS usd
+          FROM shared.llm_call_log l
+         WHERE l.created_at >= ($1::date::timestamp AT TIME ZONE 'UTC')
+           AND l.created_at < ($2::date::timestamp AT TIME ZONE 'UTC')
+           AND {_OLD_APP} = $3
+           AND NOT EXISTS (SELECT 1 FROM shared.llm_call_daily d
+                            WHERE d.day = (l.created_at AT TIME ZONE 'UTC')::date)
+         GROUP BY 1
+    )
+    SELECT coalesce(percentile_cont(0.5) WITHIN GROUP (ORDER BY coalesce(r.usd, w.usd, 0)), 0)::float AS median
+      FROM days
+      LEFT JOIN rolled r USING (day)
+      LEFT JOIN raw w USING (day)
+"""
+OLD_TENANT_COST_TOTAL_SQL = """
+    SELECT COALESCE(SUM(cost_usd), 0) FROM shared.llm_call_log WHERE tenant_id = $1 OR ($2 AND tenant_id IS NULL)
+"""
+OLD_TENANT_COST_WINDOW_SQL = """
+    SELECT COALESCE(SUM(cost_usd), 0) FROM shared.llm_call_log
+     WHERE (tenant_id = $1 OR ($2 AND tenant_id IS NULL)) AND created_at >= $3 AND created_at < $4
+"""
+APPS = ("cis", "crm", "tripplanner", "booking")
+
+
+async def _ledger_mix(c):
+    """Rows of every app shape on five days of February 2021: the app column, an old row with the app only in
+    quality_signal, an old row with neither (a CIS row), and a day already rolled up (its raw rows must not count)."""
+    for offset, cost in ((1, 1.25), (2, 2.5), (3, 0.75), (4, 4.0), (5, 3.0)):
+        day = date(2021, 2, 10 - offset)
+        await _row(c, day=day, hour=3, cost=cost, app="crm")
+        await _row(c, day=day, hour=4, cost=cost / 2, qs_app="crm")
+        await _row(c, day=day, hour=5, cost=cost * 3)                          # neither: cis
+        await _row(c, day=day, hour=6, cost=cost + 1, app="tripplanner")
+        await _row(c, day=day, hour=7, cost=0.5, app="cis", qs_app="crm")      # the column wins over quality_signal
+    await c.execute(
+        "INSERT INTO shared.llm_call_daily (day, app, tenant_id, stage, role, model, provider, account, is_shadow, "
+        "calls, fallback_calls, tokens_in, tokens_out, cost_usd, updated_at) VALUES "
+        "($1, 'crm', NULL, $2, 'writer', 'm-probe', 'bedrock', 'acc3', false, 3, 0, 30, 15, 6.5, now())",
+        date(2021, 2, 7), STAGE)
+    for hour, cost in ((1, 0.2), (8, 1.1), (9, 7.0)):
+        await _row(c, day=TODAY, hour=hour, cost=cost, app="crm" if hour != 9 else None, qs_app="crm" if hour == 8
+                   else None)
+
+
+@pytest.mark.asyncio
+async def test_sargable_today_and_baseline_reads_equal_the_coalesce_reads(conn):
+    await _ledger_mix(conn)
+    for app in APPS:
+        for since in (_ts(TODAY, 0), _ts(TODAY, 5)):
+            old = await conn.fetchval(OLD_TODAY_SQL, since, app)
+            assert await conn.fetchval(ab.TODAY_SQL, since, app) == pytest.approx(old)
+        for days in (1, 3, 5, 7):
+            start, end = ab.baseline_window(TODAY, days)
+            old = await conn.fetchval(OLD_BASELINE_SQL, start, end, app)
+            assert await conn.fetchval(ab.BASELINE_SQL, start, end, app) == pytest.approx(old), (app, days)
+    # the fixture reaches every branch: an old quality_signal row, an old CIS row, a rolled day
+    assert await ab.read_spend_since(conn, "crm", _ts(TODAY, 0)) == pytest.approx(1.3)
+    assert await ab.read_spend_since(conn, "cis", _ts(TODAY, 0)) == pytest.approx(7.0)
+    assert await ab.read_median(conn, "crm", TODAY, 5) == pytest.approx(4.5)    # [1.875, 3.75, 6.5, 6, 4.5]
+
+
+@pytest.mark.asyncio
+async def test_tenant_cost_sums_in_two_branches_equal_the_or_sums(conn):
+    from api.routers import admin
+    tenant, internal = "0aa83800-0000-4000-8000-000000000001", "00000000-0000-0000-0000-000000000001"
+    for t in (tenant, internal):
+        await conn.execute("INSERT INTO shared.tenants (tenant_id, name, slug, posts_per_week) VALUES ($1, $2, $3, 3) "
+                           "ON CONFLICT (tenant_id) DO NOTHING", t, f"aa838 {t[:8]}", f"aa838-{t[:8]}")
+    rows = ((tenant, 1.5, 1), (tenant, 2.25, 40), (internal, 0.75, 2), (None, 3.0, 3), (None, 5.0, 45))
+    for tid, cost, days_ago in rows:
+        await conn.execute(
+            "INSERT INTO shared.llm_call_log (id, tenant_id, stage, role, model, cost_usd, quality_signal, created_at) "
+            "VALUES (gen_random_uuid(), $1, $2, 'writer', 'm-probe', $3, '{}'::jsonb, $4)",
+            tid, STAGE, cost, _ts(TODAY, 12) - timedelta(days=days_ago))
+    since, until = _ts(TODAY, 12) - timedelta(days=30), _ts(TODAY, 12)
+    for tid in (tenant, internal):
+        for is_internal in (False, True):
+            old = await conn.fetchval(OLD_TENANT_COST_TOTAL_SQL, tid, is_internal)
+            new = await conn.fetchval(admin.TENANT_COST_TOTAL_SQL, tid, is_internal)
+            assert new == old
+            old = await conn.fetchval(OLD_TENANT_COST_WINDOW_SQL, tid, is_internal, since, until)
+            new = await conn.fetchval(admin.TENANT_COST_WINDOW_SQL, tid, is_internal, since, until)
+            assert new == old

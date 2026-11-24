@@ -196,8 +196,50 @@ def test_the_watch_run_alerts_every_tripped_app_once(monkeypatch):
     rows = [30.0, 1.0, 60.0, 1.0, 0.0, 0.0]                             # (today, median): cis, tripplanner, crm
     assert asyncio.run(anomaly_breaker.alert_tripped(_Conn(list(rows)), now=NOW)) == ["cis", "tripplanner"]
     assert rung == [("anomaly:cis", True), ("anomaly:tripplanner", False)]
-    assert asyncio.run(anomaly_breaker.alert_tripped(_Conn(list(rows)), now=NOW)) == ["cis", "tripplanner"]
+    # the next run reads today's spend only: the medians are cached per process, app and UTC day (AA-838, S291)
+    again = _Conn([30.0, 60.0, 0.0])
+    assert asyncio.run(anomaly_breaker.alert_tripped(again, now=NOW)) == ["cis", "tripplanner"]
+    assert len(again.sql) == 3 and all("llm_call_daily" not in sql for sql, _ in again.sql)
     assert len(rung) == 2                                                # once per trip window in this process
+    anomaly_breaker.invalidate()
+
+
+def test_the_watch_reads_each_baseline_once_per_utc_day(monkeypatch):
+    """AA-838 (S291, C4.3 W48 finding 3): the baseline query ran ~300 times a day because ``evaluate`` (each 15-min
+    watch run x 3 apps, the admin page) skipped the per-process cache. Now 96 watch runs of one day read it once per
+    app; the next UTC day reads it again; the call path shares the same cache entry."""
+    _settings(monkeypatch, anomaly_mode="alert", multiple=4, floor=25, days=14)
+
+    async def no_profiles(conn):
+        return {}
+    from shared.llm_client import app_profile
+    monkeypatch.setattr(app_profile, "read_all", no_profiles)
+    anomaly_breaker.invalidate()
+
+    class _Ledger:
+        def __init__(self):
+            self.baseline = self.today = 0
+
+        async def fetchval(self, sql, *args):
+            if "llm_call_daily" in sql:
+                self.baseline += 1
+                return 2.0
+            self.today += 1
+            return 1.0
+
+    conn = _Ledger()
+    for _ in range(96):
+        asyncio.run(anomaly_breaker.verdicts(conn, now=NOW))
+    assert conn.baseline == 3 and conn.today == 3 * 96
+    from datetime import timedelta
+    asyncio.run(anomaly_breaker.verdicts(conn, now=NOW + timedelta(days=1)))
+    assert conn.baseline == 6
+    # the call path finds the median the watch cached: it loads today's spend only (need_median False)
+    seen = []
+    monkeypatch.setattr(anomaly_breaker, "loader",
+                        lambda app, since, today, days, need_median: seen.append(need_median) or (1.0, None))
+    v = anomaly_breaker.current("cis", NOW + timedelta(days=1))
+    assert seen == [False] and v.median_usd == 2.0
     anomaly_breaker.invalidate()
 
 

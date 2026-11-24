@@ -19,7 +19,8 @@ breaker, so only they are refused in mode enforce; TripPlanner and the CRM show 
 ("over the line, not enforced for this app yet") until their own gateways call it (a follow-up lane). Every app's
 trip still rings the bell: ``alert_tripped`` runs in each ``llm_route_watch`` watch run (every 15 min), not only on
 CIS calls (review S283). Reads are
-cached per process (the baseline per app and UTC day, today's spend ``SPEND_TTL_SECONDS``). Never fails closed: a
+cached per process (the baseline per app and UTC day, on the call path and in ``evaluate`` alike; today's spend
+``SPEND_TTL_SECONDS`` on the call path, fresh in ``evaluate``). Never fails closed: a
 read error leaves the breaker closed (logged), the same rule as the central and connection budgets.
 """
 from __future__ import annotations
@@ -44,14 +45,28 @@ SCOPE_PREFIX = "anomaly:"
 APPS = ("cis", "tripplanner", "crm")      # the apps with AI (AA-Booking has none)
 ENFORCED_APPS = ("cis",)                  # the apps whose gateway refuses on the breaker (this one); see the docstring
 
-# The app of a ledger row: the platform_cost rule (an old CIS row has no app).
+# The app of a ledger row: the platform_cost rule (an old CIS row has no app), coalesce(app, quality_signal ->> 'app',
+# 'cis'). AA-1126 / AA-838 (S291, C4.3 W48 finding 3): the reads below apply it as two disjoint branches, the rows with
+# an app (`l.app = $n`, a plain column test an index on app can serve) UNION ALL the old rows without one
+# (`l.app IS NULL AND coalesce(quality_signal ->> 'app', 'cis') = $n`), instead of the coalesce over every row of the
+# window. Same rows, same sums (tests/integration/test_aa1126_gateway_caps_sql.py compares them with the expression).
 _APP_EXPR = "coalesce(l.app, l.quality_signal ->> 'app', 'cis')"
+
+
+def _app_rows_sql(columns: str, window: str, app: str) -> str:
+    """The ledger rows of app ``app`` (a parameter) inside ``window`` (a predicate on ``l``), as two branches."""
+    return (f"SELECT {columns} FROM shared.llm_call_log l WHERE l.app = {app} AND {window}\n"
+            f"        UNION ALL\n"
+            f"        SELECT {columns} FROM shared.llm_call_log l WHERE l.app IS NULL\n"
+            f"           AND coalesce(l.quality_signal ->> 'app', 'cis') = {app} AND {window}")
+
+
 TODAY_SQL = f"""
-    SELECT coalesce(sum(l.cost_usd), 0)::float AS usd
-      FROM shared.llm_call_log l
-     WHERE l.created_at >= $1 AND {_APP_EXPR} = $2
+    SELECT coalesce(sum(a.cost_usd), 0)::float AS usd
+      FROM ({_app_rows_sql("l.cost_usd", "l.created_at >= $1", "$2")}) a
 """
-# $1 / $2 = the UTC dates [start, end), $3 = the app. A day is either rolled up or raw, never both (platform_cost).
+# $1 / $2 = the UTC dates [start, end), $3 = the app. A day is either rolled up or raw, never both (platform_cost): a
+# raw day is kept only when shared.llm_call_daily has no row for it (tested per day after the GROUP BY, not per row).
 BASELINE_SQL = f"""
     WITH days AS (
         SELECT generate_series($1::date, $2::date - 1, interval '1 day')::date AS day
@@ -60,15 +75,18 @@ BASELINE_SQL = f"""
           FROM shared.llm_call_daily d
          WHERE d.day >= $1 AND d.day < $2 AND d.app = $3
          GROUP BY 1
-    ), raw AS (
-        SELECT (l.created_at AT TIME ZONE 'UTC')::date AS day, coalesce(sum(l.cost_usd), 0)::float AS usd
-          FROM shared.llm_call_log l
-         WHERE l.created_at >= ($1::date::timestamp AT TIME ZONE 'UTC')
-           AND l.created_at < ($2::date::timestamp AT TIME ZONE 'UTC')
-           AND {_APP_EXPR} = $3
-           AND NOT EXISTS (SELECT 1 FROM shared.llm_call_daily d
-                            WHERE d.day = (l.created_at AT TIME ZONE 'UTC')::date)
+    ), raw_rows AS (
+        {_app_rows_sql("l.created_at, l.cost_usd",
+                       "l.created_at >= ($1::date::timestamp AT TIME ZONE 'UTC') "
+                       "AND l.created_at < ($2::date::timestamp AT TIME ZONE 'UTC')", "$3")}
+    ), raw_days AS (
+        SELECT (w.created_at AT TIME ZONE 'UTC')::date AS day, coalesce(sum(w.cost_usd), 0)::float AS usd
+          FROM raw_rows w
          GROUP BY 1
+    ), raw AS (
+        SELECT g.day, g.usd
+          FROM raw_days g
+         WHERE NOT EXISTS (SELECT 1 FROM shared.llm_call_daily d WHERE d.day = g.day)
     )
     SELECT coalesce(percentile_cont(0.5) WITHIN GROUP (ORDER BY coalesce(r.usd, w.usd, 0)), 0)::float AS median
       FROM days
@@ -159,14 +177,33 @@ async def read_median(conn, app: str, today: date, days: int) -> float:
     return float(await conn.fetchval(BASELINE_SQL, start, end, app) or 0.0)
 
 
+async def cached_median(conn, app: str, today: date, days: int) -> float:
+    """The normal day of ``app`` through this process's baseline cache, the one the call path fills (key: app, UTC
+    date, days). The baseline days are whole UTC days before today, so the median cannot change until the day rolls
+    over (a rollup moves a day's rows into shared.llm_call_daily with the same sum). AA-838 (S291, C4.3 W48 finding 3):
+    ``evaluate`` read the median on every call, and the llm_route_watch run evaluates every app each 15 minutes (3 apps
+    x 96 runs = 288 baseline reads a day, the ~300 W48 saw) besides the admin page; it is now read once per process,
+    app and UTC day. No lock: a dict read / write is atomic, and ``_lock`` may be held by a sync loader thread."""
+    key = (app, today, days)
+    hit = _baseline.get(key)
+    if hit is not None:
+        return hit
+    median = await read_median(conn, app, today, days)
+    if len(_baseline) > 100:
+        _baseline.clear()
+    _baseline[key] = median
+    return median
+
+
 async def evaluate(conn, app: str, *, mode: str, policy: caps_settings.AnomalyPolicy,
                    profile: Optional[app_profile.AppProfile] = None, now: Optional[datetime] = None) -> Verdict:
-    """The verdict of ``app`` now, read through ``conn`` (no cache). Used by the admin status and by the loaders."""
+    """The verdict of ``app`` now, read through ``conn``: today's spend fresh, the median through the per-process
+    baseline cache (``cached_median``). Used by the admin status, the reset and the watch run."""
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     reset_at = getattr(profile, "anomaly_reset_at", None)
     since = window_start(now, reset_at)
     spent = await read_spend_since(conn, app, since)
-    median = await read_median(conn, app, now.date(), policy.baseline_days)
+    median = await cached_median(conn, app, now.date(), policy.baseline_days)
     return verdict(app, mode, policy, since=since, spent_usd=spent, median_usd=median, reset_at=reset_at,
                    reset_by=getattr(profile, "anomaly_reset_by", None))
 
