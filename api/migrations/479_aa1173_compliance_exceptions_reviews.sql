@@ -1,4 +1,4 @@
--- Migration 478: AA-1173 (S290, compliance readiness phases 2-3; tech lead decisions of the S287 decision page, root
+-- Migration 479: AA-1173 (S290, compliance readiness phases 2-3; tech lead decisions of the S287 decision page, root
 -- docs/audits/2026-11-21-S287-compliance-tracking/README.md sections 4 C.2 / C.3 / C.5 and 5 phases 2-3) — the
 -- management layer of Platform › Compliance: exceptions with maker-checker and an expiry, the monthly posture review
 -- record, the sealed-object reference on every evidence row, and the cis.compliance.* settings of the new evidence
@@ -42,7 +42,7 @@
 --        cis.compliance.review_max_age_days            int days 1-400, default 40: the newest monthly review must be at
 --                                                      most this old for the review check to pass
 --      Score-changing keys are maker_checker (as in 466 / 471); enforced (the code PR reads them).
---   6. A post-check, then register 478.
+--   6. A post-check, then register 479.
 --
 -- Behaviour on apply. None for running code: two new empty tables, two nullable columns nobody writes yet, config rows
 -- nobody reads until the code PR (Platform › Compliance, tabs Exceptions and Reviews; the evidence store reader; the
@@ -51,12 +51,12 @@
 -- Class: CONTRACT (root ADR 0017 decision 3; no migrate directive line): ALTER TABLE ADD COLUMN / ADD CONSTRAINT on an
 -- existing table, trigger functions, config rows INSERTed into shared.setting_definition and a DO post-check are outside
 -- the expand set. On Dev: Infra Migration Apply once every job table is idle (root ADR 0017a). MIG-4: this
--- migration-only PR, then the code PR (readiness raised to 478 there). Retention rows (DM-7.1) for compliance.exception
+-- migration-only PR, then the code PR (readiness raised to 479 there). Retention rows (DM-7.1) for compliance.exception
 -- and compliance.review: root data standards Part B section 7, merged before the Infra copy.
 --
--- Number. 477 is the highest on main on 24/11/2026, so this is 478 (the next free number; the S290 lanes that had
--- reserved 478-480 did not land first). If the owner main max + 1 differs at merge,
--- renumber everywhere (git grep '478_' and '478' in this repo: this file, tests/integration/test_aa1173_migration_478.py,
+-- Number. 477 is the highest on main on 24/11/2026 and 478 belongs to AA-1148 (S290 lane, merged first), so this is
+-- 479 (MIG-4 chain: it merges after 478 is on main). If the owner main max + 1 differs at merge,
+-- renumber everywhere (git grep '479_' and '479' in this repo: this file, tests/integration/test_aa1173_migration_479.py,
 -- api/core/readiness.py in the code PR, docs/implementation-notes/AA-1173.md; the root data standards rows).
 --
 -- Locks. compliance.evidence (a few thousand rows): ADD COLUMN without default (catalog only), two ADD CONSTRAINT CHECK
@@ -117,10 +117,10 @@ CREATE TABLE IF NOT EXISTS compliance.exception (
 CREATE INDEX IF NOT EXISTS exception_subject_idx ON compliance.exception (subject_kind, subject_ref);
 CREATE INDEX IF NOT EXISTS exception_status_idx ON compliance.exception (status, expires_on);
 COMMENT ON TABLE compliance.exception IS
-    'AA-1173 (CIS 478): accepted-risk exceptions of Platform > Compliance (a control, a check or a vulnerability), '
+    'AA-1173 (CIS 479): accepted-risk exceptions of Platform > Compliance (a control, a check or a vulnerability), '
     'maker-checker with an expiry. Transition-only (trigger); expired is derived from expires_on.';
 COMMENT ON COLUMN compliance.exception.self_approved IS
-    'AA-1173 (478): the proposer approved it while cis.settings.two_person_approval was off (tech lead S287 Q13).';
+    'AA-1173 (479): the proposer approved it while cis.settings.two_person_approval was off (tech lead S287 Q13).';
 
 CREATE OR REPLACE FUNCTION compliance.exception_guard() RETURNS trigger
     LANGUAGE plpgsql AS $fn$
@@ -178,7 +178,7 @@ CREATE TABLE IF NOT EXISTS compliance.review (
     CONSTRAINT review_actor_check CHECK (char_length(reviewed_by) BETWEEN 1 AND 120)
 );
 COMMENT ON TABLE compliance.review IS
-    'AA-1173 (CIS 478): the Security posture monthly review record (one per month): the numbers the page showed, the '
+    'AA-1173 (CIS 479): the Security posture monthly review record (one per month): the numbers the page showed, the '
     'reviewer''s notes and actions. Append-only (trigger).';
 
 CREATE OR REPLACE FUNCTION compliance.review_append_only() RETURNS trigger
@@ -206,9 +206,9 @@ ALTER TABLE compliance.evidence DROP CONSTRAINT IF EXISTS evidence_object_sha256
 ALTER TABLE compliance.evidence ADD CONSTRAINT evidence_object_sha256_check
     CHECK (object_sha256 IS NULL OR object_sha256 ~ '^[0-9a-f]{64}$');
 COMMENT ON COLUMN compliance.evidence.object_key IS
-    'AA-1173 (478): the key of the sealed bundle in the Object Lock evidence bucket this row came from (no bucket name).';
+    'AA-1173 (479): the key of the sealed bundle in the Object Lock evidence bucket this row came from (no bucket name).';
 COMMENT ON COLUMN compliance.evidence.object_sha256 IS
-    'AA-1173 (478): SHA-256 of that bundle, as listed in its source''s hash-chained manifest.';
+    'AA-1173 (479): SHA-256 of that bundle, as listed in its source''s hash-chained manifest.';
 
 -- 4. Grants ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 GRANT SELECT, INSERT, UPDATE, DELETE ON compliance.exception, compliance.review TO cis_app;
@@ -248,25 +248,25 @@ BEGIN
      WHERE has_table_privilege('aa_app_user', t, 'SELECT, INSERT, UPDATE, DELETE')
         OR NOT has_table_privilege('cis_app', t, 'SELECT, INSERT, UPDATE');
     IF bad IS NOT NULL THEN
-        RAISE EXCEPTION 'migration 478: grants are not cis_app DML only on %', bad;
+        RAISE EXCEPTION 'migration 479: grants are not cis_app DML only on %', bad;
     END IF;
     IF (SELECT count(*) FROM information_schema.columns
          WHERE table_schema = 'compliance' AND table_name = 'evidence'
            AND column_name IN ('object_key', 'object_sha256')) <> 2 THEN
-        RAISE EXCEPTION 'migration 478: compliance.evidence lacks object_key / object_sha256';
+        RAISE EXCEPTION 'migration 479: compliance.evidence lacks object_key / object_sha256';
     END IF;
     IF (SELECT count(*) FROM shared.setting_definition
          WHERE key IN ('cis.compliance.validity_hours.aws_nightly', 'cis.compliance.validity_hours.prowler_weekly',
                        'cis.compliance.prowler_critical_high_max', 'cis.compliance.exception_max_days',
                        'cis.compliance.review_max_age_days')
            AND guide IS NOT NULL) <> 5 THEN
-        RAISE EXCEPTION 'migration 478: the five cis.compliance.* settings are not all seeded with a guide';
+        RAISE EXCEPTION 'migration 479: the five cis.compliance.* settings are not all seeded with a guide';
     END IF;
 END
 $check$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('478', now(), 'AA-1173: compliance exceptions (maker-checker, expiry), monthly posture reviews, sealed object on evidence, five cis.compliance.* settings')
+VALUES ('479', now(), 'AA-1173: compliance exceptions (maker-checker, expiry), monthly posture reviews, sealed object on evidence, five cis.compliance.* settings')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

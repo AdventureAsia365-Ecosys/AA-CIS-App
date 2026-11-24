@@ -162,7 +162,7 @@ def test_score_settings_read_the_compliance_keys():
               "cis.compliance.retention_run_max_age_days": 3, "cis.compliance.retention_live_max_age_days": 7,
               "cis.compliance.consent_capture_max_age_days": 90,
               "cis.compliance.campaign_consent_violations_max": 0,
-              # AA-1173 (CIS 478)
+              # AA-1173 (CIS 479)
               "cis.compliance.validity_hours.aws_nightly": 48, "cis.compliance.validity_hours.prowler_weekly": 216,
               "cis.compliance.prowler_critical_high_max": 0, "cis.compliance.review_max_age_days": 40}
 
