@@ -130,3 +130,16 @@ async def test_new_request_tours_sql_returns_the_old_rows_on_every_branch(conn):
     assert (await l2._state(conn, v1))[0] == "served" and (await l2._state(conn, raw)) == (None, None)
     # and the module helper reads the same
     assert await tlv.request_tours(conn, tenant, ids) == exp
+
+
+@pytest.mark.asyncio
+async def test_the_key_state_lookup_stays_a_one_key_read(conn):
+    """The plan guard of the speed-up: the key filter must be pushed into v_tour_liveness's GROUP BY (a filter on the
+    raw_tours scan inside the view), not left as a join filter over the whole view per request row, which is what
+    the planner does when the LATERAL subquery loses its OFFSET 0 fence (it flattens it back into a join)."""
+    tenant = str(uuid.uuid4())
+    rows = await conn.fetch("EXPLAIN " + tlv.REQUEST_TOURS_SQL.replace("$1::uuid[]", f"ARRAY['{uuid.uuid4()}']::uuid[]")
+                            .replace("$2::uuid", f"'{tenant}'::uuid"))
+    plan = "\n".join(r[0] for r in rows)
+    assert "Join Filter: (g.source_key" not in plan, plan
+    assert "= (COALESCE(rt_rq.source_group_id, rt_rq.tour_id))::text)" in plan, plan
