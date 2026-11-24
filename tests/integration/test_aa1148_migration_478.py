@@ -1,7 +1,8 @@
 """AA-1148 (S290) — CIS 478 on a real Postgres (conftest replays every migration): the three raw_tours columns (the
 supplier soft key, the entry origin with its CHECK and default, the structured facts that must be an object), the
-partial supplier index, the four content workspace settings equal to the compiled defaults with complete guides, and a
-re-run that changes nothing. Runs in a transaction that is rolled back; invented names only."""
+partial supplier index, the four content workspace limits and the three option lists (tour types, one-click items)
+equal to the compiled defaults with complete guides, and a re-run that changes nothing. Runs in a transaction that
+is rolled back; invented names only."""
 import json
 import os
 import sys
@@ -89,6 +90,27 @@ async def test_the_settings_are_the_compiled_defaults(conn):
         assert (row["area"], row["scope_kind"], row["approval"]) == ("content", "platform", "single")
         assert row["env_override"] is None and row["enforced"] is True and row["guided"] is True
         assert row["label"] == d.label and row["description"] == d.description
+
+
+@pytest.mark.asyncio
+async def test_the_option_lists_are_admin_data_with_the_compiled_defaults(conn):
+    expected = {policy.TOUR_TYPES_KEY: "json", policy.QUICK_INCLUSIONS_KEY: "list",
+                policy.QUICK_EXCLUSIONS_KEY: "list"}
+    for key, value_type in expected.items():
+        row = await conn.fetchrow(ROW, key)
+        assert row is not None, key
+        d = settings.definition(key)
+        assert json.loads(row["d"]) == d.default_value and row["value_type"] == value_type == d.value_type
+        assert (row["area"], row["scope_kind"], row["approval"]) == ("content", "platform", "single")
+        assert row["env_override"] is None and row["enforced"] is True and row["guided"] is True
+    types = policy.clean_tour_types(settings.definition(policy.TOUR_TYPES_KEY).default_value)
+    assert [t["code"] for t in types] == ["private", "join_in"]
+    assert policy.clean_items(settings.definition(policy.QUICK_INCLUSIONS_KEY).default_value)
+    assert policy.clean_items(settings.definition(policy.QUICK_EXCLUSIONS_KEY).default_value)
+    # The trigger refuses a value of the wrong type (a list setting given an object).
+    probe = await conn.fetchval("SELECT shared.setting_value_problem('{\"a\": 1}'::jsonb, d) AS ok "
+                                "FROM shared.setting_definition d WHERE d.key = $1", policy.QUICK_INCLUSIONS_KEY)
+    assert probe == "value must be a list"
 
 
 @pytest.mark.asyncio
