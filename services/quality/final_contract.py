@@ -103,6 +103,8 @@ EXITS: dict[str, dict[str, tuple[str, ...]]] = {
         "services/content_generation/s1_recompose_store.py::_default_publish": ("recompose",),
         # the review approve (also the legacy Step Functions branch that does not publish here)
         "api/routers/v1_pipeline.py::approve_review": ("approve",),
+        # its publish (AA-1148): process_export with exit approve and the review row of the expected refusals
+        "api/routers/admin_pipeline/_publish.py::approve_export": ("approve",),
     },
     T2: {
         "services/jobs/t2_rewrite_job.py::_rewrite_and_save": ("done",),
