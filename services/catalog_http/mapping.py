@@ -9,7 +9,11 @@ Field sources (every name from the live schema reference, root docs/architecture
   ``country``, ``duration_days``, ``activities``, ``inclusions``, ``exclusions``, ``updated_at``).
 - ``days``: ``catalog.v_tour_day`` rows (``day_number``, ``title``, ``body``); each day's ``places`` are the
   ``catalog.v_tour_place`` rows of that ``day_number`` that resolved to a destination (``destination_id``,
-  ``destination_name``, ``country``, ``lat``, ``lng``, ``precision``), in ``position`` order.
+  ``destination_name``, ``country``, ``lat``, ``lng``, ``precision``), in ``position`` order. Each day's
+  ``overnight_destination_id`` (contract 1.4, AA-1152) is ``catalog.v_tour_day_route.overnight_destination_id`` of the
+  row whose ``day_index`` is that ``day_number`` (the place pipeline numbers the days like the itinerary, the same
+  join v_tour_place makes on ``geo.tour_place.day_index``), else null. It is the value TripPlanner's day cards read
+  (stale rows included, as there), and it may be a place that is not among the day's ``places``.
 - ``facets``: activities from ``v_tour.activities`` (source JSON) and ``catalog.v_tour_component.activity``;
   intensity = the highest ``v_tour_component.intensity_level`` (graph enum leisurely / moderate / active /
   strenuous mapped to the contract's easy / moderate / challenging / strenuous).
@@ -229,8 +233,20 @@ def _place(row: Mapping[str, Any], tour_code: Optional[str]) -> dict:
     }
 
 
+def overnights(route_rows: Iterable[Mapping[str, Any]]) -> dict[int, str]:
+    """{day number: overnight destination id} from ``catalog.v_tour_day_route`` rows; a row without a destination or
+    a day number is skipped, and a repeated day keeps its first destination in id order (never expected: the view
+    has one row per tour day)."""
+    out: dict[int, str] = {}
+    rows = [r for r in route_rows if r.get("overnight_destination_id") is not None and r.get("day_index") is not None]
+    for row in sorted(rows, key=lambda r: (int(r["day_index"]), str(r["overnight_destination_id"]))):
+        out.setdefault(int(row["day_index"]), str(row["overnight_destination_id"]))
+    return out
+
+
 def _days(day_rows: Iterable[Mapping[str, Any]], place_rows: Iterable[Mapping[str, Any]],
-          tour_code: Optional[str]) -> list[dict]:
+          tour_code: Optional[str], route_rows: Iterable[Mapping[str, Any]] = ()) -> list[dict]:
+    nights = overnights(route_rows)
     by_day: dict[int, list[Mapping[str, Any]]] = {}
     for row in place_rows:
         if row.get("destination_id") is None or row.get("day_number") is None:
@@ -257,19 +273,21 @@ def _days(day_rows: Iterable[Mapping[str, Any]], place_rows: Iterable[Mapping[st
             "description": body or None,
             "time_zone": places[-1]["time_zone"] if places else tour_zone,
             "places": places,
+            "overnight_destination_id": nights.get(day_no),
         })
     return days
 
 
 def tour_body(tour: Mapping[str, Any], *, days: Iterable[Mapping[str, Any]] = (),
               places: Iterable[Mapping[str, Any]] = (), photos: Iterable[Mapping[str, Any]] = (),
-              components: Iterable[Mapping[str, Any]] = (), photo_base: str) -> Optional[dict]:
+              components: Iterable[Mapping[str, Any]] = (), routes: Iterable[Mapping[str, Any]] = (),
+              photo_base: str) -> Optional[dict]:
     """The contract ``Tour`` for one live catalog tour, or None when its country has no ISO code (the contract
     requires one; never expected: raw_tours.country is constrained to the AA list)."""
     code = country_code(tour.get("country"))
     if not code:
         return None
-    day_list = _days(days, places, code)
+    day_list = _days(days, places, code, routes)
     duration = tour.get("duration_days")
     if not isinstance(duration, int) or duration < 1:
         duration = max((d["day_no"] for d in day_list), default=1)

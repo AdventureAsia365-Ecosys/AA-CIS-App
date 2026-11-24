@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: catalog.http.v1 (AA-CIS-App → AA-Partner CRM, published tour content and AA-authored content)
-  version: "1.3"
+  version: "1.4"
   description: >-
     Read-only HTTP view of CIS published content for the partner CRM (root ADR 0010 decision 4), because the CRM
     holds no grant on the catalog schema (root ADR 0008a decision 1). Two parts: (1) published tours with days,
@@ -45,10 +45,17 @@ info:
     a photo changed after the last text publish when 359 lands (the CRM re-reads those tours once); after that they
     move only with a Master publish. A consumer that copies the tour text keeps the mark with it; a 1.2 consumer
     may ignore the field.
+    v1.4 (AA-1152, additive): `TourDay.overnight_destination_id` is the CIS destination where the travellers sleep
+    after that day (catalog.v_tour_day_route.overnight_destination_id: the night's place as the CIS place pipeline
+    resolved it, the same value TripPlanner reads for its day cards), or null when CIS has no usable overnight place
+    for the day (none resolved yet, a last day without a night, or a place CIS hides). It may be a place that is not
+    one of the day's `places` (a night away from the day's stops) and is read with `getDestination` like a place
+    id. The key is on every day, so `content_hash` changes once for every tour when 1.4 ships (the CRM re-reads
+    each tour once); a 1.3 consumer may ignore the field.
   x-aa-contract: catalog.http.v1
   x-aa-producer: AA-CIS-App
   x-aa-consumers: [AA-Partner]
-  x-aa-issues: [AA-928, AA-976, AA-977, AA-1040]
+  x-aa-issues: [AA-928, AA-976, AA-977, AA-1040, AA-1152]
 servers:
   - url: /catalog/v1
 security:
@@ -327,6 +334,12 @@ components:
         places:
           type: array
           items: {$ref: "#/components/schemas/Place"}
+        overnight_destination_id:
+          type: [string, "null"]
+          maxLength: 64
+          description: >-
+            v1.4: the CIS destination where the travellers sleep after this day (a Destination id, read with
+            getDestination), null when CIS has none for the day. May differ from every id in `places`.
     Exclusion:
       type: object
       additionalProperties: false

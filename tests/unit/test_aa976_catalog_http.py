@@ -192,7 +192,7 @@ def test_facets_intensity_is_the_highest_component_level():
 def _body(views, sid=SID_A):
     d = views.details[sid]
     return mapping.tour_body(views.tours[sid], days=d["days"], places=d["places"], photos=d["photos"],
-                             components=d["components"], photo_base=BASE)
+                             components=d["components"], routes=d["routes"], photo_base=BASE)
 
 
 def test_tour_body_days_places_and_time_zones(views):
@@ -205,7 +205,7 @@ def test_tour_body_days_places_and_time_zones(views):
     assert {p["time_zone"] for p in day2["places"]} == {"Asia/Ho_Chi_Minh"}
     assert day2["time_zone"] == "Asia/Ho_Chi_Minh"
     assert body["days"][2] == {"day_no": 3, "title": "Depart", "description": None, "time_zone": "Asia/Ho_Chi_Minh",
-                               "places": []}
+                               "places": [], "overnight_destination_id": None}
     assert body["inclusions"] == ["Guide", "Boat cruise", "Breakfast daily"]
     assert [e["code"] for e in body["exclusions"]] == ["international_flights", "entrance_local", "tips", "visa"]
     assert body["facets"] == {"activities": ["cycling", "food tour", "kayaking"], "intensity": "challenging"}
@@ -350,7 +350,7 @@ def test_get_tour_served_with_etag_and_cache_headers(client, issuer, views):
     assert views.readonly == [True] and views.isolation == ["repeatable_read"]
     assert any("set_config('app.tenant_id', '', true)" in s for s in views.executed)
     details = [(sql, args) for sql, args in views.sql if sql != reader.GET_TOUR_SQL]
-    assert len(details) == 4
+    assert len(details) == 5        # days, places, photos, components, day routes (contract 1.4)
     assert all("tour_id = ANY($1::uuid[])" in sql and "source_id" not in sql.split("WHERE")[1] for sql, _ in details)
     assert all(args == ([tour_id_of(SID_A)],) for _, args in details)
 
@@ -431,7 +431,7 @@ def test_list_items_carry_the_tour_content_hash(client, issuer):
 def test_list_reads_details_once_per_page_with_any(client, issuer, views):
     client.get("/catalog/v1/tours", headers=_auth(issuer))
     detail_sql = [sql for sql, _ in views.sql if sql != reader.LIST_TOURS_SQL]
-    assert len(detail_sql) == 4 and all(sql.endswith("tour_id = ANY($1::uuid[])") for sql in detail_sql)
+    assert len(detail_sql) == 5 and all(sql.endswith("tour_id = ANY($1::uuid[])") for sql in detail_sql)
 
 
 def test_list_filters(client, issuer):

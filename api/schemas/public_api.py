@@ -125,7 +125,7 @@ class AccountActivityPage(BaseModel):
 # ── catalog.http.v1 (AA-976) — documentation only ──────────────────────────────
 # The /catalog/v1 handlers (api/routers/catalog_http.py) return their own JSONResponse (ETag, Cache-Control, 304),
 # so these models are declared with ``responses={200: {"model": ...}}`` and never validate or filter a body. They
-# mirror the root contract docs/contracts/catalog.http.v1.openapi.yaml (v1.3), which stays the source of truth (its
+# mirror the root contract docs/contracts/catalog.http.v1.openapi.yaml (v1.4), which stays the source of truth (its
 # test: tests/unit/test_aa976_catalog_http_contract.py). Prefixed ``Catalog`` so no other CIS schema name collides.
 
 class _CatalogModel(BaseModel):
@@ -164,6 +164,8 @@ class CatalogTourDay(_CatalogModel):
     description: Optional[str] = None
     time_zone: Optional[str] = None
     places: List[CatalogPlace]
+    # contract 1.4 (AA-1152): where the travellers sleep after the day (a destination id), null when CIS has none
+    overnight_destination_id: Optional[str] = None
 
 
 class CatalogExclusion(_CatalogModel):
