@@ -3083,6 +3083,33 @@ erasure drill age, retention run age and live run age, consent capture age, camp
 applicability review age). Refresh evidence reports its counts (toast and a status line): success only when the file
 was read and every source collected; nothing published or a skipped source is a warning with a plain reason.
 
+**Compliance phases 2-3 (AA-1173, CIS 481).** *Sealed evidence:* the collectors (root `compliance-evidence.yml` daily,
+AA-CIS-Infra `compliance-aws.yml` nightly AWS read-only checks and weekly Prowler) assume the role
+`aa-cis-<env>-compliance-evidence` and write write-once objects into the Object Lock evidence bucket (AA-CIS-Infra
+`accounts/aa365/compliance_evidence.tf`: GOVERNANCE, retention a variable, bypass / retention change / delete denied to
+every principal, a PutObject without `If-None-Match: *` refused): `evidence/<source>/bundles|raw|manifest/<yyyy>/<mm>/<dd>/`,
+one manifest per run that lists the SHA-256 of every object and links the previous manifest of the source (hash chain;
+writer: root and Infra `tools/compliance/seal.py`). `api/services/compliance_store.py` reads the newest manifest of
+`root_daily`, `aws_nightly` and `prowler_weekly` (this month, else last month), checks the bundle and the chain link
+(a mismatch = state `broken`, nothing ingested, error log) and the rows carry `object_key` / `object_sha256`; the
+docs reader file is still read after it (unique key: no duplicate). Bucket name: `COMPLIANCE_EVIDENCE_BUCKET`, else
+`aa-cis-dev-compliance-evidence-<caller account>` (no ID in the repo). *DB checks:* job kind `compliance_db_checks`
+(`services/jobs/compliance_db_checks_job.py`, daily from 03:00 UTC via the ops metrics sampler, switch
+`COMPLIANCE_DB_CHECKS`, background, deploy-gate exempt, $0) runs `compliance_db.collect`: the retention checks plus
+`db_rls_policies` / `db_grants` (the X2 RLS catalogue rules over the LIVE catalog of every app schema, pg_catalog reads
+only; `shared/compliance/rls_catalogue_rules.py` is a byte copy of `tests/integration/rls_catalogue_rules.py`, a unit
+test keeps them equal) and `monthly_review_recent`. `cis_db` is now a scheduled source (heartbeat); `prowler_weekly` is
+graded by its validity window only. *Management layer:* `compliance.exception` (subject control / check / vulnerability,
+reason, compensating control, risk, expiry; maker-checker: the proposer approves only while
+`cis.settings.two_person_approval` is off, recorded `self_approved`; the expiry is at most
+`cis.compliance.exception_max_days`, checked at proposal and approval; transition-only trigger) and `compliance.review`
+(one Security posture monthly review per month: the page's numbers + notes; append-only). An approved, unexpired
+exception never raises a score: the control keeps its state and shows "Accepted risk". Routes
+`GET|POST /admin/platform/compliance/exceptions`, `POST …/exceptions/{id}/approve|reject|revoke`,
+`GET|POST …/reviews` (compliance.read / .write; writes need a verified Cognito sign-in, not E2E, not view-as). Tabs
+Exceptions and Reviews (`GovernanceTabs.tsx`, `governance.messages.ts`). Settings (CIS 481): validity of `aws_nightly`
+and `prowler_weekly`, `prowler_critical_high_max`, `exception_max_days`, `review_max_age_days`.
+
 **Platform apps, audit and cost (AA-884).** Router `api/routers/admin_platform_ops.py` (read only, admin-only POLICY
 entries; no deploy/scale button, no AWS/Vercel/GitHub write token):
 - `GET /admin/platform/apps[/{app_id}]` (`ops.read`) — `api/services/platform_apps.py` `collect_apps()`: one card per
