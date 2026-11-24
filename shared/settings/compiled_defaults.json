@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql, 469_aa1171_ops_thresholds_and_recipient_topic.sql, 471_aa1174_compliance_obligations.sql, 472_aa1172_fact_instruction_guard.sql, 474_aa1160_tenant_crm_agency_marker.sql, 475_aa1140_ops_status_samples_and_thresholds.sql, 476_aa1152_tp_agency_price_stale_hours.sql, 477_aa1140_rds_free_storage_pct.sql, 478_aa1148_manual_tours_supplier_link.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql, 469_aa1171_ops_thresholds_and_recipient_topic.sql, 471_aa1174_compliance_obligations.sql, 472_aa1172_fact_instruction_guard.sql, 474_aa1160_tenant_crm_agency_marker.sql, 475_aa1140_ops_status_samples_and_thresholds.sql, 476_aa1152_tp_agency_price_stale_hours.sql, 477_aa1140_rds_free_storage_pct.sql, 478_aa1148_manual_tours_supplier_link.sql, 481_aa1173_compliance_exceptions_reviews.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -1094,6 +1094,42 @@
    }
   },
   {
+   "key": "cis.compliance.exception_max_days",
+   "app": "cis",
+   "area": "compliance",
+   "label": "Compliance: longest an exception may run",
+   "description": "Platform > Compliance (AA-1173): the expiry date of a compliance exception (an accepted risk on a control, a check or a vulnerability) may be at most this many days after the day it is proposed; an approval re-checks it. A shorter window forces the risk to be looked at again sooner.",
+   "value_type": "int",
+   "unit": "days",
+   "min_value": 1,
+   "max_value": 365,
+   "allowed_values": null,
+   "default_value": 90,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The longest time an accepted risk may stay accepted before it must be proposed and approved again.",
+     "raise": "Exceptions may run longer; a risk accepted once is looked at less often.",
+     "lower": "Exceptions expire sooner and must be renewed with a fresh reason.",
+     "when": "Keep about a quarter, so each exception comes up again at the next quarterly review.",
+     "example": "With the default 90, an exception proposed on 1 December can run until 1 March at the latest."
+    },
+    "vi": {
+     "what": "Thời gian dài nhất một rủi ro được chấp nhận còn hiệu lực trước khi phải đề xuất và duyệt lại.",
+     "raise": "Ngoại lệ chạy lâu hơn; rủi ro đã chấp nhận ít được xem lại hơn.",
+     "lower": "Ngoại lệ hết hạn sớm hơn và phải gia hạn với lý do mới.",
+     "when": "Giữ khoảng một quý, để mỗi ngoại lệ được xem lại ở lần rà soát quý kế tiếp.",
+     "example": "Với mặc định 90, ngoại lệ đề xuất ngày 1 tháng 12 chạy được muộn nhất tới ngày 1 tháng 3."
+    }
+   }
+  },
+  {
    "key": "cis.compliance.legal_docs_overdue_max",
    "app": "cis",
    "area": "compliance",
@@ -1162,6 +1198,42 @@
      "lower": "Đáp ứng một phần được tính ít hơn; ở mức 0 điểm có trọng số bằng điểm chặt.",
      "when": "Giữ 0,5 để so được với bản chấm tay tháng 11/2026; chỉ đổi khi có lý do ghi rõ.",
      "example": "Với mặc định 0,5, mười yêu cầu trong đó bốn đạt và hai đạt một phần cho 50% có trọng số và 40% chặt."
+    }
+   }
+  },
+  {
+   "key": "cis.compliance.prowler_critical_high_max",
+   "app": "cis",
+   "area": "compliance",
+   "label": "Compliance: critical or high Prowler findings tolerated",
+   "description": "Platform > Compliance (AA-1173): the check prowler_critical_high passes while the newest weekly Prowler scan has at most this many failing findings of severity critical or high. More, the check fails and the cloud configuration controls it feeds drop. Findings the business accepted belong in an approved exception, not in a higher number here.",
+   "value_type": "int",
+   "unit": "findings",
+   "min_value": 0,
+   "max_value": 100000,
+   "allowed_values": null,
+   "default_value": 0,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many failing critical or high findings the weekly Prowler scan may report while its check still passes.",
+     "raise": "The check tolerates more serious findings; real cloud risks are less visible on the page.",
+     "lower": "Every serious finding turns the check red.",
+     "when": "Keep 0; accept a known finding through an exception with an expiry instead of raising this.",
+     "example": "With the default 0, one high finding (an unencrypted bucket, say) fails the check."
+    },
+    "vi": {
+     "what": "Lượt quét Prowler hằng tuần được phép báo bao nhiêu phát hiện mức nghiêm trọng hoặc cao mà check vẫn đạt.",
+     "raise": "Check chấp nhận nhiều phát hiện nghiêm trọng hơn; rủi ro cloud thật khó thấy hơn trên trang.",
+     "lower": "Mỗi phát hiện nghiêm trọng đều làm check đỏ.",
+     "when": "Giữ 0; chấp nhận một phát hiện đã biết bằng ngoại lệ có hạn thay vì tăng số này.",
+     "example": "Với mặc định 0, một phát hiện mức cao (ví dụ một bucket không mã hoá) làm check không đạt."
     }
    }
   },
@@ -1280,6 +1352,78 @@
    }
   },
   {
+   "key": "cis.compliance.review_max_age_days",
+   "app": "cis",
+   "area": "compliance",
+   "label": "Compliance: days a monthly posture review counts",
+   "description": "Platform > Compliance (AA-1173): the check monthly_review_recent passes while the newest Security posture monthly review recorded on the page is at most this many days old. Older, the check fails and the management review controls it feeds drop.",
+   "value_type": "int",
+   "unit": "days",
+   "min_value": 1,
+   "max_value": 400,
+   "allowed_values": null,
+   "default_value": 40,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How recent the last recorded monthly posture review must be for the review check to pass.",
+     "raise": "An older review still counts; months without a review go unnoticed longer.",
+     "lower": "Reviews must be recorded more promptly each month to keep the check green.",
+     "when": "Keep a little above one month, so a review recorded early in each month keeps the check green.",
+     "example": "With the default 40, a review recorded on 3 November counts until 13 December."
+    },
+    "vi": {
+     "what": "Lần rà soát tư thế bảo mật hằng tháng gần nhất phải mới tới đâu thì check rà soát mới đạt.",
+     "raise": "Lần rà soát cũ hơn vẫn được tính; tháng không rà soát bị phát hiện muộn hơn.",
+     "lower": "Phải ghi rà soát đúng hạn hơn mỗi tháng để giữ check xanh.",
+     "when": "Giữ cao hơn một tháng một chút, để rà soát ghi đầu mỗi tháng giữ check xanh.",
+     "example": "Với mặc định 40, lần rà soát ghi ngày 3 tháng 11 được tính tới ngày 13 tháng 12."
+    }
+   }
+  },
+  {
+   "key": "cis.compliance.validity_hours.aws_nightly",
+   "app": "cis",
+   "area": "compliance",
+   "label": "Compliance: hours a nightly AWS check stays valid",
+   "description": "Platform > Compliance (AA-1173): how many hours a result of the nightly AWS read-only check (AA-CIS-Infra workflow compliance-aws.yml: CloudTrail, S3 public access block, KMS rotation, IAM MFA, open security groups, RDS and ECR settings, the WAF rate rule, alarms on the alerts topic) counts after it was collected. Older evidence is stale: its check no longer passes and the Evidenced % of every framework it maps to drops.",
+   "value_type": "int",
+   "unit": "hours",
+   "min_value": 1,
+   "max_value": 2160,
+   "allowed_values": null,
+   "default_value": 48,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How long a result of the nightly AWS configuration check still counts as proof on the Compliance page.",
+     "raise": "Proof stays valid longer; a nightly run that stopped is noticed later, because its old passes still count.",
+     "lower": "Proof must be fresher; one missed nightly run turns the AWS checks stale and the score drops.",
+     "when": "Keep it about two nights; set 1 hour only to show the stale path.",
+     "example": "With the default 48, a check collected on Monday at 03:00 stops counting on Wednesday at 03:00."
+    },
+    "vi": {
+     "what": "Một kết quả của lượt kiểm cấu hình AWS hằng đêm còn được tính là bằng chứng trên trang Compliance trong bao lâu.",
+     "raise": "Bằng chứng còn hiệu lực lâu hơn; lượt chạy hằng đêm bị ngừng được phát hiện muộn hơn vì các kết quả đạt cũ vẫn được tính.",
+     "lower": "Bằng chứng phải mới hơn; lỡ một lượt chạy hằng đêm là các check AWS thành cũ và điểm giảm.",
+     "when": "Giữ khoảng hai đêm; chỉ đặt 1 giờ khi muốn cho thấy đường cũ (stale).",
+     "example": "Với mặc định 48, một check thu lúc 03:00 thứ Hai hết được tính lúc 03:00 thứ Tư."
+    }
+   }
+  },
+  {
    "key": "cis.compliance.validity_hours.cis_db",
    "app": "cis",
    "area": "compliance",
@@ -1348,6 +1492,42 @@
      "lower": "Bằng chứng phải mới hơn; phải bấm Refresh evidence thường hơn.",
      "when": "Giữ ba ngày khi kết quả còn được thu bằng tay; rút ngắn khi có job hằng ngày thu.",
      "example": "Với mặc định 72, kết quả thu lúc 09:00 thứ Hai hết được tính lúc 09:00 thứ Năm."
+    }
+   }
+  },
+  {
+   "key": "cis.compliance.validity_hours.prowler_weekly",
+   "app": "cis",
+   "area": "compliance",
+   "label": "Compliance: hours a weekly Prowler scan stays valid",
+   "description": "Platform > Compliance (AA-1173): how many hours the result of the weekly Prowler scan of the AWS account (AA-CIS-Infra workflow compliance-aws.yml, free open source scanner, no Security Hub) counts after it was collected. Older, the scan checks are stale and the controls they feed drop.",
+   "value_type": "int",
+   "unit": "hours",
+   "min_value": 1,
+   "max_value": 2160,
+   "allowed_values": null,
+   "default_value": 216,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How long the result of the weekly Prowler scan still counts as proof on the Compliance page.",
+     "raise": "An older scan still counts; a weekly scan that stopped is noticed later.",
+     "lower": "The scan must be fresher; a single late weekly run turns its checks stale.",
+     "when": "Keep it a little above one week plus a day or two of slack.",
+     "example": "With the default 216 (nine days), a scan of Sunday 04:00 counts until Tuesday 04:00 of the next week but one."
+    },
+    "vi": {
+     "what": "Kết quả của lượt quét Prowler hằng tuần còn được tính là bằng chứng trên trang Compliance trong bao lâu.",
+     "raise": "Lượt quét cũ hơn vẫn được tính; lượt quét hằng tuần bị ngừng được phát hiện muộn hơn.",
+     "lower": "Lượt quét phải mới hơn; chỉ một lượt hằng tuần bị trễ là các check của nó thành cũ.",
+     "when": "Giữ cao hơn một tuần cộng một hai ngày dự phòng.",
+     "example": "Với mặc định 216 (chín ngày), lượt quét 04:00 Chủ nhật được tính tới 04:00 thứ Ba của tuần sau nữa."
     }
    }
   },
