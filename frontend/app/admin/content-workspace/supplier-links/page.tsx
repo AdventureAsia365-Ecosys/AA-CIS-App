@@ -10,7 +10,7 @@
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link2, Wand2 } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   Badge, Button, Checkbox, DataTable, Field, Input, K, KpiTile, Modal, PageFrame, PageHeader, Select, ToastProvider,
   apiGet, apiSend, useAdminIdentity, useT, useToast, type ColumnDef,
@@ -30,27 +30,12 @@ export default function SupplierLinksPage() {
   return <ToastProvider><SupplierLinks /></ToastProvider>;
 }
 
-function SupplierLinks() {
-  const t = useT(CW);
-  const qc = useQueryClient();
-  const toast = useToast();
-  const { role } = useAdminIdentity();
-  const [country, setCountry] = useState("");
-  const [q, setQ] = useState("");
-  const [onlySuggested, setOnlySuggested] = useState(false);
-  const [page, setPage] = useState({ index: 0, size: 50 });
-  const [linking, setLinking] = useState<UnlinkedRow[] | null>(null);
-  const [applyOpen, setApplyOpen] = useState(false);
-  const options = useQuery({ queryKey: ["content-workspace-options"], retry: false,
-    queryFn: () => apiGet<Options>(`${CW_API}/options`) });
-  const url = unlinkedUrl({ country, q, onlySuggested, limit: page.size, offset: page.index * page.size });
-  const report = useQuery({ queryKey: ["content-workspace-links", url], queryFn: () => apiGet<Report>(url),
-    placeholderData: keepPreviousData, retry: false });
-  const refresh = () => void qc.invalidateQueries({ queryKey: ["content-workspace-links"] });
-  const writer = can(role, "content.write");
-  const bulkMax = options.data?.limits.bulk_max ?? 0;
+type Toast = ReturnType<typeof useToast>;
+type Tr = ReturnType<typeof useT<typeof CW.en>>;
+interface Filters { country: string; q: string; onlySuggested: boolean }
 
-  const linkOne = async (row: UnlinkedRow) => {
+function useLinkOne(toast: Toast, refresh: () => void, t: Tr) {
+  return async (row: UnlinkedRow) => {
     if (!row.suggestion) return;
     try {
       await apiSend(`${CW_API}/supplier-links`, { body: {
@@ -61,83 +46,142 @@ function SupplierLinks() {
       toast.error((e as Error).message, 5000);
     }
   };
+}
 
-  const columns = useMemo<ColumnDef<UnlinkedRow, unknown>[]>(() => [
-    { accessorKey: "name", header: t("colName"), cell: (c) => (
-      <span style={{ overflowWrap: "anywhere" }}>
-        {c.row.original.entry_origin === "manual"
-          ? <Link href={tourHref(c.row.original.tour_id)} style={{ color: K.accentDeep }}>{c.row.original.name}</Link>
-          : c.row.original.name}
-      </span>) },
+function SuggestionCell({ row, writer, onLink, t }: {
+  row: UnlinkedRow; writer: boolean; onLink: (r: UnlinkedRow) => void; t: Tr;
+}) {
+  const s = row.suggestion;
+  if (!s) return <span style={{ color: K.muted }}>{t("noSuggestion")}</span>;
+  if (!writer) return <>{s.company_name}</>;
+  return (
+    <Button size="sm" variant="secondary" onClick={(e) => { e.stopPropagation(); onLink(row); }}>
+      {t("linkTo", s.company_name)}
+    </Button>
+  );
+}
+
+function NameCell({ row }: { row: UnlinkedRow }) {
+  return (
+    <span style={{ overflowWrap: "anywhere" }}>
+      {row.entry_origin === "manual"
+        ? <Link href={tourHref(row.tour_id)} style={{ color: K.accentDeep }}>{row.name}</Link> : row.name}
+    </span>
+  );
+}
+
+function useColumns(writer: boolean, onLink: (r: UnlinkedRow) => void, t: Tr) {
+  return useMemo<ColumnDef<UnlinkedRow, unknown>[]>(() => [
+    { accessorKey: "name", header: t("colName"), cell: (c) => <NameCell row={c.row.original} /> },
     { accessorKey: "provider", header: t("colProvider"), cell: (c) => c.row.original.provider ?? "—" },
     { accessorKey: "country", header: t("colCountry"), cell: (c) => c.row.original.country ?? "—" },
     { accessorKey: "live", header: t("colLive"), cell: (c) => (
       <Badge tone={c.row.original.live ? "success" : "neutral"}>{c.row.original.live ? t("yes") : t("no")}</Badge>) },
-    { id: "suggestion", header: t("colSuggestion"), cell: (c) => {
-      const s = c.row.original.suggestion;
-      if (!s) return <span style={{ color: K.muted }}>{t("noSuggestion")}</span>;
-      return writer
-        ? <Button size="sm" variant="secondary" onClick={(e) => { e.stopPropagation(); void linkOne(c.row.original); }}>
-          {t("linkTo", s.company_name)}</Button>
-        : s.company_name;
-    } },
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [t, writer]);
+    { id: "suggestion", header: t("colSuggestion"),
+      cell: (c) => <SuggestionCell row={c.row.original} writer={writer} onLink={onLink} t={t} /> },
+  ], [t, writer, onLink]);
+}
 
+function Kpis({ data, t }: { data: Report | undefined; t: Tr }) {
+  return (
+    <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 200px), 1fr))",
+      marginBottom: 16 }}>
+      <KpiTile label={t("kpiUnlinked")} value={data?.unlinked} valueTone={data?.unlinked ? "warning" : undefined} />
+      <KpiTile label={t("kpiSuggested")} value={data?.with_suggestion} />
+      <KpiTile label={t("kpiLinked")} value={data?.linked} />
+    </div>
+  );
+}
+
+function FilterControls({ filters, onChange, countries, t }: {
+  filters: Filters; onChange: (f: Partial<Filters>) => void; countries: Options["countries"]; t: Tr;
+}) {
+  return (
+    <span style={{ display: "inline-flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+      <Input value={filters.q} placeholder={t("search")} aria-label={t("search")} size="sm"
+        onChange={(e) => onChange({ q: e.target.value })} />
+      <Select value={filters.country} size="sm" aria-label={t("colCountry")}
+        options={[{ value: "", label: t("allCountries") }, ...countries.map((c) => ({ value: c.iso2, label: c.name }))]}
+        onChange={(e) => onChange({ country: e.target.value })} />
+      <Checkbox label={t("onlySuggested")} checked={filters.onlySuggested}
+        onChange={(e) => onChange({ onlySuggested: e.target.checked })} />
+    </span>
+  );
+}
+
+function reportView(report: { data?: Report; isError: boolean; error: unknown }) {
   const data = report.data;
+  const available = data?.suppliers_available === true;
+  return {
+    data, rows: data?.items ?? [], total: data?.total ?? 0, available, down: !!data && !available,
+    error: report.isError ? ((report.error as Error)?.message || "") : null,
+  };
+}
+
+function optionsView(options: Options | undefined) {
+  return { countries: options?.countries ?? [], bulkMax: options?.limits.bulk_max ?? 0 };
+}
+
+function useLinksData(filters: Filters, page: { index: number; size: number }) {
+  const options = useQuery({ queryKey: ["content-workspace-options"], retry: false,
+    queryFn: () => apiGet<Options>(`${CW_API}/options`) });
+  const url = unlinkedUrl({ ...filters, limit: page.size, offset: page.index * page.size });
+  const report = useQuery({ queryKey: ["content-workspace-links", url], queryFn: () => apiGet<Report>(url),
+    placeholderData: keepPreviousData, retry: false });
+  return { report, ...reportView(report), ...optionsView(options.data) };
+}
+
+function ApplyAction({ available, onOpen, t }: { available: boolean; onOpen: () => void; t: Tr }) {
+  const { role } = useAdminIdentity();
+  if (!can(role, "content.publish")) return null;
+  return (
+    <Button variant="secondary" size="sm" onClick={onOpen} disabled={!available}>
+      <Wand2 size={13} /> {t("applyButton")}
+    </Button>
+  );
+}
+
+function SupplierLinks() {
+  const t = useT(CW);
+  const qc = useQueryClient();
+  const toast = useToast();
+  const { role } = useAdminIdentity();
+  const [filters, setFilters] = useState<Filters>({ country: "", q: "", onlySuggested: false });
+  const [page, setPage] = useState({ index: 0, size: 50 });
+  const [linking, setLinking] = useState<UnlinkedRow[] | null>(null);
+  const [applyOpen, setApplyOpen] = useState(false);
+  const d = useLinksData(filters, page);
+  const refresh = useCallback(() => void qc.invalidateQueries({ queryKey: ["content-workspace-links"] }), [qc]);
+  const writer = can(role, "content.write");
+  const linkOne = useLinkOne(toast, refresh, t);
+  const onLink = useCallback((r: UnlinkedRow) => void linkOne(r), [linkOne]);
+  const columns = useColumns(writer, onLink, t);
+  const setFilter = (f: Partial<Filters>) => { setFilters((old) => ({ ...old, ...f })); setPage((p) => ({ ...p, index: 0 })); };
+  const done = (n: number) => { toast.success(t("linked", n), 3000); setLinking(null); refresh(); };
   return (
     <PageFrame>
-      <PageHeader
-        breadcrumbs={[{ label: t("back"), href: CW_PAGE }]}
-        title={t("linksTitle")}
+      <PageHeader breadcrumbs={[{ label: t("back"), href: CW_PAGE }]} title={t("linksTitle")}
         description={t("linksDescription")}
-        actions={can(role, "content.publish") ? (
-          <Button variant="secondary" size="sm" onClick={() => setApplyOpen(true)}
-            disabled={!data?.suppliers_available}><Wand2 size={13} /> {t("applyButton")}</Button>) : undefined}
-      />
-      <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 200px), 1fr))",
-        marginBottom: 16 }}>
-        <KpiTile label={t("kpiUnlinked")} value={data?.unlinked} valueTone={data?.unlinked ? "warning" : undefined} />
-        <KpiTile label={t("kpiSuggested")} value={data?.with_suggestion} />
-        <KpiTile label={t("kpiLinked")} value={data?.linked} />
-      </div>
-      {data && !data.suppliers_available && (
-        <p role="status" style={{ color: K.amberDeep, fontSize: 13 }}>{t("suppliersDown")}</p>)}
+        actions={<ApplyAction available={d.available} onOpen={() => setApplyOpen(true)} t={t} />} />
+      <Kpis data={d.data} t={t} />
+      {d.down && <p role="status" style={{ color: K.amberDeep, fontSize: 13 }}>{t("suppliersDown")}</p>}
       <DataTable<UnlinkedRow>
-        tableId="content-workspace-supplier-links"
-        data={data?.items ?? []}
-        columns={columns}
-        getRowId={(r) => r.tour_id}
-        loading={report.isLoading}
-        error={report.isError ? ((report.error as Error)?.message || t("loadError")) : null}
-        onRetry={refresh}
-        emptyTitle={t("noUnlinked")}
-        tableMinWidth={820}
-        enableSelection={writer}
-        serverPagination={{ pageIndex: page.index, pageSize: page.size, total: data?.total ?? 0,
+        tableId="content-workspace-supplier-links" data={d.rows} columns={columns}
+        getRowId={(r) => r.tour_id} loading={d.report.isLoading} onRetry={refresh}
+        error={d.error === null ? null : (d.error || t("loadError"))}
+        emptyTitle={t("noUnlinked")} tableMinWidth={820} enableSelection={writer}
+        serverPagination={{ pageIndex: page.index, pageSize: page.size, total: d.total,
           onChange: (index, size) => setPage({ index, size }) }}
-        toolbarExtra={
-          <span style={{ display: "inline-flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            <Input value={q} placeholder={t("search")} aria-label={t("search")} size="sm"
-              onChange={(e) => { setQ(e.target.value); setPage((p) => ({ ...p, index: 0 })); }} />
-            <Select value={country} size="sm" aria-label={t("colCountry")}
-              options={[{ value: "", label: t("allCountries") },
-                ...(options.data?.countries ?? []).map((c) => ({ value: c.iso2, label: c.name }))]}
-              onChange={(e) => { setCountry(e.target.value); setPage((p) => ({ ...p, index: 0 })); }} />
-            <Checkbox label={t("onlySuggested")} checked={onlySuggested}
-              onChange={(e) => { setOnlySuggested(e.target.checked); setPage((p) => ({ ...p, index: 0 })); }} />
-          </span>
-        }
+        toolbarExtra={<FilterControls filters={filters} onChange={setFilter} countries={d.countries} t={t} />}
         bulkActions={({ selectedRows, clearSelection }) => (
-          <Button size="sm" variant="primary" disabled={!data?.suppliers_available}
+          <Button size="sm" variant="primary" disabled={!d.available}
             onClick={() => { setLinking(selectedRows); clearSelection(); }}>
             <Link2 size={13} /> {t("linkSelected", selectedRows.length)}
           </Button>
         )}
       />
-      {linking && <LinkModal rows={linking} bulkMax={bulkMax} onClose={() => setLinking(null)}
-        onDone={(n) => { toast.success(t("linked", n), 3000); setLinking(null); refresh(); }} />}
-      {applyOpen && <ApplyModal bulkMax={bulkMax} onClose={() => setApplyOpen(false)} onDone={refresh} />}
+      {linking && <LinkModal rows={linking} bulkMax={d.bulkMax} onClose={() => setLinking(null)} onDone={done} />}
+      {applyOpen && <ApplyModal bulkMax={d.bulkMax} onClose={() => setApplyOpen(false)} onDone={refresh} />}
     </PageFrame>
   );
 }

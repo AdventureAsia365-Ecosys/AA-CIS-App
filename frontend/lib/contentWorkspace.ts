@@ -97,19 +97,23 @@ export function emptyForm(): FactsForm {
 }
 
 const num = (v: number | null | undefined): string => (v === null || v === undefined ? "" : String(v));
+const str = (v: string | null | undefined): string => v ?? "";
+const list = <T,>(v: readonly T[] | null | undefined): T[] => [...(v ?? [])];
+
+function dayOf(d: Partial<DayForm>): DayForm {
+  return {
+    title: str(d.title), places: list(d.places), meals: list(d.meals), overnight: str(d.overnight),
+    description: str(d.description),
+  };
+}
 
 /** The form of a stored tour (GET tours/{id} facts). */
 export function formOf(f: StoredFacts): FactsForm {
   return {
-    name: f.name ?? "", country: f.country ?? "", supplier_id: f.supplier_id ?? "", summary: f.summary ?? "",
-    nights: num(f.nights),
-    days: (f.days ?? []).map((d) => ({
-      title: d.title ?? "", places: [...(d.places ?? [])], meals: [...(d.meals ?? [])] as Meal[],
-      overnight: d.overnight ?? "", description: d.description ?? "",
-    })),
-    inclusions: [...(f.inclusions ?? [])], exclusions: [...(f.exclusions ?? [])],
-    group_min: num(f.group_min), group_max: num(f.group_max), tour_type: f.tour_type ?? "",
-    guide_languages: [...(f.guide_languages ?? [])], best_time_to_go: f.best_time_to_go ?? "",
+    name: str(f.name), country: str(f.country), supplier_id: str(f.supplier_id), summary: str(f.summary),
+    nights: num(f.nights), days: list(f.days).map(dayOf), inclusions: list(f.inclusions),
+    exclusions: list(f.exclusions), group_min: num(f.group_min), group_max: num(f.group_max),
+    tour_type: f.tour_type ?? "", guide_languages: list(f.guide_languages), best_time_to_go: str(f.best_time_to_go),
   };
 }
 

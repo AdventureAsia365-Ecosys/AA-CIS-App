@@ -48,15 +48,43 @@ function supplierLabel(s: Supplier, t: T): string {
   return `${s.company_name ?? s.id}${tags.length ? ` (${tags.join(", ")})` : ""}`;
 }
 
+function SupplierField({ value, onChange, suppliers, query, setQuery, readOnly, t }: {
+  value: string; onChange: (id: string) => void; suppliers: Supplier[] | null; query: string;
+  setQuery: (q: string) => void; readOnly: boolean; t: T;
+}) {
+  const down = suppliers === null;
+  const options = (suppliers ?? []).map((s) => ({ value: s.id, label: supplierLabel(s, t) }));
+  if (value && !options.some((o) => o.value === value)) options.unshift({ value, label: value });
+  return (
+    <Field label={t("supplier")} required hint={down ? t("suppliersDown") : t("supplierHint")}>
+      <div style={{ display: "grid", gap: 6 }}>
+        {!readOnly && !down && (
+          <Input value={query} placeholder={t("supplierSearch")} aria-label={t("supplierSearch")}
+            onChange={(e) => setQuery(e.target.value)} style={{ width: "100%" }} />
+        )}
+        <Select value={value} disabled={readOnly || down} placeholder={t("chooseSupplier")} options={options}
+          onChange={(e) => onChange(e.target.value)} style={{ width: "100%" }} />
+      </div>
+    </Field>
+  );
+}
+
+function NightsField({ value, days, readOnly, t, onChange }: {
+  value: string; days: number; readOnly: boolean; t: T; onChange: (v: string) => void;
+}) {
+  return (
+    <Field label={t("nights")} required hint={days ? t("nightsHint", days) : undefined}>
+      <Input inputMode="numeric" value={value} disabled={readOnly} maxLength={3} style={{ width: "100%" }}
+        placeholder={days ? String(usualNights(days)) : ""} onChange={(e) => onChange(e.target.value)} />
+    </Field>
+  );
+}
+
 function Basics({ form, set, options, suppliers, supplierQuery, setSupplierQuery, readOnly, t }: {
   form: FactsForm; set: SetForm; options: Options | undefined; suppliers: Supplier[] | null; supplierQuery: string;
   setSupplierQuery: (q: string) => void; readOnly: boolean; t: T;
 }) {
   const days = form.days.length;
-  const supplierOptions = (suppliers ?? []).map((s) => ({ value: s.id, label: supplierLabel(s, t) }));
-  if (form.supplier_id && !supplierOptions.some((o) => o.value === form.supplier_id)) {
-    supplierOptions.unshift({ value: form.supplier_id, label: form.supplier_id });
-  }
   const grid2: React.CSSProperties = {
     display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
   };
@@ -73,27 +101,15 @@ function Basics({ form, set, options, suppliers, supplierQuery, setSupplierQuery
               options={(options?.countries ?? []).map((c) => ({ value: c.iso2, label: c.name }))}
               onChange={(e) => set({ country: e.target.value })} />
           </Field>
-          <Field label={t("supplier")} required hint={suppliers === null ? t("suppliersDown") : t("supplierHint")}>
-            <div style={{ display: "grid", gap: 6 }}>
-              {!readOnly && suppliers !== null && (
-                <Input value={supplierQuery} placeholder={t("supplierSearch")} aria-label={t("supplierSearch")}
-                  onChange={(e) => setSupplierQuery(e.target.value)} style={{ width: "100%" }} />
-              )}
-              <Select value={form.supplier_id} disabled={readOnly || suppliers === null} placeholder={t("chooseSupplier")}
-                options={supplierOptions} onChange={(e) => set({ supplier_id: e.target.value })}
-                style={{ width: "100%" }} />
-            </div>
-          </Field>
+          <SupplierField value={form.supplier_id} onChange={(supplier_id) => set({ supplier_id })} suppliers={suppliers}
+            query={supplierQuery} setQuery={setSupplierQuery} readOnly={readOnly} t={t} />
         </div>
         <Field label={t("summary")}>
           <Textarea value={form.summary} rows={3} maxLength={2000} disabled={readOnly} style={{ width: "100%" }}
             onChange={(e) => set({ summary: e.target.value })} />
         </Field>
         <div style={grid2}>
-          <Field label={t("nights")} required hint={days ? t("nightsHint", days) : undefined}>
-            <Input inputMode="numeric" value={form.nights} disabled={readOnly} maxLength={3} style={{ width: "100%" }}
-              placeholder={days ? String(usualNights(days)) : ""} onChange={(e) => set({ nights: e.target.value })} />
-          </Field>
+          <NightsField value={form.nights} days={days} readOnly={readOnly} t={t} onChange={(nights) => set({ nights })} />
           <Field label={t("tourType")}>
             <Select value={form.tour_type} disabled={readOnly} style={{ width: "100%" }}
               options={[{ value: "", label: t("tourTypeNone") }, { value: "private", label: t("tourPrivate") },

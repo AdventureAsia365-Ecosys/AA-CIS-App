@@ -15,7 +15,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import {
   ApiError, Badge, Button, Field, Input, K, PageFrame, PageHeader, Section, Tabs, apiGet, apiSend, useAdminIdentity,
-  useFormat, useIsPhone, useT, useToast,
+  useFormat, useIsPhone, useT, useToast, type Translator,
 } from "../../../_kit";
 import TourDraftEditor from "../../_components/TourDraftEditor";
 import { can } from "@/lib/rbac";
@@ -28,6 +28,7 @@ import { FactsForm as FactsSections } from "./FactsForm";
 import { Checklist, History, PricePanel, Preview } from "./Panels";
 
 type Status = "idle" | "saving" | "saved" | "error" | "stale";
+type T = Translator<typeof CW.en>;
 const AUTOSAVE_MS = 1500;   // UI pacing of the autosave (not a policy value)
 
 function useOptions() {
@@ -60,31 +61,21 @@ export default function TourWorkspaceEditor({ tourId }: { tourId: string | null 
   return <Editor key={tourId ?? "new"} tourId={tourId} view={tour.data ?? null} />;
 }
 
-function Editor({ tourId, view }: { tourId: string | null; view: TourView | null }) {
-  const t = useT(CW);
-  const toast = useToast();
-  const qc = useQueryClient();
-  const router = useRouter();
-  const phone = useIsPhone();
-  const { role } = useAdminIdentity();
-  const { formatDateTime } = useFormat();
-  const options = useOptions();
-  const [form, setForm] = useState<FactsForm>(() => (view ? formOf(view.facts) : emptyForm()));
-  const [supplierQuery, setSupplierQuery] = useState("");
-  const sup = useSuppliers(supplierQuery, form.country);
-  const [tab, setTab] = useState("facts");
-  const [status, setStatus] = useState<Status>("idle");
-  const [reason, setReason] = useState("");
-  // The last save the page knows: its time (sent back as expected_saved_at) and the form it saved.
-  const [saved, setSaved] = useState<{ at?: string; key: string }>(() => ({
-    at: view?.facts.saved_at, key: formKey(view ? formOf(view.facts) : emptyForm()) }));
-  const writer = can(role, "content.write");
-  const readOnly = !writer || (view !== null && !view.editable);
-  const autosave = !!tourId && !readOnly && !view?.reason_required;
-  const dirty = formKey(form) !== saved.key;
+type Toast = ReturnType<typeof useToast>;
+type Saved = { at?: string; key: string };
 
-  const save = useCallback(async (withReason?: string) => {
-    if (!tourId) return;
+const initialSaved = (view: TourView | null): Saved => ({
+  at: view?.facts.saved_at, key: formKey(view ? formOf(view.facts) : emptyForm()),
+});
+
+/** Save the facts of an existing tour (autosave or with a reason). The save carries the time of the last save it
+ *  knows (expected_saved_at); a 409 means someone else saved in between. */
+function useFactsSaver(tourId: string | null, view: TourView | null, form: FactsForm, toast: Toast) {
+  const qc = useQueryClient();
+  const [status, setStatus] = useState<Status>("idle");
+  const [saved, setSaved] = useState<Saved>(() => initialSaved(view));
+  const save = useCallback(async (withReason?: string): Promise<boolean> => {
+    if (!tourId) return false;
     const key = formKey(form);
     setStatus("saving");
     try {
@@ -93,22 +84,73 @@ function Editor({ tourId, view }: { tourId: string | null; view: TourView | null
       });
       setSaved((old) => ({ at: res.saved_at ?? old.at, key }));
       setStatus("saved");
-      if (withReason) setReason("");
       void qc.invalidateQueries({ queryKey: ["content-workspace-tour", tourId] });
       void qc.invalidateQueries({ queryKey: ["content-workspace-history", tourId] });
+      return true;
     } catch (e) {
-      setStatus(e instanceof ApiError && e.status === 409 ? "stale" : "error");
-      if (!(e instanceof ApiError && e.status === 409)) toast.error((e as Error).message, 5000);
+      const stale = e instanceof ApiError && e.status === 409;
+      setStatus(stale ? "stale" : "error");
+      if (!stale) toast.error((e as Error).message, 5000);
+      return false;
     }
   }, [form, qc, saved.at, toast, tourId]);
+  return { status, setStatus, saved, dirty: formKey(form) !== saved.key, save };
+}
 
+function useAutosave(enabled: boolean, save: () => Promise<boolean>) {
   useEffect(() => {
-    if (!autosave || !dirty || status === "stale") return undefined;
+    if (!enabled) return undefined;
     const timer = setTimeout(() => void save(), AUTOSAVE_MS);
     return () => clearTimeout(timer);
-  }, [autosave, dirty, save, status]);
+  }, [enabled, save]);
+}
 
-  const create = async () => {
+function statusLine(status: Status, dirty: boolean, isNew: boolean, at: string | undefined, t: T,
+  fmt: (d: string) => string): string {
+  if (status === "saving") return t("saving");
+  if (status === "error") return t("saveFailed");
+  if (dirty && !isNew) return t("unsaved");
+  return at ? t("saved", fmt(at)) : "";
+}
+
+function Editor({ tourId, view }: { tourId: string | null; view: TourView | null }) {
+  const t = useT(CW);
+  const toast = useToast();
+  const { role } = useAdminIdentity();
+  const { formatDateTime } = useFormat();
+  const [form, setForm] = useState<FactsForm>(() => (view ? formOf(view.facts) : emptyForm()));
+  const [reason, setReason] = useState("");
+  const saver = useFactsSaver(tourId, view, form, toast);
+  const writer = can(role, "content.write");
+  const readOnly = !writer || (view !== null && !view.editable);
+  const autosave = !!tourId && !readOnly && !view?.reason_required;
+  useAutosave(autosave && saver.dirty && saver.status !== "stale", saver.save);
+  const create = useCreate(form, saver.setStatus, toast);
+  const set = (patch: Partial<FactsForm>) => setForm((f) => ({ ...f, ...patch }));
+  const title = form.name.trim() || (tourId ? t("untitled") : t("newTitle"));
+  const line = statusLine(saver.status, saver.dirty, !tourId, saver.saved.at, t, formatDateTime);
+  return (
+    <PageFrame>
+      <PageHeader breadcrumbs={[{ label: t("back"), href: CW_PAGE }]}
+        title={<span style={{ overflowWrap: "anywhere" }}>{title}</span>}
+        description={<HeaderStatus view={view} line={line} failed={saver.status === "error"}
+          onRetry={() => void saver.save()} />} />
+      <Notices view={view} writer={writer} status={saver.status} />
+      <Layout aside={<Aside view={view} />}>
+        <EditorTabs tourId={tourId} title={title} form={form} set={set} readOnly={readOnly} />
+        <SaveBar tourId={tourId} view={view} readOnly={readOnly} form={form} dirty={saver.dirty} status={saver.status}
+          reason={reason} setReason={setReason} onCreate={() => void create()}
+          onSave={(r) => void saver.save(r).then((ok) => { if (ok) setReason(""); })} />
+      </Layout>
+    </PageFrame>
+  );
+}
+
+function useCreate(form: FactsForm, setStatus: (s: Status) => void, toast: Toast) {
+  const t = useT(CW);
+  const qc = useQueryClient();
+  const router = useRouter();
+  return async () => {
     setStatus("saving");
     try {
       const res = await apiSend<{ tour_id: string }>(`${CW_API}/tours`, { method: "POST", body: bodyOf(form) });
@@ -120,53 +162,83 @@ function Editor({ tourId, view }: { tourId: string | null; view: TourView | null
       toast.error((e as Error).message, 5000);
     }
   };
+}
 
-  const set = (patch: Partial<FactsForm>) => setForm((f) => ({ ...f, ...patch }));
-  const title = form.name.trim() || (tourId ? t("untitled") : t("newTitle"));
-  const statusText = status === "saving" ? t("saving") : status === "error" ? t("saveFailed")
-    : dirty && tourId ? t("unsaved") : saved.at ? t("saved", formatDateTime(saved.at)) : "";
-
+function HeaderStatus({ view, line, failed, onRetry }: {
+  view: TourView | null; line: string; failed: boolean; onRetry: () => void;
+}) {
+  const t = useT(CW);
   return (
-    <PageFrame>
-      <PageHeader
-        breadcrumbs={[{ label: t("back"), href: CW_PAGE }]}
-        title={<span style={{ overflowWrap: "anywhere" }}>{title}</span>}
-        description={
-          <span style={{ display: "inline-flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-            {view && <Badge tone={stateTone(view.state)}>{t(`state_${view.state}` as const)}</Badge>}
-            {statusText && <span data-testid="cw-save-status" style={{ fontSize: 12, color: K.muted }}>{statusText}</span>}
-            {status === "error" && <Button size="sm" variant="ghost" onClick={() => void save()}>{t("retry")}</Button>}
-          </span>
-        }
-      />
-      <Notices view={view} writer={writer} status={status} />
-      <div style={{ display: "grid", gap: 16, alignItems: "start",
-        gridTemplateColumns: phone ? "minmax(0, 1fr)" : "minmax(0, 1fr) 300px" }}>
-        <div style={{ minWidth: 0, display: "grid", gap: 12 }}>
-          <Tabs active={tab} onChange={setTab} variant="underline" ariaLabel={title} testId="cw-tabs"
-            tabs={[{ key: "facts", label: t("tabFacts") },
-              { key: "wording", label: t("tabWording"), disabled: !tourId, title: tourId ? undefined : t("wordingFirst") },
-              { key: "preview", label: t("tabPreview") },
-              { key: "history", label: t("tabHistory"), disabled: !tourId }]} />
-          {tab === "facts" && (
-            <FactsSections form={form} set={set} options={options.data}
-              suppliers={sup.data ? (sup.data.available ? sup.data.items : null) : []}
-              supplierQuery={supplierQuery} setSupplierQuery={setSupplierQuery} readOnly={readOnly} />
-          )}
-          {tab === "wording" && tourId && <Wording tourId={tourId} twoPerson={!!options.data?.two_person_publish} />}
-          {tab === "preview" && <Preview tourId={tourId} form={form} />}
-          {tab === "history" && tourId && <History tourId={tourId} />}
-          <SaveBar tourId={tourId} view={view} readOnly={readOnly} form={form} dirty={dirty} status={status}
-            reason={reason} setReason={setReason} onCreate={() => void create()} onSave={(r) => void save(r)} />
-        </div>
-        <aside style={{ minWidth: 0, display: "grid", gap: 12 }}>
-          {view && <Checklist items={view.checklist} completeness={view.completeness} />}
-          {!view && <Section title={t("required")}><p style={{ margin: 0, fontSize: 13, color: K.muted }}>
-            {t("createHint")}</p></Section>}
-          {view && <PricePanel price={view.from_price} />}
-        </aside>
-      </div>
-    </PageFrame>
+    <span style={{ display: "inline-flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+      {view && <Badge tone={stateTone(view.state)}>{t(`state_${view.state}` as const)}</Badge>}
+      {line && <span data-testid="cw-save-status" style={{ fontSize: 12, color: K.muted }}>{line}</span>}
+      {failed && <Button size="sm" variant="ghost" onClick={onRetry}>{t("retry")}</Button>}
+    </span>
+  );
+}
+
+function Layout({ aside, children }: { aside: React.ReactNode; children: React.ReactNode }) {
+  const phone = useIsPhone();
+  return (
+    <div style={{ display: "grid", gap: 16, alignItems: "start",
+      gridTemplateColumns: phone ? "minmax(0, 1fr)" : "minmax(0, 1fr) 300px" }}>
+      <div style={{ minWidth: 0, display: "grid", gap: 12 }}>{children}</div>
+      <aside style={{ minWidth: 0, display: "grid", gap: 12 }}>{aside}</aside>
+    </div>
+  );
+}
+
+function Aside({ view }: { view: TourView | null }) {
+  const t = useT(CW);
+  if (!view) {
+    return <Section title={t("required")}><p style={{ margin: 0, fontSize: 13, color: K.muted }}>{t("createHint")}</p>
+    </Section>;
+  }
+  return (
+    <>
+      <Checklist items={view.checklist} completeness={view.completeness} />
+      <PricePanel price={view.from_price} />
+    </>
+  );
+}
+
+function tabItems(tourId: string | null, t: T) {
+  const none = !tourId;
+  return [{ key: "facts", label: t("tabFacts") },
+    { key: "wording", label: t("tabWording"), disabled: none, title: none ? t("wordingFirst") : undefined },
+    { key: "preview", label: t("tabPreview") },
+    { key: "history", label: t("tabHistory"), disabled: none }];
+}
+
+/** The supplier picker's list: null when Booking's list cannot be read (the picker says so). */
+function pickerList(data: { available: boolean; items: Supplier[] } | undefined): Supplier[] | null {
+  if (!data) return [];
+  return data.available ? data.items : null;
+}
+
+function EditorTabs({ tourId, title, form, set, readOnly }: {
+  tourId: string | null; title: string; form: FactsForm; set: (p: Partial<FactsForm>) => void; readOnly: boolean;
+}) {
+  const t = useT(CW);
+  const [tab, setTab] = useState("facts");
+  const [supplierQuery, setSupplierQuery] = useState("");
+  const options = useOptions();
+  const sup = useSuppliers(supplierQuery, form.country);
+  const id = tourId ?? "";
+  const panes: Record<string, () => React.ReactNode> = {
+    facts: () => (
+      <FactsSections form={form} set={set} options={options.data} suppliers={pickerList(sup.data)}
+        supplierQuery={supplierQuery} setSupplierQuery={setSupplierQuery} readOnly={readOnly} />),
+    wording: () => <Wording tourId={id} twoPerson={options.data?.two_person_publish === true} />,
+    preview: () => <Preview tourId={tourId} form={form} />,
+    history: () => <History tourId={id} />,
+  };
+  return (
+    <>
+      <Tabs active={tab} onChange={setTab} variant="underline" ariaLabel={title} testId="cw-tabs"
+        tabs={tabItems(tourId, t)} />
+      {panes[tab]()}
+    </>
   );
 }
 

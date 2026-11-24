@@ -318,11 +318,9 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/ai-gateway/batches/{job_id}/cancel"): AI_ADMIN,
     # AA-1045 — the usage explorer (AI & spend): money reads; the saved views are the caller's own (spend.read, like the
     # notification bell's own state); a re-roll of the rollup is an ops write ($0, audited)
-    ("GET", "/admin/usage-explorer/query"): SPEND_READ,
-    ("GET", "/admin/usage-explorer/options"): SPEND_READ,
+    ("GET", "/admin/usage-explorer/query"): SPEND_READ, ("GET", "/admin/usage-explorer/options"): SPEND_READ,
     ("GET", "/admin/usage-explorer/invoices"): SPEND_READ,
-    ("GET", "/admin/usage-explorer/views"): SPEND_READ,
-    ("POST", "/admin/usage-explorer/views"): SPEND_READ,
+    ("GET", "/admin/usage-explorer/views"): SPEND_READ, ("POST", "/admin/usage-explorer/views"): SPEND_READ,
     ("DELETE", "/admin/usage-explorer/views/{view_id}"): SPEND_READ,
     ("GET", "/admin/usage-explorer/rollup/check"): SPEND_READ,
     ("POST", "/admin/usage-explorer/rollup/run"): OPS_WRITE,
@@ -517,8 +515,7 @@ POLICY: dict[tuple[str, str], Any] = {
     # ── admin_atoms — Social Content atoms (Atom Curation page, admin-only)
     ("POST", "/admin/atoms/atomize"): ATOMS_WRITE, ("PATCH", "/admin/atoms/{atom_id}"): ATOMS_WRITE,
     # AA-1035: the AA atom store is catalog.read (was tenant.read, which also gated the directory and tenant text)
-    ("GET", "/admin/atoms"): CATALOG_READ,
-    ("GET", "/admin/atoms/summary"): CATALOG_READ,
+    ("GET", "/admin/atoms"): CATALOG_READ, ("GET", "/admin/atoms/summary"): CATALOG_READ,
     ("GET", "/admin/atoms/unatomized-tours"): CATALOG_READ,
     # ── admin_a4 — Content Trace force-unpublish (admin-only)
     ("POST", "/admin/a4/publish-log/{publish_id}/unpublish"): A4_UNPUBLISH,
@@ -563,8 +560,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("PATCH", "/admin/content-quality/place-cards/{card_id}/facts"): QUALITY_WRITE,
     ("POST", "/admin/content-quality/place-cards/{keep_id}/merge"): QUALITY_WRITE,
     # AA-814 — platform Facts Entries (every tenant's T9 seed reads them); reads open to every staff role
-    ("POST", "/admin/facts"): QUALITY_WRITE,
-    ("PATCH", "/admin/facts/{fact_id}"): QUALITY_WRITE,
+    ("POST", "/admin/facts"): QUALITY_WRITE, ("PATCH", "/admin/facts/{fact_id}"): QUALITY_WRITE,
     ("DELETE", "/admin/facts/{fact_id}"): QUALITY_WRITE,
     # AA-1091 — AA Catalogue › Reference prices (the customer-service team's CIS page; customer_success has no
     # content.read, so every read has an entry too)
@@ -623,8 +619,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/data-coverage"): OPS_READ,  # AA-992 data coverage counts, incl. CRM over crm.ops.v1 (admin-only)
     # ── admin_reports (AA-1003) — report register, runs, generate now (admin-only page)
     ("GET", "/admin/reports"): OPS_READ,
-    ("GET", "/admin/reports/runs/{run_id}"): OPS_READ,
-    ("GET", "/admin/reports/{report_id}/runs"): OPS_READ,
+    ("GET", "/admin/reports/runs/{run_id}"): OPS_READ, ("GET", "/admin/reports/{report_id}/runs"): OPS_READ,
     ("POST", "/admin/reports/{report_id}/run"): OPS_WRITE,
     ("POST", "/admin/reports/snapshots"): OPS_WRITE,
     # AA-900 (S271 W0): the CIS-08 content quality funnel snapshot (numbers only, no tenant text)
@@ -805,13 +800,10 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/supply-content/{entity_id}/versions/{version_id}/publish"): REVIEW_ACT,
     ("POST", "/admin/supply-content/{entity_id}/versions/{version_id}/reject"): REVIEW_ACT,
     ("POST", "/admin/supply-content/{entity_id}/unpublish"): REVIEW_ACT,
-
-    # ── admin_content_workspace (AA-1148) — hand-made tours and the supplier links of source tours. Creating and
-    # saving a hand-made tour and linking tours to a supplier is content work; linking every suggested match of the
-    # catalogue at once is a publish-level action (content_lead, admin). Reads: content.read (OPEN_READ).
+    # ── admin_content_workspace (AA-1148): hand-made tours, supplier links; link every suggestion is publish-level
     ("POST", "/admin/content-workspace/tours"): CONTENT_WRITE,
-    ("PUT", "/admin/content-workspace/tours/{tour_id}/facts"): CONTENT_WRITE,
     ("POST", "/admin/content-workspace/supplier-links"): CONTENT_WRITE,
+    ("PUT", "/admin/content-workspace/tours/{tour_id}/facts"): CONTENT_WRITE,
     ("POST", "/admin/content-workspace/supplier-links/apply-suggestions"): CONTENT_PUBLISH,
 }
 

@@ -37,9 +37,9 @@ RESOURCE = "raw_tour"
 
 
 class WorkspaceError(Exception):
-    def __init__(self, status: int, code: str, message: str, **extra: Any):
-        super().__init__(status, code, message)
-        self.status, self.code, self.message, self.extra = status, code, message, extra
+    def __init__(self, status: int, code: str, message: str, extra: Optional[dict] = None):
+        super().__init__(status, code, message, extra)
+        self.status, self.code, self.message, self.extra = status, code, message, extra or {}
 
     def detail(self) -> dict:
         return {"code": self.code, "message": self.message, **self.extra}
@@ -64,7 +64,8 @@ _WORDING_SQL = """
     SELECT gc.id::text AS id, gc.version_num, gc.status::text AS status, gc.aa_name, gc.aa_summary, gc.aa_itineraries
       FROM silver_aa_internal.generated_content gc
      WHERE gc.tour_id = $1::uuid AND (gc.status = 'draft' AND gc.origin = 'human'
-           OR gc.id = (SELECT p.generated_content_id FROM gold_aa_internal.published_tours p WHERE p.tour_id = $1::uuid))
+           OR gc.id = (SELECT p.generated_content_id FROM gold_aa_internal.published_tours p
+                        WHERE p.tour_id = $1::uuid))
      ORDER BY (gc.status = 'draft') DESC, gc.version_num DESC LIMIT 1
 """
 _FIRST_DRAFT_SQL = """
@@ -213,7 +214,7 @@ async def create_tour(pool, form: F.FactsIn, *, actor: str) -> dict:
 def _check_size(stored: dict, lim: policy.Limits) -> None:
     if len(stored["days"]) > lim.max_days:
         raise WorkspaceError(422, "too_many_days", f"A hand-made tour has at most {lim.max_days} days",
-                             max_days=lim.max_days)
+                             {"max_days": lim.max_days})
 
 
 # ── read ──────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -297,48 +298,61 @@ async def list_manual(pool, *, q: str = "", limit: int = 50, offset: int = 0) ->
 
 # ── save facts ────────────────────────────────────────────────────────────────────────────────────────────────────
 
+def _check_savable(row, old: dict, *, expected_saved_at: Optional[str], reason: Optional[str]) -> bool:
+    """Refuse a save the tour cannot take; True when the tour is published (the save is a live change)."""
+    if row is None:
+        raise WorkspaceError(404, "not_found", "Tour not found")
+    if row["entry_origin"] != "manual":
+        raise WorkspaceError(409, "not_hand_made", "Only a hand-made tour is edited here; change the facts of a sheet "
+                             "tour in its drawer (Original tab)")
+    state = _state(row)
+    if state == "retired":
+        raise WorkspaceError(409, "tour_retired", "This tour was deleted: restore it before you edit it")
+    if expected_saved_at and old.get("saved_at") and expected_saved_at != old.get("saved_at"):
+        raise WorkspaceError(409, "facts_changed", "Someone else saved this tour since you opened it: reload it to see "
+                             "their changes", {"saved_at": old.get("saved_at")})
+    live = state != "draft"
+    if live and not (reason and 3 <= len(reason.strip()) <= 500):
+        raise WorkspaceError(422, "reason_required", "This tour is published: say why you change its facts "
+                             "(3 to 500 characters)")
+    return live
+
+
+async def _plan_save(pool, row, form: F.FactsIn, stored: dict, old: dict, country: Optional[str]) -> tuple:
+    """(the column values to write, the supplier id, the changed fields, before, after) of a facts save."""
+    sup, sup_row = row["supplier_id"], None
+    if (form.supplier_id or None) != (row["supplier_id"] or None):
+        sup_row = await _checked_supplier(pool, form.supplier_id)
+        sup = sup_row["id"] if sup_row else None
+    new_cols = {**F.render(stored), "country": country,
+                "provider": sup_row["company_name"] if sup_row else row["provider"]}
+    before = {c: row[c] for c in (*_TEXT_COLS, "country", "provider")}
+    changed = [c for c in new_cols if (new_cols[c] or None) != (before[c] or None)]
+    if (sup or None) != (row["supplier_id"] or None):
+        changed.append("supplier_id")
+    old_cmp = {k: v for k, v in old.items() if k != "saved_at"}
+    new_cmp = {k: v for k, v in stored.items() if k != "saved_at"}
+    if old_cmp != new_cmp:
+        changed.append("manual_facts")
+    after_vals = {**new_cols, "supplier_id": sup, "manual_facts": new_cmp}
+    before_vals = {**before, "supplier_id": row["supplier_id"], "manual_facts": old_cmp}
+    return new_cols, sup, changed, {c: before_vals[c] for c in changed}, {c: after_vals[c] for c in changed}
+
+
 async def save_facts(pool, tour_id: str, form: F.FactsIn, *, expected_saved_at: Optional[str], reason: Optional[str],
                      actor: str) -> dict:
+    from api.routers.admin_pipeline.tour_detail import _source_fanout_raw, record_raw_revision
+
     lim = await policy.limits()
     stored = F.normalize(form)
     _check_size(stored, lim)
     country, _iso2 = _country(form.country)
-    changed_at = None
     async with pool.acquire() as conn:
         async with conn.transaction():
             row = await conn.fetchrow(_TOUR_SQL + " FOR UPDATE OF rt", tour_id)
-            if row is None:
-                raise WorkspaceError(404, "not_found", "Tour not found")
-            if row["entry_origin"] != "manual":
-                raise WorkspaceError(409, "not_hand_made", "Only a hand-made tour is edited here; change the facts "
-                                     "of a sheet tour in its drawer (Original tab)")
-            state = _state(row)
-            if state == "retired":
-                raise WorkspaceError(409, "tour_retired", "This tour was deleted: restore it before you edit it")
-            old = F.facts_from_row(row)
-            if expected_saved_at and old.get("saved_at") and expected_saved_at != old.get("saved_at"):
-                raise WorkspaceError(409, "facts_changed", "Someone else saved this tour since you opened it: reload "
-                                     "it to see their changes", saved_at=old.get("saved_at"))
-            live = state != "draft"
-            if live and not (reason and 3 <= len(reason.strip()) <= 500):
-                raise WorkspaceError(422, "reason_required", "This tour is published: say why you change its facts "
-                                     "(3 to 500 characters)")
-            sup = row["supplier_id"]
-            sup_row = None
-            if (form.supplier_id or None) != (row["supplier_id"] or None):
-                sup_row = await _checked_supplier(pool, form.supplier_id)
-                sup = sup_row["id"] if sup_row else None
-            text = F.render(stored)
-            new_cols = {**text, "country": country,
-                        "provider": sup_row["company_name"] if sup_row else row["provider"]}
-            before = {c: row[c] for c in (*_TEXT_COLS, "country", "provider")}
-            changed = [c for c in new_cols if (new_cols[c] or None) != (before[c] or None)]
-            if (sup or None) != (row["supplier_id"] or None):
-                changed.append("supplier_id")
-            old_cmp = {k: v for k, v in old.items() if k != "saved_at"}
-            new_cmp = {k: v for k, v in stored.items() if k != "saved_at"}
-            if old_cmp != new_cmp:
-                changed.append("manual_facts")
+            old = F.facts_from_row(row) if row is not None else {}
+            live = _check_savable(row, old, expected_saved_at=expected_saved_at, reason=reason)
+            new_cols, sup, changed, hist_b, hist_a = await _plan_save(pool, row, form, stored, old, country)
             if not changed:
                 return {"tour_id": tour_id, "saved": False, "saved_at": old.get("saved_at")}
             stored["saved_at"] = _now_iso()
@@ -349,19 +363,14 @@ async def save_facts(pool, tour_id: str, form: F.FactsIn, *, expected_saved_at: 
                 f"UPDATE silver_aa_internal.raw_tours SET {sets}, manual_facts = ${n + 2}::jsonb, "
                 f"supplier_id = ${n + 3}::uuid WHERE tour_id = $1::uuid RETURNING now() AS changed_at",
                 tour_id, *[new_cols[c] for c in cols], json.dumps(stored, ensure_ascii=False), sup)
-            after_vals = {**new_cols, "supplier_id": sup, "manual_facts": new_cmp}
-            before_vals = {**before, "supplier_id": row["supplier_id"], "manual_facts": old_cmp}
-            hist_b = {c: before_vals[c] for c in changed}
-            hist_a = {c: after_vals[c] for c in changed}
-            from api.routers.admin_pipeline.tour_detail import record_raw_revision
+            why = reason.strip() if reason else None
             revision = await record_raw_revision(conn, tour_id, source="staff_edit", before=hist_b, after=hist_a,
-                                                 actor=actor, reason=reason.strip() if reason else None)
+                                                 actor=actor, reason=why)
             await write_audit_log(conn, tenant_id=None, actor=actor, action="raw_tour.manual_facts_saved",
                                   resource_type=RESOURCE, resource_id=tour_id, details={
                                       "fields": changed, "before": hist_b, "after": hist_a, "live": live,
-                                      "reason": reason, "revision_num": revision})
+                                      "reason": why, "revision_num": revision})
     if live:
-        from api.routers.admin_pipeline.tour_detail import _source_fanout_raw
         await _source_fanout_raw(pool, tour_id, changed_at, [c for c in changed if c != "manual_facts"])
     return {"tour_id": tour_id, "saved": True, "saved_at": stored["saved_at"], "fields": changed,
             "revision_num": revision}
@@ -386,8 +395,8 @@ async def publish_check(pool, conn, tour_id: str) -> None:
     gaps = F.missing(items)
     if gaps:
         raise WorkspaceError(409, "required_missing", "This hand-made tour is not complete: " + "; ".join(
-            i["message"] for i in gaps), items=[{"key": i["key"], "message": i["message"], "params": i["params"]}
-                                                for i in gaps])
+            i["message"] for i in gaps), {"items": [{"key": i["key"], "message": i["message"], "params": i["params"]}
+                                                 for i in gaps]})
 
 
 # ── supplier links ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -464,7 +473,7 @@ async def link_tours(pool, tour_ids: list[str], supplier_id: str, *, reason: str
         raise WorkspaceError(422, "no_tours", "Choose at least one tour")
     if len(ids) > lim.bulk_max:
         raise WorkspaceError(422, "too_many_tours", f"Link at most {lim.bulk_max} tours at a time",
-                             bulk_max=lim.bulk_max)
+                             {"bulk_max": lim.bulk_max})
     for i in ids:
         try:
             uuid.UUID(i)
