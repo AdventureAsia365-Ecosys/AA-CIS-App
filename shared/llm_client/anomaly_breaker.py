@@ -45,28 +45,18 @@ SCOPE_PREFIX = "anomaly:"
 APPS = ("cis", "tripplanner", "crm")      # the apps with AI (AA-Booking has none)
 ENFORCED_APPS = ("cis",)                  # the apps whose gateway refuses on the breaker (this one); see the docstring
 
-# The app of a ledger row: the platform_cost rule (an old CIS row has no app), coalesce(app, quality_signal ->> 'app',
-# 'cis'). AA-1126 / AA-838 (S291, C4.3 W48 finding 3): the reads below apply it as two disjoint branches, the rows with
-# an app (`l.app = $n`, a plain column test an index on app can serve) UNION ALL the old rows without one
-# (`l.app IS NULL AND coalesce(quality_signal ->> 'app', 'cis') = $n`), instead of the coalesce over every row of the
-# window. Same rows, same sums (tests/integration/test_aa1126_gateway_caps_sql.py compares them with the expression).
+# The app of a ledger row: the platform_cost rule (an old CIS row has no app). One range scan on created_at
+# (llm_call_log_created_id_idx) with this test as a cheap Filter: the ledger has no index on app, so a UNION ALL of
+# `app = $n` and `app IS NULL AND ...` would scan and heap-fetch the window twice (S291 review, AA-838).
 _APP_EXPR = "coalesce(l.app, l.quality_signal ->> 'app', 'cis')"
-
-
-def _app_rows_sql(columns: str, window: str, app: str) -> str:
-    """The ledger rows of app ``app`` (a parameter) inside ``window`` (a predicate on ``l``), as two branches."""
-    return (f"SELECT {columns} FROM shared.llm_call_log l WHERE l.app = {app} AND {window}\n"
-            f"        UNION ALL\n"
-            f"        SELECT {columns} FROM shared.llm_call_log l WHERE l.app IS NULL\n"
-            f"           AND coalesce(l.quality_signal ->> 'app', 'cis') = {app} AND {window}")
-
-
 TODAY_SQL = f"""
-    SELECT coalesce(sum(a.cost_usd), 0)::float AS usd
-      FROM ({_app_rows_sql("l.cost_usd", "l.created_at >= $1", "$2")}) a
+    SELECT coalesce(sum(l.cost_usd), 0)::float AS usd
+      FROM shared.llm_call_log l
+     WHERE l.created_at >= $1 AND {_APP_EXPR} = $2
 """
 # $1 / $2 = the UTC dates [start, end), $3 = the app. A day is either rolled up or raw, never both (platform_cost): a
-# raw day is kept only when shared.llm_call_daily has no row for it (tested per day after the GROUP BY, not per row).
+# raw day is kept only when shared.llm_call_daily has no row for it, tested once per grouped day, not per ledger row
+# (AA-838, S291, C4.3 W48 finding 3).
 BASELINE_SQL = f"""
     WITH days AS (
         SELECT generate_series($1::date, $2::date - 1, interval '1 day')::date AS day
@@ -75,13 +65,12 @@ BASELINE_SQL = f"""
           FROM shared.llm_call_daily d
          WHERE d.day >= $1 AND d.day < $2 AND d.app = $3
          GROUP BY 1
-    ), raw_rows AS (
-        {_app_rows_sql("l.created_at, l.cost_usd",
-                       "l.created_at >= ($1::date::timestamp AT TIME ZONE 'UTC') "
-                       "AND l.created_at < ($2::date::timestamp AT TIME ZONE 'UTC')", "$3")}
     ), raw_days AS (
-        SELECT (w.created_at AT TIME ZONE 'UTC')::date AS day, coalesce(sum(w.cost_usd), 0)::float AS usd
-          FROM raw_rows w
+        SELECT (l.created_at AT TIME ZONE 'UTC')::date AS day, coalesce(sum(l.cost_usd), 0)::float AS usd
+          FROM shared.llm_call_log l
+         WHERE l.created_at >= ($1::date::timestamp AT TIME ZONE 'UTC')
+           AND l.created_at < ($2::date::timestamp AT TIME ZONE 'UTC')
+           AND {_APP_EXPR} = $3
          GROUP BY 1
     ), raw AS (
         SELECT g.day, g.usd

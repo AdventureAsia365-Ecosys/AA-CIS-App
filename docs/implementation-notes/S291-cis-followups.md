@@ -9,7 +9,7 @@ one index) and this code PR. The code works with or without 480 (slower without)
 | 1 | AA-1148 | Upload › "Tours Ready for Rewrite" (`GET /admin/tours-ready`) no longer lists hand-made tours |
 | 2 | AA-1148 | Trash / restore of a tour whose key was never served queues no platform recompute |
 | 3 | AA-838 | `REQUEST_TOURS_SQL` (`shared/tour_liveness.py`) reads the key state with a one-key LATERAL lookup |
-| 4 | AA-1126, AA-838 | Anomaly-breaker ledger reads in two sargable branches, the baseline cached in `evaluate`; the Tenant 360 cost sums in two branches |
+| 4 | AA-1126, AA-838 | Anomaly-breaker baseline cached in `evaluate`, its rolled-day test per day; the Tenant 360 cost sums in two branches |
 
 ## Decisions
 
@@ -40,9 +40,12 @@ one index) and this code PR. The code works with or without 480 (slower without)
   apps every 15 minutes: 3 × 96 = 288 baseline reads a day, the ~300 W48 counted. `evaluate` now reads the median
   through `cached_median` (the same `_baseline` dict and key as the call path); today's spend stays fresh. No lock in
   the async path: dict reads / writes are atomic and `_lock` may be held by a sync loader thread.
-- **Slice 4: two disjoint branches for the app rule.** `coalesce(app, quality_signal ->> 'app', 'cis') = $n` equals
-  `app = $n` UNION ALL `app IS NULL AND coalesce(quality_signal ->> 'app', 'cis') = $n` (the branches cannot overlap).
-  The rolled-day test (`NOT EXISTS llm_call_daily`) moved from every ledger row to every grouped day (same days kept).
+- **Slice 4: the app rule stays one coalesce Filter (review fix).** A first cut split
+  `coalesce(app, quality_signal ->> 'app', 'cis') = $n` into `app = $n` UNION ALL `app IS NULL AND ...`. The ledger has
+  no index on `app`, so both branches drove off the same `created_at` range (`llm_call_log_created_id_idx`) and
+  heap-fetched the window twice, about twice the buffers of the single scan, where the coalesce is a cheap Filter. The
+  reviewer caught it; `TODAY_SQL` is back to the original statement and the baseline's raw part keeps one scan.
+  Only the rolled-day test (`NOT EXISTS llm_call_daily`) moved, from every ledger row to every grouped day (same days kept).
 - **Slice 4: the baseline already reads `shared.llm_call_daily` for rolled days** (the `rolled` CTE, unchanged). The
   table is near empty on Dev (rollup happens at retention, still dry run), so nothing more to gain there today.
 - **Slice 4: Tenant 360 sums.** `tenant_id = $1 OR ($2 AND tenant_id IS NULL)` became two branches
@@ -52,7 +55,7 @@ one index) and this code PR. The code works with or without 480 (slower without)
 
 ## Changed (against the ask)
 
-- No new index on `shared.llm_call_log`. With the baseline cached, the baseline query runs about once per process, app
+- No new index on `shared.llm_call_log`, so no app-split branches either (see the review fix above). With the baseline cached, the baseline query runs about once per process, app
   and UTC day (single digits a day instead of ~300), and today's read is a one-day range on `llm_call_log_created_id_idx`.
   A `(app, created_at) INCLUDE (cost_usd)` index on a 300 MB ledger would need `CREATE INDEX CONCURRENTLY` in a
   `-- migrate: no-transaction` file, which the CIS integration replay cannot run today (it sends each file as one
@@ -72,7 +75,10 @@ one index) and this code PR. The code works with or without 480 (slower without)
 - Equivalence tests freeze the old statements: `tests/integration/test_aa838_request_tours_sql.py` (served, retired with
   and without a served Segment member, paused, grouped versions, never served, atom only, missing atom, another
   tenant) and the two new tests at the end of `tests/integration/test_aa1126_gateway_caps_sql.py` (every app shape, a
-  rolled day; tenant sums for a tenant and the internal tenant, all time and the 30-day window).
+  rolled day: the per-day rolled test equals the per-row one; tenant sums for a tenant and the internal tenant, all
+  time and the 30-day window). The tenant branches are a real gain: `idx_llm_call_log_tenant_created` serves `tenant_id = $1`.
+- Live check before merge: in the EXPLAIN output, `today_*` new shared hit + read must equal old (same statement now),
+  and `baseline_*` new must not exceed old.
 - The live EXPLAIN comparison (old vs new for slices 3 and 4) is a DB Migrate `run-script` file the orchestrator runs:
   root `.tmp-session/S291/aa838_explain_s291.py` (plans only, no row values).
 - `tests/unit/test_aa1126_spend_stops.py`: the second watch run now reads today's spend only (3 reads, no baseline);

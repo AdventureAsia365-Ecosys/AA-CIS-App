@@ -106,7 +106,7 @@ async def test_the_run_spend_of_a_job_an_eval_run_and_an_adhoc_stage(conn):
     assert await run_cap.read_spend(conn, ad) == pytest.approx(0.25)
 
 
-# ── AA-838 (S291, C4.3 W48 finding 3): the sargable reads return what the coalesce reads returned ─────────────────
+# ── AA-838 (S291, C4.3 W48 finding 3): the per-day rolled test and the tenant branches return the old sums ─────
 
 _OLD_APP = "coalesce(l.app, l.quality_signal ->> 'app', 'cis')"
 OLD_TODAY_SQL = f"""
@@ -168,7 +168,7 @@ async def _ledger_mix(c):
 
 
 @pytest.mark.asyncio
-async def test_sargable_today_and_baseline_reads_equal_the_coalesce_reads(conn):
+async def test_today_and_baseline_reads_equal_the_per_row_reads(conn):
     await _ledger_mix(conn)
     for app in APPS:
         for since in (_ts(TODAY, 0), _ts(TODAY, 5)):
