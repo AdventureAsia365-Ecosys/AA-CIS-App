@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql, 469_aa1171_ops_thresholds_and_recipient_topic.sql, 471_aa1174_compliance_obligations.sql, 472_aa1172_fact_instruction_guard.sql, 474_aa1160_tenant_crm_agency_marker.sql, 475_aa1140_ops_status_samples_and_thresholds.sql, 476_aa1152_tp_agency_price_stale_hours.sql, 477_aa1140_rds_free_storage_pct.sql, 478_aa1148_manual_tours_supplier_link.sql, 479_aa1173_compliance_exceptions_reviews.sql, 481_aa1154_ops_assist_settings.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql, 469_aa1171_ops_thresholds_and_recipient_topic.sql, 471_aa1174_compliance_obligations.sql, 472_aa1172_fact_instruction_guard.sql, 474_aa1160_tenant_crm_agency_marker.sql, 475_aa1140_ops_status_samples_and_thresholds.sql, 476_aa1152_tp_agency_price_stale_hours.sql, 477_aa1140_rds_free_storage_pct.sql, 478_aa1148_manual_tours_supplier_link.sql, 479_aa1173_compliance_exceptions_reviews.sql, 481_aa1154_ops_assist_settings.sql, 483_aa1141_ops_status_p1_settings.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -4705,6 +4705,78 @@
    }
   },
   {
+   "key": "cis.ops.status_ack_hours",
+   "app": "cis",
+   "area": "ops",
+   "label": "Status page: how long an Ack lasts (hours)",
+   "description": "On the Ecosystem status page (/admin/overview, api/services/ops_status/) an Ack of a Needs-attention item lasts this many hours and then ends by itself: if the item is still open it counts again in the verdict and shows as open. An alarm or rollout item also ends when the event ends. Snooze and mute have their own end times. Default 24.",
+   "value_type": "int",
+   "unit": "hours",
+   "min_value": 1,
+   "max_value": 168,
+   "allowed_values": null,
+   "default_value": 24,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many hours an acknowledged alert stays set aside before it counts as open again.",
+     "raise": "An acknowledged alert stays quiet longer; a problem that drags on is seen again later.",
+     "lower": "An acknowledged alert comes back sooner if it is still open.",
+     "when": "Keep one working day; lower it during an incident so nothing stays set aside overnight.",
+     "example": "With the default 24, an alert acked at 09:00 counts as open again at 09:00 the next day if it is still there."
+    },
+    "vi": {
+     "what": "Một cảnh báo đã xác nhận được gác bao nhiêu giờ trước khi tính là đang mở trở lại.",
+     "raise": "Cảnh báo đã xác nhận im lâu hơn; vấn đề kéo dài được thấy lại muộn hơn.",
+     "lower": "Cảnh báo đã xác nhận quay lại sớm hơn nếu vẫn còn.",
+     "when": "Giữ một ngày làm việc; giảm khi có sự cố để không gì bị gác qua đêm.",
+     "example": "Với mặc định 24, cảnh báo xác nhận lúc 09:00 tính là mở lại lúc 09:00 hôm sau nếu vẫn còn."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.status_ack_reason_min_chars",
+   "app": "cis",
+   "area": "ops",
+   "label": "Status page: shortest reason to ack, snooze or mute",
+   "description": "On the Ecosystem status page (/admin/overview, api/services/ops_status/) a person who acknowledges, snoozes or mutes a Needs-attention item must write a reason of at least this many characters (POST /admin/overview/status/acks); the reason is kept with the ack and in the audit log. The S285 review sets 20. Default 20.",
+   "value_type": "int",
+   "unit": "characters",
+   "min_value": 10,
+   "max_value": 500,
+   "allowed_values": null,
+   "default_value": 20,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The shortest written reason the page accepts when someone acknowledges, snoozes or mutes an alert.",
+     "raise": "Longer reasons and better records, a little slower when many alerts fire.",
+     "lower": "Faster to act, with thinner records of why an alert was set aside.",
+     "when": "Keep 20 unless reviews of the ack trail show reasons that say too little.",
+     "example": "With the default 20, \"deploy in progress, ok\" (22 characters) is accepted."
+    },
+    "vi": {
+     "what": "Độ dài tối thiểu của lý do mà trang chấp nhận khi ai đó xác nhận, tạm hoãn hoặc tắt tiếng một cảnh báo.",
+     "raise": "Lý do dài hơn, hồ sơ rõ hơn, chậm hơn một chút khi nhiều cảnh báo cùng lúc.",
+     "lower": "Thao tác nhanh hơn, hồ sơ lý do gác cảnh báo sơ sài hơn.",
+     "when": "Giữ 20 trừ khi rà soát lịch sử xác nhận thấy lý do quá sơ sài.",
+     "example": "Với mặc định 20, \"deploy in progress, ok\" (22 ký tự) được chấp nhận."
+    }
+   }
+  },
+  {
    "key": "cis.ops.status_client_error_warn_pct",
    "app": "cis",
    "area": "ops",
@@ -4737,6 +4809,114 @@
      "lower": "Các lần từ chối bình thường (khách chưa đăng nhập, bot) có thể làm ô sáng lên.",
      "when": "Tăng cho app cố ý từ chối nhiều lời gọi ẩn danh; giảm sau khi bỏ sót một lỗi client.",
      "example": "Với mặc định 10 %, 300 request bị từ chối trên 2.000 (15 %) hiện màu vàng."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.status_cost_anomaly_baseline_days",
+   "app": "cis",
+   "area": "ops",
+   "label": "Status page: days of usual AI spend for the anomaly banner",
+   "description": "On the Ecosystem status page (/admin/overview, api/services/ops_status/) the usual hourly AI spend of an app x provider x route is its median hour over this many UTC days before the current hour (hours with no spend count as 0); the cost anomaly banner compares each recent hour with it. The S285 review reads 7 days. Default 7.",
+   "value_type": "int",
+   "unit": "days",
+   "min_value": 1,
+   "max_value": 30,
+   "allowed_values": null,
+   "default_value": 7,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many days of past AI spend the page uses to know the usual spend per hour of each app and route.",
+     "raise": "A steadier usual spend that a few busy days do not move, learned slower after a lasting change.",
+     "lower": "The usual spend follows recent use sooner; a busy day can hide a jump right after it.",
+     "when": "Keep a full week so weekdays and weekends both count.",
+     "example": "With the default 7, an hour on 24/11 is compared with the median hour from 17/11 to 24/11."
+    },
+    "vi": {
+     "what": "Số ngày chi phí AI trước đó mà trang dùng để biết mức chi thường ngày theo giờ của từng app và route.",
+     "raise": "Mức thường ngày ổn định hơn, vài ngày bận không làm lệch, nhưng học chậm hơn sau thay đổi lâu dài.",
+     "lower": "Mức thường ngày theo sát gần đây hơn; một ngày bận có thể che bước nhảy ngay sau đó.",
+     "when": "Giữ trọn một tuần để tính cả ngày thường và cuối tuần.",
+     "example": "Với mặc định 7, một giờ ngày 24/11 được so với giờ trung vị từ 17/11 tới 24/11."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.status_cost_anomaly_factor",
+   "app": "cis",
+   "area": "ops",
+   "label": "Status page: AI spend anomaly factor",
+   "description": "On the Ecosystem status page (/admin/overview, api/services/ops_status/) the cost anomaly banner shows an app x provider x route (connection) whose AI spend in one hour is above this many times its median hour over cis.ops.status_cost_anomaly_baseline_days days (hours with no spend count as 0) and above cis.ops.status_cost_anomaly_floor_usd_h. Read from the hourly usage rollup (shared.ai_usage_hourly), so the grouping stays the same when a route moves between the vendor API and Bedrock. Default 3.",
+   "value_type": "numeric",
+   "unit": "x",
+   "min_value": 1.5,
+   "max_value": 50,
+   "allowed_values": null,
+   "default_value": 3,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many times its usual hourly AI spend one app on one provider route must reach before the page shows a cost anomaly banner.",
+     "raise": "Only big jumps show a banner; a slow rise is seen later.",
+     "lower": "Smaller jumps show a banner, including busy hours of a planned wave.",
+     "when": "Raise it while waves run often; lower it when spend is flat and any jump is suspect.",
+     "example": "With the default 3, a route that usually spends 0.20 USD an hour shows a banner at 0.61 USD in one hour."
+    },
+    "vi": {
+     "what": "Chi phí AI trong một giờ của một app trên một route nhà cung cấp phải gấp bao nhiêu lần mức thường ngày để trang hiện băng cảnh báo bất thường.",
+     "raise": "Chỉ bước nhảy lớn mới hiện băng; tăng chậm được thấy muộn hơn.",
+     "lower": "Bước nhảy nhỏ cũng hiện băng, kể cả giờ bận của một wave đã lên kế hoạch.",
+     "when": "Tăng khi wave chạy thường xuyên; giảm khi chi phí đều và bước nhảy nào cũng đáng ngờ.",
+     "example": "Với mặc định 3, route thường tốn 0,20 USD một giờ sẽ hiện băng khi lên 0,61 USD trong một giờ."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.status_cost_anomaly_floor_usd_h",
+   "app": "cis",
+   "area": "ops",
+   "label": "Status page: smallest hourly AI spend that can be an anomaly",
+   "description": "On the Ecosystem status page (/admin/overview, api/services/ops_status/) an app x provider x route spending at most this many USD in one hour never shows in the cost anomaly banner, whatever its usual spend, so a route that is usually idle does not raise one on its first cents. Default 0.10 USD per hour.",
+   "value_type": "usd",
+   "unit": "USD/hour",
+   "min_value": 0,
+   "max_value": 100,
+   "allowed_values": null,
+   "default_value": 0.1,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The lowest spend in one hour at which the page can call a route's AI spend abnormal.",
+     "raise": "Small routes never show a banner; only real money does.",
+     "lower": "Even a few cents an hour can show a banner on a route that is usually idle.",
+     "when": "Keep it near the hourly cost you would not act on.",
+     "example": "With the default 0.10, an idle route spending 0.05 USD in an hour shows no banner."
+    },
+    "vi": {
+     "what": "Mức chi trong một giờ thấp nhất mà trang có thể coi chi phí AI của một route là bất thường.",
+     "raise": "Route nhỏ không bao giờ hiện băng; chỉ số tiền đáng kể mới hiện.",
+     "lower": "Chỉ vài cent một giờ cũng có thể hiện băng trên một route thường không dùng.",
+     "when": "Giữ gần mức chi theo giờ mà bạn sẽ không xử lý.",
+     "example": "Với mặc định 0,10, route ít dùng chi 0,05 USD trong một giờ không hiện băng."
     }
    }
   },
@@ -4809,6 +4989,114 @@
      "lower": "App chuyển vàng với các đợt lỗi nhỏ hơn, kể cả khi chỉ vài lời gọi lỗi lẻ tẻ.",
      "when": "Tăng khi một app có tỉ lệ lỗi đã biết và chấp nhận được; giảm khi người dùng báo lỗi mà trang không thấy.",
      "example": "Với mặc định 1 %, app có 2.000 request và 25 lỗi máy chủ (1,25 %) sẽ chuyển vàng."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.status_forecast_crit_days",
+   "app": "cis",
+   "area": "ops",
+   "label": "Status page: capacity forecast critical (days left)",
+   "description": "On the Ecosystem status page (/admin/overview, api/services/ops_status/) a capacity forecast that reaches its limit in this many days or fewer is coloured critical and listed in Needs attention (SEV3). A value above the warn days is lowered to it. Default 7.",
+   "value_type": "int",
+   "unit": "days",
+   "min_value": 1,
+   "max_value": 180,
+   "allowed_values": null,
+   "default_value": 7,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many days before a limit the capacity forecast turns red and asks for action.",
+     "raise": "Earlier red rows and earlier action items.",
+     "lower": "Red only when the limit is very close.",
+     "when": "Keep a week: enough to raise storage or a cap with a reviewed change.",
+     "example": "With the default 7, an AI connection expected to reach its monthly cap in 5 days shows red."
+    },
+    "vi": {
+     "what": "Còn bao nhiêu ngày tới giới hạn thì dự báo dung lượng chuyển đỏ và cần xử lý.",
+     "raise": "Dòng đỏ và việc cần làm xuất hiện sớm hơn.",
+     "lower": "Chỉ đỏ khi giới hạn đã rất gần.",
+     "when": "Giữ một tuần: đủ để tăng dung lượng hoặc trần chi qua một thay đổi có duyệt.",
+     "example": "Với mặc định 7, kết nối AI dự kiến chạm trần tháng sau 5 ngày hiện màu đỏ."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.status_forecast_warn_days",
+   "app": "cis",
+   "area": "ops",
+   "label": "Status page: capacity forecast warn (days left)",
+   "description": "On the Ecosystem status page (/admin/overview, api/services/ops_status/) a capacity forecast (RDS free storage, an AI connection's monthly cap) that reaches its limit in this many days or fewer is coloured warn. Default 30.",
+   "value_type": "int",
+   "unit": "days",
+   "min_value": 1,
+   "max_value": 365,
+   "allowed_values": null,
+   "default_value": 30,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many days before a limit the capacity forecast turns amber.",
+     "raise": "Earlier warnings, more time to plan; more amber rows that may never matter.",
+     "lower": "Fewer amber rows, less time to act.",
+     "when": "Keep about a month: storage growth and monthly caps are planned monthly.",
+     "example": "With the default 30, storage expected to run out in 25 days shows amber."
+    },
+    "vi": {
+     "what": "Còn bao nhiêu ngày tới giới hạn thì dự báo dung lượng chuyển màu vàng.",
+     "raise": "Cảnh báo sớm hơn, nhiều thời gian chuẩn bị; nhiều dòng vàng có thể không bao giờ thành vấn đề.",
+     "lower": "Ít dòng vàng hơn, ít thời gian xử lý hơn.",
+     "when": "Giữ khoảng một tháng: dung lượng và trần chi hằng tháng được lên kế hoạch theo tháng.",
+     "example": "Với mặc định 30, dung lượng dự kiến hết sau 25 ngày hiện màu vàng."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.status_forecast_window_days",
+   "app": "cis",
+   "area": "ops",
+   "label": "Status page: days of trend for the capacity forecast",
+   "description": "On the Ecosystem status page (/admin/overview, api/services/ops_status/) the capacity forecast fits the trend of RDS free storage over this many days (one CloudWatch FreeStorageSpace read per day point, cached 6 hours) to say in how many days it reaches its limit; the AI caps use the month to date. Default 7.",
+   "value_type": "int",
+   "unit": "days",
+   "min_value": 1,
+   "max_value": 30,
+   "allowed_values": null,
+   "default_value": 7,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many past days the page looks at to project when database storage runs out.",
+     "raise": "A steadier projection that one busy day does not move, slower to follow a change in growth.",
+     "lower": "The projection follows recent growth sooner but jumps more.",
+     "when": "Keep a week; lower it right after a large data load so the projection follows the new pace.",
+     "example": "With the default 7, the forecast on 24/11 uses the free storage from 17/11 to 24/11."
+    },
+    "vi": {
+     "what": "Trang xem bao nhiêu ngày trước để dự báo khi nào dung lượng database hết.",
+     "raise": "Dự báo ổn định hơn, một ngày bận không làm lệch, nhưng chậm theo thay đổi tốc độ tăng.",
+     "lower": "Dự báo theo sát tốc độ gần đây hơn nhưng dao động nhiều hơn.",
+     "when": "Giữ một tuần; giảm ngay sau một đợt nạp dữ liệu lớn để dự báo theo nhịp mới.",
+     "example": "Với mặc định 7, dự báo ngày 24/11 dùng dung lượng trống từ 17/11 tới 24/11."
     }
    }
   },
@@ -4953,6 +5241,42 @@
      "lower": "Chỉ một lời gọi lỗi ở app ít truy cập có thể làm nó chuyển đỏ.",
      "when": "Tăng trên Dev nơi lưu lượng rất nhỏ; giảm khi đã có lưu lượng thật.",
      "example": "Với mặc định 50, app có 20 request và 3 lỗi hiện \"ít request\" thay vì đỏ 15 %."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.status_mute_max_days",
+   "app": "cis",
+   "area": "ops",
+   "label": "Status page: longest mute (days)",
+   "description": "On the Ecosystem status page (/admin/overview, api/services/ops_status/) a person who mutes a Needs-attention item picks an end time; the API refuses an end time more than this many days ahead, so no alert is muted for good. Default 7.",
+   "value_type": "int",
+   "unit": "days",
+   "min_value": 1,
+   "max_value": 30,
+   "allowed_values": null,
+   "default_value": 7,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The furthest end time a person may pick when muting an alert.",
+     "raise": "Longer mutes are allowed, for a known issue that waits on a fix; a forgotten mute hides a problem longer.",
+     "lower": "Mutes end sooner and must be renewed with a new reason.",
+     "when": "Keep one week; raise it only for a known issue with a planned fix date.",
+     "example": "With the default 7, a mute set on 24/11 can end on 01/12 at the latest."
+    },
+    "vi": {
+     "what": "Thời điểm kết thúc xa nhất mà một người được chọn khi tắt tiếng một cảnh báo.",
+     "raise": "Cho phép tắt tiếng lâu hơn cho lỗi đã biết đang chờ sửa; nếu quên thì lỗi bị che lâu hơn.",
+     "lower": "Tắt tiếng hết sớm hơn và phải đặt lại kèm lý do mới.",
+     "when": "Giữ một tuần; chỉ tăng cho lỗi đã biết có ngày sửa dự kiến.",
+     "example": "Với mặc định 7, tắt tiếng đặt ngày 24/11 kết thúc muộn nhất ngày 01/12."
     }
    }
   },
@@ -5421,6 +5745,92 @@
      "lower": "Các đỉnh bình thường của một app có thể hiện thành SEV2.",
      "when": "Giữ gần 100 %; giảm khi một app lỗi vì kết nối mà ô không đỏ.",
      "example": "Với mặc định 95 % và giới hạn 20, role có 19 kết nối làm ô chuyển đỏ."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.status_snooze_choices_hours",
+   "app": "cis",
+   "area": "ops",
+   "label": "Status page: snooze lengths offered (hours)",
+   "description": "On the Ecosystem status page (/admin/overview, api/services/ops_status/) the Snooze picker of a Needs-attention item offers these lengths in hours, each one of 1, 2, 3, 4, 6, 8, 12, 24, 48 or 72, next to \"until tomorrow\" (cis.ops.status_snooze_tomorrow_hour). The API refuses a snooze whose end time is none of them (POST /admin/overview/status/acks). An empty list leaves only \"until tomorrow\". Default [1, 4].",
+   "value_type": "list",
+   "unit": "hours",
+   "min_value": null,
+   "max_value": null,
+   "allowed_values": [
+    1,
+    2,
+    3,
+    4,
+    6,
+    8,
+    12,
+    24,
+    48,
+    72
+   ],
+   "default_value": [
+    1,
+    4
+   ],
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The snooze lengths, in hours, the page offers when someone snoozes an alert (\"until tomorrow\" is always offered too).",
+     "raise": "Longer choices let an alert stay quiet for most of a shift; a problem that drags on is seen again later.",
+     "lower": "Short choices only: a snoozed alert comes back soon and must be snoozed again if it is still expected.",
+     "when": "Match the choices to how long typical known noise lasts, for example a deploy or a planned wave.",
+     "example": "With the default [1, 4], the picker offers 1 h, 4 h and until tomorrow; adding 12 offers a 12 h snooze too."
+    },
+    "vi": {
+     "what": "Các độ dài tạm hoãn (giờ) mà trang đưa ra khi ai đó tạm hoãn một cảnh báo (luôn có thêm \"tới mai\").",
+     "raise": "Lựa chọn dài hơn cho phép cảnh báo im gần hết một ca; vấn đề kéo dài được thấy lại muộn hơn.",
+     "lower": "Chỉ lựa chọn ngắn: cảnh báo tạm hoãn quay lại sớm và phải tạm hoãn lại nếu vẫn còn.",
+     "when": "Chọn theo thời gian mà nhiễu đã biết thường kéo dài, ví dụ một lần deploy hay một wave đã lên kế hoạch.",
+     "example": "Với mặc định [1, 4], trang đưa ra 1 giờ, 4 giờ và tới mai; thêm 12 thì có thêm tạm hoãn 12 giờ."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.status_snooze_tomorrow_hour",
+   "app": "cis",
+   "area": "ops",
+   "label": "Status page: hour \"snooze until tomorrow\" ends",
+   "description": "On the Ecosystem status page (/admin/overview, api/services/ops_status/) \"Snooze until tomorrow\" ends at this hour of the next day on the clock of the person who snoozes (0-23). Default 8.",
+   "value_type": "int",
+   "unit": "hour",
+   "min_value": 0,
+   "max_value": 23,
+   "allowed_values": null,
+   "default_value": 8,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The hour of the next morning at which \"snooze until tomorrow\" ends, on your own clock.",
+     "raise": "Snoozed alerts come back later in the morning.",
+     "lower": "Snoozed alerts come back earlier, before the working day starts.",
+     "when": "Set it to when the person on duty starts the day.",
+     "example": "With the default 8, an alert snoozed at 22:00 comes back at 08:00 the next day."
+    },
+    "vi": {
+     "what": "Giờ sáng hôm sau mà \"tạm hoãn tới mai\" kết thúc, theo đồng hồ của chính bạn.",
+     "raise": "Cảnh báo tạm hoãn quay lại muộn hơn trong buổi sáng.",
+     "lower": "Cảnh báo tạm hoãn quay lại sớm hơn, trước giờ làm.",
+     "when": "Đặt theo giờ người trực bắt đầu ngày làm việc.",
+     "example": "Với mặc định 8, cảnh báo tạm hoãn lúc 22:00 quay lại lúc 08:00 hôm sau."
     }
    }
   },
