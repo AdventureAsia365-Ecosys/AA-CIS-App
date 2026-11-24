@@ -50,7 +50,8 @@ def test_every_privacy_check_is_graded_by_a_setting():
             "campaign_consent_enforced"} <= graded
     for cid, (_fact, key, kind) in keys.FACT_LIMITS.items():
         assert key in keys.ALL and kind in ("age_days", "max"), cid
-    assert set(keys.VALIDITY_HOURS) == {"root_daily", "cis_db", "crm_ops"}
+    # AA-1173: + the two sealed Infra sources
+    assert set(keys.VALIDITY_HOURS) == {"root_daily", "cis_db", "crm_ops", "aws_nightly", "prowler_weekly"}
 
 
 def test_framework_seed_is_the_six_of_466_and_no_law_row():
