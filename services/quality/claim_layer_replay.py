@@ -53,19 +53,16 @@ MAX_DAYS = 366
 MAX_LIMIT = 1000
 SAMPLE_IDS = 10
 
-# The newest attempt of each request, approved or held, with a stored writer input (the gate inputs are rebuilt from
-# it: writing_memory.replay.PieceReplay).
+# Every stored T9 piece, approved or held, with a stored writer input (the gate inputs are rebuilt from it:
+# writing_memory.replay.PieceReplay): the population of the R0 replay's _PIECES_SQL. Each row is one write session and
+# already holds that session's final attempt (attempt_number counts T9's internal retries, 1-2); since migration 125 a
+# reopened request gets a new row, and every approved or held row is a decision that shipped, so none is collapsed.
 PIECES_SQL = """
-SELECT piece_id, channel, status, content_text, seo_title, meta_description, slug, gate_ledger, writer_input
-FROM (
-    SELECT DISTINCT ON (angle_gate_request_id) piece_id::text AS piece_id, channel, status, content_text, seo_title,
-           meta_description, slug, gate_ledger, writer_input, created_at
-    FROM acp_shared.content_piece
-    WHERE writer_input IS NOT NULL AND created_at >= now() - make_interval(days => $1)
-    ORDER BY angle_gate_request_id, attempt_number DESC
-) latest
-WHERE status IN ('approved', 'held')
-ORDER BY created_at DESC
+SELECT piece_id::text AS piece_id, channel, status, content_text, seo_title, meta_description, slug, gate_ledger,
+       writer_input
+FROM acp_shared.content_piece
+WHERE status IN ('approved', 'held') AND writer_input IS NOT NULL AND created_at >= now() - make_interval(days => $1)
+ORDER BY created_at DESC, piece_id
 LIMIT $2
 """
 LEDGER_SQL = """
