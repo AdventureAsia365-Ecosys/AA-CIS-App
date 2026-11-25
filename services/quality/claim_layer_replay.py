@@ -47,10 +47,10 @@ SCHEMA = "aa1050-claim-layer-replay/1"
 LAYERS = ("t10_claims", "seed_align_tier1", "t10_adjudicate", "claim_shadow")
 LEDGER_STAGES = ("t10_claims", "t10_adjudicate", "claim_shadow")
 SETTING_PREFIX = "cis.quality_modes.t10_"
-DEFAULT_DAYS = 90
-DEFAULT_LIMIT = 300
-MAX_DAYS = 366
-MAX_LIMIT = 1000
+DEFAULT_DAYS = 90  # technical-constant: replay window bound of an offline read-only script, not a business policy
+DEFAULT_LIMIT = 300  # technical-constant: rows per offline replay run, not a business policy
+MAX_DAYS = 366  # technical-constant: upper bound of the offline replay window
+MAX_LIMIT = 1000  # technical-constant: upper bound of rows per offline replay run
 SAMPLE_IDS = 10
 
 # Every stored T9 piece, approved or held, with a stored writer input (the gate inputs are rebuilt from it:
