@@ -523,9 +523,16 @@ _ORIGIN_SQL = """
 """
 
 
+async def is_hand_made(conn, tour_id: str) -> bool:
+    """True for a hand-made tour (entry_origin 'manual'); False for a sheet tour, an unknown id or before CIS 478. The
+    Excel fact-draft merge and publish refuse a hand-made tour with it (AA-1181, api/routers/admin_pipeline/
+    fact_drafts.py)."""
+    return await conn.fetchval(_ORIGIN_SQL, tour_id) == "manual"
+
+
 async def _manual_row(conn, tour_id: str):
     """The tour row when it is a hand-made tour; None for a sheet tour, an unknown id or before CIS 478."""
-    if await conn.fetchval(_ORIGIN_SQL, tour_id) != "manual":
+    if not await is_hand_made(conn, tour_id):
         return None
     return await conn.fetchrow(_TOUR_SQL, tour_id)
 

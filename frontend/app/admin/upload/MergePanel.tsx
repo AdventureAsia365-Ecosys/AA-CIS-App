@@ -6,10 +6,13 @@
 // required. The parent sends {decision: "merge", resolutions, reason} with the other decisions. The merge becomes a
 // draft of the tour's facts, published from the tour drawer (TourFactDraft.tsx); a field the role may not change (the
 // price without reference_price.write, D5) keeps its value; a tour with a sheet draft waiting cannot take another.
+// AA-1181: a tour made by hand in the content workspace never takes a sheet (409 fact_draft_hand_made): the panel says
+// so in the reader's language and the merge is never ready (Confirm stays off until another decision is chosen).
 
 import { useEffect, useState } from "react";
 import { K, Badge, DataTable, Input, Select, useT, type ColumnDef } from "../../_kit";
 import { D } from "../_components/tourDraft.messages";
+import { FACT_DRAFT_HAND_MADE, refusalText } from "@/lib/factDraftErrors";
 
 interface MergeItem { field: string; current: unknown; incoming: unknown; hand_edited: boolean }
 interface MergePreview {
@@ -40,8 +43,7 @@ export default function MergePanel({ stagingId, onChange }: {
         const body = await r.json().catch(() => ({}));
         if (!alive) return;
         if (!r.ok) {
-          const d = body?.detail;
-          setError(typeof d === "string" ? d : d?.message || t("loadFailed"));
+          setError(refusalText(body, t("loadFailed"), { [FACT_DRAFT_HAND_MADE]: t("mergeHandMade") }));
           return;
         }
         setPreview(body);
