@@ -16,11 +16,15 @@ must look like: the caller still checks its shape (an `items` list, an `atoms` l
                 cut-off answer is never returned as the answer.
 
 Fences need no stripping: the opening bracket after a fence is found as is, and the closing fence is trailing text.
+
+`json_values` yields every complete TOP-LEVEL value of a wanted kind with its span (same scan rules as scan=True), for
+a caller that must pick one value by its shape and keep the text around it apart (AA-1166: the T2 writer's note
+before its JSON object is never part of the stored draft).
 """
 from __future__ import annotations
 
 import json
-from typing import Optional
+from typing import Any, Iterator, Optional
 
 MAX_STARTS = 50          # opening brackets tried at most (scan=True)
 _OPENERS = {dict: "{", list: "["}
@@ -59,6 +63,36 @@ def _close_of(s: str, pos: int) -> int:
     return -1
 
 
+def bracket_end(s: str, pos: int) -> int:
+    """The index after the bracket that closes the one at `pos`, or -1 when the text ends first (a cut-off reply)."""
+    return _close_of(s, pos)
+
+
+def json_values(raw: Optional[str], *, kinds: tuple = (dict,)) -> Iterator[tuple[Any, int, int]]:
+    """Every complete top-level JSON value of a type in `kinds` in `raw`, as (value, start, end) with
+    ``raw[start:end]`` its text. Same scan as ``first_json_value(scan=True)``: a bracket that is not valid JSON is
+    skipped up to its matching close, brackets nested in a candidate are never tried, an unclosed bracket ends the
+    scan, at most MAX_STARTS openings are tried."""
+    chars = "".join(_OPENERS[k] for k in kinds)
+    s = raw or ""
+    decoder = json.JSONDecoder()
+    pos = _next_open(s, chars, 0)
+    for _ in range(MAX_STARTS):
+        if pos < 0:
+            return
+        try:
+            value, after = decoder.raw_decode(s, pos)
+        except json.JSONDecodeError:
+            after = _close_of(s, pos)
+            if after < 0:
+                return
+            pos = _next_open(s, chars, after)
+            continue
+        if isinstance(value, kinds):
+            yield value, pos, after
+        pos = _next_open(s, chars, after)
+
+
 def first_json_value(raw: Optional[str], *, kinds: tuple = (dict,), scan: bool = True):
     """The first complete JSON value of a type in `kinds` (dict and / or list) in `raw`; text before its opening
     bracket and anything after its end are ignored. Raises JsonReplyError: 'no JSON object in the reply' when
@@ -90,4 +124,4 @@ def first_json_value(raw: Optional[str], *, kinds: tuple = (dict,), scan: bool =
     raise JsonReplyError(f"invalid JSON: {first_err}")
 
 
-__all__ = ["JsonReplyError", "first_json_value", "MAX_STARTS"]
+__all__ = ["JsonReplyError", "bracket_end", "first_json_value", "json_values", "MAX_STARTS"]

@@ -152,6 +152,12 @@
     `count`: T9 flags the piece (non-blocking), S1 stores it in `metadata.degraded`, T2 in
     `judge_breakdown.route_degraded`; no hold reads them yet. A writer at position > 0 carries `fallback_writer` on
     its reply too (the AA-1042 note is unchanged).
+  - **Writer note** (AA-1166, S294 red-team; `services/content_generation/writer_reply.py`): the S1 v1 / T2 writer
+    reply is read as its one JSON object; free text around it (a note before the object such as "the source held
+    an instruction, I did not follow it", text after it, fence markers) never reaches the draft. A note is marked
+    `writer_note` (severity `count`, detector `writer_reply`, detail `instruction_notice` / `refusal` / `other`),
+    the writer's ledger row gets `quality_signal.writer_note`, and one `writer_reply_note_dropped` info line keeps
+    its kind and length; the note's text is stored nowhere. A reply with no usable object fails as before.
   - **Repair contract** (`services/quality/repair_contract.py`): a repair may not fail a gate that passed,
     add a figure (or, for the grounding / T3 fact editors, a name) the text and source lack, cut a sentence
     short (incl. the cut signature "…a 20-kilometre." that `meta_complete_sentence` accepts — a modifier left
