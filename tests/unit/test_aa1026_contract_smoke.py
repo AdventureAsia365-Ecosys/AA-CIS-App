@@ -66,8 +66,6 @@ GOOD = {
                                 "places": []}]},
     "a3_place_locate": {"Tamsin Lodge": None, "Varro hut": None},
     "a3_place_dedupe_check": {"verdict": "unsure", "confidence": 0.4, "reason": "names differ"},
-    "t10_claims": {"rows": [{"i": "1", "t": "trip_fact", "ref": "S1", "q": "walk 12 km", "p": ["Varro hut"]},
-                            {"i": "2", "t": "number", "ref": "F1", "q": "sits at 2,100 m", "p": ["Varro hut"]}]},
     "t9_faq_answer_fit": {"items": [{"n": 1, "verdict": "ANSWERS", "reason": ""},
                                     {"n": 2, "verdict": "ANSWERS", "reason": ""}]},
     "t9_faq_filter": {"items": [{"n": 1, "label": "KEEP", "reason_code": "on_subject", "confidence": "high"},
@@ -154,7 +152,6 @@ def test_prose_instead_of_json_fails_the_contract(stage):
 
 
 def test_the_requests_are_the_stages_own_prompts():
-    from services.acp_content_writing.claim_rules import EXTRACTION_SYSTEM
     from services.acp_shared.atom_extraction import SYSTEM_PROMPT as ATOMIZE_SYSTEM
     from services.content_generation.brand_audit_node import BRAND_AUDIT_SCHEMA
     from services.content_generation.source_facts import _SCHEMA
@@ -171,7 +168,7 @@ def test_the_requests_are_the_stages_own_prompts():
     assert seen["a3_place_days"].system_prompt == days.SYSTEM_PROMPT
     assert seen["a3_place_locate"].system_prompt == locate.SYSTEM_PROMPT
     assert seen["a3_place_dedupe_check"].json_schema == dedupe.VERDICT_SCHEMA
-    assert seen["t10_claims"].system_prompt == EXTRACTION_SYSTEM and seen["t10_claims"].json_schema
+    assert "t10_claims" not in smoke.PLANNED and "t10_claims" not in smoke.CASES   # retired (AA-1050, S294 D6)
     assert "Varro hut" in seen["a3_place_card"].user_prompt                 # draft_card's own user prompt
     assert "FACTS:\n1. The Varro hut stands" in seen["a3_place_card_check"].user_prompt
 
@@ -508,14 +505,15 @@ async def test_a_billed_unusable_reply_writes_its_failing_smoke_row_without_its_
     class Unusable(FakeClient):
         def probe(self, request, model, target):
             raise _billed_unusable("schema mismatch", [{"model": "nova-lite", "cost_usd": 0.0003}])
-    plan = {"stages": [{"stage": "t10_claims", "role": "validate", "model_key": "nova-lite", "model_source": "planned",
+    plan = {"stages": [{"stage": "t9_faq_filter", "role": "validate", "model_key": "nova-lite",
+                        "model_source": "planned",
                         "callable": True, "why_not": None, "estimated_usd": 0.001}],
             "unknown": [], "estimated_usd": 0.001, "unpriced": 0}
     with patch("shared.llm_client.catalog.get_model_sync", side_effect=MODELS.get), \
             patch.object(smoke, "_target", return_value=(NOVA, _target(NOVA), None)), \
             patch("shared.llm_client.call_log.record_call_with_pool", AsyncMock()) as rec:
         results = await smoke.run_smoke(MagicMock(), plan, client=Unusable({}))
-    assert smoke.summarize(results)["failed"] == ["t10_claims"]
+    assert smoke.summarize(results)["failed"] == ["t9_faq_filter"]
     assert results[0]["cost_usd"] == pytest.approx(0.0003)         # the gateway's billed_unusable row carries it
     kw = rec.await_args.kwargs
     assert kw["cost_usd"] == 0.0 and kw["quality_signal"]["parser_ok"] is False and kw["error_class"] == "other"

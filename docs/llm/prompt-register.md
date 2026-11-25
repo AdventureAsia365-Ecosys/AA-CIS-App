@@ -107,6 +107,9 @@ Not in the register:
 - Embedding stages (`f10_embed`, `a3_place_embed`): no prompt.
 - `s1_atom_writer`: retired stage (the S1-from-atom pipeline was removed, AA-611); migration 336 switches its route
   row off (history kept).
+- `t10_claims` (in the table above for its registered history): retired (AA-1050, S294 D6). It never had a production
+  caller; the contract smoke case is gone and migration 495 switches its route row off. `EXTRACTION_SYSTEM` stays in
+  `claim_rules.py` because the manifest and `shared.prompt_version` keep v1-v3.
 - Jev questions (TypeSafe `decide()`, for example `a1_promise_unsupported`): questions, not gateway prompts. They are
   listed on the admin Jev Decisions page and in `shared.decision_log`.
 - TripPlanner stages (`tp_*`): their prompts live in AA-TripPlanner-Web. Their routes appear in the generated route

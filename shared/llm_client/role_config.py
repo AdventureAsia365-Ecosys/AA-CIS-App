@@ -149,7 +149,8 @@ SAFE_DEFAULTS: dict[str, StageConfig] = {
                                        fallback_model_ids=("sonnet",)),
     # S234 (migration 221): t9_repair — one cheap Claude stage for T9 sentence repair, SEO fit and
     # the admin sentence suggest (plan C2/C12); t10_claims — F9 v2 claim extraction, a validate
-    # stage on GPT-6 Luna (ADR 0008 pattern), not wired into the gates until its replay passes.
+    # stage on GPT-6 Luna (ADR 0008 pattern). Retired (AA-1050, S294 D6: never wired into the gates, a 0-diff
+    # replay, no W2 record): no caller, CIS 495 switches its row off; kept here and in the manifest as history.
     "t9_repair":          StageConfig("t9_repair", "writer", "claude", "haiku", "acc3",
                                       fallback_model_ids=("sonnet",)),
     "t10_claims":         StageConfig("t10_claims", "validate", "openai", "gpt-6-luna", "acc3",
