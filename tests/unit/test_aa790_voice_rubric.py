@@ -135,13 +135,24 @@ class TestScore:
         assert res["blocking"] is False and res["repairable"] is False and res["rubric"] == vr.RUBRIC_VERSION
 
 
+# S294 (AA-790 prep): offline measurement modules may read the rubric, as long as no pipeline module imports them.
+OFFLINE_READERS = {"services/quality/brand_voice_kappa.py"}
+
+
 def test_no_pipeline_module_reads_the_rubric():
-    """Go/no-go 6b: an offline scorer during the gate freeze — only its replay script imports it."""
+    """Go/no-go 6b: an offline scorer during the gate freeze — only its replay script and the offline kappa
+    measurement (OFFLINE_READERS) import it, and no pipeline module imports those."""
     root = pathlib.Path(__file__).resolve().parents[2]
-    readers = [p.relative_to(root).as_posix() for d in ("api", "services", "shared", "worker")
-               for p in (root / d).rglob("*.py")
+    files = [p for d in ("api", "services", "shared", "worker") for p in (root / d).rglob("*.py")]
+    readers = [p.relative_to(root).as_posix() for p in files
                if "voice_rubric" in p.read_text(encoding="utf-8") and p.name != "voice_rubric.py"]
-    assert readers == []
+    assert sorted(set(readers) - OFFLINE_READERS) == []
+    offline_modules = {r.removesuffix(".py").replace("/", ".") for r in OFFLINE_READERS}
+    importers = [p.relative_to(root).as_posix() for p in files
+                 if p.relative_to(root).as_posix() not in OFFLINE_READERS
+                 and any(m in p.read_text(encoding="utf-8") or m.rsplit(".", 1)[-1] in p.read_text(encoding="utf-8")
+                         for m in offline_modules)]
+    assert importers == []
 
 
 # ---------------------------------------------------------------- the replay and the corpus (S250 review round)
