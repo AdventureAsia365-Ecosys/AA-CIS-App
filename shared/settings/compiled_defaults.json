@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql, 469_aa1171_ops_thresholds_and_recipient_topic.sql, 471_aa1174_compliance_obligations.sql, 472_aa1172_fact_instruction_guard.sql, 474_aa1160_tenant_crm_agency_marker.sql, 475_aa1140_ops_status_samples_and_thresholds.sql, 476_aa1152_tp_agency_price_stale_hours.sql, 477_aa1140_rds_free_storage_pct.sql, 478_aa1148_manual_tours_supplier_link.sql, 479_aa1173_compliance_exceptions_reviews.sql, 481_aa1154_ops_assist_settings.sql, 483_aa1141_ops_status_p1_settings.sql, 484_aa1169_blog_claim_rule.sql, 486_aa1142_ops_status_p2_settings.sql, 487_aa1154_ops_assist_stage_and_budget.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql, 469_aa1171_ops_thresholds_and_recipient_topic.sql, 471_aa1174_compliance_obligations.sql, 472_aa1172_fact_instruction_guard.sql, 474_aa1160_tenant_crm_agency_marker.sql, 475_aa1140_ops_status_samples_and_thresholds.sql, 476_aa1152_tp_agency_price_stale_hours.sql, 477_aa1140_rds_free_storage_pct.sql, 478_aa1148_manual_tours_supplier_link.sql, 479_aa1173_compliance_exceptions_reviews.sql, 481_aa1154_ops_assist_settings.sql, 483_aa1141_ops_status_p1_settings.sql, 484_aa1169_blog_claim_rule.sql, 486_aa1142_ops_status_p2_settings.sql, 487_aa1154_ops_assist_stage_and_budget.sql, 488_aa1141_ops_role_connections_samples.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -4870,6 +4870,42 @@
      "lower": "Báo sớm hơn, nhưng các lúc bận bình thường (một wave, deploy có hai bộ task) có thể gây cảnh báo.",
      "when": "Giảm khi một role đã chạm giới hạn mà không có cảnh báo; tăng khi các đỉnh bình thường gây cảnh báo.",
      "example": "Với mặc định 80 %, một role có giới hạn 20 kết nối sẽ cảnh báo khi mở 17 kết nối."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.role_connections_samples",
+   "app": "cis",
+   "area": "ops",
+   "label": "Ops check: database role connections, samples in a row",
+   "description": "The in-app check rds_role_connections alerts only when a LOGIN role of the shared database stays above cis.ops.role_connections_pct on this many consecutive ticks of the api's ops sampler (one tick every 5 minutes). During a rolling deploy the old and the new task of an app overlap for a few minutes, and the role's CONNECTION LIMIT is sized for that overlap (data standard C2.2), so a short peak is expected; a lasting one still alerts. 1 alerts on the first tick above the line (the behaviour before S292). Counted per api task: an api restart starts the count again.",
+   "value_type": "int",
+   "unit": "samples",
+   "min_value": 1,
+   "max_value": 12,
+   "allowed_values": null,
+   "default_value": 3,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many 5-minute samples in a row a database login role must stay above its connection alert share before the check alerts.",
+     "raise": "Fewer alerts from deploys, but a role that is really near its limit alerts later (5 more minutes per sample).",
+     "lower": "Earlier alerts, but a rolling deploy, whose old and new tasks overlap for a few minutes, may alert; 1 alerts on every single sample.",
+     "when": "Raise it when deploys still raise the alert; lower it when a role ran out of connections before the alert came.",
+     "example": "With the default 3, a role above the line at 10:00, 10:05 and 10:10 alerts at 10:10; a role above it only at 10:00, during a deploy, does not."
+    },
+    "vi": {
+     "what": "Một role đăng nhập database phải vượt ngưỡng cảnh báo kết nối bao nhiêu lần lấy mẫu 5 phút liên tiếp thì kiểm tra mới cảnh báo.",
+     "raise": "Ít cảnh báo do deploy hơn, nhưng một role thật sự sắp chạm giới hạn sẽ được báo muộn hơn (thêm 5 phút cho mỗi mẫu).",
+     "lower": "Báo sớm hơn, nhưng một lần deploy cuốn chiếu, khi task cũ và task mới chạy chồng nhau vài phút, có thể gây cảnh báo; 1 thì báo ngay mẫu đầu tiên.",
+     "when": "Tăng khi deploy vẫn gây cảnh báo; giảm khi một role đã hết kết nối mà cảnh báo chưa tới.",
+     "example": "Với mặc định 3, một role vượt ngưỡng lúc 10:00, 10:05 và 10:10 sẽ cảnh báo lúc 10:10; một role chỉ vượt lúc 10:00, trong lúc deploy, thì không."
     }
    }
   },
