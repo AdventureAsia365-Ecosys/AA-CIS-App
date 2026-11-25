@@ -40,7 +40,11 @@ then ``DEFAULTS`` fill a missing value):
   fallback share, requests with no answer logged and the extra cost; raised only when one stage used a fallback or
   lost requests (the job result always keeps the digest). AA-900 (S271 l11): ``failed_attempts`` leaves out the
   expected refusals (``shared/llm_client/expected_refusal.py``: a model with no grant yet on an account that answers),
-  counted apart as ``expected_refusals``; no alert reads them.
+  counted apart as ``expected_refusals``; no alert reads them. AA-1141 (S292): only ROUTED stages are judged
+  (:func:`routed_stage`: a ``shared.llm_role_config`` row or a code route in ``role_config.SAFE_DEFAULTS``, and not
+  an ``adhoc_`` name). The connection probe (``adhoc_conn_test``, it calls every model of every connection, the ones an
+  account refuses included) and ad-hoc scripts have no route, so they have no fallback either: they are listed by name
+  in ``unrouted`` and never raise the digest.
 
 Quality guard: ``hold_fallback_writes(stage)`` (cached ``CACHE_TTL_SECONDS`` per process, never raises; off when
 the table is missing or unreadable) tells ``services/quality/route_guard.py`` whether content written by a fallback
@@ -464,10 +468,28 @@ def watch_findings(stats: dict[str, dict], cost_stats: dict[str, dict], baseline
     return out
 
 
+ADHOC_STAGE_PREFIX = "adhoc_"   # the probe and ad-hoc scripts (stage="adhoc_<issue>"), never a routed stage
+
+
+def routed_stage(stage: str, routes: dict[str, dict]) -> bool:
+    """AA-1141 (S292): True when ``stage`` has a route the digest can judge: a ``shared.llm_role_config`` row
+    (``routes``) or a code route in ``role_config.SAFE_DEFAULTS`` (a new stage shipped before its seed row), and its
+    name is not an ad-hoc one (the connection probe ``adhoc_conn_test``, ad-hoc scripts). Pure."""
+    from .role_config import SAFE_DEFAULTS
+
+    if stage.startswith(ADHOC_STAGE_PREFIX):
+        return False
+    return stage in routes or stage in SAFE_DEFAULTS
+
+
 def digest(stats: dict[str, dict], baseline: dict[str, dict], routes: dict[str, dict]) -> dict:
-    """The daily digest over ``DIGEST_WINDOW`` (job result + the digest finding's details). Pure."""
+    """The daily digest over ``DIGEST_WINDOW`` (job result + the digest finding's details) of the routed stages; the
+    stages without a route (the connection probe, ad-hoc scripts) are named in ``unrouted`` only. Pure."""
     stages = []
+    unrouted = sorted(s for s in stats if not routed_stage(s, routes))
     for stage, st in sorted(stats.items()):
+        if stage in unrouted:
+            continue
         answered = int(st.get("answered") or 0)
         fb = int(st.get("fallback_answered") or 0)
         lost = int(st.get("lost") or 0)
@@ -485,7 +507,7 @@ def digest(stats: dict[str, dict], baseline: dict[str, dict], routes: dict[str, 
             "answered": sum(s["answered"] for s in stages),
             "fallback_answered": sum(s["fallback_answered"] for s in stages),
             "lost_requests": sum(s["lost_requests"] for s in stages),
-            "attention": attention[:DIGEST_MAX_STAGES], "attention_total": len(attention)}
+            "attention": attention[:DIGEST_MAX_STAGES], "attention_total": len(attention), "unrouted": unrouted}
 
 
 def digest_finding(d: dict) -> Optional[Finding]:
