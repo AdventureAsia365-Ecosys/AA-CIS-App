@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql, 469_aa1171_ops_thresholds_and_recipient_topic.sql, 471_aa1174_compliance_obligations.sql, 472_aa1172_fact_instruction_guard.sql, 474_aa1160_tenant_crm_agency_marker.sql, 475_aa1140_ops_status_samples_and_thresholds.sql, 476_aa1152_tp_agency_price_stale_hours.sql, 477_aa1140_rds_free_storage_pct.sql, 478_aa1148_manual_tours_supplier_link.sql, 479_aa1173_compliance_exceptions_reviews.sql, 481_aa1154_ops_assist_settings.sql, 483_aa1141_ops_status_p1_settings.sql, 484_aa1169_blog_claim_rule.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql, 469_aa1171_ops_thresholds_and_recipient_topic.sql, 471_aa1174_compliance_obligations.sql, 472_aa1172_fact_instruction_guard.sql, 474_aa1160_tenant_crm_agency_marker.sql, 475_aa1140_ops_status_samples_and_thresholds.sql, 476_aa1152_tp_agency_price_stale_hours.sql, 477_aa1140_rds_free_storage_pct.sql, 478_aa1148_manual_tours_supplier_link.sql, 479_aa1173_compliance_exceptions_reviews.sql, 481_aa1154_ops_assist_settings.sql, 483_aa1141_ops_status_p1_settings.sql, 484_aa1169_blog_claim_rule.sql, 486_aa1142_ops_status_p2_settings.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -4777,6 +4777,222 @@
    }
   },
   {
+   "key": "cis.ops.status_burn_fast_factor",
+   "app": "cis",
+   "area": "ops",
+   "label": "Status page: fast burn alert factor",
+   "description": "On the Ecosystem status page (/admin/overview, api/services/ops_status/) an app whose error share over cis.ops.status_burn_fast_window_min minutes is above this many times its error budget share is a SEV2 Needs-attention item (it would spend the whole budget in the window days divided by this factor). Requests under cis.ops.status_min_requests in the window are not judged. SRE Workbook default 14.4.",
+   "value_type": "numeric",
+   "unit": "x",
+   "min_value": 1,
+   "max_value": 100,
+   "allowed_values": null,
+   "default_value": 14.4,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many times faster than allowed an app may spend its error budget over the last hour before the page raises an alert.",
+     "raise": "Only a severe outage raises the alert.",
+     "lower": "Smaller bursts raise the alert, with more noise on Dev.",
+     "when": "Keep 14.4 with a one-hour window and a 30-day budget.",
+     "example": "With the default 14.4 and a 99.5 % objective, more than 7.2 % server errors in the last hour raise a SEV2 item."
+    },
+    "vi": {
+     "what": "App được tiêu ngân sách lỗi nhanh hơn mức cho phép bao nhiêu lần trong giờ qua trước khi trang báo động.",
+     "raise": "Chỉ sự cố nặng mới báo.",
+     "lower": "Đợt lỗi nhỏ hơn cũng báo, nhiễu hơn trên Dev.",
+     "when": "Giữ 14,4 với cửa sổ một giờ và ngân sách 30 ngày.",
+     "example": "Với mặc định 14,4 và mục tiêu 99,5 %, hơn 7,2 % lỗi máy chủ trong giờ qua tạo một mục SEV2."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.status_burn_fast_window_min",
+   "app": "cis",
+   "area": "ops",
+   "label": "Status page: fast burn window (minutes)",
+   "description": "On the Ecosystem status page (/admin/overview, api/services/ops_status/) the fast burn rate of each app is its share of server errors over this many minutes up to now divided by the error budget (100 % minus cis.ops.status_slo_target_pct); above cis.ops.status_burn_fast_factor it is a SEV2 item. SRE Workbook default 60.",
+   "value_type": "int",
+   "unit": "minutes",
+   "min_value": 5,
+   "max_value": 240,
+   "allowed_values": null,
+   "default_value": 60,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many recent minutes the fast burn alert looks at.",
+     "raise": "Steadier: a short burst alone does not fire it, a real outage fires a little later.",
+     "lower": "Faster: a short burst of errors can fire it.",
+     "when": "Keep one hour with the factor 14.4 (2 % of a 30-day budget in one hour).",
+     "example": "With the default 60, at 10:30 the fast burn counts the requests from 09:30."
+    },
+    "vi": {
+     "what": "Cảnh báo cháy nhanh xem bao nhiêu phút gần nhất.",
+     "raise": "Ổn định hơn: một đợt lỗi ngắn không đủ báo, sự cố thật báo muộn hơn chút.",
+     "lower": "Nhanh hơn: một đợt lỗi ngắn có thể gây báo.",
+     "when": "Giữ một giờ với hệ số 14,4 (2 % ngân sách 30 ngày trong một giờ).",
+     "example": "Với mặc định 60, lúc 10:30 tốc độ cháy nhanh tính các yêu cầu từ 09:30."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.status_burn_slow_factor",
+   "app": "cis",
+   "area": "ops",
+   "label": "Status page: slow burn alert factor",
+   "description": "On the Ecosystem status page (/admin/overview, api/services/ops_status/) an app whose error share over cis.ops.status_burn_slow_window_hours hours is above this many times its error budget share is a SEV3 Needs-attention item. Requests under cis.ops.status_min_requests in the window are not judged. SRE Workbook default 6.",
+   "value_type": "numeric",
+   "unit": "x",
+   "min_value": 1,
+   "max_value": 100,
+   "allowed_values": null,
+   "default_value": 6,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many times faster than allowed an app may spend its error budget over the slow window before the page raises a ticket-level alert.",
+     "raise": "Only a strong, lasting error rate raises it.",
+     "lower": "A mild lasting error rate raises it.",
+     "when": "Keep 6 with a 6-hour window and a 30-day budget.",
+     "example": "With the default 6 and a 99.5 % objective, more than 3 % server errors over 6 hours raise a SEV3 item."
+    },
+    "vi": {
+     "what": "App được tiêu ngân sách lỗi nhanh hơn mức cho phép bao nhiêu lần trong cửa sổ chậm trước khi trang báo mức ticket.",
+     "raise": "Chỉ tỷ lệ lỗi cao và kéo dài mới báo.",
+     "lower": "Tỷ lệ lỗi nhẹ nhưng kéo dài cũng báo.",
+     "when": "Giữ 6 với cửa sổ 6 giờ và ngân sách 30 ngày.",
+     "example": "Với mặc định 6 và mục tiêu 99,5 %, hơn 3 % lỗi máy chủ trong 6 giờ tạo một mục SEV3."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.status_burn_slow_window_hours",
+   "app": "cis",
+   "area": "ops",
+   "label": "Status page: slow burn window (hours)",
+   "description": "On the Ecosystem status page (/admin/overview, api/services/ops_status/) the slow burn rate of each app is its share of server errors over this many hours up to now divided by the error budget; above cis.ops.status_burn_slow_factor it is a SEV3 item. SRE Workbook default 6.",
+   "value_type": "int",
+   "unit": "hours",
+   "min_value": 1,
+   "max_value": 72,
+   "allowed_values": null,
+   "default_value": 6,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many recent hours the slow burn alert looks at.",
+     "raise": "Catches a slower leak, but later.",
+     "lower": "Reacts sooner, closer to the fast alert.",
+     "when": "Keep 6 hours with the factor 6 (5 % of a 30-day budget in 6 hours).",
+     "example": "With the default 6, at 14:00 the slow burn counts the requests from 08:00."
+    },
+    "vi": {
+     "what": "Cảnh báo cháy chậm xem bao nhiêu giờ gần nhất.",
+     "raise": "Bắt được rò rỉ chậm hơn, nhưng muộn hơn.",
+     "lower": "Phản ứng sớm hơn, gần với cảnh báo nhanh.",
+     "when": "Giữ 6 giờ với hệ số 6 (5 % ngân sách 30 ngày trong 6 giờ).",
+     "example": "Với mặc định 6, lúc 14:00 tốc độ cháy chậm tính các yêu cầu từ 08:00."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.status_cert_crit_days",
+   "app": "cis",
+   "area": "ops",
+   "label": "Status page: certificate expiry critical (days left)",
+   "description": "On the Ecosystem status page (/admin/overview, api/services/ops_status/) an external check whose TLS certificate ends in this many days or fewer is critical and listed in Needs attention (SEV2). A value above the warn days is lowered to it. Default 7.",
+   "value_type": "int",
+   "unit": "days",
+   "min_value": 1,
+   "max_value": 60,
+   "allowed_values": null,
+   "default_value": 7,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many days before a public certificate ends the page asks for action.",
+     "raise": "Earlier red rows and earlier action items.",
+     "lower": "Red only when the certificate is about to end.",
+     "when": "Keep a week: enough to fix a failed renewal.",
+     "example": "With the default 7, a certificate ending in 5 days shows red and opens a SEV2 item."
+    },
+    "vi": {
+     "what": "Còn bao nhiêu ngày trước khi chứng chỉ công khai hết hạn thì trang yêu cầu xử lý.",
+     "raise": "Dòng đỏ và việc cần làm xuất hiện sớm hơn.",
+     "lower": "Chỉ đỏ khi chứng chỉ sắp hết hạn.",
+     "when": "Giữ một tuần: đủ để sửa một lần gia hạn lỗi.",
+     "example": "Với mặc định 7, chứng chỉ hết hạn sau 5 ngày hiện đỏ và mở một mục SEV2."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.status_cert_warn_days",
+   "app": "cis",
+   "area": "ops",
+   "label": "Status page: certificate expiry warn (days left)",
+   "description": "On the Ecosystem status page (/admin/overview, api/services/ops_status/) an external check whose TLS certificate ends in this many days or fewer is coloured warn on the external strip (root repo workflow External checks, every 15 minutes). Default 21.",
+   "value_type": "int",
+   "unit": "days",
+   "min_value": 1,
+   "max_value": 90,
+   "allowed_values": null,
+   "default_value": 21,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many days before a public certificate ends the external strip turns amber.",
+     "raise": "Earlier warnings; managed certificates that renew by themselves may show amber for a while.",
+     "lower": "Fewer amber rows, less time to act if a renewal fails.",
+     "when": "Keep three weeks: managed certificates renew about a month before they end.",
+     "example": "With the default 21, a certificate ending in 15 days shows amber."
+    },
+    "vi": {
+     "what": "Còn bao nhiêu ngày trước khi chứng chỉ công khai hết hạn thì dải external chuyển vàng.",
+     "raise": "Cảnh báo sớm hơn; chứng chỉ tự gia hạn có thể hiện vàng một thời gian.",
+     "lower": "Ít dòng vàng hơn, ít thời gian xử lý nếu gia hạn lỗi.",
+     "when": "Giữ ba tuần: chứng chỉ được quản lý tự gia hạn khoảng một tháng trước khi hết.",
+     "example": "Với mặc định 21, chứng chỉ hết hạn sau 15 ngày hiện màu vàng."
+    }
+   }
+  },
+  {
    "key": "cis.ops.status_client_error_warn_pct",
    "app": "cis",
    "area": "ops",
@@ -5169,6 +5385,42 @@
      "lower": "Xem được ít ngày hơn.",
      "when": "Giữ bằng số ngày lịch sử mà các mẫu vận hành được giữ.",
      "example": "Với mặc định 14, khoảng bắt đầu từ 15 ngày trước bị từ chối."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.status_incident_lookback_min",
+   "app": "cis",
+   "area": "ops",
+   "label": "Status page: incident timeline lookback (minutes)",
+   "description": "On the Ecosystem status page (/admin/overview, api/services/ops_status/) the timeline of an incident starts this many minutes before it was declared (the deploys, alarms and service drops of its app that led up to it) and ends when it was resolved. Default 60.",
+   "value_type": "int",
+   "unit": "minutes",
+   "min_value": 0,
+   "max_value": 1440,
+   "allowed_values": null,
+   "default_value": 60,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How far before an incident was declared its timeline starts.",
+     "raise": "More of what happened before shows, with more unrelated events.",
+     "lower": "A shorter timeline focused on the incident itself.",
+     "when": "Keep an hour; raise it when incidents are declared long after the first alert.",
+     "example": "With the default 60, an incident declared at 10:00 shows the events of its app from 09:00."
+    },
+    "vi": {
+     "what": "Dòng thời gian của sự cố bắt đầu bao lâu trước lúc khai báo.",
+     "raise": "Thấy nhiều diễn biến trước hơn, kèm nhiều sự kiện không liên quan hơn.",
+     "lower": "Dòng thời gian ngắn, tập trung vào chính sự cố.",
+     "when": "Giữ một giờ; tăng khi sự cố thường được khai báo lâu sau cảnh báo đầu tiên.",
+     "example": "Với mặc định 60, sự cố khai báo lúc 10:00 hiện các sự kiện của app từ 09:00."
     }
    }
   },
@@ -5749,6 +6001,114 @@
    }
   },
   {
+   "key": "cis.ops.status_slo_budget_warn_pct",
+   "app": "cis",
+   "area": "ops",
+   "label": "Status page: error budget left warn line (%)",
+   "description": "On the Ecosystem status page (/admin/overview, api/services/ops_status/) the error budget left of an app (over cis.ops.status_slo_window_days days, against cis.ops.status_slo_target_pct) is coloured amber when this share of the budget or less is left, and red when the budget is spent (0 % or less). Default 25.",
+   "value_type": "int",
+   "unit": "%",
+   "min_value": 1,
+   "max_value": 90,
+   "allowed_values": null,
+   "default_value": 25,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How much of an app's error budget may be left before its budget bar turns amber.",
+     "raise": "Earlier amber bars: more time to slow down risky changes, more amber on a noisy Dev.",
+     "lower": "Amber only when the budget is nearly spent, less time to react.",
+     "when": "Keep 25 %; raise it before a busy release period.",
+     "example": "With the default 25, an app with 20 % of its budget left shows an amber bar."
+    },
+    "vi": {
+     "what": "Ngân sách lỗi của app còn bao nhiêu phần trăm thì thanh ngân sách chuyển vàng.",
+     "raise": "Thanh vàng sớm hơn: thêm thời gian để chậm lại các thay đổi rủi ro, nhiều vàng hơn trên Dev nhiễu.",
+     "lower": "Chỉ vàng khi ngân sách gần hết, ít thời gian phản ứng hơn.",
+     "when": "Giữ 25 %; tăng trước một đợt phát hành dày.",
+     "example": "Với mặc định 25, app còn 20 % ngân sách hiện thanh màu vàng."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.status_slo_target_pct",
+   "app": "cis",
+   "area": "ops",
+   "label": "Status page: availability objective per app (SLO, %)",
+   "description": "On the Ecosystem status page (/admin/overview, api/services/ops_status/) each app's availability (share of requests without a server error, 5xx, over cis.ops.status_slo_window_days days; the partner CRM, whose requests are not measured, by its 5-minute health samples) is compared with this objective; the error budget is 100 % minus it, and the burn rates of cis.ops.status_burn_fast_factor and cis.ops.status_burn_slow_factor are multiples of it. S285 review default 99.5 %.",
+   "value_type": "numeric",
+   "unit": "%",
+   "min_value": 90,
+   "max_value": 99.99,
+   "allowed_values": null,
+   "default_value": 99.5,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The share of requests each app should answer without a server error; the rest is the error budget.",
+     "raise": "Fewer errors are allowed: the budget is smaller, burns faster and alerts sooner.",
+     "lower": "More errors are allowed before the budget runs out or a burn alert fires.",
+     "when": "Keep 99.5 % on Dev; agree the prod objective with the business owner before the first tenant.",
+     "example": "With the default 99.5 %, an app serving 100,000 requests in the window may answer 500 of them with a server error."
+    },
+    "vi": {
+     "what": "Tỷ lệ yêu cầu mỗi app phải trả lời không lỗi máy chủ; phần còn lại là ngân sách lỗi.",
+     "raise": "Cho phép ít lỗi hơn: ngân sách nhỏ hơn, cháy nhanh hơn và cảnh báo sớm hơn.",
+     "lower": "Cho phép nhiều lỗi hơn trước khi hết ngân sách hoặc có cảnh báo tốc độ cháy.",
+     "when": "Giữ 99,5 % trên Dev; chốt mục tiêu prod với chủ doanh nghiệp trước tenant đầu tiên.",
+     "example": "Với mặc định 99,5 %, app phục vụ 100.000 yêu cầu trong cửa sổ được phép trả lỗi máy chủ cho 500 yêu cầu."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.status_slo_window_days",
+   "app": "cis",
+   "area": "ops",
+   "label": "Status page: error budget window (days)",
+   "description": "On the Ecosystem status page (/admin/overview, api/services/ops_status/) the availability and the error budget left of each app are counted over this many days up to now (a rolling window). Default 30.",
+   "value_type": "int",
+   "unit": "days",
+   "min_value": 7,
+   "max_value": 90,
+   "allowed_values": null,
+   "default_value": 30,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many past days the availability objective and its error budget cover.",
+     "raise": "A longer memory: one bad day weighs less, and the budget refills slower after it.",
+     "lower": "A shorter memory: the budget refills sooner, and one bad day weighs more.",
+     "when": "Keep 30 days, the usual monthly objective.",
+     "example": "With the default 30, on 25/11 the budget counts the requests from 26/10 to now."
+    },
+    "vi": {
+     "what": "Ngân sách lỗi và mục tiêu khả dụng tính trên bao nhiêu ngày gần nhất.",
+     "raise": "Nhớ lâu hơn: một ngày xấu nhẹ hơn, ngân sách hồi chậm hơn sau đó.",
+     "lower": "Nhớ ngắn hơn: ngân sách hồi sớm hơn, một ngày xấu nặng hơn.",
+     "when": "Giữ 30 ngày, mục tiêu theo tháng thông dụng.",
+     "example": "Với mặc định 30, ngày 25/11 ngân sách tính các yêu cầu từ 26/10 tới nay."
+    }
+   }
+  },
+  {
    "key": "cis.ops.status_snooze_choices_hours",
    "app": "cis",
    "area": "ops",
@@ -5867,6 +6227,42 @@
      "lower": "Một lần làm mới chậm đã làm phần đó chuyển xám.",
      "when": "Tăng nếu các phần chớp sang \"cũ\"; giảm khi một số cũ bị nhầm là số mới.",
      "example": "Với mặc định 3 và chu kỳ 5 phút, một phần thành \"cũ\" sau 15 phút không có câu trả lời."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.status_tenant_top_n",
+   "app": "cis",
+   "area": "ops",
+   "label": "Status page: agencies listed per ranking",
+   "description": "On the Ecosystem status page (/admin/overview, api/services/ops_status/) the per-agency drill-down (GET /admin/overview/status/tenants) lists at most this many agencies in each ranking (AI spend, failed jobs, AI errors) over the page's time range. Default 10.",
+   "value_type": "int",
+   "unit": "agencies",
+   "min_value": 3,
+   "max_value": 50,
+   "allowed_values": null,
+   "default_value": 10,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many agencies each ranking of the per-agency drill-down shows.",
+     "raise": "Longer lists, more scrolling.",
+     "lower": "Only the top few agencies show.",
+     "when": "Keep 10; raise it when many agencies are active.",
+     "example": "With the default 10, the AI spend ranking shows the 10 agencies that spent the most in the range."
+    },
+    "vi": {
+     "what": "Mỗi bảng xếp hạng trong phần xem theo đại lý hiện tối đa bao nhiêu đại lý.",
+     "raise": "Danh sách dài hơn, cuộn nhiều hơn.",
+     "lower": "Chỉ hiện vài đại lý đứng đầu.",
+     "when": "Giữ 10; tăng khi có nhiều đại lý hoạt động.",
+     "example": "Với mặc định 10, bảng chi phí AI hiện 10 đại lý chi nhiều nhất trong khoảng thời gian."
     }
    }
   },
