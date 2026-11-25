@@ -29,6 +29,9 @@ on:
       - ".github/scripts/test_workflow_lint.py"
       - ".github/scripts/ecs_smoke_rollback.py"
       - ".github/scripts/test_ecs_smoke_rollback.py"
+      - ".github/scripts/npm_audit_gate.py"
+      - ".github/scripts/test_npm_audit_gate.py"
+      - ".github/npm-audit-allow.json"
   push:
     branches: [main]
     paths:
@@ -45,6 +48,9 @@ on:
       - ".github/scripts/test_workflow_lint.py"
       - ".github/scripts/ecs_smoke_rollback.py"
       - ".github/scripts/test_ecs_smoke_rollback.py"
+      - ".github/scripts/npm_audit_gate.py"
+      - ".github/scripts/test_npm_audit_gate.py"
+      - ".github/npm-audit-allow.json"
 
 permissions:
   contents: read
@@ -90,4 +96,5 @@ jobs:
           python -B -m unittest discover -s .github/scripts -p 'test_release_bin.py'
           python -B -m unittest discover -s .github/scripts -p 'test_cache_cleanup.py'
           python -B -m unittest discover -s .github/scripts -p 'test_cache_warm.py'
+          python -B -m unittest discover -s .github/scripts -p 'test_npm_audit_gate.py'
           python -B .github/scripts/workflow_lint.py

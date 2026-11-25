@@ -177,6 +177,16 @@ jobs:
           REQ: ${{ steps.wheels.outputs.requirements }}
         run: bash .github/scripts/pip_audit_gate.sh "$REQ"
 
+      # AA-1111 (S294): the admin app's npm dependencies (runtime and dev), from the lockfile, failing on high or
+      # critical, as in the AA-Partner CRM web (AA-935, S284). Through .github/scripts/npm_audit_gate.py, so one
+      # advisory with no patched version can be accepted with a reason and an expiry (.github/npm-audit-allow.json, at
+      # most 90 days) instead of blocking every pull request. Any other high or critical advisory fails.
+      - name: npm audit (admin frontend, failing on high)
+        working-directory: frontend
+        run: |
+          npm audit --json > ../npm-audit.json || true
+          python3 ../.github/scripts/npm_audit_gate.py ../.github/npm-audit-allow.json < ../npm-audit.json
+
 
   # AA-1032 (faster CI): the unit suite runs as UNIT_SHARDS parallel jobs ("Unit shard i/N"), each on 4 pytest-xdist
   # workers; the required check keeps its name: "Unit Tests" below combines the shards' coverage, then runs the same
