@@ -1,4 +1,4 @@
-// app/admin/overview/assist.messages.ts — AA-1154 (A0): the assistant panel of the Ecosystem status page in English and
+// app/admin/overview/assist.messages.ts — AA-1154: the assistant panel of the Ecosystem status page in English and
 // Vietnamese. The cards' own text (reason, predictions, way back) comes from the API in English, built by rule from
 // structured evidence; the page's own words are here.
 
@@ -44,6 +44,39 @@ export const ASSIST = defineMessages(
     confnot_enough_data: "Not enough data",
     signalsTitle: "The assistant also sees",
     noCards: "No action cards for this item.",
+    analyse: "Analyse",
+    analyseFor: (title: string) => `Analyse: ${title}`,
+    aiRunning: "The AI is ranking and explaining these cards…",
+    llmUsed: (model: string, cost: string, time: string) =>
+      `Ranked and explained by ${model} (${cost}) at ${time}. The cards, their risk and the API each one names come `
+      + "from the rules; nothing runs automatically.",
+    llmCached: (model: string, time: string) =>
+      `Answer of ${model} saved at ${time}, reused while the cards are valid (no new cost).`,
+    llmOff: "The assistant's AI is switched off (AI gateway, Routing, stage ops_assist): the cards keep the rules' "
+      + "order.",
+    llmBudget: "The assistant's monthly AI cap is reached or missing (AI gateway, Budgets, stage ops_assist): the cards "
+      + "keep the rules' order.",
+    llmNotSet: "The assistant's AI is not set up yet: the cards keep the rules' order.",
+    llmFailed: (code: string) =>
+      `The AI answer could not be used (${code}): the cards keep the rules' order.`,
+    deep: "Deep analysis",
+    deepFallback: (model: string) =>
+      `The Deep analysis model (${model}) is not an enabled catalog model, so the quick route answered.`,
+    again: "Analyse again",
+    whyNow: "Why now (AI)",
+    ruleRank: (n: number) => `rules #${n}`,
+    aiSummary: "AI summary",
+    ownerAi: "In plain words",
+    lookTitle: "Ask the assistant",
+    lookQuestion: "What changed in the last",
+    wHour: "hour",
+    wHours: (n: number) => `${n} hours`,
+    wMinutes: (n: number) => `${n} minutes`,
+    lookFromRecords: "From the records, no AI call.",
+    lookPhrase: "Phrase with AI",
+    lookAi: "AI wording (only the records above)",
+    lookLoading: "Reading the records…",
+    lookFailed: "The records could not be read.",
   },
   {
     actions: "Hành động",
@@ -84,5 +117,36 @@ export const ASSIST = defineMessages(
     confnot_enough_data: "Chưa đủ dữ liệu",
     signalsTitle: "Trợ lý còn thấy",
     noCards: "Không có thẻ hành động cho mục này.",
+    analyse: "Phân tích",
+    analyseFor: (title: string) => `Phân tích: ${title}`,
+    aiRunning: "AI đang xếp hạng và giải thích các thẻ…",
+    llmUsed: (model: string, cost: string, time: string) =>
+      `${model} đã xếp hạng và giải thích (${cost}) lúc ${time}. Thẻ, mức rủi ro và API của từng thẻ do luật tạo; `
+      + "không có gì tự chạy.",
+    llmCached: (model: string, time: string) =>
+      `Câu trả lời của ${model} lưu lúc ${time}, dùng lại khi thẻ còn hạn (không tốn thêm).`,
+    llmOff: "AI của trợ lý đang tắt (AI gateway, Routing, stage ops_assist): thẻ giữ thứ tự của luật.",
+    llmBudget: "Trần chi AI hằng tháng của trợ lý đã hết hoặc chưa có (AI gateway, Budgets, stage ops_assist): thẻ giữ "
+      + "thứ tự của luật.",
+    llmNotSet: "AI của trợ lý chưa được cài đặt: thẻ giữ thứ tự của luật.",
+    llmFailed: (code: string) => `Không dùng được câu trả lời của AI (${code}): thẻ giữ thứ tự của luật.`,
+    deep: "Phân tích sâu",
+    deepFallback: (model: string) =>
+      `Model Phân tích sâu (${model}) không còn bật trong danh mục, nên tuyến nhanh đã trả lời.`,
+    again: "Phân tích lại",
+    whyNow: "Vì sao lúc này (AI)",
+    ruleRank: (n: number) => `luật #${n}`,
+    aiSummary: "Tóm tắt của AI",
+    ownerAi: "Nói đơn giản",
+    lookTitle: "Hỏi trợ lý",
+    lookQuestion: "Điều gì đã thay đổi trong",
+    wHour: "1 giờ qua",
+    wHours: (n: number) => `${n} giờ qua`,
+    wMinutes: (n: number) => `${n} phút qua`,
+    lookFromRecords: "Từ dữ liệu đã ghi, không gọi AI.",
+    lookPhrase: "Diễn đạt bằng AI",
+    lookAi: "AI diễn đạt (chỉ từ dữ liệu ở trên)",
+    lookLoading: "Đang đọc dữ liệu…",
+    lookFailed: "Không đọc được dữ liệu.",
   },
 );

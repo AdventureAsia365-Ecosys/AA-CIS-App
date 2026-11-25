@@ -41,6 +41,10 @@ ALLOWED = {
     ("services/ground_truth/r1.py", EXPR): 1,
     # AA-1050 W4: the same pinned claim instrument in shadow (stage claim_shadow), pinned on purpose (D7: no fallback).
     ("services/quality/claim_shadow.py", EXPR): 1,
+    # AA-1154 A1 (tech lead AI2 / AI3): "Deep analysis" asks the model of the setting cis.ops.assist_deep_model
+    # (default Sonnet 5.5, checked against the catalog before each call) on the ops_assist stage itself, so one month
+    # cap (stage:ops_assist), one kill switch and one data scope cover both depths; the quick call is the stage route.
+    ("api/services/ops_assist/explain.py", EXPR): 1,
     # Eval / adhoc scripts (they compare models on purpose; logged under adhoc_* stages).
     ("scripts/aa645/s1_screen.py", EXPR): 1,
     ("scripts/aa645/shadow.py", "model_tier='sonnet'"): 1,

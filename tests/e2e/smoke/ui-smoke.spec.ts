@@ -326,6 +326,35 @@ test.describe('UI smoke — admin', { tag: '@staff' }, () => {
     }
   });
 
+  // AA-1154 (A1) — the status page's assistant asks the AI (Analyse, the automatic analysis, Phrase with AI) only for
+  // a session that may write: the API refuses every POST of a read-only one (the Dev E2E identity, a viewer, view-as),
+  // so such a session must send none (a 403 there would also fail every page check of /admin/overview).
+  test('admin: Overview · a read-only session sends no assistant AI request', async ({ browser }) => {
+    test.skip(!isAdminRun(), 'the Ecosystem status page is admin-only');
+    const context = await browser.newContext({ baseURL: baseUrl(), storageState: ADMIN_STATE, viewport: { width: 1440, height: 900 } });
+    await installBypassRoute(context);
+    const origin = baseOrigin();
+    const asks: string[] = [];
+    context.on('request', (req) => {
+      const url = new URL(req.url());
+      if (url.origin === origin && req.method() === 'POST' && url.pathname.startsWith('/api/admin/ops-assist/')) {
+        asks.push(`${req.method()} ${url.pathname}`);
+      }
+    });
+    const page = await context.newPage();
+    try {
+      const session = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/admin/session', { timeout: 30000 });
+      await assertNavOk(page, '/admin/overview');
+      const hint = await (await session).json().catch(() => null);
+      test.skip(!hint?.read_only, 'this session may write: the automatic analysis is expected to run');
+      await waitForSkeletonGone(page);
+      await page.waitForTimeout(3000);
+      expect(asks, 'a read-only session sent an assistant AI request').toEqual([]);
+    } finally {
+      await context.close();
+    }
+  });
+
   // AA-916 WM-07 — Reject, Dismiss and Regenerate open a modal with the reason chip row (one chip preselected). Each
   // is opened, captured (light + dark) and CANCELLED. Every same-origin non-GET /api/admin/ call is aborted and the
   // test fails if one was attempted, so the run can never act on the queue (Production stays read-only).

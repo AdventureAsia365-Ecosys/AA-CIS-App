@@ -73,6 +73,9 @@ LOGGED_CALL_SITES: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
         ("services/acp_contract/a3_atomize.py", "_ask_atoms"),
         ("services/acp_contract/a3_atomize.py", "_atomize_whole_tour_legacy"),
         ("services/acp_contract/a3_atomize.py", "_atomize_per_day")),
+    # AA-1154 A1: the CIS admin assistant's one call (rank / explain, phrase); record_call_with_pool right after the
+    # reply (**billed_fields), the gateway writes the refused and failed attempts.
+    ("api/services/ops_assist/explain.py", "call_gateway"): _self("api/services/ops_assist/explain.py", "call_gateway"),
     ("services/acp_contract/segment_research.py", "_research_place"): _self(
         "services/acp_contract/segment_research.py", "_research_place"),
     ("services/acp_contract/segment_research_batch.py", "_propose"): _self(

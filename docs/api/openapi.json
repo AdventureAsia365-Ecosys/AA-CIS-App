@@ -35303,6 +35303,86 @@
         ]
       }
     },
+    "/admin/ops-assist/auto": {
+      "post": {
+        "operationId": "post_auto_admin_ops_assist_auto_post",
+        "parameters": [
+          {
+            "description": "the status page's range (the item ids depend on it)",
+            "in": "query",
+            "name": "range",
+            "required": false,
+            "schema": {
+              "default": "24h",
+              "description": "the status page's range (the item ids depend on it)",
+              "pattern": "^(1h|6h|24h|7d)$",
+              "title": "Range",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Post Auto Admin Ops Assist Auto Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Analyse each open incident of an automatic severity once (the status page calls it)",
+        "tags": [
+          "admin-ops-assist"
+        ]
+      }
+    },
     "/admin/ops-assist/catalog": {
       "get": {
         "operationId": "get_catalog_admin_ops_assist_catalog_get",
@@ -35365,6 +35445,293 @@
           }
         },
         "summary": "The assistant's action catalogue (read-only)",
+        "tags": [
+          "admin-ops-assist"
+        ]
+      }
+    },
+    "/admin/ops-assist/changes": {
+      "get": {
+        "operationId": "get_changes_admin_ops_assist_changes_get",
+        "parameters": [
+          {
+            "description": "how far back, in minutes: one of the windows of the setting cis.ops.assist_lookup_windows_min (default: the hour when offered)",
+            "in": "query",
+            "name": "window",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "how far back, in minutes: one of the windows of the setting cis.ops.assist_lookup_windows_min (default: the hour when offered)",
+              "title": "Window"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Changes Admin Ops Assist Changes Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "What changed in the window, from the records (no AI call)",
+        "tags": [
+          "admin-ops-assist"
+        ]
+      }
+    },
+    "/admin/ops-assist/changes/phrase": {
+      "post": {
+        "operationId": "post_changes_phrase_admin_ops_assist_changes_phrase_post",
+        "parameters": [
+          {
+            "description": "how far back, in minutes: one of the windows of the setting cis.ops.assist_lookup_windows_min (default: the hour when offered)",
+            "in": "query",
+            "name": "window",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "how far back, in minutes: one of the windows of the setting cis.ops.assist_lookup_windows_min (default: the hour when offered)",
+              "title": "Window"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Post Changes Phrase Admin Ops Assist Changes Phrase Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "What changed in the window, phrased by the model (one AI call)",
+        "tags": [
+          "admin-ops-assist"
+        ]
+      }
+    },
+    "/admin/ops-assist/items/{item_id}/analyse": {
+      "post": {
+        "operationId": "post_analyse_admin_ops_assist_items__item_id__analyse_post",
+        "parameters": [
+          {
+            "description": "A Needs-attention item id or a signal id",
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "description": "A Needs-attention item id or a signal id",
+              "pattern": "^[A-Za-z0-9_.:-]{1,200}$",
+              "title": "Item Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "the status page's range (the item ids depend on it)",
+            "in": "query",
+            "name": "range",
+            "required": false,
+            "schema": {
+              "default": "24h",
+              "description": "the status page's range (the item ids depend on it)",
+              "pattern": "^(1h|6h|24h|7d)$",
+              "title": "Range",
+              "type": "string"
+            }
+          },
+          {
+            "description": "quick = the stage route, deep = the model of cis.ops.assist_deep_model",
+            "in": "query",
+            "name": "depth",
+            "required": false,
+            "schema": {
+              "default": "quick",
+              "description": "quick = the stage route, deep = the model of cis.ops.assist_deep_model",
+              "pattern": "^(quick|deep)$",
+              "title": "Depth",
+              "type": "string"
+            }
+          },
+          {
+            "description": "ask the model again instead of reusing the answer of the card lifetime",
+            "in": "query",
+            "name": "fresh",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "ask the model again instead of reusing the answer of the card lifetime",
+              "title": "Fresh",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Secret"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-admin-role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Admin-Role"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Post Analyse Admin Ops Assist Items  Item Id  Analyse Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "The item's cards ranked and explained by the model (one AI call)",
         "tags": [
           "admin-ops-assist"
         ]
