@@ -242,10 +242,87 @@ def test_gitleaks_scans_the_pushed_range_with_the_base_rules(repo: Path):
     assert p.returncode == 1 and "FAIL" in p.stdout and "secret-scan.yml" in p.stdout
     p = _run(repo, "--only", "gitleaks", AA_GITLEAKS=str(gl), FAKE_GL_VERSION="8.18.0")
     assert p.returncode == 1 and "CI uses 8.30.1" in p.stdout
-    p = _run(repo, "--only", "gitleaks", AA_GITLEAKS=str(repo.parent / "missing"))
+    missing = {**_hermetic(repo), "AA_GITLEAKS": str(repo.parent / "missing")}
+    p = _run(repo, "--only", "gitleaks", **missing)
     assert p.returncode == 1 and "AA_SKIP_GITLEAKS=1" in p.stdout
-    p = _run(repo, "--only", "gitleaks", AA_GITLEAKS=str(repo.parent / "missing"), AA_SKIP_GITLEAKS="1")
+    p = _run(repo, "--only", "gitleaks", **missing, AA_SKIP_GITLEAKS="1")
     assert p.returncode == 0 and "WARN" in p.stdout
+
+
+SHIM = "#!/usr/bin/env bash\necho 'mise ERROR No version is set for shim: gitleaks' >&2\nexit 1\n"
+
+
+def _exe(path: Path, body: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body)
+    path.chmod(path.stat().st_mode | stat.S_IEXEC)
+    return path
+
+
+def _hermetic(repo: Path, *path_dirs: Path) -> dict:
+    """S294: the gitleaks resolver reads PATH, HOME and the mise data dir; point all of them at the test's own dirs
+    (the machine's mise shim and install, or a real gitleaks on PATH, must not decide the result)."""
+    env = {"HOME": str(repo.parent / "home"), "MISE_DATA_DIR": "", "XDG_DATA_HOME": "", "AA_GITLEAKS": ""}
+    env["PATH"] = os.pathsep.join([*(str(d) for d in path_dirs), "/usr/bin", "/bin"])
+    return env
+
+
+def test_gitleaks_resolver_passes_over_a_shim_that_does_not_run(repo: Path):
+    """S294 (S284/S289/S293 lessons): a mise shim with no global version first on PATH blocked every push with
+    "gitleaks unreadable" although a working v8.30.1 was installed. The resolver passes it over, names it, and takes
+    the mise install of the pin, else the next PATH entry."""
+    _exe(repo.parent / "shims" / "gitleaks", SHIM)
+    log = repo.parent / "fake.log"
+    mise = _exe(repo.parent / "home" / ".local" / "share" / "mise" / "installs" / "gitleaks" / "8.30.1" / "gitleaks",
+                FAKE_GITLEAKS)
+    p = _run(repo, "--only", "gitleaks", **_hermetic(repo, repo.parent / "shims"))
+    assert p.returncode == 0, p.stdout
+    assert "passed over" not in p.stdout  # the mise install comes before PATH: the shim is never probed
+    assert "git . --log-opts=--no-renames base..HEAD" in log.read_text()
+
+    mise.unlink()
+    good = _exe(repo.parent / "bin" / "gitleaks", FAKE_GITLEAKS)
+    p = _run(repo, "--only", "gitleaks", **_hermetic(repo, repo.parent / "shims", repo.parent / "bin"))
+    assert p.returncode == 0, p.stdout
+    assert f"gitleaks: {good} (passed over: {repo.parent / 'shims' / 'gitleaks'}: `gitleaks version` exit 1" in p.stdout
+    assert "No version is set for shim" in p.stdout
+
+
+def test_gitleaks_resolver_only_a_broken_shim_blocks_and_says_why(repo: Path):
+    _exe(repo.parent / "shims" / "gitleaks", SHIM)
+    p = _run(repo, "--only", "gitleaks", **_hermetic(repo, repo.parent / "shims"))
+    assert p.returncode == 1
+    assert "no working gitleaks binary; passed over:" in p.stdout and "No version is set for shim" in p.stdout
+    assert "unreadable" not in p.stdout and "AA_SKIP_GITLEAKS=1" in p.stdout
+
+
+def test_gitleaks_resolver_workspace_copy_and_pin(repo: Path):
+    """The workspace copy in a parent directory is taken at the pin only; off the pin it is passed over for a PATH
+    binary at the pin; with no candidate at the pin the first working one is reported as a version gap."""
+    ws = _exe(repo.parent / ".tmp-session" / "gitleaks-8301" / "gitleaks", FAKE_GITLEAKS)
+    _exe(repo.parent / "shims" / "gitleaks", SHIM)
+    p = _run(repo, "--only", "gitleaks", **_hermetic(repo, repo.parent / "shims"))
+    assert p.returncode == 0 and "passed over" not in p.stdout, p.stdout
+
+    ws.write_text(FAKE_GITLEAKS.replace("${FAKE_GL_VERSION:-8.30.1}", "8.29.0"))
+    old = _exe(repo.parent / "old" / "gitleaks", FAKE_GITLEAKS.replace("${FAKE_GL_VERSION:-8.30.1}", "v8.18.0"))
+    pinned = _exe(repo.parent / "bin" / "gitleaks", FAKE_GITLEAKS)
+    p = _run(repo, "--only", "gitleaks", **_hermetic(repo, repo.parent / "old", repo.parent / "bin"))
+    assert p.returncode == 0, p.stdout
+    assert f"gitleaks: {pinned} (passed over: {ws}: version 8.29.0, not the CI pin 8.30.1)" in p.stdout
+    p = _run(repo, "--only", "gitleaks", **_hermetic(repo, repo.parent / "old"))
+    assert p.returncode == 1 and f"gitleaks 8.18.0 at {old}; CI uses 8.30.1" in p.stdout
+
+
+def test_gitleaks_resolver_broken_explicit_binary_falls_through(repo: Path):
+    good = _exe(repo.parent / "bin" / "gitleaks", FAKE_GITLEAKS)
+    broken = _exe(repo.parent / "broken" / "gitleaks", SHIM)
+    env = _hermetic(repo, repo.parent / "bin")
+    p = _run(repo, "--only", "gitleaks", **{**env, "AA_GITLEAKS": str(broken)})
+    assert p.returncode == 0, p.stdout
+    assert f"gitleaks: {good} (passed over: AA_GITLEAKS={broken}: `gitleaks version` exit 1" in p.stdout
+    p = _run(repo, "--only", "gitleaks", **{**env, "AA_GITLEAKS": str(repo.parent / "missing")})
+    assert p.returncode == 0 and f"AA_GITLEAKS={repo.parent / 'missing'}: not found" in p.stdout, p.stdout
 
 
 def test_gitleaks_is_not_in_ci_mode(repo: Path):

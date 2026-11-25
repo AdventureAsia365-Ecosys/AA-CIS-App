@@ -30,9 +30,11 @@
 #                   `lean`): a raster image > 500 KiB, > 10 MiB of images, a dist/**/*.zip, an ELF / Mach-O / PE binary or
 #                   a file > 5 MiB that .lean-allow does not list blocks the push. A missing base is a note, not a block.
 #   gitleaks        AA-1024 G14: every mode but --ci scans the pushed commits (<base>..<head>) with gitleaks v8.30.1 (the
-#                   secret-scan.yml pin) and the BASE's .gitleaks.toml / .gitleaksignore, as CI reads them. Binary:
-#                   $AA_GITLEAKS, `gitleaks` on PATH, or <workspace>/.tmp-session/gitleaks-8301/gitleaks. A missing or
-#                   other-version binary blocks; skip once, visibly: AA_SKIP_GITLEAKS=1 git push.
+#                   secret-scan.yml pin) and the BASE's .gitleaks.toml / .gitleaksignore, as CI reads them. Binary
+#                   (gitleaks_resolve, S294): $AA_GITLEAKS, <workspace>/.tmp-session/gitleaks-8301/gitleaks, the mise
+#                   install of the pin, then `gitleaks` on PATH; a candidate whose `gitleaks version` fails (a mise
+#                   shim with no version set) is passed over and named. No working or an other-version binary
+#                   blocks; skip once, visibly: AA_SKIP_GITLEAKS=1 git push.
 #   pins            AA-1024 (S274, S276): before a run that starts Python tests (unit, integration, --integration) the
 #                   Python it uses must have the fastapi / pydantic versions requirements.txt pins (CI installs them);
 #                   another version makes test_aa899_openapi_export red on main too. A mismatch stops at once with the
@@ -813,17 +815,75 @@ do_code_health() {
     "$PY" .github/scripts/code_health.py check --kind "$kinds" --base "$BASE" "${allow[@]}"
 }
 
-# gitleaks_bin: $AA_GITLEAKS, gitleaks on PATH, or the workspace copy in a parent directory of this checkout (the repo
-# sits at <workspace>/apps/AA-CIS-App, a lane worktree under <workspace>/.tmp-session/wt/).
-gitleaks_bin() {
-  local d
-  if [[ -n ${AA_GITLEAKS:-} ]]; then echo "$AA_GITLEAKS"; return 0; fi
-  command -v gitleaks 2>/dev/null && return 0
+# gitleaks_probe EXE: runs `EXE version`; sets GL_V (the version, no leading v) or, when it does not run or prints no
+# version, GL_V="" and GL_WHY (the reason). S294: a mise shim with no global version answers "No version is set for
+# shim: gitleaks" (exit 1); it used to be taken as the binary and blocked pushes with "gitleaks unreadable" (S284, S289,
+# S293 lessons) although a working v8.30.1 sat in the workspace and in the mise install dir.
+GL_V="" GL_WHY=""
+gitleaks_probe() {
+  local out rc=0 first
+  GL_V="" GL_WHY=""
+  out=$("$1" version 2>&1 </dev/null) || rc=$?
+  first=$({ grep -v '^[[:space:]]*$' <<<"$out" || true; } | head -1 | cut -c1-160)
+  if (( rc == 127 )) && [[ ! -e $1 ]]; then GL_WHY="not found"; return 0; fi
+  if (( rc != 0 )); then GL_WHY="\`gitleaks version\` exit $rc${first:+ ($first)}"; return 0; fi
+  GL_V=$({ grep -oE '[0-9]+\.[0-9]+\.[0-9]+' <<<"$out" || true; } | head -1)
+  [[ -z $GL_V ]] && GL_WHY="\`gitleaks version\` printed no version (${first:-empty})"
+  return 0
+}
+
+# gitleaks_resolve: sets GL_EXE / GL_VERSION (empty: none works) and GL_SKIPPED (each candidate passed over, and why).
+# Same order as the root resolver (AA-Ecosys tools/github/gitleaks_resolve.py); a candidate whose `gitleaks version`
+# fails is passed over for the next one:
+#   1. $AA_GITLEAKS: when it runs it wins as given (do_gitleaks still checks its version against the CI pin);
+#   2. the workspace copy <dir>/.tmp-session/gitleaks-8301/gitleaks in a parent directory of this checkout (the repo
+#      sits at <workspace>/apps/AA-CIS-App, a lane worktree under <workspace>/.tmp-session/wt/), taken at the pin only;
+#   3. the mise install of the pin, <mise data dir>/installs/gitleaks/<pin>/gitleaks ($MISE_DATA_DIR, else
+#      $XDG_DATA_HOME/mise, else ~/.local/share/mise), taken at the pin only;
+#   4. every `gitleaks` on PATH, in PATH order: the first at the pin, else the first that runs (do_gitleaks then
+#      reports the version gap).
+GL_EXE="" GL_VERSION="" GL_SKIPPED=""
+gitleaks_resolve() {
+  local c d data first_exe="" first_v="" seen=$'\n' key pinned=()
+  GL_EXE="" GL_VERSION="" GL_SKIPPED=""
+  if [[ -n ${AA_GITLEAKS:-} ]]; then
+    seen+="$(realpath -q -- "$AA_GITLEAKS" 2>/dev/null || echo "$AA_GITLEAKS")"$'\n'
+    gitleaks_probe "$AA_GITLEAKS"
+    if [[ -n $GL_V ]]; then GL_EXE=$AA_GITLEAKS GL_VERSION=$GL_V; return 0; fi
+    GL_SKIPPED+="${GL_SKIPPED:+; }AA_GITLEAKS=$AA_GITLEAKS: $GL_WHY"
+  fi
   d=$(pwd -P)
   while [[ -n $d && $d != / ]]; do
-    if [[ -x $d/$GITLEAKS_LOCAL ]]; then echo "$d/$GITLEAKS_LOCAL"; return 0; fi
+    [[ -f $d/$GITLEAKS_LOCAL ]] && pinned+=("$d/$GITLEAKS_LOCAL")
     d=$(dirname "$d")
   done
+  data=${MISE_DATA_DIR:-}
+  if [[ -z $data && -n ${XDG_DATA_HOME:-} ]]; then data=$XDG_DATA_HOME/mise; fi
+  if [[ -z $data && -n ${HOME:-} ]]; then data=$HOME/.local/share/mise; fi
+  c=$data/installs/gitleaks/$GITLEAKS_VERSION/gitleaks
+  [[ -n $data && -f $c ]] && pinned+=("$c")
+  for c in ${pinned[@]+"${pinned[@]}"}; do
+    key=$(realpath -q -- "$c" 2>/dev/null || echo "$c")
+    [[ $seen == *$'\n'"$key"$'\n'* ]] && continue
+    seen+="$key"$'\n'
+    if [[ ! -x $c ]]; then GL_SKIPPED+="${GL_SKIPPED:+; }$c: not executable"; continue; fi
+    gitleaks_probe "$c"
+    if [[ $GL_V == "$GITLEAKS_VERSION" ]]; then GL_EXE=$c GL_VERSION=$GL_V; return 0; fi
+    GL_SKIPPED+="${GL_SKIPPED:+; }$c: ${GL_WHY:-version $GL_V, not the CI pin $GITLEAKS_VERSION}"
+  done
+  local IFS=:
+  for d in ${PATH:-}; do
+    c=$d/gitleaks
+    [[ -n $d && -f $c && -x $c ]] || continue
+    key=$(realpath -q -- "$c" 2>/dev/null || echo "$c")
+    [[ $seen == *$'\n'"$key"$'\n'* ]] && continue
+    seen+="$key"$'\n'
+    gitleaks_probe "$c"
+    if [[ -z $GL_V ]]; then GL_SKIPPED+="${GL_SKIPPED:+; }$c: $GL_WHY"; continue; fi
+    if [[ $GL_V == "$GITLEAKS_VERSION" ]]; then GL_EXE=$c GL_VERSION=$GL_V; return 0; fi
+    if [[ -z $first_exe ]]; then first_exe=$c first_v=$GL_V; fi
+  done
+  GL_EXE=$first_exe GL_VERSION=$first_v
   return 0
 }
 
@@ -833,14 +893,15 @@ do_gitleaks() {
   if [[ ${AA_SKIP_GITLEAKS:-} == 1 ]]; then
     warn_result gitleaks "skipped (AA_SKIP_GITLEAKS=1): CI's Secret Scan is the only scan of these commits"; return
   fi
-  local exe have rules name hint
+  local exe have rules name hint passed
   hint="install gitleaks v$GITLEAKS_VERSION (github.com/gitleaks/gitleaks/releases, linux_x64 tar.gz checked against the release checksums) on PATH or at <workspace>/$GITLEAKS_LOCAL, or set AA_GITLEAKS; skip once: AA_SKIP_GITLEAKS=1 git push"
-  exe=$(gitleaks_bin)
-  if [[ -z $exe ]]; then fail_check gitleaks "no gitleaks binary" "$hint"; return; fi
-  have=$("$exe" version 2>/dev/null); have=${have#v}
+  gitleaks_resolve
+  exe=$GL_EXE have=$GL_VERSION passed=${GL_SKIPPED:+; passed over: $GL_SKIPPED}
+  if [[ -z $exe ]]; then fail_check gitleaks "no working gitleaks binary$passed" "$hint"; return; fi
   if [[ $have != "$GITLEAKS_VERSION" ]]; then
-    fail_check gitleaks "gitleaks ${have:-unreadable} at $exe; CI uses $GITLEAKS_VERSION" "$hint"; return
+    fail_check gitleaks "gitleaks $have at $exe; CI uses $GITLEAKS_VERSION$passed" "$hint"; return
   fi
+  if [[ -n $GL_SKIPPED ]]; then echo "   gitleaks: $exe (passed over: $GL_SKIPPED)"; fi
   # The rules come from the BASE (as CI reads them), so a branch cannot allowlist its own leak.
   rules="$LOG_DIR/gitleaks-rules"; mkdir -p "$rules"
   for name in .gitleaks.toml .gitleaksignore; do

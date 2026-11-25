@@ -409,6 +409,32 @@ def test_verify_is_rate_limited_per_client_address(h):
     assert h.client.get("/learn/public/v1/certificates/AAAAAAAAAAAAAAAAAAAAAA", headers=other).status_code == 404
 
 
+def test_verify_window_is_one_fixed_minute_on_the_pinned_clock(h):
+    """S294: the harness pins the limiter's clock (the test above went red when its 31 requests straddled a minute
+    boundary). Retry-After counts to the end of the pinned minute; the next minute starts a fresh count."""
+    path = "/learn/public/v1/certificates/AAAAAAAAAAAAAAAAAAAAAA"
+    assert h.now % 60 == 20
+    for _ in range(30):
+        assert h.client.get(path).status_code == 404
+    over = h.client.get(path)
+    assert over.status_code == 429 and over.headers["retry-after"] == "40"
+    h.now += 39            # still the same minute
+    assert h.client.get(path).status_code == 429
+    h.now += 1             # the next minute
+    assert h.client.get(path).status_code == 404
+
+
+def test_harness_restores_the_router_clock():
+    from tests.unit.aa1105_learn_fake import Harness
+    real = learn_router.time
+    harness = Harness()
+    try:
+        assert learn_router.time is not real and learn_router.time.time() == harness.now
+    finally:
+        harness.close()
+    assert learn_router.time is real and learn_router._window == {}
+
+
 def test_verify_limit_is_the_setting(h, monkeypatch):
     from shared import settings
     real = settings.aget
@@ -470,4 +496,3 @@ def test_unavailable_store_still_sends_the_visitor_limit(h, monkeypatch):
     monkeypatch.setattr(learn_router, "open_store", down)
     r = h.client.get("/learn/public/v1/certificates/BBBBBBBBBBBBBBBBBBBBBB")
     assert r.status_code == 503 and r.headers[learn_router.VISITOR_LIMIT_HEADER] == "6"
-
