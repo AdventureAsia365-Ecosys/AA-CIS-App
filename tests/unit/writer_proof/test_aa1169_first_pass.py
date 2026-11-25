@@ -213,14 +213,16 @@ def test_first_pass_report_counts(monkeypatch):
 
 # ── the re-measure draft ───────────────────────────────────────────────────────────────────────────────────────────
 
-def test_the_re_measure_draft_mirrors_w5_t9():
-    """w5-t9-r2 (a DRAFT until the tech lead's yes) measures the same thing as w5-t9 on the active golden version."""
+def test_the_re_measure_mirrors_w5_t9():
+    """w5-t9-r2 (registered S292 after the tech lead's yes) measures the same thing as w5-t9 on the active golden
+    version, and the lock pins it."""
     base = json.loads(pr.path_for("w5-t9").read_text())
     r2 = json.loads(pr.path_for("w5-t9-r2").read_text())
     for key in ("workflow", "eval_split", "sample_ids", "noise_sample_ids", "release_id", "judge", "metrics",
                 "decision", "requirements", "power"):
         assert r2[key] == base[key], key
-    assert r2["status"] == "draft" and r2["golden_set"] == {"name": "aa729", "version": "1.7.0"}
+    assert r2["status"] == "registered" and r2["golden_set"] == {"name": "aa729", "version": "1.7.0"}
+    assert r2["registered_by"] == "tech_lead" and r2["registered_on"] == "2026-11-25"
     assert 0 < r2["cap_usd"] <= 5.0
     assert pr.registration_problems(r2) == []
-    assert "w5-t9-r2" not in pr.read_lock()
+    assert pr.read_lock()["w5-t9-r2"] == pr.sha256_of(r2)
