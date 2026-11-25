@@ -52,7 +52,8 @@ def test_baseline_version_snapshots_every_route_and_deployment(cur):
     assert row["action"] == "baseline" and row["created_by"] == "migration-370-aa1042" and row["diff"] == []
     snap = row["snapshot"]
     assert snap["order_mode"] == "model_first"
-    cur.execute("SELECT count(*) AS n FROM shared.llm_role_config")
+    # Stages created after this baseline are not in version 1: CIS 487 (AA-1154 A1, S292) adds ops_assist.
+    cur.execute("SELECT count(*) AS n FROM shared.llm_role_config WHERE stage NOT IN ('ops_assist')")
     assert len(snap["routes"]) == cur.fetchone()["n"]
     # AA-1042 (S269): CIS 376 adds five Anthropic API models after this baseline (rows it creates, not in version 1)
     cur.execute("SELECT count(DISTINCT model_key) AS n FROM shared.llm_model_deployment WHERE model_key NOT IN "
