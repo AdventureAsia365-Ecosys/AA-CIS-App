@@ -40,6 +40,8 @@ def _run(c):
     c.execute("DO $$ BEGIN IF to_regclass('shared.llm_provider_connection') IS NOT NULL THEN "
               "DELETE FROM shared.llm_provider_connection WHERE kind NOT IN "
               "('bedrock', 'anthropic', 'openai', 'azure_openai', 'mock'); END IF; END $$")
+    # AA-1154 A1 (S292): 304's CHECK has no 'llm'; 487's stage budget row leaves before a 304 re-run, LATER puts it back
+    c.execute("DELETE FROM shared.spend_budget WHERE provider = 'llm'")
     c.execute(open(MIGRATION, encoding="utf-8").read())
 
 
@@ -156,7 +158,6 @@ def cur():
 
 def _undo(c):
     """The pre-304 state: no new tables, no capabilities column, the 181 / 169 / 226 CHECKs, 304 unregistered."""
-    c.execute("DELETE FROM shared.spend_budget WHERE provider = 'llm'")  # 487: the pre-304 CHECK refuses 'llm'
     c.execute("DROP VIEW IF EXISTS shared.llm_connection_budget_current")  # 455: over the budget table
     c.execute("DROP TABLE IF EXISTS shared.llm_connection_budget")        # 455: references the connection table
     c.execute("DELETE FROM shared.schema_versions WHERE version = '455'")
