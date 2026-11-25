@@ -55,3 +55,18 @@ Source: the S283 ZAP baseline triage (root `docs/audits/2026-11-17-S283-access-r
   `frontend/lib/securityHeaders.test.mjs` the policy builder (`npm run test:unit`).
 - The 403s ZAP saw from `awselb` on the admin host are WAF block responses, not the app: AA-CIS-Infra adds the headers
   to the WAF custom responses in the same wave.
+
+## S294 (lane l16-sec-headers, ZAP re-run of 25/11)
+
+- **Decisions:** no header change in the app. Live `curl` on `/`, `/login`, `/robots.txt`, `/sitemap.xml` and a 404
+  shows the full set already (nonce CSP, HSTS two years with sub-domains, Permissions-Policy, COOP, no `X-Powered-By`,
+  no `Server`). HSTS stays at two years (the slice asked for at least one; lowering it would be a step back).
+- **Root cause of the S294 ZAP alerts** ("CSP / HSTS / Permissions-Policy not set" and `Server: awselb/2.0` on `/`,
+  `/robots.txt`, `/sitemap.xml`): ZAP's first requests carry no `User-Agent`, the WAF managed rule
+  `NoUserAgent_HEADER` blocks them, and that block is the ALB's plain 403 with no header (WAF sampled requests of
+  the scan window). The app never answered those requests. Fix belongs to AA-CIS-Infra: a custom block response with
+  the security headers on the managed rule group (follow-up), or a `User-Agent` on the scan.
+- **Changed:** the header smoke also checks the host root `/` (the scan's first request; a redirect, still the set).
+- **Should know:** the `next.config.ts` redirects (`/upload`, `/review`, the IA table, `/portal/*`, `/trip/*`) still
+  leave with no header at all: Next answers them before `headers()` and before `proxy.ts`. Moving them into the proxy
+  touches the auth gate, frozen until after the 26/11 meeting: follow-up.

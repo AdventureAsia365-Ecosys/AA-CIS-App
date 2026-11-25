@@ -1,6 +1,6 @@
 // tests/e2e/smoke/aa876-security-headers.spec.ts
 // AA-876 — the ADMIN host sends the same security headers as the portal (AA-885) on every response.
-// AA-1111 (S284, ZAP baseline): a page, a static route (/robots.txt), a 404 and the BFF all carry the set, the CSP is
+// AA-1111 (S284, ZAP baseline): the root, a page, the static routes, a 404 and the BFF all carry the set, the CSP is
 // the full policy (scripts by a per-response nonce on pages, no 'unsafe-inline' for scripts, no wildcard fetch
 // directive) and COOP is same-origin.
 // Runs in the admin `smoke` project without a session (a fresh request context, no storage state).
@@ -50,7 +50,8 @@ test.describe('AA-876 / AA-1111 — admin host security headers', () => {
     }
   });
 
-  for (const path of ['/robots.txt', '/sitemap.xml', '/aa1111-no-such-page', '/api/healthz']) {
+  // S294 (ZAP re-run): the host root is the scan's first request, so it is checked too (a redirect, still the set).
+  for (const path of ['/', '/robots.txt', '/sitemap.xml', '/aa1111-no-such-page', '/api/healthz']) {
     test(`${path} carries the security headers too`, async () => {
       const ctx = await anon();
       try {
