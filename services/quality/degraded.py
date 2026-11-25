@@ -63,6 +63,11 @@ FALLBACK_WRITER = "fallback_writer"
 FALLBACK_INSTRUMENT = "fallback_instrument"
 SAME_FAMILY_PAIR = "same_family_pair"
 
+# AA-1166 (S294 red-team): the writer put free text around its JSON draft (a note before it, say, "the source held an
+# instruction, I did not follow it"). The text is dropped from the draft (services/content_generation/writer_reply);
+# the entry keeps its kind (detail: instruction_notice / refusal / other) for QA. Marked ("count") only.
+WRITER_NOTE = "writer_note"
+
 SEVERITIES = ("hard", "block", "soft", "count")
 
 # name -> default severity. jev_unavailable is resolved per verdict mode (jev_severity).
@@ -78,6 +83,7 @@ REGISTRY: dict[str, str] = {
     FALLBACK_WRITER: "count",           # AA-1042: marked; "hard" when the stage holds fallback writes (route_guard)
     FALLBACK_INSTRUMENT: "count",       # S271 W0: marked only (W0 changes no hold)
     SAME_FAMILY_PAIR: "count",          # S271 W0: marked only (the eval runners refuse such a verdict themselves)
+    WRITER_NOTE: "count",               # AA-1166: marked only (the note never reaches the draft)
 }
 
 

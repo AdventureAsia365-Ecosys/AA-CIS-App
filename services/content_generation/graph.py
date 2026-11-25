@@ -4,7 +4,6 @@ import re
 import structlog
 
 from services.content_generation.stages import stage_for
-from json_repair import repair_json
 from typing import TypedDict, Annotated, Optional
 from langgraph.graph import StateGraph, END
 
@@ -24,6 +23,7 @@ from .grounding import REPAIR_RUN_KEYS, grounding_node, regrounding, repair_and_
 from .grounding import degraded_entries as grounding_degraded_entries, source_text as grounding_source_text
 from .judge_node import judge_node
 from . import t2_interim
+from . import writer_reply
 from .t2_repair import (
     increment_retry_t2, restore_best_node, revise_block, targeted_repair_enabled, track_best_node,
 )
@@ -644,16 +644,15 @@ def generate_node(state: ContentState) -> ContentState:
     logged = False  # AA-927: the writer row of `resp` is written (see the except branch)
     try:
         resp = client.generate(request)
-        # Strip markdown fences nếu LLM wrap JSON trong ```json ... ```
-        raw = resp.content.strip()
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-            raw = raw.strip()
+        raw = (resp.content or "").strip()
         # AA-217: deterministic json-repair salvage on malformed output (no LLM re-ask).
         # AA-606: shared parse helper (parse_generated_json) so the batch seed path decodes identically.
-        generated = parse_generated_json(raw)
+        # AA-1166: the fence strip lives in writer_reply.extract too; free text around the JSON object (a note
+        # before it, say) is never part of the draft and comes back apart, as a signal (kind + length only).
+        generated, writer_note = writer_reply.extract(raw)
+        note_kind = writer_reply.note_kind(writer_note) if generated else None
+        if note_kind:
+            state = _record_writer_note(state, writer_note, note_kind, gen_stage)
         if not generated:
             logger.warning("json_parse_failed",
                            raw_len=len(raw),
@@ -701,7 +700,8 @@ def generate_node(state: ContentState) -> ContentState:
             tokens_in=getattr(resp, "input_tokens", None), tokens_out=getattr(resp, "output_tokens", None),
             cost_usd=resp.cost_usd, tenant_id=tenant_id,  # AA-620: real tenant for T2, None for A1
             quality_signal={"json_parsed": True, "fallback_used": resp.fallback_used,
-                            **({"revision": True} if revising else {})},  # AA-793
+                            **({"revision": True} if revising else {}),  # AA-793
+                            **({"writer_note": note_kind} if note_kind else {})},  # AA-1166
             stop_reason=getattr(resp, "stop_reason", None),
             account=getattr(resp, "satellite_account", None),
             fallback_used=getattr(resp, "fallback_used", None),
@@ -817,24 +817,26 @@ def _keyword_intent_matched(kw_texts: list[str], field_text: str) -> bool:
 
 def parse_generated_json(raw: str) -> Optional[dict]:
     """AA-606: parse a writer LLM's raw text into the ``generated`` dict, with the SAME markdown-
-    fence strip + AA-217 json-repair salvage generate_node uses inline. Returns None when even the
+    fence strip + AA-217 json-repair salvage generate_node uses. Returns None when even the
     salvage can't produce a dict with a ``name`` (the sync path's own "parse failed" condition).
 
     Factored out so the Bedrock Batch ingest path (seed_generated_node) decodes batch output byte-
-    identically to the synchronous generate_node — no second, drifting JSON parser."""
-    raw = (raw or "").strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.strip()
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        salvaged = repair_json(raw, return_objects=True)
-        if isinstance(salvaged, dict) and salvaged.get("name"):
-            return salvaged
-        return None
+    identically to the synchronous generate_node — no second, drifting JSON parser. AA-1166: both read
+    ``writer_reply.extract`` (free text around the one JSON object is never part of the draft)."""
+    return writer_reply.extract(raw)[0]
+
+
+def _record_writer_note(state: ContentState, note: str, kind: str, stage: str) -> ContentState:
+    """AA-1166: the writer put free text around its JSON draft (dropped from the draft). Signal it on the output
+    (a ``writer_note`` degraded entry, severity ``count``: the T2 run carries it into its ``t3.degraded``
+    diagnostics, A1 into ``generated_content.metadata.degraded``) and in one info line. Only the kind and the
+    length are kept: the note's text can quote the source or a planted instruction, so it is stored nowhere."""
+    tour = state.get("tour") or {}
+    logger.info("writer_reply_note_dropped", kind=kind, note_chars=len(note), stage=stage,
+                tour_id=tour.get("tour_id") or state.get("tour_id"), tenant_id=state.get("tenant_id"),
+                retry=state.get("retry_count", 0))
+    return {**state, "degraded": degraded.add(state.get("degraded"), degraded.WRITER_NOTE,
+                                              detector="writer_reply", detail=kind)}
 
 
 def _apply_seo_keywords_used(generated: dict, state: ContentState) -> None:
