@@ -203,7 +203,9 @@ test.describe('AA-1042 / AA-1045 — evidence as the Dev-only E2E CIS admin', ()
     expect(chk.status).toBe(200);
     expect(JSON.parse(chk.body).ok, 'rollup totals equal the raw ledger').toBe(true);
 
-    // ── sign out ──
+    // ── sign out ── (S293: a drawer left open by step 3 covers the top bar; close it first)
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 10000 }).catch(() => {});
     await account.click();
     await page.getByRole('button', { name: 'Sign out' }).click({ timeout: 5000 });
     await page.waitForURL((u) => u.origin === CIS_PROD_ORIGIN && u.pathname === '/login', { timeout: 30000 });

@@ -50,6 +50,8 @@ const PAGES = [
   // AA-1174 (S288): Platform › Compliance readiness, Overview and Obligations tabs (a crash here once shipped
   // unnoticed: the post-deploy smoke's content role cannot open the page).
   '/admin/platform/compliance', '/admin/platform/compliance?tab=obligations',
+  // AA-1169 (S293): Writing Lab › Eval runs (the run list carries no tenant text; the sample view is not shot).
+  '/admin/lab/eval-runs',
 ] as const;
 // A page whose loaded content is not a table row: its ready marker (rendered only once its data answered).
 const READY: Partial<Record<(typeof PAGES)[number], string>> = {
