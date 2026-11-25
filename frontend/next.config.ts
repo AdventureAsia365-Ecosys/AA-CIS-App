@@ -1,6 +1,6 @@
 import type { NextConfig } from "next";
 import path from "path";
-import { withSentryConfig } from "@sentry/nextjs";
+import { withSentryConfig } from "@sentry/nextjs/config";
 import { PORTAL_BASE_URL, TRIP_PAGE_BASE_URL } from "./lib/apps";
 import { adminIaRedirects } from "./lib/adminIa";
 import { STATIC_SECURITY_HEADERS, contentSecurityPolicy, sentryOrigin } from "./lib/securityHeaders";
@@ -64,6 +64,10 @@ const nextConfig: NextConfig = {
   },
 };
 
+// AA-1111 (S294): @sentry/nextjs 11 (the version the Booking admin and the CRM web run) moved the build wrapper to
+// "@sentry/nextjs/config" and replaced `disableLogger` with `bundleSizeOptimizations.excludeDebugStatements`.
+// `buildTimeInstrumentation` (new in 11, on by default for Turbopack) stays off: the admin sends errors only
+// (lib/sentryConfig.ts, no tracing), the same runtime set-up as the two apps that use no wrapper at all.
 export default withSentryConfig(nextConfig, {
   org: "dk-0ql",
   project: "aa-cis-frontend",
@@ -71,5 +75,8 @@ export default withSentryConfig(nextConfig, {
   sourcemaps: {
     disable: false,
   },
-  disableLogger: true,
+  bundleSizeOptimizations: {
+    excludeDebugStatements: true,
+  },
+  buildTimeInstrumentation: false,
 });
