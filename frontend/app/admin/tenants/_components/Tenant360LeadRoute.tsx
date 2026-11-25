@@ -101,7 +101,7 @@ function LeadRouteDrawer({ data, onClose }: { data: LeadRouteResp; onClose: () =
   );
 }
 
-/** AA-1160: with the CRM add-on, the note says whether the CRM holds the agency yet (an older API: as before). */
+// AA-1160: with the CRM add-on, the note says whether the CRM holds the agency yet (an older API: as before).
 function crmNoteKey(data: LeadRouteResp): Msg {
   return data.crm_agency === false ? "crmNoAgency" : "crmNote";
 }
