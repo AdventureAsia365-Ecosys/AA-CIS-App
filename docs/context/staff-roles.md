@@ -429,7 +429,9 @@ NavGroup, S264; no sections, no footer Settings entry):
   `t2-rewrite`, `t9-blog`, `t9-social` with the tabs Eval gate, Samples, Labels, Experiments, Prompt versions, one read
   `GET /admin/writing-memory/lab/{writer}` over the existing learning tables, ids / labels / counts / hashes only, no
   new learning logic: S262 TL-11 freeze unchanged), Writing memory (`/admin/lab/writing-memory`, was
-  `/admin/writing-memory`), Jev Decisions;
+  `/admin/writing-memory`), Eval runs (`/admin/lab/eval-runs`, AA-1169: an evaluation run read by hand, one sample's
+  stored output beside the source the judge read with its flagged claims and gate replay, Markdown export; plus the
+  lineage reads: coverage, one output, one tour's fan-out), Jev Decisions;
 - **Trade** (AA-1037, root ADR 0019 d9 "Screens now") — Booking admin, Agency billing, Agency tiers, B2B desk: pages of
   AA-Booking's admin (`external` items; the URL comes from `lib/apps.ts appPageUrl`; same tab, never the active item),
   shown to `billing.read` or `tenant.book.account.read` (`lib/rbac.ts canSeeNavItem`); Booking checks its own grant;

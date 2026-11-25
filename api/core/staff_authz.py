@@ -606,9 +606,9 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/waves/check"): OPS_WRITE, ("GET", "/admin/waves"): any_of(OPS_READ, WAVE_RUN),
     ("GET", "/admin/waves/{wave_id}/report"): any_of(OPS_READ, WAVE_RUN),   # incl. the wave's LLM cost
     # ── admin_overview — whole-system snapshot incl. spend (admin-only page; CI smoke = machine)
-    ("GET", "/admin/overview"): OPS_READ, **{(m, "/admin/ops-assist/" + p): OPS_READ for m, ps in (  # AA-1154 A0 reads,
-        ("GET", ("catalog", "signals", "items/{item_id}/cards", "replays", "replays/{case}", "changes")),  # A1: the AI
-        ("POST", ("items/{item_id}/analyse", "auto", "changes/phrase"))) for p in ps},  # ranks/explains (stage cap)
+    ("GET", "/admin/overview"): OPS_READ, **{(m, "/admin/ops-assist/" + p): OPS_READ for m, ps in (  # AA-1154 A0-A2
+        ("GET", ("catalog", "signals", "items/{item_id}/cards", "replays", "replays/{case}", "changes", "runs",
+                 "track")), ("POST", ("items/{item_id}/analyse", "auto", "changes/phrase", "runs"))) for p in ps},
     ("GET", "/admin/overview/ops"): OPS_READ, ("GET", "/admin/overview/status"): OPS_READ,  # AA-858, AA-1140 status
     **{("POST", "/admin/overview/status/acks" + p): OPS_WRITE for p in ("", "/{item_id}/clear")},  # AA-1141 ack
     **{(m, "/admin/overview/views" + p): OPS_READ for m, p in (("GET", ""), ("POST", ""), ("DELETE", "/{view_id}"))},
@@ -759,11 +759,12 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/writing-memory/releases/{release_id}/keep"): AI_ADMIN,
     ("GET", "/admin/writing-memory/disagreements"): _LAB_TEXT_READ,
     ("POST", "/admin/writing-memory/disagreements/{item_id}/resolve"): AI_ADMIN,
-    # AA-1039 R6 slice 3: the Writing Lab stage read (ids, labels, counts, hashes; no text). AA-1035 R2: Writing Lab R
-    # without tenant text, like the release reads (content_lead, tenant_qa, ai_ops, admin)
+    # AA-1039 R6 slice 3 / AA-1035 R2: the Writing Lab stage read, no text (Lab R, as the release reads)
     ("GET", "/admin/writing-memory/lab/{writer}"): _LAB_READ,
-    # AA-1048 W2 (S273): the claim-level ground truth (api/routers/admin_claim_labels.py). Writes ai.admin; the counts
-    # and the split plan carry no text (Writing Lab R); the finals carry claim text (Lab text read, logged).
+    ("GET", "/admin/writing-memory/eval-runs"): _LAB_READ,   # AA-1169 Eval runs: the lists carry no text (Lab R)
+    ("GET", "/admin/writing-memory/eval-runs/{run_id}"): _LAB_READ,
+    ("GET", "/admin/writing-memory/eval-runs/{run_id}/items/{item_id}"): _LAB_TEXT_READ,   # writer text, logged
+    # AA-1048 W2: claim ground truth (admin_claim_labels.py): writes ai.admin, counts Lab R, finals Lab text read
     ("POST", "/admin/writing-memory/claim-labels/import"): AI_ADMIN,
     ("GET", "/admin/writing-memory/claim-labels/split-plan"): _LAB_READ,
     ("GET", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/report"): _LAB_READ,
@@ -771,8 +772,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/pull-resolutions"): AI_ADMIN,
     ("POST", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/prefilter"): AI_ADMIN,   # AA-1063
     ("GET", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/finals"): _LAB_TEXT_READ,
-    # AA-1063 (S275): the Writing Lab claim review, agent proposals, the label set browser and corrections. Reads that
-    # return claim text are Lab text reads (logged); the set counts carry no text; every write is ai.admin.
+    # AA-1063 (S275): Writing Lab claim review: text reads are Lab text reads (logged), counts Lab R, writes ai.admin
     ("GET", "/admin/writing-memory/claim-labels/review"): _LAB_TEXT_READ,
     ("GET", "/admin/writing-memory/claim-labels/review/{item_id}/context"): _LAB_TEXT_READ,
     ("POST", "/admin/writing-memory/claim-labels/review/accept-proposals"): AI_ADMIN,

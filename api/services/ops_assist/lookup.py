@@ -9,7 +9,8 @@ with no model call; a model only phrases the answer when someone asks.
   ``acp_shared.ops_event``, approved settings, migrations, waves, route control versions), so the panel and the page's
   What changed panel never disagree.
 - **Also happened**: alarms and service drops of the window from ``acp_shared.ops_event`` (an alarm is not a change,
-  but it is the other half of "what is different since an hour ago").
+  but it is the other half of "what is different since an hour ago"), and those that started before the window and
+  are still open (S292 follow-up: the answer said "no alarm fired" while the page listed an open alarm).
 - **The rule answer** (:func:`rule_answer`, pure): a headline with the counts and one line per type with the newest
   rows. Free and immediate.
 - **Phrase** (:func:`phrase`): one call of the ``ops_assist`` stage (``explain.call_gateway``: the preflight, the
@@ -42,7 +43,8 @@ TYPE_WORDS = {"deploy": ("deploy", "deploys"), "setting": ("setting change", "se
 EVENTS_SQL = f"""
     SELECT event_id, occurred_at, ended_at, kind, severity, app, subject, title
       FROM acp_shared.ops_event
-     WHERE kind IN ('alarm', 'service_down') AND occurred_at >= $1 AND occurred_at < $2
+     WHERE kind IN ('alarm', 'service_down') AND occurred_at < $2
+       AND (occurred_at >= $1 OR ended_at IS NULL OR ended_at >= $1)
      ORDER BY occurred_at DESC
      LIMIT {EVENT_ROWS}
 """
@@ -89,13 +91,14 @@ def window_of(minutes: int, now: datetime) -> tuple[datetime, datetime, int, str
 
 
 def event_rows(rows: list[dict]) -> list[dict]:
-    """Alarms and service drops as rows shaped like the change rows. Pure."""
+    """Alarms and service drops as rows shaped like the change rows; ``open`` = not ended yet. Pure."""
     out = []
     for r in rows:
         t = r.get("occurred_at")
         out.append({"id": f"event-{r['event_id']}", "t": t.isoformat() if hasattr(t, "isoformat") else t,
                     "type": r["kind"], "app": r.get("app") or "shared", "severity": r.get("severity"),
-                    "title": explain.clip(r.get("title") or r.get("subject"), 300), "href": "/admin/overview"})
+                    "title": explain.clip(r.get("title") or r.get("subject"), 300), "href": "/admin/overview",
+                    "open": r.get("ended_at") is None})
     return out
 
 
@@ -104,6 +107,14 @@ def _hhmm(t: Optional[str]) -> str:
         return datetime.fromisoformat(str(t)).astimezone(timezone.utc).strftime("%H:%M UTC")
     except (TypeError, ValueError):
         return "?"
+
+
+def _row_words(r: dict) -> str:
+    """"CIS Deploy api (dev-ab12) at 09:58 UTC"; an open alarm "... since 09:58 UTC, still open". Pure."""
+    from api.services.ops_assist.playbooks import app_label
+
+    when = f"since {_hhmm(r.get('t'))}, still open" if r.get("open") else f"at {_hhmm(r.get('t'))}"
+    return f"{app_label(r.get('app')) if r.get('app') else ''} {r['title']} {when}".strip()
 
 
 def _count_words(typ: str, n: int) -> str:
@@ -121,16 +132,17 @@ def rule_answer(changes: list[dict], events: list[dict], words: str) -> dict:
     for r in rows:
         counts[r["type"]] = counts.get(r["type"], 0) + 1
     ch = [_count_words(t, counts[t]) for t in TYPE_WORDS if t in counts and t not in ("alarm", "service_down")]
+    still = sum(1 for r in events if r.get("open"))
     ev = [_count_words(t, counts[t]) for t in ("alarm", "service_down") if t in counts]
     head = f"In the last {words}: " + (", ".join(ch) if ch else "no change")
-    head += (" and " + ", ".join(ev) if ev else "; no alarm fired") + "."
+    head += (" and " + ", ".join(ev) + (f" ({still} still open)" if still else "") if ev else "; no alarm fired")
+    head += "."
     lines = []
     for typ in TYPE_WORDS:
         of_type = [r for r in rows if r["type"] == typ]
         if not of_type:
             continue
-        named = "; ".join(f"{r['app'].upper() if r.get('app') else ''} {r['title']} at {_hhmm(r.get('t'))}".strip()
-                          for r in of_type[:LIST_PER_TYPE])
+        named = "; ".join(_row_words(r) for r in of_type[:LIST_PER_TYPE])
         more = f"; and {len(of_type) - LIST_PER_TYPE} more" if len(of_type) > LIST_PER_TYPE else ""
         lines.append(f"{TYPE_WORDS[typ][1].capitalize()} ({len(of_type)}): {named}{more}.")
     return {"headline": head, "lines": lines}

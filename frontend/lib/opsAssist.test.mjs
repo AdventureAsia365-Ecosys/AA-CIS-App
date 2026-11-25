@@ -7,8 +7,9 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  SIGNALS_PATH, analysePath, autoPath, callText, cardsPath, changesPath, citedEvidence, confidenceTone,
-  costText, expired, explanationEvidence, extraSignals, llmNotice, ranked, riskTone, windowWords,
+  RUNS_PATH, SIGNALS_PATH, TRACK_PATH, analysePath, assistRange, autoPath, callText, cardsPath, changesPath,
+  citedEvidence, confidenceTone, costText, currentRun, expired, explanationEvidence, extraSignals, llmNotice, pendingChecks,
+  ranked, riskTone, runOfCard, runsPath, verdictTone, windowWords, withTimeout,
 } from "./opsAssist.ts";
 
 const FRONTEND = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -118,6 +119,12 @@ test("the panel runs no action, uses the kit and is wired on the attention rows"
   }
   const src = read("app/admin/overview/_status/Assist.tsx");
   assert.ok(src.includes("cardsPath(") && src.includes("SIGNALS_PATH") && src.includes("analysePath("));
+  // A2: the one more POST marks a card as done (the run record); it never sends the card's own call either.
+  const outcome = read("app/admin/overview/_status/AssistOutcome.tsx");
+  assert.ok(outcome.includes('from "../../../_kit"') && outcome.includes("<WriteOnly>"));
+  assert.ok(!/method:\s*"(PUT|PATCH|DELETE)"/.test(outcome) && !/card\.(call|dry_run|way_back)/.test(outcome));
+  assert.deepEqual([...outcome.matchAll(/apiSend\(([^,]+),/g)].map((m) => m[1].trim()), ["RUNS_PATH"]);
+  assert.ok(src.includes("<CardOutcome") && src.includes("<TrackRecord"));
   const verdict = read("app/admin/overview/_status/Verdict.tsx");
   assert.ok(verdict.includes("<AssistButton") && verdict.includes("<AssistSignals"));
   const msgs = read("app/admin/overview/assist.messages.ts").split("\n").filter((l) => !l.trim().startsWith("//"))
@@ -125,4 +132,51 @@ test("the panel runs no action, uses the kit and is wired on the attention rows"
   assert.ok(!/AA-\d+/.test(msgs), "no tracker ids in UI copy");
   const rbac = read("lib/rbac.ts");
   assert.ok(rbac.includes('{ prefix: "ops-assist", caps: ["ops.read"], roles: ["admin"] }'));
+});
+
+test("A2 runs, checks and the hit rate helpers", () => {
+  assert.equal(RUNS_PATH, "/api/admin/ops-assist/runs");
+  assert.equal(TRACK_PATH, "/api/admin/ops-assist/track");
+  assert.equal(runsPath("alarm-e4"), "/api/admin/ops-assist/runs?item_id=alarm-e4");
+  assert.equal(assistRange("custom"), "24h");
+  assert.equal(assistRange("6h"), "6h");
+  const runs = [
+    { card_id: "x:observe", recorded_at: "2026-11-25T09:00:00+00:00", check_after_min: [10, 30],
+      checks: [{ after_min: 10 }] },
+    { card_id: "x:observe", recorded_at: "2026-11-25T10:00:00+00:00", check_after_min: [10, 30], checks: [] },
+    { card_id: "x:wave_pause", recorded_at: "2026-11-25T11:00:00+00:00", check_after_min: [10], checks: [] },
+  ];
+  assert.equal(runOfCard(runs, "x:observe").recorded_at, "2026-11-25T10:00:00+00:00");
+  assert.equal(runOfCard(runs, "x:none"), undefined);
+  assert.deepEqual(pendingChecks(runs[0]), [30]);
+  assert.equal(verdictTone("hit"), "success");
+  assert.equal(verdictTone("miss"), "danger");
+  assert.equal(verdictTone("unclear"), "neutral");
+  assert.equal(verdictTone(null), "info");
+});
+
+test("A2 a run counts for the card shown only within that card's lifetime; an earlier incident's run is history", () => {
+  // the card was built at 09:00 with a 30-minute lifetime (expires 09:30); a record is refused for 30 minutes after one
+  const shown = card({ id: "x:observe", expires_at: "2026-11-25T09:30:00+00:00" });
+  const at = (recorded_at) => [{ card_id: "x:observe", recorded_at, check_after_min: [10, 30], checks: [] }];
+  assert.equal(currentRun(at("2026-11-25T09:05:00+00:00"), shown, 30)?.recorded_at, "2026-11-25T09:05:00+00:00");
+  // marked on the previous build of the same card (the server still refuses a second record at 09:00): it counts
+  assert.ok(currentRun(at("2026-11-25T08:40:00+00:00"), shown, 30));
+  // the same card a week earlier (the item recurred): stale, so the page offers "I ran this" again
+  assert.equal(currentRun(at("2026-11-18T09:05:00+00:00"), shown, 30), undefined);
+  assert.equal(currentRun(at("2026-11-25T08:00:00+00:00"), shown, 30), undefined);
+  assert.equal(runOfCard(at("2026-11-18T09:05:00+00:00"), "x:observe").recorded_at, "2026-11-18T09:05:00+00:00");
+  // no lifetime known (an older API answer) or no run: nothing counts
+  assert.equal(currentRun(at("2026-11-25T09:05:00+00:00"), shown, 0), undefined);
+  assert.equal(currentRun([], shown, 30), undefined);
+  // the drawer wires the lifetime from GET /runs and keeps the older run as history under the button
+  const outcome = read("app/admin/overview/_status/AssistOutcome.tsx");
+  assert.ok(outcome.includes("currentRun(runs, card, ttlMin)") && outcome.includes("<LastRun"));
+  assert.ok(read("app/admin/overview/_status/Assist.tsx").includes("runs.data?.card_ttl_min"));
+});
+
+test("A2 withTimeout gives up with the message, and passes a fast answer through", async () => {
+  await assert.rejects(withTimeout(new Promise(() => {}), 5, "zz try again"), /zz try again/);
+  assert.equal(await withTimeout(Promise.resolve(7), 50, "zz"), 7);
+  await assert.rejects(withTimeout(Promise.reject(new Error("zz boom")), 50, "zz"), /zz boom/);
 });

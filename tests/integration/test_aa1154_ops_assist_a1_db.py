@@ -87,15 +87,21 @@ async def test_the_preflight_says_whether_the_deep_model_is_an_enabled_chat_mode
 @pytest.mark.asyncio
 async def test_the_lookup_reads_alarms_and_service_drops_of_the_window(conn):
     now = datetime.now(timezone.utc)
-    for n, (kind, sev, minutes) in enumerate((("alarm", "sev2", 10), ("service_down", "sev1", 20),
-                                              ("deploy", "info", 5), ("alarm", "sev3", 200))):
+    # (kind, severity, minutes ago, ended minutes ago): A2 (S292 follow-up) also reads an alarm that started before the
+    # window and is still open; one that ended before the window stays out.
+    for n, (kind, sev, minutes, ended) in enumerate((("alarm", "sev2", 10, None), ("service_down", "sev1", 20, 15),
+                                                     ("deploy", "info", 5, None), ("alarm", "sev3", 200, 150),
+                                                     ("alarm", "sev2", 300, None))):
         await conn.execute(
-            "INSERT INTO acp_shared.ops_event (occurred_at, kind, severity, app, subject, title, details, dedupe_key) "
-            "VALUES ($1, $2, $3, 'cis', $4, $5, '{}'::jsonb, $6)",
-            now - timedelta(minutes=minutes), kind, sev, f"zz-subject-{n}", f"zz title {n}", f"zz-aa1154-a1-{n}")
+            "INSERT INTO acp_shared.ops_event (occurred_at, ended_at, kind, severity, app, subject, title, details, "
+            "dedupe_key) VALUES ($1, $2, $3, $4, 'cis', $5, $6, '{}'::jsonb, $7)",
+            now - timedelta(minutes=minutes), None if ended is None else now - timedelta(minutes=ended), kind, sev,
+            f"zz-subject-{n}", f"zz title {n}", f"zz-aa1154-a1-{n}")
     await _as_cis_app(conn)
     rows = [dict(r) for r in await conn.fetch(lookup.EVENTS_SQL, now - timedelta(minutes=60), now)]
     ours = [r for r in rows if r["subject"].startswith("zz-subject-")]
-    assert [(r["kind"], r["severity"]) for r in ours] == [("alarm", "sev2"), ("service_down", "sev1")]
+    assert [(r["kind"], r["severity"]) for r in ours] == [("alarm", "sev2"), ("service_down", "sev1"),
+                                                          ("alarm", "sev2")]
+    assert [x["open"] for x in lookup.event_rows(ours)] == [True, False, True]
     shaped = lookup.event_rows(ours)
     assert shaped[0]["type"] == "alarm" and shaped[0]["title"] == "zz title 0" and shaped[0]["id"].startswith("event-")

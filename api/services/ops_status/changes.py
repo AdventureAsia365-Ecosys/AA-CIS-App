@@ -28,7 +28,7 @@ from typing import Any, Optional
 import asyncpg
 import structlog
 
-from api.services.issue_refs import clean
+from api.services.issue_refs import clean, strip_issue_refs
 from api.services.ops_status.ranges import TimeRange
 from api.services.ops_status.store import _json
 
@@ -145,9 +145,16 @@ def _settings(rows: list[dict], names: dict) -> list[dict]:
     return out
 
 
+def migration_title(version: Any, description: Optional[str]) -> str:
+    """"Migration 488: Role connections check ..." — the tracker reference is taken off the description first, so a
+    description that starts with one never leaves "Migration 488::" behind (S292 follow-up). Pure."""
+    desc = strip_issue_refs(description)
+    return f"Migration {version}" + (f": {desc}" if desc else "")
+
+
 def _migrations(rows: list[dict]) -> list[dict]:
     return [_row(f"migration-{r['version']}", r["applied_at"], "migration", migration_app(r["version"]),
-                 f"Migration {r['version']}" + (f": {r['description']}" if r.get("description") else ""),
+                 migration_title(r["version"], r.get("description")),
                  ref=str(r["version"]), href=PAGES["data_model"],
                  msg={"key": "chg_migration", "version": str(r["version"])}) for r in rows]
 

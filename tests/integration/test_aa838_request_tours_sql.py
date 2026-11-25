@@ -143,3 +143,75 @@ async def test_the_key_state_lookup_stays_a_one_key_read(conn):
     plan = "\n".join(r[0] for r in rows)
     assert "Join Filter: (g.source_key" not in plan, plan
     assert "= (COALESCE(rt_rq.source_group_id, rt_rq.tour_id))::text)" in plan, plan
+
+
+@pytest.mark.asyncio
+async def test_new_request_tours_sql_returns_the_old_rows_on_the_other_subject_rule_branches(conn):
+    """AA-1179 (S293): the branches the first test does not reach. An atom-only request (no trip) whose atom's tour is
+    retired while its Segment is served elsewhere (substituted); a Subject stored on a Segment id that merged into
+    another (atom_segment_alias: the surviving Segment's served member counts); a representative retired by a
+    source delete (retire_source, reason source_deleted) with a served member; a Segment whose only other member is a
+    deleted atom (not served: kept); a Route Subject (no Segment) on a retired tour (kept)."""
+    tenant = await l2._tenant(conn, "aa1179")
+    exp = {}
+    place_a, place_b, place_c, place_d = "Orrin Cove", "Vessel Ridge", "Talmer Ford", "Brask Hollow"
+
+    # atom-only request on a retired tour, Segment served on another tour -> that member
+    rep = await l2._tour(conn, "aa1179-rep")
+    mem = await l2._tour(conn, "aa1179-mem")
+    a_rep, a_mem = await _atom(conn, rep.tour, place_a), await _atom(conn, mem.tour, place_a)
+    seg_a = await _segment(conn, [a_rep, a_mem], place=place_a)
+    rq_atom_only = await _request(conn, tenant, a_rep, None, await _subject(conn, tenant, seg_a))
+    await tl.trash_master(conn, rep.tour)
+    exp[rq_atom_only] = mem.tour
+
+    # the Subject's Segment merged into another: the members of the surviving Segment count
+    old_rep = await l2._tour(conn, "aa1179-merged-rep")
+    survivor = await l2._tour(conn, "aa1179-survivor")
+    a_old, a_surv = await _atom(conn, old_rep.tour, place_b), await _atom(conn, survivor.tour, place_b)
+    seg_old = await _segment(conn, [a_old], place=place_b)
+    seg_new = await _segment(conn, [a_surv], place=place_b)
+    await conn.execute("INSERT INTO acp_contract.atom_segment_alias (segment_id_old, segment_id_canonical, merged_at) "
+                       "VALUES ($1, $2, now())", seg_old, seg_new)
+    rq_merged = await _request(conn, tenant, a_old, old_rep.tour, await _subject(conn, tenant, seg_old))
+    await tl.trash_master(conn, old_rep.tour)
+    exp[rq_merged] = survivor.tour
+
+    # representative retired by a source delete, Segment served elsewhere -> the member
+    src = await l2._tour(conn, "aa1179-src")
+    src_mem = await l2._tour(conn, "aa1179-src-mem")
+    a_src, a_src_mem = await _atom(conn, src.tour, place_c), await _atom(conn, src_mem.tour, place_c)
+    seg_c = await _segment(conn, [a_src, a_src_mem], place=place_c)
+    rq_src = await _request(conn, tenant, a_src, src.tour, await _subject(conn, tenant, seg_c))
+    await tl.retire_source(conn, src.tour)
+    exp[rq_src] = src_mem.tour
+
+    # the only other member is a deleted atom (not served) -> kept
+    lone = await l2._tour(conn, "aa1179-lone")
+    other = await l2._tour(conn, "aa1179-deleted-atom")
+    a_lone, a_del = await _atom(conn, lone.tour, place_d), await _atom(conn, other.tour, place_d, deleted=True)
+    seg_d = await _segment(conn, [a_lone, a_del], place=place_d)
+    rq_lone = await _request(conn, tenant, a_lone, lone.tour, await _subject(conn, tenant, seg_d))
+    await tl.trash_master(conn, lone.tour)
+    exp[rq_lone] = lone.tour
+
+    # a Route Subject (segment_id NULL) on a retired tour -> kept (the Subject rule is for Segment Subjects)
+    route_tour = await l2._tour(conn, "aa1179-route")
+    a_route = await _atom(conn, route_tour.tour, place_a)
+    route_id = f"zz1179-route-{uuid.uuid4().hex[:8]}"
+    await s1057._route(conn, route_id, route_tour.tour, 1, 2, [seg_a])
+    route_subject = str(await conn.fetchval(
+        "INSERT INTO acp_shared.subject (tenant_id, route_id, channel, state, cleared_bar_reason) "
+        "VALUES ($1, $2, 'blog', 'used', '{}'::jsonb) RETURNING subject_id",
+        uuid.UUID(tenant), route_id))
+    rq_route = await _request(conn, tenant, a_route, route_tour.tour, route_subject)
+    await tl.trash_master(conn, route_tour.tour)
+    exp[rq_route] = route_tour.tour
+
+    ids = sorted(exp)
+    old, new = await _both(conn, tenant, ids)
+    assert new == old
+    assert new == exp
+    for t in (rep, old_rep, lone, route_tour):
+        assert (await l2._state(conn, t))[0] == "retired", t
+    assert await l2._state(conn, src) == ("retired", "source_deleted")

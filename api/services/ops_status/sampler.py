@@ -21,6 +21,9 @@ One tick, each part on its own (a failing part is named in the result, the other
 - ``external`` (AA-1142): the newest run of the root repo workflow External checks (one S3 GET of
   ``docs-reader/ops/external-checks.json``, the docs reader grant), copied once into ``acp_shared.ops_external_check``
   (:func:`api.services.ops_status.external.ingest`).
+- ``assist`` (AA-1154 A2): the due checkpoints of the action cards people marked as done in the assistant
+  (:func:`api.services.ops_assist.outcome.check_due`: predicted against measured at the minutes of
+  ``cis.ops.assist_check_after_min``, DB reads only, no model).
 
 Sample states: ok, warn, degraded, down, unknown (did not answer). For the uptime strip ok and warn count as up,
 degraded and down as down, unknown as not measured. Never raises; $0 (free control-plane reads and DB queries).
@@ -462,6 +465,15 @@ async def _external_part(pool, out: dict, loader: Any = None) -> None:
     await external.ingest(pool, out, loader)
 
 
+async def _assist_part(pool, out: dict) -> None:
+    from api.services.ops_assist import outcome
+
+    res = await outcome.check_due(pool)
+    out["assist_checks"] = res.get("checked", 0)
+    if res.get("finished"):
+        out["assist_finished"] = res["finished"]
+
+
 async def tick(pool, at: datetime, job_id: Optional[str] = None, *, env: Optional[str] = None,
                ecs_client: Any = None, cw_client: Any = None, http_client: Any = None, rds_client: Any = None,
                part_timeout_s: float = 30.0, external_loader: Any = None) -> dict:
@@ -477,6 +489,7 @@ async def tick(pool, at: datetime, job_id: Optional[str] = None, *, env: Optiona
         "queue": lambda: queue_part(pool, at, job_id, out),
         "database": lambda: database_part(pool, at, job_id, out, env, rds_client),
         "external": lambda: _external_part(pool, out, external_loader),
+        "assist": lambda: _assist_part(pool, out),
     }
     for name, part in parts.items():
         try:

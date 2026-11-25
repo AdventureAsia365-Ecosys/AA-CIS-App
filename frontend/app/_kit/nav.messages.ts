@@ -60,6 +60,7 @@ export const NAV_MESSAGES = defineMessages(
     // Writing Lab
     "Stages": "Stages",
     "Writing memory": "Writing memory",
+    "Eval runs": "Eval runs",
     "Jev Decisions": "Jev Decisions",
     // Trade (AA-1037, root ADR 0019 d9): pages of Booking admin
     "Booking admin": "Booking admin",
@@ -130,6 +131,7 @@ export const NAV_MESSAGES = defineMessages(
     "Usage explorer": "Phân tích sử dụng",
     "Stages": "Các bước",
     "Writing memory": "Bộ nhớ viết",
+    "Eval runs": "Lượt đánh giá",
     "Jev Decisions": "Quyết định Jev",
     "Booking admin": "Quản trị Booking",
     "Agency billing": "Hoá đơn đại lý",

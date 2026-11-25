@@ -111,6 +111,7 @@ SAMPLES = [
     ("admin_writing_memory", "GET", "/admin/writing-memory/releases/active", None),
     ("admin_claim_labels", "POST", "/admin/writing-memory/claim-labels/import", {}),                 # AA-1048 W2
     ("admin_claim_labels", "GET", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/report", None),
+    ("admin_eval_runs", "GET", "/admin/writing-memory/eval-runs/{run_id}", None),               # AA-1169
     ("admin_claim_shadow", "GET", "/admin/writing-memory/claim-shadow/summary", None),                # AA-1050 W4
     ("admin_reports", "GET", "/admin/reports", None),      # AA-1003
     ("admin_reports", "POST", "/admin/reports/{report_id}/run", {}),

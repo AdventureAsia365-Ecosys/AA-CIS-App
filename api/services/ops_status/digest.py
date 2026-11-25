@@ -8,6 +8,10 @@ builds this part on the job's pool and Redis (the page's own cache: the CloudWat
 page was opened in the last 5 minutes) and hands it to the renderer as an input; a failure leaves the part out with
 its reason, never the digest. Push for SEV1 / SEV2 not acknowledged after N minutes is P2 (not built): the digest is
 daily, the SNS alarms still page in real time. :func:`compact` and :func:`markdown` are pure.
+
+AA-1154 A2: the part also carries the admin assistant's paragraph (``assistant``): its hit rate over
+``cis.ops.assist_digest_days`` days ("right n of m" checked action cards, ``ops_assist.outcome.track``), the same
+numbers the status page shows. No model call: the paragraph is written by rule ($0).
 """
 from __future__ import annotations
 
@@ -51,7 +55,7 @@ def markdown(part: Optional[dict]) -> list[str]:
     if not part:
         return md + ["- Not built for this digest.", ""]
     if part.get("error"):
-        return md + [f"- Not available: {part['error']}.", ""]
+        return md + [f"- Not available: {part['error']}.", ""] + assistant_markdown(part.get("assistant"))
     head = HEADLINE.get(part.get("status") or "", "Status unknown").format(n=part.get("open", 0))
     md.append(f"**{head}**" + (f"; {part['set_aside']} set aside (acknowledged, snoozed or muted)"
                                if part.get("set_aside") else "") + f". [Open the status page]({part['link']})")
@@ -63,7 +67,29 @@ def markdown(part: Optional[dict]) -> list[str]:
         md.append(f"- {str(i.get('severity') or '').upper()} {i.get('title')}{state}: [view]({i['link']})")
     if part.get("more"):
         md.append(f"- and {part['more']} more on the page.")
-    return md + [""]
+    return md + [""] + assistant_markdown(part.get("assistant"))
+
+
+def assistant_markdown(a: Optional[dict]) -> list[str]:
+    """The admin assistant's paragraph (absent from a digest built before A2). Pure."""
+    if a is None:
+        return []
+    if a.get("error"):
+        return ["**The admin assistant:** hit rate not available (" + str(a["error"]) + ").", ""]
+    return [f"**The admin assistant:** {a.get('text')}", ""]
+
+
+async def assistant_part(pool: Any) -> dict:
+    """The assistant's hit rate for the digest. Never raises: {"error": ...} instead."""
+    from api.services import ops_assist
+    from api.services.ops_assist import outcome
+
+    try:
+        return await outcome.track(pool, days=ops_assist.limits()["digest_days"])
+    except outcome.NotSetUp:
+        return {"error": "not set up yet"}
+    except Exception as e:  # noqa: BLE001 — the digest is always written
+        return {"error": type(e).__name__}
 
 
 async def build(pool: Any, redis: Any, now: Optional[datetime] = None) -> dict:
@@ -74,5 +100,5 @@ async def build(pool: Any, redis: Any, now: Optional[datetime] = None) -> dict:
     try:
         status = await ops_status.build_status(pool, redis, range_key="24h", now=now)
     except Exception as e:  # noqa: BLE001 — the digest is always written
-        return {"error": f"{type(e).__name__}"}
-    return compact(status, admin_base_url())
+        return {"error": f"{type(e).__name__}", "assistant": await assistant_part(pool)}
+    return {**compact(status, admin_base_url()), "assistant": await assistant_part(pool)}
