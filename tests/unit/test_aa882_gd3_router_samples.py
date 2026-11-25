@@ -50,6 +50,7 @@ SAMPLES = [
     ("admin_segment_research", "POST", "/admin/segment-research/run", {}),
     ("admin_waves", "POST", "/admin/waves/{wave_id}/close", None),
     ("admin_waves", "POST", "/admin/waves/check", None),
+    ("admin_ops_status_p2", "POST", "/admin/overview/incidents", {}),                    # AA-1142
     ("admin_overview", "GET", "/admin/overview", None),
     ("admin_ops_assist", "GET", "/admin/ops-assist/catalog", None),                     # AA-1154
     ("admin_my_work", "GET", "/admin/my-work/summary", None),                           # AA-1156
