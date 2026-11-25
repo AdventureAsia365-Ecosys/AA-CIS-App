@@ -93,6 +93,7 @@ export const UP = defineMessages(
     deletedOn: (date: string) =>
       `This tour was deleted on ${date}. Choose Restore to bring it back, or Create a new tour.`,
     earlierDate: "an earlier date",
+    handMadeMatch: "This tour was made by hand in the content workspace: a supplier sheet never merges into it or replaces it. Choose Bypass, or Create a new tour to keep the sheet's tour as a separate tour.",
     incoming: "Incoming (new)",
     existing: "Existing (in catalog)",
     lName: "Name",
@@ -255,6 +256,7 @@ export const UP = defineMessages(
     deletedOn: (date: string) =>
       `Tour này đã bị xoá vào ${date}. Chọn Khôi phục để đưa nó trở lại, hoặc Tạo tour mới.`,
     earlierDate: "một ngày trước đây",
+    handMadeMatch: "Tour này được tạo tay trong Khu làm nội dung: bảng tính nhà cung cấp không bao giờ gộp vào hay thay thế nó. Hãy chọn Bỏ qua, hoặc Tạo tour mới để giữ tour của bảng tính thành một tour riêng.",
     incoming: "Bản mới (đang nhập)",
     existing: "Bản hiện có (trong danh mục)",
     lName: "Tên",

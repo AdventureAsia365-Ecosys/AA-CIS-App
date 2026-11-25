@@ -47,7 +47,7 @@ _HAND_MADE_MESSAGES = {
     "publish": "This tour was made by hand in the content workspace: a supplier sheet never changes it. Discard this "
                "sheet draft and change the tour in the content workspace",
     "merge": "This tour was made by hand in the content workspace: a supplier sheet never merges into it. Choose "
-             "Bypass for this row",
+             "Bypass, or Create a new tour to keep the sheet's tour as a separate tour",
 }
 _FD_OPEN_SQL = """
     SELECT id, tour_id::text AS tour_id, staging_id::text AS staging_id, fields, before::text AS before,

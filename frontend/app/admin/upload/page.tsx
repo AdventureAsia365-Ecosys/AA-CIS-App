@@ -104,6 +104,8 @@ interface StagingItem {
   // AA-986 L2 (Q6): the matched tour was deleted at S0/A0 (no live version left).
   matched_deleted?: boolean;
   matched_deleted_at?: string | null;
+  // AA-1181: the matched tour was made by hand in the content workspace (Bypass or Create a new tour only).
+  matched_hand_made?: boolean;
   incoming: Record<string, string | null>;
   existing: {
     src_name: string | null;
@@ -858,6 +860,15 @@ function DuplicateReviewStep({
                   fontSize: 12, color: K.danger, fontWeight: 600,
                 }}>
                   {t("deletedOn", item.matched_deleted_at ? item.matched_deleted_at.slice(0, 10) : t("earlierDate"))}
+                </div>
+              )}
+
+              {!item.matched_deleted && item.matched_hand_made && (
+                <div style={{
+                  padding: "8px 16px", background: K.dangerTint, borderBottom: `1px solid ${K.line}`,
+                  fontSize: 12, color: K.danger, fontWeight: 600,
+                }}>
+                  {t("handMadeMatch")}
                 </div>
               )}
 

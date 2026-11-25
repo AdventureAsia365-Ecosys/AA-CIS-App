@@ -1,7 +1,10 @@
 """AA-1181 slice (a) on real Postgres: a supplier sheet never changes a hand-made tour (raw_tours.entry_origin
 'manual', CIS 478). The merge of a staged re-import into one is refused (409 ``fact_draft_hand_made``, the staging row
 stays pending, no draft); a sheet draft opened before the tour was hand-made is shown with ``hand_made`` and its publish
-is refused with the tour untouched (it can still be discarded); a normal sheet tour still merges and publishes.
+is refused with the tour untouched (it can still be discarded); a normal sheet tour still merges and publishes. The
+other staging decisions (replace / update / keep_both) are refused on a hand-made match too (409 ``source_hand_made``,
+services/tour_lifecycle), the staged row is listed with ``matched_hand_made`` and Create a new tour still works; an
+older sheet version never goes live over a hand-made one (set-active).
 
 Needs CIS 457 and 478 (skipped without them). Each test runs in one transaction that is rolled back. Invented names and
 places only."""
@@ -144,3 +147,54 @@ async def test_a_sheet_tour_still_merges_and_publishes(conn):
         pub = await ap.publish_fact_draft(tour_id, _request(conn, user=LEAD), x_admin_secret="s")
     assert pub["published"] is True and pub["updated"] == ["duration"]
     assert await _duration(conn, tour_id) == "4 days"
+
+
+async def _origin_and_status(conn, tour_id):
+    r = await conn.fetchrow("SELECT entry_origin, source_status::text AS status FROM silver_aa_internal.raw_tours "
+                            "WHERE tour_id = $1::uuid", tour_id)
+    return r["entry_origin"], r["status"]
+
+
+@pytest.mark.asyncio
+async def test_a_sheet_never_replaces_or_joins_a_hand_made_tour(conn):
+    tour_id = await _tour(conn, origin="manual")
+    staging = await _staged(conn, tour_id, {"src_name": "Tarnwick Valley Ride 3D", "duration": "4 days",
+                                            "src_itineraries": "Day 1: Arrive in Tarnwick."})
+    listed = await ap.list_upload_staging(BATCH_ID, _request(conn), x_admin_secret="s")
+    item = next(i for i in listed["items"] if i["staging_id"] == staging)
+    assert item["matched_hand_made"] is True and item["matched_deleted"] is False
+    versions = await conn.fetchval("SELECT count(*) AS n FROM silver_aa_internal.raw_tours WHERE "
+                                   "COALESCE(source_group_id, tour_id) = $1::uuid", tour_id)
+    for decision in ("replace", "update", "keep_both"):
+        with pytest.raises(HTTPException) as e:
+            await ap.decide_staging(staging, ap.DecideRequest(decision=decision), _request(conn), x_admin_secret="s",
+                                    x_admin_user_id=None)
+        assert e.value.status_code == 409 and e.value.headers == {"X-Error-Code": "source_hand_made"}
+        assert e.value.detail.startswith("source_hand_made: this tour was made by hand in the content workspace")
+    assert await _origin_and_status(conn, tour_id) == ("manual", "active")      # still the live, hand-made tour
+    assert await conn.fetchval("SELECT count(*) AS n FROM silver_aa_internal.raw_tours WHERE "
+                               "COALESCE(source_group_id, tour_id) = $1::uuid", tour_id) == versions
+    assert await conn.fetchval("SELECT decision FROM silver_aa_internal.upload_staging WHERE id = $1::uuid",
+                               staging) == "pending"
+    with patch("services.tour_lifecycle.run_after_commit", AsyncMock()):
+        out = await ap.decide_staging(staging, ap.DecideRequest(decision="create_new"), _request(conn),
+                                      x_admin_secret="s", x_admin_user_id=None)
+    assert out["committed"] is True and out["new_tour_id"] != tour_id               # a separate sheet tour
+    assert await _origin_and_status(conn, out["new_tour_id"]) == ("sheet", "active")
+    assert await _origin_and_status(conn, tour_id) == ("manual", "active")
+
+
+@pytest.mark.asyncio
+async def test_an_older_sheet_version_never_goes_live_over_a_hand_made_one(conn):
+    from services.tour_lifecycle import LifecycleError, set_active
+    hand = await _tour(conn, origin="manual")
+    sheet = await _tour(conn)
+    await conn.execute("UPDATE silver_aa_internal.raw_tours SET source_group_id = $1::uuid, source_version = "
+                       "CASE WHEN tour_id = $1::uuid THEN 2 ELSE 1 END, source_status = CASE WHEN tour_id = $1::uuid "
+                       "THEN 'active' ELSE 'superseded' END::silver_aa_internal.source_status_enum "
+                       "WHERE tour_id IN ($1::uuid, $2::uuid)", hand, sheet)
+    with pytest.raises(LifecycleError) as e:
+        await set_active(conn, sheet)
+    assert e.value.status == 409 and e.value.code == "source_hand_made"
+    assert await _origin_and_status(conn, hand) == ("manual", "active")
+    assert await _origin_and_status(conn, sheet) == ("sheet", "superseded")

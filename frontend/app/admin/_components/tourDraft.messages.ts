@@ -55,7 +55,7 @@ export const D = defineMessages(
     mergeIsDraft: "The merge becomes a draft of the tour's facts: the tour changes only when someone publishes it in the tour drawer (Original tab).",
     mergeOpenDraft: "This tour already has a sheet draft waiting: publish or discard it in the tour drawer first.",
     mergePriceKept: "The price stays as it is: prices are entered by the pricing team on Reference prices.",
-    mergeHandMade: "This tour was made by hand in the content workspace: a supplier sheet never merges into it. Choose Bypass for this row.",
+    mergeHandMade: "This tour was made by hand in the content workspace: a supplier sheet never merges into it. Choose Bypass, or Create a new tour to keep the sheet's tour as a separate tour.",
     // the sheet draft of the tour drawer (TourFactDraft.tsx)
     factTitle: "Sheet draft waiting",
     factIntro: (who: string, reason: string) => `Merged from a supplier sheet by ${who}: ${reason}. Customers see these values only after someone publishes them.`,
@@ -121,7 +121,7 @@ export const D = defineMessages(
     mergeIsDraft: "Kết quả gộp là bản nháp dữ kiện của tour: tour chỉ đổi khi có người xuất bản bản nháp trong ngăn chi tiết tour (thẻ Gốc).",
     mergeOpenDraft: "Tour này đang có một bản nháp từ bảng tính chờ xử lý: xuất bản hoặc bỏ nó trong ngăn chi tiết tour trước.",
     mergePriceKept: "Giá giữ nguyên: giá do nhóm định giá nhập ở trang Giá tham chiếu.",
-    mergeHandMade: "Tour này được tạo tay trong Khu làm nội dung: bảng tính nhà cung cấp không bao giờ gộp vào nó. Hãy chọn Bỏ qua cho dòng này.",
+    mergeHandMade: "Tour này được tạo tay trong Khu làm nội dung: bảng tính nhà cung cấp không bao giờ gộp vào nó. Hãy chọn Bỏ qua, hoặc Tạo tour mới để giữ tour của bảng tính thành một tour riêng.",
     factTitle: "Bản nháp từ bảng tính đang chờ",
     factIntro: (who: string, reason: string) => `Gộp từ bảng tính nhà cung cấp bởi ${who}: ${reason}. Khách chỉ thấy các giá trị này sau khi có người xuất bản.`,
     factField: "Trường",

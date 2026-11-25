@@ -128,3 +128,76 @@ def test_a_merge_into_a_sheet_tour_still_plans_the_fields():
         _staging, cur, owned, plan = _run(up._merge_inputs(conn, "s1"))
     assert cur["tour_id"] == TOUR and owned == set()
     assert [a["field"] for a in plan["auto"]] == ["duration"]
+
+
+# ── the other staging decisions (replace / update / keep_both) and set-active: services/tour_lifecycle ──────────────
+
+GROUP = "00000000-0000-4000-8000-00000000b181"
+SHEET_VERSION = "00000000-0000-4000-8000-00000000c181"
+
+
+class _LifecycleConn:
+    """Enough of a connection for the refusals of supersede / set_active: the key, its deleted state, its hand-made
+    versions. Any write is a test failure (the refusal comes before every write)."""
+
+    def __init__(self, manual):
+        self.manual = manual
+
+    def transaction(self):
+        conn = self
+
+        class _Tr:
+            async def __aenter__(self):
+                return conn
+
+            async def __aexit__(self, *exc):
+                return False
+        return _Tr()
+
+    async def fetchval(self, sql, *args):
+        assert "COALESCE(rt.source_group_id, rt.tour_id)" in sql
+        return GROUP
+
+    async def fetchrow(self, sql, *args):
+        if "has_live" in sql:                                   # deleted_key_info: the key is live
+            return {"has_live": True, "deleted_at": None, "trashed_tour_id": None}
+        assert "FOR UPDATE OF rt" in sql                        # set_active: the version row
+        return {"tour_id": args[0] and str(args[0]), "tenant_id": "t", "src_name": "Quillmere Ridge Walk 3D",
+                "source_group_id": GROUP, "source_status": "superseded", "deleted_at": None, "source_id": GROUP}
+
+    async def fetch(self, sql, *args):
+        assert "entry_origin" in sql and args == (GROUP,)
+        return [{"tour_id": t} for t in self.manual]
+
+    async def execute(self, sql, *args):
+        raise AssertionError(f"no write on a refused decision: {sql}")
+
+
+@pytest.mark.parametrize("decision", ["replace", "update", "keep_both"])
+def test_a_sheet_row_never_replaces_or_joins_a_hand_made_tour(decision):
+    from services.tour_lifecycle import SOURCE_HAND_MADE, LifecycleError, supersede
+    with pytest.raises(LifecycleError) as e:
+        _run(supersede(_LifecycleConn({TOUR}), decision=decision, tenant_id="t", batch_id="b",
+                       payload={"src_name": "Quillmere Ridge Walk 3D"}, matched_tour_id=TOUR, matched_group_id=GROUP))
+    assert e.value.status == 409 and e.value.code == SOURCE_HAND_MADE == "source_hand_made"
+    assert e.value.detail.startswith("source_hand_made: this tour was made by hand in the content workspace")
+    assert "Bypass" in e.value.message and "Create a new tour" in e.value.message and "AA-" not in e.value.message
+
+
+def test_the_staging_decide_answers_the_hand_made_refusal_as_409():
+    from services.tour_lifecycle import SOURCE_HAND_MADE, LifecycleError
+    e = up._lifecycle_http(LifecycleError(409, SOURCE_HAND_MADE, "made by hand"))
+    assert e.status_code == 409 and e.headers == {"X-Error-Code": "source_hand_made"}
+
+
+def test_an_older_sheet_version_never_goes_live_over_a_hand_made_one():
+    from services.tour_lifecycle import LifecycleError, set_active
+    with pytest.raises(LifecycleError) as e:
+        _run(set_active(_LifecycleConn({TOUR}), SHEET_VERSION))
+    assert e.value.status == 409 and e.value.code == "source_hand_made"
+
+
+def test_hand_made_versions_is_empty_without_a_key():
+    from services.tour_lifecycle import hand_made_versions
+    assert _run(hand_made_versions(_LifecycleConn({TOUR}), None)) == set()
+    assert _run(hand_made_versions(_LifecycleConn(set()), GROUP)) == set()

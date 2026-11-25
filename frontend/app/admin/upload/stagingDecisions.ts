@@ -24,8 +24,18 @@ const DELETED_DECISION_LABELS: Record<"bypass" | "restore" | "create_new", Decis
   create_new: "decCreateNew",
 };
 
-export function decisionLabels(item: { matched_deleted?: boolean }): Record<string, DecisionLabel> {
-  return item.matched_deleted ? DELETED_DECISION_LABELS : DECISION_LABELS;
+// AA-1181 — a tour made by hand in the content workspace never takes a supplier sheet (no merge, replace or keep
+// both; the API refuses them): skip the row, or keep the sheet's tour as a separate new tour.
+const HAND_MADE_DECISION_LABELS: Record<"bypass" | "create_new", DecisionLabel> = {
+  bypass:     "decBypass",
+  create_new: "decCreateNew",
+};
+
+export function decisionLabels(
+  item: { matched_deleted?: boolean; matched_hand_made?: boolean },
+): Record<string, DecisionLabel> {
+  if (item.matched_deleted) return DELETED_DECISION_LABELS;
+  return item.matched_hand_made ? HAND_MADE_DECISION_LABELS : DECISION_LABELS;
 }
 
 /** The POST body of one decision: a merge carries the person's choices and reason. */
