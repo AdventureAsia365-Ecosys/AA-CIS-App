@@ -14,7 +14,8 @@ Schedule: queued by the api's ops metrics sampler (api/core/ops_metrics_sampler.
 one run. Switch ``COMPLIANCE_DB_CHECKS`` (ECS env, default ON: the run costs nothing). The heartbeat of source
 ``cis_db`` on the page (cis.compliance.collector_heartbeat_hours) shows a schedule that stopped. max_attempts 2 (a
 transient DB error retries once; the next day is the next run), monitoring lane (background with monitor=True: its own
-worker slots, AA-1178), deploy-gate exempt (it may sit queued across a deploy; a re-run adds rows with a new collected_at, harmless).
+worker slots, AA-1178), deploy-gate exempt (it may sit queued across a deploy; a re-run adds rows with a new
+collected_at, harmless).
 """
 from __future__ import annotations
 

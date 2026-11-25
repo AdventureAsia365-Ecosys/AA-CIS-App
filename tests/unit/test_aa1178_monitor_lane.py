@@ -158,6 +158,7 @@ def test_the_caps_are_the_settings(monkeypatch):
 
 def test_the_settings_reader_falls_back_to_the_seeded_defaults(monkeypatch):
     monkeypatch.undo()
+
     def boom(_key):
         raise KeyError("not compiled")
     monkeypatch.setattr(settings, "get", boom)
