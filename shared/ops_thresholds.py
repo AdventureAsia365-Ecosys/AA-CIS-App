@@ -6,7 +6,7 @@ services/recompute/lifecycle.py and services/acp_contract/research_coverage.py f
 shared/llm_client/route_watch.py and services/quality/funnel.py for the reply cut share and the quality funnel rules)
 and the bell window of each check family (``Check.bell_key``) read the values in force through these accessors,
 never a module constant (tech lead S279: a threshold is a setting, maker-checker and audited, with today's value as
-the seeded default). The keys equal the CIS 469 seed
+the seeded default). The keys equal the CIS 469 seed plus CIS 488 (AA-1141, the role connections samples in a row)
 (tests/integration/test_aa1171_migration_469.py and the settings-lint reader check,
 tests/unit/test_s279_settings_lint.py).
 ``shared.settings.get`` serves the last snapshot (the api and the worker refresh it in the background) and the
@@ -23,6 +23,7 @@ from shared import settings
 JOBS_STARVED_AFTER_S = "cis.ops.jobs_starved_after_s"
 JOBS_OVERDUE_FACTOR = "cis.ops.jobs_overdue_factor"
 ROLE_CONNECTIONS_PCT = "cis.ops.role_connections_pct"
+ROLE_CONNECTIONS_SAMPLES = "cis.ops.role_connections_samples"   # AA-1141 (S292, CIS 488)
 XID_AGE_LIMIT = "cis.ops.xid_age_limit"
 RECOMPUTE_LAG_LIMIT_S = "cis.ops.recompute_lag_limit_s"
 RESEARCH_STALE_SHARE_PCT = "cis.ops.research_stale_share_pct"
@@ -39,7 +40,7 @@ BELL_EVERY_NIGHTLY_HOURS = "cis.ops.bell_every_nightly_hours"
 ALL = (JOBS_STARVED_AFTER_S, JOBS_OVERDUE_FACTOR, ROLE_CONNECTIONS_PCT, XID_AGE_LIMIT, RECOMPUTE_LAG_LIMIT_S,
        RESEARCH_STALE_SHARE_PCT, APP_SPEND_NEAR_PCT, BELL_EVERY_HOURS, REPLY_CUT_ALERT_PCT, QF_MIN_REQUESTS,
        QF_DRIFT_ALERT_PCT, QF_DRIFT_NEW_MODEL_PCT, BELL_EVERY_ROUTE_HOURS, BELL_EVERY_DAILY_HOURS,
-       BELL_EVERY_NIGHTLY_HOURS)
+       BELL_EVERY_NIGHTLY_HOURS, ROLE_CONNECTIONS_SAMPLES)
 # The bell window keys (hours); a check names one in Check.bell_key, BELL_EVERY_HOURS when it names none.
 BELL_KEYS = (BELL_EVERY_HOURS, BELL_EVERY_ROUTE_HOURS, BELL_EVERY_DAILY_HOURS, BELL_EVERY_NIGHTLY_HOURS)
 
@@ -48,7 +49,7 @@ BELL_KEYS = (BELL_EVERY_HOURS, BELL_EVERY_ROUTE_HOURS, BELL_EVERY_DAILY_HOURS, B
 BY_CHECK: dict[str, tuple[str, ...]] = {
     "jobs_starved": (JOBS_STARVED_AFTER_S,),
     "jobs_overdue": (JOBS_OVERDUE_FACTOR,),
-    "rds_role_connections": (ROLE_CONNECTIONS_PCT,),
+    "rds_role_connections": (ROLE_CONNECTIONS_PCT, ROLE_CONNECTIONS_SAMPLES),
     "rds_xid_age": (XID_AGE_LIMIT,),
     "recompute_lifecycle_lag": (RECOMPUTE_LAG_LIMIT_S,),
     "research_stale_share": (RESEARCH_STALE_SHARE_PCT,),
@@ -70,6 +71,12 @@ def jobs_overdue_factor() -> float:
 
 def role_connections_pct() -> float:
     return float(settings.get(ROLE_CONNECTIONS_PCT))
+
+
+def role_connections_samples() -> int:
+    """AA-1141 (S292, CIS 488): how many sampler ticks in a row a role must stay above :func:`role_connections_pct`
+    before ``rds_role_connections`` alerts (a rolling deploy's old and new tasks overlap briefly by design)."""
+    return int(settings.get(ROLE_CONNECTIONS_SAMPLES))
 
 
 def xid_age_limit() -> int:

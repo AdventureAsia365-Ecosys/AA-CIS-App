@@ -1,6 +1,7 @@
 """AA-1171 (S287 alerts catalogue P0, tech lead decision D3) — CIS 469: the fifteen in-app check thresholds and bell
-windows are compiled with today's values as defaults, a plain label and a complete EN + VI guide, maker-checker, and
-the accessors of shared/ops_thresholds.py return them in the units the checks use. No DB."""
+windows (plus CIS 488, AA-1141: the role connections samples in a row) are compiled with today's values as defaults, a
+plain label and a complete EN + VI guide, maker-checker, and the accessors of shared/ops_thresholds.py return them in
+the units the checks use. No DB."""
 from datetime import timedelta
 
 from shared import ops_thresholds as t
@@ -22,6 +23,7 @@ DEFAULTS = {
     t.BELL_EVERY_ROUTE_HOURS: 1,
     t.BELL_EVERY_DAILY_HOURS: 24,
     t.BELL_EVERY_NIGHTLY_HOURS: 20,
+    t.ROLE_CONNECTIONS_SAMPLES: 3,   # AA-1141 (S292, CIS 488)
 }
 
 
@@ -42,6 +44,7 @@ def test_accessors_return_the_units_the_checks_use():
     assert t.jobs_starved_after_s() == 900.0
     assert t.jobs_overdue_factor() == 2.0
     assert t.role_connections_pct() == 80.0
+    assert t.role_connections_samples() == 3 and isinstance(t.role_connections_samples(), int)
     assert t.xid_age_limit() == 1_000_000_000
     assert t.recompute_lag_limit_s() == 1800.0
     assert t.research_stale_share() == 0.2
