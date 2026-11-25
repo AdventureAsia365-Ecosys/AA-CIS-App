@@ -1,6 +1,6 @@
-"""AA-1142 — CIS 484 + 485 on a real Postgres (conftest replays every migration): the incident, incident update and
-external check tables with their constraints and grants (484), the eleven P2 settings of the Ecosystem status page equal to
-the compiled defaults with a complete guide (485), values outside their bounds refused, a re-run of 485 changes nothing.
+"""AA-1142 — CIS 485 + 486 on a real Postgres (conftest replays every migration): the incident, incident update and
+external check tables with their constraints and grants (485), the eleven P2 settings of the Ecosystem status page equal to
+the compiled defaults with a complete guide (486), values outside their bounds refused, a re-run of 486 changes nothing.
 Runs in a transaction that is rolled back; invented values only."""
 import json
 import os
@@ -17,7 +17,7 @@ from shared import ops_status_thresholds as th  # noqa: E402
 from shared import settings  # noqa: E402
 
 DSN = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-M485 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations", "485_aa1142_ops_status_p2_settings.sql")
+M486 = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations", "486_aa1142_ops_status_p2_settings.sql")
 INS = ("INSERT INTO shared.setting_value (key, value, version, proposed_by, reason, evidence_ref) "
        "VALUES ($1, $2::jsonb, 1, 'admin:zz-a', 'zz test: a reason of at least twenty characters', NULL) RETURNING id")
 ROW = ("SELECT default_value::text AS d, value_type, unit, min_value::float8 AS lo, max_value::float8 AS hi, area, "
@@ -62,13 +62,13 @@ def test_every_new_reader_key_is_seeded():
 
 
 @pytest.mark.asyncio
-async def test_484_485_registered(conn):
-    got = await conn.fetch("SELECT version AS v FROM shared.schema_versions WHERE version IN ('484', '485')")
-    assert sorted(r["v"] for r in got) == ["484", "485"]
+async def test_485_486_registered(conn):
+    got = await conn.fetch("SELECT version AS v FROM shared.schema_versions WHERE version IN ('485', '486')")
+    assert sorted(r["v"] for r in got) == ["485", "486"]
 
 
 @pytest.mark.asyncio
-async def test_485_keys_are_the_compiled_defaults(conn):
+async def test_486_keys_are_the_compiled_defaults(conn):
     for key, (default, vtype, unit, bounds) in EXPECTED.items():
         row = await conn.fetchrow(ROW, key)
         assert row is not None, key
@@ -96,8 +96,8 @@ async def test_a_value_must_stay_inside_its_bounds(conn):
 
 
 @pytest.mark.asyncio
-async def test_rerun_485_changes_nothing(conn):
-    body = open(M485, encoding="utf-8").read().replace("BEGIN;", "", 1).rsplit("COMMIT;", 1)[0]
+async def test_rerun_486_changes_nothing(conn):
+    body = open(M486, encoding="utf-8").read().replace("BEGIN;", "", 1).rsplit("COMMIT;", 1)[0]
     q = "SELECT key, label, description, guide::text AS g FROM shared.setting_definition ORDER BY key"
     before = await conn.fetch(q)
     await conn.execute(body)

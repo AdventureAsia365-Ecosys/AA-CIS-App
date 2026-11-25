@@ -1,4 +1,4 @@
--- Migration 485: AA-1142 (S292, the P2 features of the Ecosystem status page) — the availability objective, its error
+-- Migration 486: AA-1142 (S292, the P2 features of the Ecosystem status page) — the availability objective, its error
 -- budget window, the budget-left warn line and the burn rate alerts, the certificate expiry limits of the external checks, the incident timeline
 -- lookback and the size of the per-agency rankings, as settings.
 --
@@ -25,18 +25,18 @@
 --        cis.ops.status_incident_lookback_min      int minutes 0-1440, default 60 (timeline before the declaration)
 --        cis.ops.status_tenant_top_n               int agencies 3-50, default 10 (rows per per-agency ranking)
 --      Each seed row carries its plain label and its EN + VI operator guide (CIS 416 rule).
---   2. Register 485.
+--   2. Register 486.
 --
 -- Behaviour on apply. None for running code: no value row is seeded and the code on main reads none of the keys. After
 -- the code PR the page reads the defaults until an administrator changes them.
 --
 -- Class: CONTRACT (root ADR 0017 decision 3; no migrate directive line): config rows INSERTed into an existing table.
--- MIG-4: a migration-only PR together with CIS 484 (expand, the three tables), applied on Dev by Infra Migration Apply
--- when the job tables are idle (ADR 0017a), then the code PR (readiness requires 484 and 485). DM-6.1: no personal
+-- MIG-4: a migration-only PR together with CIS 485 (expand, the three tables), applied on Dev by Infra Migration Apply
+-- when the job tables are idle (ADR 0017a), then the code PR (readiness requires 485 and 486). DM-6.1: no personal
 -- data. DM-7.1: no new table.
 --
--- Number. Owner main max (483) + 2, after 484 of the same CIS migration batch (484-485). If the owner main max + 1
--- differs at merge, renumber (git grep '485_' and '485' here, in tests/integration/test_aa1142_migration_484_485.py,
+-- Number. Owner main max (484, AA-1169) + 2, after 485 of the same CIS migration batch (485-486). If the owner main max + 1
+-- differs at merge, renumber (git grep '486_' and '486' here, in tests/integration/test_aa1142_migration_485_486.py,
 -- compiled_defaults.json's _generated line, api/core/readiness.py and docs/implementation-notes/AA-1142.md).
 --
 -- Locks. One INSERT ... ON CONFLICT of eleven rows (the definition guard trigger allows the file's role, cis_owner).
@@ -77,7 +77,7 @@ ON CONFLICT (key) DO NOTHING;
 -- settings-seed:end
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('485', now(), 'AA-1142: Ecosystem status P2 settings (SLO, burn rate, certificates, incidents, agencies)')
+VALUES ('486', now(), 'AA-1142: Ecosystem status P2 settings (SLO, burn rate, certificates, incidents, agencies)')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

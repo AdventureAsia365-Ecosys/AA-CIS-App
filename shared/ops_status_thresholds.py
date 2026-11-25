@@ -53,7 +53,7 @@ COST_ANOMALY_FLOOR_USD_H = "cis.ops.status_cost_anomaly_floor_usd_h"
 FORECAST_WINDOW_DAYS = "cis.ops.status_forecast_window_days"
 FORECAST_WARN_DAYS = "cis.ops.status_forecast_warn_days"
 FORECAST_CRIT_DAYS = "cis.ops.status_forecast_crit_days"
-# CIS 485 (AA-1142, the P2 features of the page): the availability objective, its budget-left warn line and its burn
+# CIS 486 (AA-1142, the P2 features of the page): the availability objective, its budget-left warn line and its burn
 # rate alerts, the certificate limits of the external checks, the incident timeline lookback and the per-agency ranking
 # size.
 SLO_TARGET_PCT = "cis.ops.status_slo_target_pct"

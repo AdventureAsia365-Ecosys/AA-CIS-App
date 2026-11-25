@@ -1,5 +1,5 @@
 -- migrate: expand
--- Migration 484: AA-1142 (S292, the P2 features of the Ecosystem status page) — the incident record with its timeline
+-- Migration 485: AA-1142 (S292, the P2 features of the Ecosystem status page) — the incident record with its timeline
 -- of updates, and the results of the external synthetic checks.
 --
 -- Why. The S285 review of the status page (root docs/audits/2026-11-19-S285-session/ops-overview-v2-review.md, ideas
@@ -28,7 +28,7 @@
 --      strip over any range of the history window.
 --   4. GRANT cis_app SELECT, INSERT, UPDATE on the incident tables (no DELETE: an incident is resolved, never
 --      deleted) and SELECT, INSERT on the check results (rows are facts, never changed).
---   5. Register 484.
+--   5. Register 485.
 --
 -- Schema. DM-1.5: the three tables are CIS-private (only the CIS status page reads them), so they live in acp_shared
 -- next to acp_shared.ops_event and ops_sample (CIS 475), not in shared.
@@ -46,13 +46,13 @@
 --
 -- Class: expand (root ADR 0017 d3): three new tables with their constraints and indexes, grants to the owner's runtime
 -- role, comments on new objects and the shared.schema_versions registration; no existing object changes, no seed row,
--- no DO block, no REVOKE. Migration-only PR (MIG-4) together with CIS 485 (the settings, contract); the code PR adds 484
--- and 485 to REQUIRED_CIS_ABOVE_GAP.
+-- no DO block, no REVOKE. Migration-only PR (MIG-4) together with CIS 486 (the settings, contract); the code PR adds 485
+-- and 486 to REQUIRED_CIS_ABOVE_GAP.
 --
 -- Behaviour on apply: none. The tables are empty; nothing reads them until the AA-1142 code ships.
 --
--- Number. Owner main max (483) + 1, with 485 in the same CIS migration batch (484-485). If the owner main max + 1
--- differs at merge, renumber (git grep '484_' and "'484'" here, in tests/integration/test_aa1142_migration_484_485.py,
+-- Number. Owner main max (484, AA-1169) + 1, with 486 in the same CIS migration batch (485-486). If the owner main max + 1
+-- differs at merge, renumber (git grep '485_' and "'485'" here, in tests/integration/test_aa1142_migration_485_486.py,
 -- api/core/readiness.py and docs/implementation-notes/AA-1142.md).
 --
 -- Locks. Three CREATE TABLE and their indexes (new objects). lock_timeout 5s.
@@ -101,20 +101,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS ops_incident_open_item_uq ON acp_shared.ops_in
 CREATE INDEX IF NOT EXISTS ops_incident_declared_idx ON acp_shared.ops_incident (declared_at DESC);
 
 COMMENT ON TABLE acp_shared.ops_incident IS
-    'AA-1142 (CIS 484): an incident declared from the Ecosystem status page (POST /admin/overview/incidents, ops.write, '
+    'AA-1142 (CIS 485): an incident declared from the Ecosystem status page (POST /admin/overview/incidents, ops.write, '
     'never the business owner): SEV, status, owner, the Needs-attention item it came from. At most one unresolved '
     'incident per item. Every write is also an ops_incident_update row and an audit row. Proposed retention: kept for '
     'good (DM-7.1).';
 COMMENT ON COLUMN acp_shared.ops_incident.title IS
-    'pii:free_text; AA-1142 (484): what is wrong, as the person who declared it wrote it (3-300 characters).';
+    'pii:free_text; AA-1142 (485): what is wrong, as the person who declared it wrote it (3-300 characters).';
 COMMENT ON COLUMN acp_shared.ops_incident.summary IS
-    'pii:free_text; AA-1142 (484): an optional longer description (at most 2000 characters).';
+    'pii:free_text; AA-1142 (485): an optional longer description (at most 2000 characters).';
 COMMENT ON COLUMN acp_shared.ops_incident.item_id IS
-    'AA-1142 (484): the Needs-attention item id of GET /admin/overview/status it was declared from (NULL: by hand).';
+    'AA-1142 (485): the Needs-attention item id of GET /admin/overview/status it was declared from (NULL: by hand).';
 COMMENT ON COLUMN acp_shared.ops_incident.owner IS
-    'AA-1142 (484): admin:<admin_users.id> of the person handling it (the audit actor format). Never an e-mail.';
+    'AA-1142 (485): admin:<admin_users.id> of the person handling it (the audit actor format). Never an e-mail.';
 COMMENT ON COLUMN acp_shared.ops_incident.declared_by IS
-    'AA-1142 (484): admin:<admin_users.id> of the person who declared it. Never an e-mail.';
+    'AA-1142 (485): admin:<admin_users.id> of the person who declared it. Never an e-mail.';
 
 GRANT SELECT, INSERT, UPDATE ON acp_shared.ops_incident TO cis_app;
 
@@ -143,13 +143,13 @@ CREATE TABLE IF NOT EXISTS acp_shared.ops_incident_update (
 CREATE INDEX IF NOT EXISTS ops_incident_update_incident_idx ON acp_shared.ops_incident_update (incident_id, at);
 
 COMMENT ON TABLE acp_shared.ops_incident_update IS
-    'AA-1142 (CIS 484): the trail of one incident (declared, status, severity, owner, note) with the old and new value; '
+    'AA-1142 (CIS 485): the trail of one incident (declared, status, severity, owner, note) with the old and new value; '
     'the status page merges it with the ops_event rows of the incident''s app into the timeline. Kept with its '
     'incident (DM-7.1).';
 COMMENT ON COLUMN acp_shared.ops_incident_update.note IS
-    'pii:free_text; AA-1142 (484): what the person wrote with the update (at most 2000 characters).';
+    'pii:free_text; AA-1142 (485): what the person wrote with the update (at most 2000 characters).';
 COMMENT ON COLUMN acp_shared.ops_incident_update.actor IS
-    'AA-1142 (484): admin:<admin_users.id> of the person who made the update. Never an e-mail.';
+    'AA-1142 (485): admin:<admin_users.id> of the person who made the update. Never an e-mail.';
 
 GRANT SELECT, INSERT ON acp_shared.ops_incident_update TO cis_app;
 
@@ -185,20 +185,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS ops_external_check_target_at_key
 CREATE INDEX IF NOT EXISTS ops_external_check_checked_at_idx ON acp_shared.ops_external_check (checked_at);
 
 COMMENT ON TABLE acp_shared.ops_external_check IS
-    'AA-1142 (CIS 484): one result of the external synthetic checks (root repo workflow External checks, every 15 '
+    'AA-1142 (CIS 485): one result of the external synthetic checks (root repo workflow External checks, every 15 '
     'minutes on GitHub Actions) for one public target: DNS, TLS and its certificate end date, the health path. Copied '
     'by the 5-minute status sampler from docs-reader/ops/external-checks.json. Proposed retention: '
     'cis.ops.status_history_days like ops_sample (DM-7.1), no deletion job yet.';
 COMMENT ON COLUMN acp_shared.ops_external_check.target IS
-    'AA-1142 (484): the check''s id in the workflow config (root tools/ops/external_checks.json), e.g. cis-api.';
+    'AA-1142 (485): the check''s id in the workflow config (root tools/ops/external_checks.json), e.g. cis-api.';
 COMMENT ON COLUMN acp_shared.ops_external_check.state IS
-    'AA-1142 (484): ok, warn (certificate within cis.ops.status_cert_warn_days), degraded (certificate within the '
+    'AA-1142 (485): ok, warn (certificate within cis.ops.status_cert_warn_days), degraded (certificate within the '
     'critical days, or an unexpected HTTP status), down (DNS, TLS or the request failed), unknown.';
 
 GRANT SELECT, INSERT ON acp_shared.ops_external_check TO cis_app;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('484', now(), 'AA-1142: acp_shared.ops_incident, ops_incident_update and ops_external_check (status P2)')
+VALUES ('485', now(), 'AA-1142: acp_shared.ops_incident, ops_incident_update and ops_external_check (status P2)')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;
