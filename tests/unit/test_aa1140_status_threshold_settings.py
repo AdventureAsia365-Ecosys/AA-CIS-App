@@ -1,4 +1,4 @@
-"""AA-1140 (S289, the Ecosystem status page; CIS 475, 477; AA-1141 CIS 483; AA-1142 CIS 485) — the forty-four status
+"""AA-1140 (S289, the Ecosystem status page; CIS 475, 477; AA-1141 CIS 483; AA-1142 CIS 485) — the forty-five status
 page limits are compiled with the S285 advisory values as defaults, a plain label and a complete EN + VI guide,
 maker-checker, and the accessors of shared/ops_status_thresholds.py return them in the units the page uses, a
 critical value never on the wrong side of its warn value. No DB."""
@@ -22,7 +22,7 @@ DEFAULTS = {
     t.COST_ANOMALY_FACTOR: 3, t.COST_ANOMALY_BASELINE_DAYS: 7, t.COST_ANOMALY_FLOOR_USD_H: 0.1,
     t.FORECAST_WINDOW_DAYS: 7, t.FORECAST_WARN_DAYS: 30, t.FORECAST_CRIT_DAYS: 7,
     # AA-1142 (CIS 485): the availability objective and burn rates, certificates, incidents, agencies
-    t.SLO_TARGET_PCT: 99.5, t.SLO_WINDOW_DAYS: 30, t.BURN_FAST_WINDOW_MIN: 60, t.BURN_FAST_FACTOR: 14.4,
+    t.SLO_TARGET_PCT: 99.5, t.SLO_WINDOW_DAYS: 30, t.SLO_BUDGET_WARN_PCT: 25, t.BURN_FAST_WINDOW_MIN: 60, t.BURN_FAST_FACTOR: 14.4,
     t.BURN_SLOW_WINDOW_HOURS: 6, t.BURN_SLOW_FACTOR: 6, t.CERT_WARN_DAYS: 21, t.CERT_CRIT_DAYS: 7,
     t.INCIDENT_LOOKBACK_MIN: 60, t.TENANT_TOP_N: 10,
 }
@@ -111,6 +111,7 @@ def test_aa1142_slo_and_certificate_accessors():
     s = t.slo()
     assert (s["target_pct"], s["window_days"], s["fast"]["window_min"], s["fast"]["factor"]) == (99.5, 30, 60, 14.4)
     assert (s["slow"]["window_hours"], s["slow"]["factor"], s["min_requests"]) == (6, 6.0, 50)
+    assert (s["budget_warn_pct"], s["budget_warn_key"]) == (25.0, t.SLO_BUDGET_WARN_PCT)
     assert t.cert_days() == {"warn": 21.0, "crit": 7.0, "warn_key": t.CERT_WARN_DAYS, "crit_key": t.CERT_CRIT_DAYS,
                              "dir": "below"}
     assert t.incident_lookback_min() == 60 and t.tenant_top_n() == 10

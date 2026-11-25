@@ -6001,6 +6001,42 @@
    }
   },
   {
+   "key": "cis.ops.status_slo_budget_warn_pct",
+   "app": "cis",
+   "area": "ops",
+   "label": "Status page: error budget left warn line (%)",
+   "description": "On the Ecosystem status page (/admin/overview, api/services/ops_status/) the error budget left of an app (over cis.ops.status_slo_window_days days, against cis.ops.status_slo_target_pct) is coloured amber when this share of the budget or less is left, and red when the budget is spent (0 % or less). Default 25.",
+   "value_type": "int",
+   "unit": "%",
+   "min_value": 1,
+   "max_value": 90,
+   "allowed_values": null,
+   "default_value": 25,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How much of an app's error budget may be left before its budget bar turns amber.",
+     "raise": "Earlier amber bars: more time to slow down risky changes, more amber on a noisy Dev.",
+     "lower": "Amber only when the budget is nearly spent, less time to react.",
+     "when": "Keep 25 %; raise it before a busy release period.",
+     "example": "With the default 25, an app with 20 % of its budget left shows an amber bar."
+    },
+    "vi": {
+     "what": "Ngân sách lỗi của app còn bao nhiêu phần trăm thì thanh ngân sách chuyển vàng.",
+     "raise": "Thanh vàng sớm hơn: thêm thời gian để chậm lại các thay đổi rủi ro, nhiều vàng hơn trên Dev nhiễu.",
+     "lower": "Chỉ vàng khi ngân sách gần hết, ít thời gian phản ứng hơn.",
+     "when": "Giữ 25 %; tăng trước một đợt phát hành dày.",
+     "example": "Với mặc định 25, app còn 20 % ngân sách hiện thanh màu vàng."
+    }
+   }
+  },
+  {
    "key": "cis.ops.status_slo_target_pct",
    "app": "cis",
    "area": "ops",

@@ -53,10 +53,12 @@ COST_ANOMALY_FLOOR_USD_H = "cis.ops.status_cost_anomaly_floor_usd_h"
 FORECAST_WINDOW_DAYS = "cis.ops.status_forecast_window_days"
 FORECAST_WARN_DAYS = "cis.ops.status_forecast_warn_days"
 FORECAST_CRIT_DAYS = "cis.ops.status_forecast_crit_days"
-# CIS 485 (AA-1142, the P2 features of the page): the availability objective and its burn rate alerts, the certificate
-# limits of the external checks, the incident timeline lookback and the per-agency ranking size.
+# CIS 485 (AA-1142, the P2 features of the page): the availability objective, its budget-left warn line and its burn
+# rate alerts, the certificate limits of the external checks, the incident timeline lookback and the per-agency ranking
+# size.
 SLO_TARGET_PCT = "cis.ops.status_slo_target_pct"
 SLO_WINDOW_DAYS = "cis.ops.status_slo_window_days"
+SLO_BUDGET_WARN_PCT = "cis.ops.status_slo_budget_warn_pct"
 BURN_FAST_WINDOW_MIN = "cis.ops.status_burn_fast_window_min"
 BURN_FAST_FACTOR = "cis.ops.status_burn_fast_factor"
 BURN_SLOW_WINDOW_HOURS = "cis.ops.status_burn_slow_window_hours"
@@ -73,8 +75,8 @@ ALL = (ERROR_RATE_WARN_PCT, ERROR_RATE_CRIT_PCT, CLIENT_ERROR_WARN_PCT, P95_WARN
        HISTORY_DAYS, GUARD_STALE_HOURS, ACK_REASON_MIN_CHARS, ACK_HOURS, MUTE_MAX_DAYS, SNOOZE_TOMORROW_HOUR,
        SNOOZE_CHOICES_HOURS, COST_ANOMALY_FACTOR, COST_ANOMALY_BASELINE_DAYS, COST_ANOMALY_FLOOR_USD_H,
        FORECAST_WINDOW_DAYS, FORECAST_WARN_DAYS, FORECAST_CRIT_DAYS, SLO_TARGET_PCT, SLO_WINDOW_DAYS,
-       BURN_FAST_WINDOW_MIN, BURN_FAST_FACTOR, BURN_SLOW_WINDOW_HOURS, BURN_SLOW_FACTOR, CERT_WARN_DAYS, CERT_CRIT_DAYS,
-       INCIDENT_LOOKBACK_MIN, TENANT_TOP_N)
+       SLO_BUDGET_WARN_PCT, BURN_FAST_WINDOW_MIN, BURN_FAST_FACTOR, BURN_SLOW_WINDOW_HOURS, BURN_SLOW_FACTOR,
+       CERT_WARN_DAYS, CERT_CRIT_DAYS, INCIDENT_LOOKBACK_MIN, TENANT_TOP_N)
 
 
 def _num(key: str) -> float:
@@ -226,9 +228,11 @@ def acks() -> dict:
 
 
 def slo() -> dict:
-    """The availability objective of every app and its burn rate alerts: {target_pct, window_days, fast: {window_min,
-    factor}, slow: {window_hours, factor}, min_requests} (the CIS 475 minimum of requests a window needs)."""
+    """The availability objective of every app and its burn rate alerts: {target_pct, window_days, budget_warn_pct,
+    fast: {window_min, factor}, slow: {window_hours, factor}, min_requests} (the CIS 475 minimum of requests a window
+    needs). ``budget_warn_pct``: the error budget left (%) at or under which the page colours the budget amber."""
     return {"target_pct": _num(SLO_TARGET_PCT), "window_days": int(settings.get(SLO_WINDOW_DAYS)),
+            "budget_warn_pct": _num(SLO_BUDGET_WARN_PCT), "budget_warn_key": SLO_BUDGET_WARN_PCT,
             "fast": {"window_min": int(settings.get(BURN_FAST_WINDOW_MIN)), "factor": _num(BURN_FAST_FACTOR)},
             "slow": {"window_hours": int(settings.get(BURN_SLOW_WINDOW_HOURS)), "factor": _num(BURN_SLOW_FACTOR)},
             "min_requests": min_requests(), "target_key": SLO_TARGET_PCT, "window_key": SLO_WINDOW_DAYS,

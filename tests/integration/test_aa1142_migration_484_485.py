@@ -1,5 +1,5 @@
 """AA-1142 — CIS 484 + 485 on a real Postgres (conftest replays every migration): the incident, incident update and
-external check tables with their constraints and grants (484), the ten P2 settings of the Ecosystem status page equal to
+external check tables with their constraints and grants (484), the eleven P2 settings of the Ecosystem status page equal to
 the compiled defaults with a complete guide (485), values outside their bounds refused, a re-run of 485 changes nothing.
 Runs in a transaction that is rolled back; invented values only."""
 import json
@@ -33,6 +33,7 @@ EXT = ("INSERT INTO acp_shared.ops_external_check (checked_at, target, app, host
 EXPECTED = {
     th.SLO_TARGET_PCT: (99.5, "numeric", "%", (90, 99.99)),
     th.SLO_WINDOW_DAYS: (30, "int", "days", (7, 90)),
+    th.SLO_BUDGET_WARN_PCT: (25, "int", "%", (1, 90)),
     th.BURN_FAST_WINDOW_MIN: (60, "int", "minutes", (5, 240)),
     th.BURN_FAST_FACTOR: (14.4, "numeric", "x", (1, 100)),
     th.BURN_SLOW_WINDOW_HOURS: (6, "int", "hours", (1, 72)),
@@ -83,6 +84,7 @@ async def test_485_keys_are_the_compiled_defaults(conn):
 @pytest.mark.asyncio
 async def test_a_value_must_stay_inside_its_bounds(conn):
     for key, bad in ((th.SLO_TARGET_PCT, "89"), (th.SLO_TARGET_PCT, "100"), (th.SLO_WINDOW_DAYS, "6"),
+                     (th.SLO_BUDGET_WARN_PCT, "0"), (th.SLO_BUDGET_WARN_PCT, "91"),
                      (th.BURN_FAST_WINDOW_MIN, "241"), (th.BURN_FAST_FACTOR, "0.5"), (th.BURN_SLOW_WINDOW_HOURS, "0"),
                      (th.BURN_SLOW_FACTOR, "101"), (th.CERT_WARN_DAYS, "91"), (th.CERT_CRIT_DAYS, "0"),
                      (th.INCIDENT_LOOKBACK_MIN, "1441"), (th.TENANT_TOP_N, "2"), (th.TENANT_TOP_N, '"10"')):
