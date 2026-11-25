@@ -33,6 +33,7 @@ OUTPUT = {"seo_title": "Walking the Lantern Hills of Norvale", "slug": "lantern-
           "content_text": "Day 1 starts at the Velin market.\n\nIt is one of the rarest views in the whole valley."}
 CONTROL_OUTPUT = {"seo_title": "Lantern Hills", "content_text": "By evening the group reaches the ridge camp."}
 INPUT = {"context": {"channel": "blog", "trip_name": "Lantern Hills", "facts_text": "The walk is 12 km."}}
+TENANT = uuid.UUID("00000000-0000-0000-0000-0000000f1169")   # a T9 item is always tenant scoped (CIS 284)
 CLAIMS = [{"class": "unsupported", "claim": "It is one of the rarest views in the whole valley.", "why": "invented"}]
 
 
@@ -65,11 +66,11 @@ async def _result(c, run, item, *, arm, mode, verdict, output=None, claims=None,
     details = {"judge_claims": claims} if claims else {}
     return await c.fetchval(
         "INSERT INTO shared.eval_item_result (run_id, item_id, writer, scope, arm, mode, phase, scored_result_id, "
-        "output, output_sha256, verdict, failure_codes, hard_stop, judge_version, cost_usd, details) VALUES "
-        "($1, $2, 't9_blog', 'platform', $3, $4, 'holdout', $5, $6::jsonb, $7, $8, $9::text[], false, 'judge-v1', "
-        "0.01, $10::jsonb) RETURNING result_id",
+        "output, output_sha256, verdict, failure_codes, hard_stop, judge_version, cost_usd, details, tenant_id) "
+        "VALUES ($1, $2, 't9_blog', 'tenant', $3, $4, 'holdout', $5, $6::jsonb, $7, $8, $9::text[], false, "
+        "'judge-v1', 0.01, $10::jsonb, $11) RETURNING result_id",
         run, item, arm, mode, scored, json.dumps(output) if output else None, "a" * 64 if output else None, verdict,
-        ["claims"] if claims else [], json.dumps(details))
+        ["claims"] if claims else [], json.dumps(details), TENANT)
 
 
 async def _seed(c) -> dict:
@@ -83,9 +84,9 @@ async def _seed(c) -> dict:
         items.append(await c.fetchval(
             "INSERT INTO shared.eval_golden_item (set_id, sample_id, writer, channel, scope, tenant_id, split, trap, "
             "kind, tiers, input, control_output, post_edit, label, label_verdict, label_source, refs, input_sha256) "
-            "VALUES ($1, $2, 't9_blog', 'blog', 'platform', NULL, 'holdout', false, 'real', ARRAY['trek_hike'], "
+            "VALUES ($1, $2, 't9_blog', 'blog', 'tenant', $5, 'holdout', false, 'real', ARRAY['trek_hike'], "
             "$3::jsonb, NULL, false, '{\"verdict\": \"fail\"}', 'fail', 'agent_panel', '{}', $4) RETURNING item_id",
-            gset, sample, json.dumps(INPUT), "f" * 64))
+            gset, sample, json.dumps(INPUT), "f" * 64, TENANT))
     run = await _run(c)
     other_run = await _run(c, kind="r1", prereg=None)
     legacy = await _run(c, pipeline="s1_old")
