@@ -436,7 +436,8 @@ async def test_digest_build_never_raises(monkeypatch):
         raise OSError("zz down")
 
     monkeypatch.setattr(ops_status, "build_status", boom)
-    assert await digest.build(MagicMock(), None) == {"error": "OSError"}
+    out = await digest.build(MagicMock(), None)
+    assert out["error"] == "OSError" and "error" in out["assistant"]   # AA-1154 A2: the assistant part never raises
 
 
 def test_ops12_takes_the_status_part_as_an_input():

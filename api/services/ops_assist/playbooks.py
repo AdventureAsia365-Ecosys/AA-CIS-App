@@ -24,16 +24,34 @@ refused connection off by hand, resetting the anomaly breaker, retrying every fa
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from api.services.ops_assist import catalog, risk
+from api.services.ops_assist.outcome import m
 from api.services.ops_assist.evidence import ACCESS_CLASSES, baseline_label, stages_by_connection
 from shared.llm_client.route_evidence import BREAK_GLASS_MIN_CHARS
 
 SEV_ACCESS = "sev2"
 SEV_THROTTLE = "sev3"
 SEV_SPEND = "sev3"
+
+
+# App names as the status page shows them (ops_status.sections.APP_LABELS; a card never shows the lower-case key).
+APP_LABELS = {"cis": "CIS", "tripplanner": "TripPlanner", "booking": "Booking", "crm": "Partner CRM",
+              "shared": "Shared"}
+
+
+def app_label(app: Optional[str]) -> str:
+    return APP_LABELS.get(str(app or ""), str(app or ""))
+
+
+def hhmm(t: Optional[str]) -> str:
+    """"09:58 UTC" for an ISO time, never the raw ISO string in a card. Pure."""
+    try:
+        return datetime.fromisoformat(str(t)).astimezone(timezone.utc).strftime("%H:%M UTC")
+    except (TypeError, ValueError):
+        return str(t or "?")
 
 
 # ── signals ──────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -186,7 +204,7 @@ def make_card(s: dict, limits: dict, action_id: str, *, reason: str, evidence: l
               params: Optional[dict] = None, stages: Optional[int] = None, change: Optional[dict] = None,
               precondition: Optional[str] = None, precondition_met: bool = True, title: Optional[str] = None,
               copy_text: Optional[str] = None, way_back_body: Optional[dict] = None,
-              dry_run_body: Optional[dict] = None) -> dict:
+              dry_run_body: Optional[dict] = None, measures: Optional[list[dict]] = None) -> dict:
     a = catalog.get(action_id)
     params = params or {}
     rk = risk.assess(a, limits, stages=stages, cost_usd=cost_usd, change=change)
@@ -214,7 +232,7 @@ def make_card(s: dict, limits: dict, action_id: str, *, reason: str, evidence: l
         "approval": approval(a, rk["level"], limits),
         "call": call, "dry_run": dry, "copy_only": a.copy_only, "runbook": a.runbook, "copy_text": copy_text,
         "precondition": precondition, "precondition_met": precondition_met,
-        "check_after": list(a.check_after),
+        "check_after": list(a.check_after), "measures": list(measures or []),
         "expires_at": (as_of + timedelta(minutes=int(limits["card_ttl_min"]))).isoformat(),
     }
 
@@ -272,10 +290,15 @@ def _paid_fallback_spend(s: dict, key: str) -> tuple[float, float, list[str]]:
 
 
 def _observe(s: dict, limits: dict, *, reason: str, evidence: list[str], if_nothing: str, watch: str = "",
-             predictions: Optional[list[dict]] = None) -> dict:
+             predictions: Optional[list[dict]] = None, measures: Optional[list[dict]] = None) -> dict:
     return make_card(s, limits, "observe", reason=reason, evidence=evidence,
                      predictions=predictions or [pred(watch, "code", "nothing is changed")],
-                     if_nothing=if_nothing, cost_usd=0.0, cost_basis="Nothing is called.")
+                     if_nothing=if_nothing, cost_usd=0.0, cost_basis="Nothing is called.", measures=measures)
+
+
+def _item_closes(s: dict) -> list[dict]:
+    """The measure "the item is no longer open" (A2 checks it again). Pure."""
+    return [m("item_open", "zero", "The item is no longer open", item_id=s.get("item_id"))]
 
 
 def _open_wave(s: dict) -> Optional[dict]:
@@ -285,10 +308,15 @@ def _open_wave(s: dict) -> Optional[dict]:
     return None
 
 
-def _wave_card(s: dict, limits: dict, extra_evidence: list[str], spend_now: float) -> Optional[dict]:
+def _wave_card(s: dict, limits: dict, extra_evidence: list[str], spend_now: float,
+               spend_on: Optional[list[str]] = None) -> Optional[dict]:
     w = _open_wave(s)
     if w is None:
         return None
+    checks = [m("wave_paused", "nonzero", "The wave is paused", wave_id=w["id"])]
+    if spend_on:
+        checks.append(m("spend_per_hour", "down", f"Spend per hour on {', '.join(spend_on)} falls",
+                        connections=sorted(spend_on)))
     return make_card(
         s, limits, "wave_pause", params={"wave_id": w["id"]}, body={"reason": "ops assistant: paused while the "
                                                                     "incident is open"},
@@ -301,7 +329,7 @@ def _wave_card(s: dict, limits: dict, extra_evidence: list[str], spend_now: floa
                      pred(f"Spend per hour falls towards the median ({spend_now:g} USD/h now).", "not_enough_data",
                           "no measured pause outcome yet")],
         if_nothing=f"The wave keeps queuing jobs at about {spend_now:g} USD/h on the fallback.",
-        cost_usd=0.0, cost_basis="A pause calls nothing.",
+        cost_usd=0.0, cost_basis="A pause calls nothing.", measures=checks,
         precondition="The wave is still open and not paused when the button is pressed (the API answers 409 if "
                      "not).")
 
@@ -346,6 +374,7 @@ def llm_access_denied(s: dict, limits: dict, ctx: dict) -> tuple[list[dict], lis
                f"{len(calls.get('refused_models') or [])} model(s) in {window} min). Check the account level first: "
                "on 29/10 hours went into model-by-model checks before the refusal was found to be account-wide.",
         evidence=[f"conn:{key}", f"calls:{key}", "probe"], predictions=probe_preds,
+        measures=[m("probe_finished", "nonzero", "A connection probe finished after the card was done")],
         if_nothing="The cause stays a guess: account-wide and model-level refusals need different fixes.",
         cost_usd=measured_cost, cost_basis="DRY RUN estimate" if measured_cost is not None else
         "A few cents at most (32 output tokens per enabled deployment, code)",
@@ -363,9 +392,10 @@ def llm_access_denied(s: dict, limits: dict, ctx: dict) -> tuple[list[dict], lis
                           + ", ".join(f"{k} {(s.get('calls') or {})[k]['ok']} answered" for k in fb)
                           + f" in {window} min.", "measured", f"shared.llm_call_log, last {window} min")
                      if fb else pred("No other connection answered in the window: the stages may be down.",
-                                     "measured", f"shared.llm_call_log, last {window} min")]))
+                                     "measured", f"shared.llm_call_log, last {window} min")],
+        measures=[m("answered_calls", "nonzero", f"Calls are answered by {served}", connections=fb)] if fb else []))
 
-    wave = _wave_card(s, limits, [f"spend:{k}" for k in fb], now_h)
+    wave = _wave_card(s, limits, [f"spend:{k}" for k in fb], now_h, spend_on=fb)
     if wave:
         cards.append(wave)
 
@@ -391,6 +421,7 @@ def llm_access_denied(s: dict, limits: dict, ctx: dict) -> tuple[list[dict], lis
             if_nothing="Every call keeps trying the refused connection first, then falls back.",
             cost_usd=None, cost_basis="The fallback's own price per call (paid); the preview costs 0 USD.",
             stages=len(st["stages"]),
+            measures=[m("refused_calls", "down", f"Refused calls on {label} fall", connection_key=key)],
             precondition=f"The live route version is still {version} when saving (the API refuses a stale "
                          "version). When the preview's needs_evidence names a writer or judge stage, the save also "
                          "needs eval_run_id (an eval run of the new order) or break_glass_reason (why now, at least "
@@ -408,6 +439,7 @@ def llm_access_denied(s: dict, limits: dict, ctx: dict) -> tuple[list[dict], lis
                               "refuses.", "code", "shared/jobs/queue.py retry_by_reason")],
             if_nothing="The failed jobs stay failed; their work is redone only by hand.",
             cost_usd=None, cost_basis="The re-queued jobs' own AI cost; the DRY RUN shows the jobs first.",
+            measures=[m("denied_jobs", "down", "Fewer jobs fail on an account refusal")],
             precondition=f"{label} answers again (a probe shows it); now it still refuses." if refusing
             else f"{label} answers again (a probe shows it).", precondition_met=not refusing))
 
@@ -449,8 +481,9 @@ def llm_throttled(s: dict, limits: dict, ctx: dict) -> tuple[list[dict], list[di
                           "move to the next deployment.",
         evidence=[f"calls:{key}", f"conn:{key}"],
         watch="Throttled calls are retried or moved on by the limiter; nothing fails for good.",
-        if_nothing="Calls are slower while the throttle lasts.")]
-    wave = _wave_card(s, limits, [f"calls:{key}"], now_h)
+        if_nothing="Calls are slower while the throttle lasts.",
+        measures=[m("throttled_calls", "down", f"Throttled calls on {label} fall", connection_key=key)])]
+    wave = _wave_card(s, limits, [f"calls:{key}"], now_h, spend_on=fb)
     if wave:
         cards.append(wave)
     cards.append(make_card(
@@ -461,7 +494,8 @@ def llm_throttled(s: dict, limits: dict, ctx: dict) -> tuple[list[dict], list[di
         predictions=[pred("Bulk jobs wait; live requests keep their capacity.", "code",
                           "app profile bulk_paused: the bulk lane does not claim new work")],
         if_nothing="Bulk work and live requests keep competing for the throttled capacity.",
-        cost_usd=0.0, cost_basis="A switch, no call."))
+        cost_usd=0.0, cost_basis="A switch, no call.",
+        measures=[m("throttled_calls", "down", f"Throttled calls on {label} fall", connection_key=key)]))
     return cards, [not_proposed("connection_disable", f"A throttle is temporary; switching {label} off stops it "
                                                       "for every stage.")]
 
@@ -479,16 +513,19 @@ def llm_cost_spike(s: dict, limits: dict, ctx: dict) -> tuple[list[dict], list[d
         evidence=ev, watch="The app's daily cap and the stage caps still stop the spend at their limits.",
         if_nothing=f"About {now_h * 24:g} USD a day at this rate until a cap stops it.",
         predictions=[pred(f"About {now_h:g} USD/h keeps being spent.", "measured",
-                          f"shared.llm_call_log, last {s['window']['minutes']} min")])]
-    wave = _wave_card(s, limits, ev, now_h)
+                          f"shared.llm_call_log, last {s['window']['minutes']} min")],
+        measures=[m("spend_per_hour", "nonzero", f"Spend on {key} continues", connections=[key])] if key else [])]
+    wave = _wave_card(s, limits, ev, now_h, spend_on=[key] if key else None)
     if wave:
         cards.append(wave)
     cards.append(make_card(
         s, limits, "app_bulk_pause", params={"app": app}, body={"bulk_paused": True},
-        title=f"Pause the bulk AI work of {app}", reason="Bulk work is where a spend jump usually comes from.",
+        title=f"Pause the bulk AI work of {app_label(app)}",
+        reason="Bulk work is where a spend jump usually comes from.",
         evidence=ev, predictions=[pred("No new bulk AI job starts; live requests go on.", "code",
                                        "app profile bulk_paused")],
-        if_nothing=f"About {now_h:g} USD/h continues.", cost_usd=0.0, cost_basis="A switch, no call."))
+        if_nothing=f"About {now_h:g} USD/h continues.", cost_usd=0.0, cost_basis="A switch, no call.",
+        measures=[m("app_spend_per_hour", "down", f"AI spend per hour of {app_label(app)} falls", app=app)]))
     return cards, [not_proposed("anomaly_breaker_reset", "A reset loosens the spend guard during a spike.")]
 
 
@@ -504,7 +541,9 @@ def queue_stuck(s: dict, limits: dict, ctx: dict) -> tuple[list[dict], list[dict
             predictions=[pred("Queued jobs start within a few minutes of a worker task running.", "code",
                               "the worker claims due jobs on each poll")],
             if_nothing="Every queued job keeps waiting.", cost_usd=None,
-            cost_basis="The worker task's own ECS cost (the tech lead decides)."))
+            cost_basis="The worker task's own ECS cost (the tech lead decides).",
+            measures=[m("live_workers", "nonzero", "A worker is live again"),
+                      m("oldest_wait_min", "down", "The oldest queued wait falls")]))
     for j in jobs.get("stuck") or []:
         if not j.get("registered"):
             cards.append(make_card(
@@ -515,10 +554,13 @@ def queue_stuck(s: dict, limits: dict, ctx: dict) -> tuple[list[dict], list[dict
                 predictions=[pred("The job leaves the queue; the oldest wait drops to the next job.", "code",
                                   "POST /admin/job-runner/jobs/{id}/cancel on a queued job")],
                 if_nothing="The job stays queued for good and the queue keeps its warning.",
-                cost_usd=0.0, cost_basis="A cancel calls nothing."))
+                cost_usd=0.0, cost_basis="A cancel calls nothing.",
+                measures=[m("job_queued", "zero", "The job left the queue", job_id=j["id"]),
+                          m("oldest_wait_min", "down", "The oldest queued wait falls")]))
     cards.append(_observe(
         s, limits, reason="The queue may drain on its own once the running jobs finish.", evidence=ev,
-        watch="The oldest wait falls when a running job ends.", if_nothing="The wait keeps growing if nothing runs."))
+        watch="The oldest wait falls when a running job ends.", if_nothing="The wait keeps growing if nothing runs.",
+        measures=[m("oldest_wait_min", "down", "The oldest queued wait falls")]))
     wave = _wave_card(s, limits, ev, 0.0)
     if wave:
         cards.append(wave)
@@ -530,12 +572,13 @@ def server_errors(s: dict, limits: dict, ctx: dict) -> tuple[list[dict], list[di
     deploys = [e for e in s.get("changes") or [] if e["kind"] in ("deploy", "rollout_failed") and e["app"] == app]
     cards = [_observe(
         s, limits, reason="A short spike often ends on its own.", evidence=["item", "changes"],
-        watch="The rate is read again on the next refresh.", if_nothing="Users keep getting errors while it lasts.")]
+        watch="The rate is read again on the next refresh.", if_nothing="Users keep getting errors while it lasts.",
+        measures=_item_closes(s))]
     if deploys:
         cards.append(make_card(
-            s, limits, "ecs_rollback", title=f"Roll {app} back to the revision before the last deploy",
-            reason=f"A deploy of {app} happened in the changes window ({deploys[0]['subject']} at "
-                   f"{deploys[0]['t']}).", evidence=["item", "changes"],
+            s, limits, "ecs_rollback", title=f"Roll {app_label(app)} back to the revision before the last deploy",
+            reason=f"A deploy of {app_label(app)} happened in the changes window ({deploys[0]['subject']} at "
+                   f"{hhmm(deploys[0]['t'])}).", evidence=["item", "changes"], measures=_item_closes(s),
             predictions=[pred("The previous revision serves again within a few minutes of the rollback.", "code",
                               "ECS rollout of the previous task definition")],
             if_nothing="The errors continue if the deploy caused them.", cost_usd=0.0,

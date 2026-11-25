@@ -369,6 +369,10 @@ _SQL_WRITE = re.compile(r"\bINSERT\s+INTO\b|\bUPDATE\s+[a-z_]+\.[a-z_]+\s+SET\b|
 # A1: the one model call (and its ledger row) lives in explain.py; the three POST routes call the model, never an action.
 LLM_MODULE = "explain.py"
 A1_POSTS = ("/items/{item_id}/analyse", "/auto", "/changes/phrase")
+# A2: the one write of the package is the run record (outcome.py, acp_shared.ops_assist_run only); POST /runs records.
+RUN_MODULE = "outcome.py"
+A2_POSTS = ("/runs",)
+_RUN_WRITE = re.compile(r"^\s*(INSERT INTO|UPDATE) acp_shared\.ops_assist_run\b")
 
 
 def test_the_assistant_has_no_write_path_and_one_llm_call_site():
@@ -377,6 +381,8 @@ def test_the_assistant_has_no_write_path_and_one_llm_call_site():
         text = f.read_text(encoding="utf-8")
         for node in ast.walk(ast.parse(text)):
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if f.name == RUN_MODULE and _RUN_WRITE.search(node.value):
+                    continue
                 assert not _SQL_WRITE.search(node.value), f"{f.name}: SQL write in {node.value[:60]!r}"
         code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
         for w in ("enqueue(", ".execute(", "executemany(", "enqueue_manual"):
@@ -386,14 +392,16 @@ def test_the_assistant_has_no_write_path_and_one_llm_call_site():
                 assert w not in code, f"{f.name}: {w!r} (only {LLM_MODULE} calls the model)"
     router = (ROOT / "api" / "routers" / "admin_ops_assist.py").read_text(encoding="utf-8")
     posts = re.findall(r'@router\.post\("([^"]+)"', router)
-    assert tuple(posts) == A1_POSTS
+    assert tuple(posts) == A1_POSTS + A2_POSTS
     for verb in ("put", "patch", "delete"):
         assert f"@router.{verb}(" not in router
 
 
 def test_every_route_is_ops_read_and_none_is_a_machine_route():
-    paths = ("/catalog", "/signals", "/items/{item_id}/cards", "/replays", "/replays/{case}", "/changes")
-    keys = [("GET", "/admin/ops-assist" + p) for p in paths] + [("POST", "/admin/ops-assist" + p) for p in A1_POSTS]
+    paths = ("/catalog", "/signals", "/items/{item_id}/cards", "/replays", "/replays/{case}", "/changes", "/runs",
+             "/track")
+    keys = [("GET", "/admin/ops-assist" + p) for p in paths] + [("POST", "/admin/ops-assist" + p)
+                                                                 for p in A1_POSTS + A2_POSTS]
     for key in keys:
         assert POLICY[key] == OPS_READ and key not in MACHINE_ROUTES
 
