@@ -76,7 +76,10 @@ replaces only `final_contract`, so the object's lineage stays the writer's. Each
 version only at a writer exit. An eval result reads its run's fingerprint (`config_fp.parts.policy`,
 `route_config_version`) and its `judge_version`; it has no FactSheet. `GET /admin/quality/lineage/coverage?days=`
 (the share of recent objects carrying each field) and `GET /admin/quality/lineage/{s1|t2|t9|eval}/{id}` (one object,
-with `missing` / `complete`); ops.read or lab.read; ids and shas, never text.
+with `missing` / `complete`); ops.read or lab.read; ids and shas, never text. Writing Lab › Eval runs
+(`/admin/lab/eval-runs`, AA-1169) shows them, and reads an evaluation run by hand through
+`GET /admin/writing-memory/eval-runs[/{run_id}[/items/{item_id}]]` (`services/writing_memory/eval_review.py`): the
+lists carry ids, codes and counts (Lab R); one item returns the stored writer input and output (a logged Lab text read).
 _Avoid_: provenance (that is a FactSheet line's source class), audit trail.
 
 **Source-change fan-out (AA-1052 W6, CIS 392)**:
