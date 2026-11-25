@@ -99,6 +99,7 @@ from api.routers.admin_alerts_catalogue import router as admin_alerts_catalogue_
 from api.routers.admin_aa_content import router as admin_aa_content_router  # AA-977
 from api.routers.admin_writing_memory import router as admin_writing_memory_router  # AA-917
 from api.routers.admin_claim_labels import router as admin_claim_labels_router  # AA-1048 W2
+from api.routers.admin_eval_runs import router as admin_eval_runs_router  # AA-1169
 from api.routers.admin_claim_shadow import router as admin_claim_shadow_router  # AA-1050 W4
 from api.routers.admin_facts import router as admin_facts_router  # AA-814
 from api.routers.admin_reference_prices import router as admin_reference_prices_router  # AA-1091
@@ -420,6 +421,7 @@ app.include_router(admin_alerts_catalogue_router)  # AA-1171 — /admin/platform
 app.include_router(admin_aa_content_router)  # AA-977 — /admin/aa-content (AA content editor, no include prefix)
 app.include_router(admin_writing_memory_router)  # AA-917 — /admin/writing-memory (no include prefix)
 app.include_router(admin_claim_labels_router)  # AA-1048 W2 — /admin/writing-memory/claim-labels (no include prefix)
+app.include_router(admin_eval_runs_router)  # AA-1169 — /admin/writing-memory/eval-runs (read an eval run, $0)
 app.include_router(admin_claim_shadow_router)  # AA-1050 W4 — /admin/writing-memory/claim-shadow (no include prefix)
 app.include_router(admin_facts_router)  # AA-814 — /admin/facts (platform Facts Entries, no include prefix)
 app.include_router(admin_reference_prices_router)  # AA-1091 — /admin/reference-prices (tour reference prices)

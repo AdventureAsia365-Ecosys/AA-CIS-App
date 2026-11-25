@@ -27,7 +27,7 @@ export type NavIcon =
   | "seo" | "settings"
   | "quality" | "trace" | "reviewLog" | "slate" | "compliance"
   | "aiGateway" | "spend" | "usage"
-  | "lab" | "writingMemory" | "decisions"
+  | "lab" | "writingMemory" | "evalRuns" | "decisions"
   | "staff" | "roles" | "audit" | "jobs" | "alerts" | "infra" | "apiDocs" | "dataModel" | "docs" | "uiKit" | "productMap"
   | "delivery" | "readiness"
   | "bookingAdmin" | "agencyBilling" | "agencyTiers" | "b2bDesk";
@@ -126,6 +126,9 @@ export const ADMIN_IA: IaGroup[] = [
     // existing learning tables, then the Writing memory tools (moved from /admin/writing-memory) and Jev Decisions.
     { href: "/admin/lab", label: "Stages", icon: "lab" },
     { href: "/admin/lab/writing-memory", label: "Writing memory", icon: "writingMemory" },
+    // AA-1169: read an evaluation run by hand (runs, a run's items, one item's output beside its source and flags),
+    // and the quality lineage reads (coverage, one object, one tour's fan-out).
+    { href: "/admin/lab/eval-runs", label: "Eval runs", icon: "evalRuns" },
     { href: "/admin/decisions", label: "Jev Decisions", icon: "decisions" },
   ] },
   // AA-1037 (root ADR 0019 d9 "Screens now"): Booking admin's B2B screens, opened through the app registry (same tab).

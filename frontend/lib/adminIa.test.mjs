@@ -214,7 +214,9 @@ test("10. AI & spend and Writing Lab (R6 slice 3): groups, moves, query merge", 
   const group = (label) => ADMIN_IA.find((g) => g.label === label).items.map((i) => i.href);
   // AA-1045: + the usage explorer
   assert.deepEqual(group("AI & spend"), ["/admin/ai-gateway", "/admin/spend", "/admin/usage"]);
-  assert.deepEqual(group("Writing Lab"), ["/admin/lab", "/admin/lab/writing-memory", "/admin/decisions"]);
+  // AA-1169: + Eval runs (read an evaluation run by hand, and the lineage reads)
+  assert.deepEqual(group("Writing Lab"), ["/admin/lab", "/admin/lab/writing-memory", "/admin/lab/eval-runs",
+    "/admin/decisions"]);
   assert.equal(resolveAdminRoute("/admin/writing-memory"), "/admin/lab/writing-memory");
   assert.equal(resolveAdminRoute("/admin/cost-ops?tab=spend&view=dfs"), "/admin/spend?tab=spend&view=dfs");
   assert.equal(resolveAdminRoute("/admin/platform/cost"), "/admin/spend?tab=apps");

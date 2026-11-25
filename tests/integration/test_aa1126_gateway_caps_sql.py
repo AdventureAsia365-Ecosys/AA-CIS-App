@@ -137,6 +137,33 @@ OLD_BASELINE_SQL = f"""
       LEFT JOIN rolled r USING (day)
       LEFT JOIN raw w USING (day)
 """
+# AA-1179 (S293): the S291 statement (one scan of the window grouped by UTC day, the rolled test per grouped day),
+# replaced by per-day LATERAL sums on a raw created_at range.
+S291_BASELINE_SQL = f"""
+    WITH days AS (
+        SELECT generate_series($1::date, $2::date - 1, interval '1 day')::date AS day
+    ), rolled AS (
+        SELECT d.day, sum(d.cost_usd)::float AS usd
+          FROM shared.llm_call_daily d
+         WHERE d.day >= $1 AND d.day < $2 AND d.app = $3
+         GROUP BY 1
+    ), raw_days AS (
+        SELECT (l.created_at AT TIME ZONE 'UTC')::date AS day, coalesce(sum(l.cost_usd), 0)::float AS usd
+          FROM shared.llm_call_log l
+         WHERE l.created_at >= ($1::date::timestamp AT TIME ZONE 'UTC')
+           AND l.created_at < ($2::date::timestamp AT TIME ZONE 'UTC')
+           AND {_OLD_APP} = $3
+         GROUP BY 1
+    ), raw AS (
+        SELECT g.day, g.usd
+          FROM raw_days g
+         WHERE NOT EXISTS (SELECT 1 FROM shared.llm_call_daily d WHERE d.day = g.day)
+    )
+    SELECT coalesce(percentile_cont(0.5) WITHIN GROUP (ORDER BY coalesce(r.usd, w.usd, 0)), 0)::float AS median
+      FROM days
+      LEFT JOIN rolled r USING (day)
+      LEFT JOIN raw w USING (day)
+"""
 OLD_TENANT_COST_TOTAL_SQL = """
     SELECT COALESCE(SUM(cost_usd), 0) FROM shared.llm_call_log WHERE tenant_id = $1 OR ($2 AND tenant_id IS NULL)
 """
@@ -177,7 +204,8 @@ async def test_today_and_baseline_reads_equal_the_per_row_reads(conn):
         for days in (1, 3, 5, 7):
             start, end = ab.baseline_window(TODAY, days)
             old = await conn.fetchval(OLD_BASELINE_SQL, start, end, app)
-            assert await conn.fetchval(ab.BASELINE_SQL, start, end, app) == pytest.approx(old), (app, days)
+            assert await conn.fetchval(S291_BASELINE_SQL, start, end, app) == old, (app, days)
+            assert await conn.fetchval(ab.BASELINE_SQL, start, end, app) == old, (app, days)
     # the fixture reaches every branch: an old quality_signal row, an old CIS row, a rolled day
     assert await ab.read_spend_since(conn, "crm", _ts(TODAY, 0)) == pytest.approx(1.3)
     assert await ab.read_spend_since(conn, "cis", _ts(TODAY, 0)) == pytest.approx(7.0)
@@ -206,3 +234,56 @@ async def test_tenant_cost_sums_in_two_branches_equal_the_or_sums(conn):
             old = await conn.fetchval(OLD_TENANT_COST_WINDOW_SQL, tid, is_internal, since, until)
             new = await conn.fetchval(t360.TENANT_COST_WINDOW_SQL, tid, is_internal, since, until)
             assert new == old
+
+
+# ── AA-1179 (S293): per-day LATERAL sums of the baseline, the edges of a UTC day and the plan shape ──────────────
+
+@pytest.mark.asyncio
+async def test_baseline_per_day_sums_equal_both_earlier_statements_at_the_day_edges(conn):
+    """Rows on the first and last microsecond of a UTC day, on the window's start and end bounds, under a session time
+    zone that is not UTC; a day rolled up for another app only (its raw rows are dropped for every app, the
+    platform_cost rule); an empty window."""
+    await conn.execute("SET LOCAL TimeZone = 'Asia/Ho_Chi_Minh'")
+    await _ledger_mix(conn)
+    edge = date(2021, 2, 3)
+    for ts, cost, app in ((datetime(2021, 2, 3, 0, 0, tzinfo=UTC), 1.5, "crm"),
+                          (datetime(2021, 2, 3, 23, 59, 59, 999999, tzinfo=UTC), 2.25, "crm"),
+                          (datetime(2021, 2, 4, 0, 0, tzinfo=UTC), 0.5, "crm"),
+                          (datetime(2021, 2, 2, 23, 59, 59, 999999, tzinfo=UTC), 9.0, "crm"),   # before a 7-day window
+                          (datetime(2021, 2, 10, 0, 0, tzinfo=UTC), 11.0, "crm"),                # today: never baseline
+                          (datetime(2021, 2, 1, 12, 0, tzinfo=UTC), 4.0, "tripplanner")):
+        await conn.execute(
+            "INSERT INTO shared.llm_call_log (id, stage, role, model, tokens_in, tokens_out, cost_usd, quality_signal, "
+            "created_at, app) VALUES (gen_random_uuid(), $1, 'writer', 'm-probe', 1, 1, $2, '{}'::jsonb, $3, $4)",
+            STAGE, cost, ts, app)
+    await conn.execute(
+        "INSERT INTO shared.llm_call_daily (day, app, tenant_id, stage, role, model, provider, account, is_shadow, "
+        "calls, fallback_calls, tokens_in, tokens_out, cost_usd, updated_at) VALUES "
+        "($1, 'tripplanner', NULL, $2, 'writer', 'm-probe', 'bedrock', 'acc3', false, 1, 0, 1, 1, 0.5, now())",
+        date(2021, 2, 1), STAGE)
+    for app in APPS:
+        for start, end in ((edge, TODAY), (date(2021, 1, 31), TODAY), (edge, edge + timedelta(days=1)),
+                           (TODAY, TODAY), (date(2021, 2, 1), date(2021, 2, 2))):
+            old = await conn.fetchval(OLD_BASELINE_SQL, start, end, app)
+            assert await conn.fetchval(S291_BASELINE_SQL, start, end, app) == old, (app, start, end)
+            assert await conn.fetchval(ab.BASELINE_SQL, start, end, app) == old, (app, start, end)
+    # the edge day holds exactly its two crm rows (00:00:00 and 23:59:59.999999), not the 00:00 of the next day
+    assert await conn.fetchval(ab.BASELINE_SQL, edge, edge + timedelta(days=1), "crm") == pytest.approx(3.75)
+    # 2021-02-01 is rolled up for tripplanner only: its raw rows count for no app, the rolled row for tripplanner
+    assert await conn.fetchval(ab.BASELINE_SQL, date(2021, 2, 1), date(2021, 2, 2), "tripplanner") == 0.5
+    assert await conn.fetchval(ab.BASELINE_SQL, date(2021, 2, 1), date(2021, 2, 2), "crm") == 0.0
+
+
+@pytest.mark.asyncio
+async def test_baseline_plan_sums_each_day_on_a_created_at_range_without_a_sort(conn):
+    """The plan guard of AA-1179: no Sort of ledger rows by an expression of created_at (the grouped form sorted the
+    whole window and spilled to temp on Dev), and the raw part is a per-day sum (a nested loop over the days whose
+    ledger read is bounded by the day's created_at range, the rolled test a one-time filter)."""
+    start, end = ab.baseline_window(TODAY, 28)
+    rows = await conn.fetch("EXPLAIN (VERBOSE) " + ab.BASELINE_SQL.replace("$1", f"'{start}'::date")
+                            .replace("$2", f"'{end}'::date").replace("$3", "'cis'::text"))
+    plan = "\n".join(r[0] for r in rows)
+    assert "Sort Key" not in plan, plan                                   # only llm_call_daily is grouped (index order)
+    assert "timezone('UTC'::text, l.created_at)" not in plan, plan       # no expression on the ledger column
+    assert "Nested Loop Left Join" in plan and "One-Time Filter: (NOT " in plan, plan
+    assert "l.created_at >= " in plan and "l.created_at < " in plan, plan

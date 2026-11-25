@@ -191,7 +191,11 @@ def test_only_the_r2_runner_imports_the_eval_judge():
                          "services/writer_proof/fire_share.py",
                          # AA-1169 (S292): the first-pass diagnosis reads the judge's OUTPUT view to place a stored
                          # flagged claim in its field; it never calls the eval judge.
-                         "services/writer_proof/first_pass.py"}
+                         "services/writer_proof/first_pass.py",
+                         # AA-1169 (S293): the Eval runs reads rebuild the source the judge read and the judge's
+                         # output view of a stored row (judge_source_text / judge_output_text) for a human review;
+                         # read-only, they never call the eval judge.
+                         "services/writing_memory/eval_review.py"}
 
 
 def test_r2_judges_with_the_parity_source_and_stores_the_claims(monkeypatch):

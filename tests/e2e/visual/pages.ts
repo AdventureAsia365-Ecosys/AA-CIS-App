@@ -53,6 +53,7 @@ export const PAGES: VisualPage[] = [
   { slug: "jobs", route: "/admin/jobs", path: "/admin/jobs", auth: "staff" },
   { slug: "lab", route: "/admin/lab", path: "/admin/lab", auth: "staff" },
   { slug: "lab-writing-memory", route: "/admin/lab/writing-memory", path: "/admin/lab/writing-memory", auth: "staff" },
+  { slug: "lab-eval-runs", route: "/admin/lab/eval-runs", path: "/admin/lab/eval-runs", auth: "staff" },   // AA-1169
   { slug: "master-content", route: "/admin/master-content", path: "/admin/master-content", auth: "staff" },
   { slug: "overview", route: "/admin/overview", path: "/admin/overview", auth: "staff" },
   { slug: "my-work", route: "/admin/my-work", path: "/admin/my-work", auth: "staff" },
