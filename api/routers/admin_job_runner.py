@@ -168,7 +168,9 @@ async def summary(request: Request):
                    "expected_seconds": k.expected_seconds,
                    # AA-993 G1: what a deploy does to this kind's running job.
                    "deploy_gate_exempt": k.deploy_gate_exempt, "deploy_blocking": k.deploy_blocking,
-                   "release_delay_seconds": k.release_delay_seconds}
+                   "release_delay_seconds": k.release_delay_seconds,
+                   # AA-1178: the worker lane of the kind (worker.claim_caps_for): main, background or monitor.
+                   "lane": "monitor" if k.monitor else "background" if k.background else "main"}
                   for k in kinds().values()],
         # AA-687: a job released this many times on shutdown is failed (queue.release()).
         "max_releases": queue.MAX_RELEASES,

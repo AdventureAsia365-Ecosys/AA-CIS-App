@@ -48,7 +48,8 @@ def finding_view(f: ops_checks.Finding) -> dict:
     return {"check": f.check, "summary": f.summary, "details": f.details}
 
 
-@job_kind(KIND, concurrency=1, max_attempts=2, expected_seconds=60, background=True, deploy_gate_exempt=True)
+@job_kind(KIND, concurrency=1, max_attempts=2, expected_seconds=60, background=True, deploy_gate_exempt=True,
+          monitor=True)
 async def run(ctx: JobContext) -> dict:
     payload = ctx.payload or {}
     mode = payload.get("mode") if payload.get("mode") in MODES else "watch"

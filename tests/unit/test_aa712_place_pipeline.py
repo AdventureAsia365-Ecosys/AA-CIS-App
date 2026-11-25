@@ -300,7 +300,8 @@ def test_background_kinds_are_dropped_from_caps_when_only_reserved_slots_are_fre
     background = {n for n, k in kinds().items() if k.background}
     assert {"place_extract", "place_geocode", "tour_graph_build"} <= background
     assert background <= set(w.claim_caps(3))
-    assert not background & set(w.claim_caps(2)) and not background & set(w.claim_caps(1))
+    long_background = background - worker.monitor_kinds()   # AA-1178: monitoring kinds have their own slots
+    assert not long_background & set(w.claim_caps(2)) and not long_background & set(w.claim_caps(1))
     assert "a3_atomize" in w.claim_caps(1)
     # a tiny worker still runs background work
     assert "place_extract" in worker.Worker(MagicMock(), max_parallel=1).claim_caps(1)

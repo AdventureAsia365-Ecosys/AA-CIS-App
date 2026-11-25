@@ -35,7 +35,7 @@ from shared.llm_client.errors import LLM_ACCESS_DENIED_REASON, LLMAccessDenied, 
 from shared.llm_client.tenant_budget import approval_stop_in
 from shared.sentry_init import release  # AA-884: APP_GIT_SHA of this image, written to shared.job_worker
 
-from . import queue
+from . import lanes, queue
 from .registry import (
     HANDLED_FAILURES, RESCHEDULE_MAX_COUNT, JobContext, NonRetryable, Reschedule, kinds, run_terminal_hook,
 )
@@ -215,14 +215,24 @@ class Worker:
         return background_reserve_for(self.max_parallel)
 
     def running_background(self) -> int:
-        background = background_kinds()
+        """The long background jobs running on this worker (the monitoring lane not counted, AA-1178)."""
+        background = background_kinds() - monitor_kinds()
         return sum(1 for kind in self._running_kinds.values() if kind in background)
 
-    def claim_caps(self, free_slots: int, running_background: int = 0) -> dict[str, int]:
+    def running_monitor(self) -> int:
+        """AA-1178: the monitoring jobs running on this worker (in their own slots)."""
+        monitor = monitor_kinds()
+        return sum(1 for kind in self._running_kinds.values() if kind in monitor)
+
+    def free_main_slots(self) -> int:
+        """The free main slots: max_parallel minus the running jobs outside the monitoring lane (AA-1178)."""
+        return self.max_parallel - (len(self._running) - self.running_monitor())
+
+    def claim_caps(self, free_slots: int, running_background: int = 0, running_monitor: int = 0) -> dict[str, int]:
         """The caps passed to claim() — see claim_caps_for (AA-751: the ops metrics sampler applies
         the same rule to each live worker's registered caps)."""
         return claim_caps_for(self.max_parallel, self.caps(), free_slots, running_background,
-                              background_kinds())
+                              background_kinds(), running_monitor=running_monitor, monitor=monitor_kinds())
 
     # ── main loop ─────────────────────────────────────────────────────────────────────────────
     async def run(self) -> None:
@@ -347,10 +357,13 @@ class Worker:
             return 0
         self.yielding = False
         held = await self._capacity_hold()
-        while len(self._running) < self.max_parallel and not self._stopping.is_set():
-            caps = self.claim_caps(self.max_parallel - len(self._running), self.running_background())
+        while not self._stopping.is_set():
+            # AA-1178: the main slots and the monitoring lane's own slots; nothing claimable in either = stop.
+            caps = self.claim_caps(self.free_main_slots(), self.running_background(), self.running_monitor())
             if held:
                 caps = capacity.without_held(caps, held)
+            if not caps:
+                break
             job = await queue.claim(self.pool, self.worker_id, caps, self.lease_seconds)
             if job is None:
                 break
@@ -548,14 +561,22 @@ class Worker:
 # then atomize ran alone as a ~55 min tail. 8 slots = s1_rewrite (cap 6) + a3_atomize (cap 1, by
 # design) + 1 for prefetch/recompute, so atomize drains alongside the rewrites.
 WORKER_MAX_PARALLEL_DEFAULT = 8
-# AA-712: background kinds (place pipeline) never take the last 2 free slots of a worker, and at
-# most BACKGROUND_MAX_RUNNING of them run at once on a worker (all background kinds together).
+# AA-712: background kinds (place pipeline) never take the last 2 free slots of a worker, and at most
+# cis.ops.jobs_background_max_running long background jobs run at once on a worker (all of them together; default 1).
+# AA-1178: the monitoring kinds run in slots of their own on top of max_parallel, at most
+# cis.ops.jobs_monitor_max_running at once (default 2). Both caps are Platform › Settings values (CIS 489,
+# shared/jobs/lanes.py).
 BACKGROUND_RESERVE = 2
-BACKGROUND_MAX_RUNNING = 1
 
 
 def background_kinds() -> set[str]:
+    """Every background kind, the monitoring kinds included."""
     return {name for name, k in kinds().items() if k.background}
+
+
+def monitor_kinds() -> set[str]:
+    """AA-1178: the background kinds of the monitoring lane (``@job_kind(..., monitor=True)``)."""
+    return {name for name, k in kinds().items() if k.background and k.monitor}
 
 
 def background_reserve_for(max_parallel: int) -> int:
@@ -565,20 +586,49 @@ def background_reserve_for(max_parallel: int) -> int:
 
 
 def claim_caps_for(max_parallel: int, caps: dict[str, int], free_slots: int, running_background: int,
-                   background: set[str] | frozenset[str]) -> dict[str, int]:
-    """The caps a worker passes to claim(): every kind in `caps`, minus the `background` kinds when
-    only the reserved slots are free OR when BACKGROUND_MAX_RUNNING background jobs already run on
-    this worker. claim() is FIFO across kinds, so without this a background batch queued before a
-    wave could fill the slots a3_atomize needs (S217: 59-minute atomize tail). The reserve alone is
-    not enough: background jobs claimed before a wave keep their slots, and each slot a wave job
-    frees goes to the next s1_rewrite (review finding 2) — so background work is also capped as a
-    group: 8 slots = s1_rewrite 6 + a3_atomize 1 + background 1.
+                   background: set[str] | frozenset[str], *, running_monitor: int = 0,
+                   monitor: set[str] | frozenset[str] = frozenset(), background_max: Optional[int] = None,
+                   monitor_max: Optional[int] = None) -> dict[str, int]:
+    """The caps a worker passes to claim().
 
-    Pure (AA-751): Worker.claim_caps and the ops metrics sampler (shared/jobs/backlog.py) both call
-    it, so the "would a live worker claim this row now" rule cannot drift from the worker's."""
-    if free_slots <= background_reserve_for(max_parallel) or running_background >= BACKGROUND_MAX_RUNNING:
-        return {name: cap for name, cap in caps.items() if name not in background}
-    return dict(caps)
+    Main slots (`max_parallel`; `free_slots` = the free ones, i.e. max_parallel minus the running jobs outside the
+    monitoring lane): every kind of `caps` but the `monitor` ones, minus the `background` kinds when only the reserved
+    slots are free OR when `background_max` long background jobs already run on this worker (`running_background`
+    counts only those). claim() is FIFO across kinds, so without this a background batch queued before a wave could
+    fill the slots a3_atomize needs (S217: 59-minute atomize tail). The reserve alone is not enough: background jobs
+    claimed before a wave keep their slots, and each slot a wave job frees goes to the next s1_rewrite (review finding
+    2) — so background work is also capped as a group: 8 slots = s1_rewrite 6 + a3_atomize 1 + background 1. No free
+    main slot: no main kind.
+
+    Monitoring lane (AA-1178): the `monitor` kinds (background kinds registered with monitor=True) run in slots of
+    their own on top of the main ones, at most `monitor_max` at once (`running_monitor`). They used to be in the
+    background group, so a 90-minute background run (writing_memory_r2) held the status page sampler and the route
+    watchers 40+ minutes. Now they never count toward, nor wait for, the background cap, and never take a main slot:
+    the waves and content kinds see exactly the slots they saw before.
+
+    `background_max` / `monitor_max`: the caps in force; None reads the settings (shared/jobs/lanes.py, never raises).
+    `monitor` empty (the default) = no monitoring lane, the pre-AA-1178 rule.
+
+    Pure apart from that settings read (AA-751): Worker.claim_caps and the ops metrics sampler
+    (shared/jobs/backlog.py) both call it, so the "would a live worker claim this row now" rule cannot drift from the
+    worker's."""
+    monitor = frozenset(monitor) & frozenset(background)
+    out: dict[str, int] = {}
+    if free_slots > 0:
+        out = {name: cap for name, cap in caps.items() if name not in monitor}
+        if free_slots <= background_reserve_for(max_parallel):
+            out = {name: cap for name, cap in out.items() if name not in background}
+        else:
+            if background_max is None:
+                background_max = lanes.background_max_running()
+            if running_background >= background_max:
+                out = {name: cap for name, cap in out.items() if name not in background}
+    if monitor:
+        if monitor_max is None:
+            monitor_max = lanes.monitor_max_running()
+        if running_monitor < monitor_max:
+            out.update({name: cap for name, cap in caps.items() if name in monitor})
+    return out
 
 
 # AA-993 G1 (ADR 0016 D1, design Q1): the service worker's drain window. `JOB_WORKER_GRACE_SECONDS` (Infra sets 100 on
@@ -695,9 +745,12 @@ async def _main() -> None:
     # sized from the CPU count (6 threads on the 0.5 vCPU task) — fewer than the slots. Size it to
     # the slots (2 per job: a node + a blocking side call such as atomize's Cohere pacing) so
     # raising max_parallel is not silently capped by threads. Same reason the pool grows with it.
+    # AA-1178: plus the monitoring lane's own slots, at the setting's upper bound (both grow lazily, so an unused
+    # slot costs nothing, and an administrator raising the cap needs no restart).
+    slots = max_parallel + lanes.monitor_slots_bound()
     asyncio.get_running_loop().set_default_executor(
-        ThreadPoolExecutor(max_workers=2 * max_parallel, thread_name_prefix="job"))
-    pool = await asyncpg.create_pool(get_database_url(), min_size=1, max_size=max(5, max_parallel + 2),
+        ThreadPoolExecutor(max_workers=2 * slots, thread_name_prefix="job"))
+    pool = await asyncpg.create_pool(get_database_url(), min_size=1, max_size=max(5, slots + 2),
                                      server_settings={"application_name": "cis-worker"})  # AA-824
     redis = None
     if os.environ.get("REDIS_HOST"):
@@ -710,7 +763,8 @@ async def _main() -> None:
     from shared import settings as platform_settings
     settings_refresh_task = platform_settings.start_refresher(pool)
     worker = Worker(pool, max_parallel=max_parallel, grace_seconds=grace_seconds, resources={"redis": redis})
-    logger.info("job_worker_config", max_parallel=max_parallel, executor_threads=2 * max_parallel,
+    logger.info("job_worker_config", max_parallel=max_parallel, monitor_slots=slots - max_parallel,
+                executor_threads=2 * slots,
                 grace_seconds=grace_seconds)
     # AA-919 (WM-18 scope 5): a deploy can change the gate taxonomy (services/quality/registry.TAXONOMY_VERSION): flag
     # the active writing-memory releases whose fingerprint no longer matches (they keep serving). Never fails the start.

@@ -166,7 +166,8 @@ def summarize_run(state: dict, listings: dict, rows: list, today: date) -> dict:
             "warnings": found}
 
 
-@job_kind(KIND, concurrency=1, max_attempts=2, expected_seconds=120, background=True, deploy_gate_exempt=True)
+@job_kind(KIND, concurrency=1, max_attempts=2, expected_seconds=120, background=True, deploy_gate_exempt=True,
+          monitor=True)
 async def run(ctx: JobContext) -> dict:
     payload = ctx.payload or {}
     trigger = payload.get("trigger", "manual")

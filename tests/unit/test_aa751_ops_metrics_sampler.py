@@ -75,16 +75,19 @@ def test_worker_claim_caps_is_claim_caps_for():
     worker.load_kinds()
     bg = worker.background_kinds()
     assert bg, "the registry has background kinds (place pipeline, retention)"
-    for max_parallel, free, running_bg in itertools.product((1, 2, 4, 8), range(0, 9), (0, 1, 2)):
+    mon = worker.monitor_kinds()   # AA-1178
+    for max_parallel, free, running_bg, running_mon in itertools.product((1, 2, 4, 8), range(0, 9), (0, 1, 2),
+                                                                         (0, 2)):
         w = worker.Worker(MagicMock(), max_parallel=max_parallel)
-        assert w.claim_caps(free, running_bg) == worker.claim_caps_for(max_parallel, w.caps(), free, running_bg, bg)
+        assert w.claim_caps(free, running_bg, running_mon) == worker.claim_caps_for(
+            max_parallel, w.caps(), free, running_bg, bg, running_monitor=running_mon, monitor=mon)
 
 
 def test_claim_caps_for_rules():
     bg = {"place_geocode"}
     assert "place_geocode" in worker.claim_caps_for(8, CAPS, 3, 0, bg)
     assert "place_geocode" not in worker.claim_caps_for(8, CAPS, 2, 0, bg)      # reserve (2)
-    assert "place_geocode" not in worker.claim_caps_for(8, CAPS, 5, 1, bg)      # BACKGROUND_MAX_RUNNING
+    assert "place_geocode" not in worker.claim_caps_for(8, CAPS, 5, 1, bg)      # background cap (setting, default 1)
     assert "place_geocode" in worker.claim_caps_for(1, CAPS, 1, 0, bg)          # small worker: reserve 0
     caps = dict(CAPS)
     worker.claim_caps_for(8, caps, 1, 0, bg)
@@ -143,7 +146,7 @@ def test_background_kind_behind_the_reserve_is_not_starved():
     running = [R("s1_rewrite", started=100 + i) for i in range(6)]      # 2 free = the reserve
     out = backlog.backlog_sample([Q("place_geocode", 4000, n=200)], running, [W()], KINDS, NOW, ago(900))
     assert out["starved"] == {}
-    # ... and behind another background job (BACKGROUND_MAX_RUNNING = 1)
+    # ... and behind another background job (cis.ops.jobs_background_max_running, default 1)
     running = [R("place_geocode", started=50)]
     out = backlog.backlog_sample([Q("place_geocode", 4000, n=200)], running, [W()], KINDS, NOW, ago(900))
     assert out["starved"] == {}

@@ -125,9 +125,20 @@
     `started_at` keeps the first attempt's start, so per-attempt age reads the progress key.
   - **Background kinds (AA-712)**: `@job_kind(..., background=True)` kinds never take the worker's
     last `BACKGROUND_RESERVE` (2) free slots (`Worker.claim_caps`), so a place-pipeline backlog cannot
-    starve a wave's `a3_atomize` (claim is FIFO across kinds). Guarded by `test_aa737`. The rule is the
-    pure `worker.claim_caps_for(max_parallel, caps, free_slots, running_background, background)`, also
-    used by the backlog sample (below), so the two cannot drift.
+    starve a wave's `a3_atomize` (claim is FIFO across kinds), and at most
+    `cis.ops.jobs_background_max_running` (setting, default 1, CIS 489) of them run at once on a worker.
+    Guarded by `test_aa737`. The rule is the pure `worker.claim_caps_for(max_parallel, caps, free_slots,
+    running_background, background, running_monitor=, monitor=)`, also used by the backlog sample (below), so
+    the two cannot drift.
+  - **Monitoring lane (AA-1178)**: `@job_kind(..., background=True, monitor=True)` marks the short periodic
+    watchers (`ops_status_sample`, `llm_route_watch`, `quality_funnel_watch`, `compliance_db_checks`,
+    `llm_model_lifecycle_sync`, `ai_usage_rollup`, `llm_connection_probe`). They run in slots of their own on top
+    of `max_parallel`, at most `cis.ops.jobs_monitor_max_running` (setting, default 2) at once per worker, never
+    counted toward nor held by the background cap: a long background run (a 90-minute `writing_memory_r2`) no
+    longer stops the status page, and the waves see the same main slots as before. The worker sizes its DB pool
+    and thread executor for the setting's upper bound. Both caps are read through `shared/jobs/lanes.py`
+    (the seeded default when the settings reader cannot answer); `GET /admin/job-runner/summary` lists each
+    kind's `lane` (main, background, monitor). Guarded by `test_aa1178_monitor_lane`.
   - **Retention (AA-825, migration 233, data standards DM-7 / C5.4)**: one background kind per log
     table in `services/jobs/retention_job.py` — `retention_llm_call_log` (180 d, daily rollup
     `shared.llm_call_daily`), `retention_tenant_api_usage` (90 d, monthly rollup

@@ -62,7 +62,8 @@ async def enqueue_for_run(pool, run_id: str, *, parent_job_id: Optional[str] = N
     return {"job_id": job_id, "created": created}
 
 
-@job_kind(KIND, concurrency=1, max_attempts=3, expected_seconds=60, background=True, deploy_gate_exempt=True)
+@job_kind(KIND, concurrency=1, max_attempts=3, expected_seconds=60, background=True, deploy_gate_exempt=True,
+          monitor=True)
 async def run(ctx: JobContext) -> dict:
     payload = ctx.payload or {}
     run_id = payload.get("run_id")

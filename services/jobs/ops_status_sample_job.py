@@ -10,8 +10,8 @@ Schedule: queued by the api's ops metrics sampler on every tick (no cron in the 
 ``OPS_STATUS_SAMPLER`` (ECS env, default ON: the run costs nothing). A run that starts more than ``LATE_AFTER_S`` after
 its bucket (a worker that was down) writes nothing and says so: its numbers would be labelled with the wrong time, and
 the uptime strip then shows that bucket as "no sample", which is the truth. max_attempts 1 (the next bucket is the
-retry), background (never takes one of the last free worker slots), deploy-gate exempt (it may sit queued across a
-deploy; a re-run of a bucket writes nothing twice).
+retry), monitoring lane (background with monitor=True: its own worker slots, never behind a long background job,
+AA-1178), deploy-gate exempt (it may sit queued across a deploy; a re-run of a bucket writes nothing twice).
 """
 from __future__ import annotations
 
@@ -84,7 +84,8 @@ def _bucket(payload: dict, now: datetime) -> datetime:
     return bucket_start(t)
 
 
-@job_kind(KIND, concurrency=1, max_attempts=1, expected_seconds=60, background=True, deploy_gate_exempt=True)
+@job_kind(KIND, concurrency=1, max_attempts=1, expected_seconds=60, background=True, deploy_gate_exempt=True,
+          monitor=True)
 async def run(ctx: JobContext) -> dict:
     from api.services.ops_status import sampler
 

@@ -13,8 +13,8 @@ Schedule: queued by the api's ops metrics sampler (api/core/ops_metrics_sampler.
 ``SCHEDULE_HOUR_UTC`` (idempotency key ``compliance_db_checks:<day>``), so two api tasks during a rolling deploy queue
 one run. Switch ``COMPLIANCE_DB_CHECKS`` (ECS env, default ON: the run costs nothing). The heartbeat of source
 ``cis_db`` on the page (cis.compliance.collector_heartbeat_hours) shows a schedule that stopped. max_attempts 2 (a
-transient DB error retries once; the next day is the next run), background (never takes one of the last free worker
-slots), deploy-gate exempt (it may sit queued across a deploy; a re-run adds rows with a new collected_at, harmless).
+transient DB error retries once; the next day is the next run), monitoring lane (background with monitor=True: its own
+worker slots, AA-1178), deploy-gate exempt (it may sit queued across a deploy; a re-run adds rows with a new collected_at, harmless).
 """
 from __future__ import annotations
 
@@ -69,7 +69,8 @@ async def tick_part(pool, kinds: dict, now: datetime, out: dict) -> None:
         out[KIND] = {"job_id": job_id, "day": day.isoformat()}
 
 
-@job_kind(KIND, concurrency=1, max_attempts=2, expected_seconds=120, background=True, deploy_gate_exempt=True)
+@job_kind(KIND, concurrency=1, max_attempts=2, expected_seconds=120, background=True, deploy_gate_exempt=True,
+          monitor=True)
 async def run(ctx: JobContext) -> dict:
     from api.services import compliance, compliance_db   # noqa: PLC0415 - the api modules, imported on use
 
