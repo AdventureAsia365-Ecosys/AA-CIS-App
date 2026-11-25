@@ -258,7 +258,7 @@ def test_the_ops_metrics_sampler_queues_the_worker_checks():
     from api.core import ops_metrics_sampler
 
     src = inspect.getsource(ops_metrics_sampler.sample_once)
-    assert "ops_external_check_job import tick_part" in src and '"ops_external_check_error"' in src
+    assert "compliance_db_checks_job, ops_external_check_job)" in src and 'f"{_job.KIND}_error"' in src
 
 
 def test_every_external_and_burn_item_has_a_message_the_page_can_word():

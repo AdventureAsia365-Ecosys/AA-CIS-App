@@ -86,6 +86,45 @@ function Rankings({ d, t }: { d: TenantsResp; t: PT }) {
   );
 }
 
+type Agency = NonNullable<TenantsResp["agency"]>;
+type Endpoint = NonNullable<Agency["server_error_endpoints"]>[number];
+
+/** S293: one agency's API server errors (totals and the endpoints that answered 5xx); nothing before the API has it. */
+function ServerErrors({ a, t }: { a: Agency; t: PT }) {
+  const { formatDateTime } = useFormat();
+  const rows = a.server_error_endpoints;
+  if (!rows) return null;
+  const pct = a.server_error_pct == null ? "—" : `${fmtNum(a.server_error_pct)} %`;
+  return (
+    <div style={{ display: "grid", gap: 6, minWidth: 0 }} data-testid="status-agency-5xx">
+      <b style={{ color: K.ink, fontSize: 13 }}>{t("agServer")}</b>
+      <span style={small}>{t("agServerTotals", a.server_errors ?? 0, a.api_calls ?? 0, pct)}</span>
+      {rows.length === 0 ? <span style={small}>{t("agEmpty")}</span> : (
+        <DataTable<Endpoint> tableId="status-agency-5xx" data={rows} searchable={false} paginate={false} compact
+          tableMinWidth={260} getRowId={(r) => `${r.method} ${r.endpoint}`} columns={[
+            { id: "e", header: t("colEndpoint"), accessorFn: (r) => `${r.method} ${r.endpoint}`,
+              cell: ({ row }) => <span style={{ overflowWrap: "anywhere" }}>{row.original.method}{" "}
+                {row.original.endpoint}</span> },
+            { id: "f", header: t("col5xx"), accessorFn: (r) => r.server_errors },
+            { id: "l", header: t("colLast"), accessorFn: (r) => r.last ?? "",
+              cell: ({ row }) => <span style={small}>{row.original.last ? formatDateTime(row.original.last)
+                : "—"}</span> },
+          ]} />)}
+    </div>
+  );
+}
+
+/** What the card cannot measure: the scope of the server-error figure (S293) and the CRM's jobs per agency. */
+function Limits({ d, t }: { d: TenantsResp; t: PT }) {
+  const scoped = !!d.server_errors_scope;
+  return (
+    <>
+      {scoped && <span style={small} data-testid="status-agencies-5xx-scope">{t("agServerScope")}</span>}
+      <NotMeasured reason={t(scoped ? "agNotMeasuredCrm" : "agNotMeasured")} testId="status-agencies-not-measured" />
+    </>
+  );
+}
+
 function OneAgency({ d, t }: { d: TenantsResp; t: PT }) {
   const lang = useLang();
   const { formatDateTime } = useFormat();
@@ -94,7 +133,6 @@ function OneAgency({ d, t }: { d: TenantsResp; t: PT }) {
   type Stage = (typeof a.by_stage)[number];
   type Cls = (typeof a.ai_errors)[number];
   type Kind = (typeof a.failed_jobs)[number];
-  type Endpoint = NonNullable<typeof a.server_error_endpoints>[number];
   const box = { display: "grid", gap: 6, minWidth: 0 } as const;
   return (
     <>
@@ -136,23 +174,7 @@ function OneAgency({ d, t }: { d: TenantsResp; t: PT }) {
                     : "—"}</span> },
               ]} />)}
         </div>
-        {a.server_error_endpoints && (
-          <div style={box} data-testid="status-agency-5xx">
-            <b style={{ color: K.ink, fontSize: 13 }}>{t("agServer")}</b>
-            <span style={small}>{t("agServerTotals", a.server_errors ?? 0, a.api_calls ?? 0,
-              a.server_error_pct == null ? "—" : `${fmtNum(a.server_error_pct)} %`)}</span>
-            {a.server_error_endpoints.length === 0 ? <span style={small}>{t("agEmpty")}</span> : (
-              <DataTable<Endpoint> tableId="status-agency-5xx" data={a.server_error_endpoints} searchable={false}
-                paginate={false} compact tableMinWidth={260} getRowId={(r) => `${r.method} ${r.endpoint}`} columns={[
-                  { id: "e", header: t("colEndpoint"), accessorFn: (r) => `${r.method} ${r.endpoint}`,
-                    cell: ({ row }) => <span style={{ overflowWrap: "anywhere" }}>{row.original.method}{" "}
-                      {row.original.endpoint}</span> },
-                  { id: "f", header: t("col5xx"), accessorFn: (r) => r.server_errors },
-                  { id: "l", header: t("colLast"), accessorFn: (r) => r.last ?? "",
-                    cell: ({ row }) => <span style={small}>{row.original.last ? formatDateTime(row.original.last)
-                      : "—"}</span> },
-                ]} />)}
-          </div>)}
+        <ServerErrors a={a} t={t} />
       </div>
     </>
   );
@@ -187,9 +209,7 @@ export function AgenciesCard({ view }: { view: View }) {
         <>
           {!tenant && <span style={small}>{t("agNote", d.top_n)}</span>}
           {tenant ? <OneAgency d={d} t={t} /> : <Rankings d={d} t={t} />}
-          {d.server_errors_scope && <span style={small} data-testid="status-agencies-5xx-scope">{t("agServerScope")}</span>}
-          <NotMeasured reason={t(d.server_errors_scope ? "agNotMeasuredCrm" : "agNotMeasured")}
-            testId="status-agencies-not-measured" />
+          <Limits d={d} t={t} />
         </>)}
     </Card>
   );

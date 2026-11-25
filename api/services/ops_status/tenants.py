@@ -183,7 +183,8 @@ async def collect(pool: Any, rng: TimeRange, tenant: Optional[str], now: Optiona
                                   [dict(r) for r in api])}
     ai, errors, jobs, api, api_total = await asyncio.gather(
         pool.fetch(ONE_AI_SQL, h0, h1, tenant), pool.fetch(ONE_ERRORS_SQL, h0, h1, tenant),
-        pool.fetch(ONE_JOBS_SQL, rng.start, rng.end, tenant), pool.fetch(ONE_API_SQL, rng.start, rng.end, tenant, th.tenant_top_n()),
+        pool.fetch(ONE_JOBS_SQL, rng.start, rng.end, tenant),
+        pool.fetch(ONE_API_SQL, rng.start, rng.end, tenant, th.tenant_top_n()),
         pool.fetch(ONE_API_TOTAL_SQL, rng.start, rng.end, tenant))
     total = dict(api_total[0]) if api_total else {}
     calls, server_errors = int(total.get("calls") or 0), int(total.get("server_errors") or 0)
