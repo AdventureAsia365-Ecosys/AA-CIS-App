@@ -357,8 +357,8 @@ NO_CALL_SITE = {
     "tp_compose": "TripPlanner's stage: the call site is apps/AA-TripPlanner-Web",
     "segment_research": "route row kept for the admin page; the CIS calls send model_tier haiku with no stage",
     "segment_research_batch": "route row kept for the admin page; the CIS calls send model_tier haiku with no stage",
-    "t10_claims": "F9 v2 claim extraction, not wired into the gates until its replay passes (role_config.py); only "
-                  "the contract smoke sends it",
+    "t10_claims": "F9 v2 claim extraction, retired (AA-1050 S294 D6: 0-diff replay, no W2 record); the route row "
+                  "stays for history, switched off by CIS 495",
 }
 
 

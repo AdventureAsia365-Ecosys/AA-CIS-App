@@ -71,7 +71,7 @@ PLANNED = {
     "s1_brand_audit": "nova-lite", "s1_source_facts": "nova-lite", "a3_atomize": "nova-lite",
     "a3_place_card": "nova-lite", "a3_place_card_check": "llama4-scout", "a3_place_days": "nova-lite",
     "a3_place_locate": "nova-lite", "a3_place_dedupe_check": "nova-lite",
-    "t2_brand_audit": "nova-lite", "t10_claims": "nova-lite", "t9_faq_answer_fit": "nova-lite",
+    "t2_brand_audit": "nova-lite", "t9_faq_answer_fit": "nova-lite",
     "t9_faq_filter": "nova-lite",
     "s1_judge": "nova-lite", "t2_judge": "nova-lite", "t7_debate_judge": "nova-lite", "t10_judge": "nova-lite",
     "writing_memory_eval": "nova-lite", "writing_memory_mine": "nova-lite", "t10_adjudicate": "nova-lite",
@@ -347,36 +347,6 @@ def _dedupe_check(call, stage: str = "a3_place_dedupe_check") -> dict:
     return {"verdict": verdict, "confidence": confidence}
 
 
-def _claims_inputs():
-    from services.acp_content_writing.claim_rules import KIND_FACT, KIND_TRIP, PieceSentence, SourceLine
-    lines = [SourceLine("S1", KIND_TRIP, "Day 2: walk 12 km along the Orvalen ridge to the Varro hut."),
-             SourceLine("F1", KIND_FACT, "The Varro hut sits at 2,100 m.")]
-    sentences = [PieceSentence("1", "body", "sentence", "On day two you walk the Orvalen ridge to the Varro hut."),
-                 PieceSentence("2", "body", "sentence", "The hut sits at 2,100 m above the bay.")]
-    return lines, sentences
-
-
-def _claims_request():
-    from services.acp_content_writing.claim_rules import EXTRACTION_SYSTEM, build_extraction_prompt, extraction_schema
-    from shared.llm_client.models import LLMRequest
-    lines, sentences = _claims_inputs()
-    return LLMRequest(system_prompt=EXTRACTION_SYSTEM, user_prompt=build_extraction_prompt(lines, sentences),
-                      stage="t10_claims", max_tokens=2048, temperature=0.0, json_schema=extraction_schema())
-
-
-def _t10_claims(call) -> dict:
-    from services.acp_content_writing.claim_rules import parse_rows
-    _lines, sentences = _claims_inputs()
-    resp = call(_claims_request())
-    try:
-        rows, missing = parse_rows(json.loads(resp.content), sentences)
-    except (ValueError, TypeError) as e:
-        raise ContractError(f"claim_rules.parse_rows refused the reply: {e}") from e
-    if missing:
-        raise ContractError(f"no claim row for sentence(s) {missing}")
-    return {"rows": len(rows)}
-
-
 _FAQ = [("How long is the walk on day two?", "About 12 km, which takes around five hours."),
         ("Where do we sleep on the ridge?", "In the Varro hut at about 2,100 m.")]
 
@@ -565,7 +535,6 @@ def _cases() -> dict[str, Case]:
         Case("a3_place_days", "validate", _place_days, _days_request),
         Case("a3_place_locate", "validate", _place_locate, _locate_request),
         Case("a3_place_dedupe_check", "validate", _dedupe_check, _dedupe_request),
-        Case("t10_claims", "validate", _t10_claims, _claims_request),
         Case("t9_faq_answer_fit", "validate", _faq_answer_fit, _fit_request),
         Case("t9_faq_filter", "validate", _faq_filter, _filter_request),
         # migration 333
