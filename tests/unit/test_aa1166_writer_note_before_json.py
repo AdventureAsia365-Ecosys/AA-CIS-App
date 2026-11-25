@@ -185,13 +185,13 @@ def _run(content):
             patch.object(graph, "_process_itineraries", return_value={
                 "extra_cost_usd": 0.0, "extra_cache_read_tokens": 0, "extra_cache_write_tokens": 0,
                 "day_ratios": [], "nudges_used": 0}), \
-            patch.object(graph, "logger") as log:
+            patch.object(graph, "logger") as log, patch.object(writer_reply, "logger") as note_log:
         out = generate_node(_state())
-    return out, rows, log
+    return out, rows, log, note_log
 
 
 def test_generate_node_drops_the_note_and_records_the_signal():
-    out, rows, log = _run(f"{NOTE}\n\n{CLEAN}")
+    out, rows, _log, note_log = _run(f"{NOTE}\n\n{CLEAN}")
     assert out["error"] == ""
     assert out["generated"]["name"] == DRAFT["name"] and out["generated"]["summary"] == DRAFT["summary"]
     _no_note_text(out["generated"])
@@ -201,7 +201,7 @@ def test_generate_node_drops_the_note_and_records_the_signal():
     assert not degraded.is_hard(out["degraded"])
     assert len(rows) == 1 and rows[0]["quality_signal"]["json_parsed"] is True
     assert rows[0]["quality_signal"]["writer_note"] == "instruction_notice"
-    info = [c for c in log.info.call_args_list if c.args and c.args[0] == "writer_reply_note_dropped"]
+    info = [c for c in note_log.info.call_args_list if c.args and c.args[0] == "writer_reply_note_dropped"]
     assert len(info) == 1
     assert info[0].kwargs["kind"] == "instruction_notice" and info[0].kwargs["tour_id"] == "t-velmora"
     assert info[0].kwargs["note_chars"] == len(NOTE)
@@ -211,18 +211,18 @@ def test_generate_node_drops_the_note_and_records_the_signal():
 
 
 def test_generate_node_clean_reply_has_no_signal():
-    out, rows, log = _run(CLEAN)
+    out, rows, _log, note_log = _run(CLEAN)
     assert out["generated"]["name"] == DRAFT["name"]
     assert out["degraded"] == []
     assert "writer_note" not in rows[0]["quality_signal"]
-    assert not [c for c in log.info.call_args_list if c.args and c.args[0] == "writer_reply_note_dropped"]
+    assert not note_log.info.call_args_list
 
 
 def test_generate_node_note_without_json_fails_as_before():
-    out, rows, log = _run(NOTE)
+    out, rows, log, note_log = _run(NOTE)
     assert out["generated"] == {} and out["error"] == "JSON parse error"
     assert rows[0]["quality_signal"] == {"json_parsed": False, "fallback_used": False}
-    assert out["degraded"] == []
+    assert out["degraded"] == [] and not note_log.info.call_args_list
     assert any(c.args and c.args[0] == "json_parse_failed" for c in log.warning.call_args_list)
 
 

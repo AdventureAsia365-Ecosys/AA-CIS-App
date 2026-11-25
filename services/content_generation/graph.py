@@ -652,7 +652,7 @@ def generate_node(state: ContentState) -> ContentState:
         generated, writer_note = writer_reply.extract(raw)
         note_kind = writer_reply.note_kind(writer_note) if generated else None
         if note_kind:
-            state = _record_writer_note(state, writer_note, note_kind, gen_stage)
+            state = writer_reply.record_note(state, writer_note, note_kind, gen_stage)
         if not generated:
             logger.warning("json_parse_failed",
                            raw_len=len(raw),
@@ -824,19 +824,6 @@ def parse_generated_json(raw: str) -> Optional[dict]:
     identically to the synchronous generate_node — no second, drifting JSON parser. AA-1166: both read
     ``writer_reply.extract`` (free text around the one JSON object is never part of the draft)."""
     return writer_reply.extract(raw)[0]
-
-
-def _record_writer_note(state: ContentState, note: str, kind: str, stage: str) -> ContentState:
-    """AA-1166: the writer put free text around its JSON draft (dropped from the draft). Signal it on the output
-    (a ``writer_note`` degraded entry, severity ``count``: the T2 run carries it into its ``t3.degraded``
-    diagnostics, A1 into ``generated_content.metadata.degraded``) and in one info line. Only the kind and the
-    length are kept: the note's text can quote the source or a planted instruction, so it is stored nowhere."""
-    tour = state.get("tour") or {}
-    logger.info("writer_reply_note_dropped", kind=kind, note_chars=len(note), stage=stage,
-                tour_id=tour.get("tour_id") or state.get("tour_id"), tenant_id=state.get("tenant_id"),
-                retry=state.get("retry_count", 0))
-    return {**state, "degraded": degraded.add(state.get("degraded"), degraded.WRITER_NOTE,
-                                              detector="writer_reply", detail=kind)}
 
 
 def _apply_seo_keywords_used(generated: dict, state: ContentState) -> None:

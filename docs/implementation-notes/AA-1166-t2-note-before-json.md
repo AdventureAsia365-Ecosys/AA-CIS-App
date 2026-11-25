@@ -32,10 +32,10 @@ into a signal. Separate notes file from `AA-1166.md` (the red-team set lane) so 
 
 - `shared/llm_client/json_reply.py`: `json_values` (top-level values with spans) and `bracket_end`; `first_json_value`
   unchanged.
-- `services/content_generation/writer_reply.py` (new): `extract(raw) -> (draft, note)`, `note_kind(note)`.
+- `services/content_generation/writer_reply.py` (new): `extract(raw) -> (draft, note)`, `note_kind(note)`,
+  `record_note(state, note, kind, stage)` (the signal; kept out of `graph.py`, whose size baseline may not grow).
 - `services/content_generation/graph.py`: `generate_node` parses with `writer_reply.extract` (the inline fence strip
-  moved into it), records the note signal on a parsed draft; `parse_generated_json` wraps `extract`;
-  `_record_writer_note` new. The `json_parse_failed` path is unchanged (its `raw_len` is now the length before the
+  moved into it), records the note signal on a parsed draft; `parse_generated_json` wraps `extract`. The `json_parse_failed` path is unchanged (its `raw_len` is now the length before the
   fence strip).
 - `services/quality/degraded.py`: `WRITER_NOTE` in `REGISTRY` (`count`).
 - `docs/context/pipeline-stages.md`: a "Writer note" bullet under the degraded detectors.
