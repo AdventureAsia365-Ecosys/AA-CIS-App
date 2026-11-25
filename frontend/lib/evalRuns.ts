@@ -244,65 +244,67 @@ export function runHeaderMarkdown(run: EvalRun): string {
   ].join("\n");
 }
 
+function headingOf(level: number | undefined): (n: number) => string {
+  return (n: number) => "#".repeat(Math.min(6, (level ?? 1) + n - 1));
+}
+
+function itemLines(v: ItemView, withRun: boolean): string[] {
+  const it = v.item;
+  const where = [it.country, it.days ? `${it.days} days` : null].filter(Boolean).map((x) => ` · ${x}`).join("");
+  return [
+    ...(withRun ? [runHeaderMarkdown(v.run)] : []),
+    `- Item: \`${it.item_id}\` · ${it.scope} · split ${it.split} · ${it.kind}${where}`,
+    `- Golden label: ${it.label_verdict} (${it.label_source})`,
+  ];
+}
+
+export function gateLine(g: GateReplay | null): string | null {
+  if (!g) return null;
+  if (g.error) return `- Gate replay: could not be replayed (${g.error})`;
+  const first = g.first_failure ? ` · first failure ${g.first_failure}` : "";
+  const blocking = g.blocking?.length ? ` · blocking ${g.blocking.join(", ")}` : "";
+  return `- Gate replay: ${g.passed ? "passed" : "failed"}${first}${blocking}`;
+}
+
+function claimLines(claims: TypedClaim[]): string[] {
+  if (!claims.length) return ["None."];
+  return claims.map((c, i) => `${i + 1}. [${c.policy_class} · ${c.field}] ${oneLine(c.claim)}` +
+    (c.why ? ` — ${oneLine(c.why)}` : ""));
+}
+
+function outputLines(fields: { field: string; text: string }[]): string[] {
+  if (!fields.length) return ["No stored output.", ""];
+  return fields.flatMap((f) => [`**${f.field}**`, "", fence(f.text), ""]);
+}
+
+function resultLines(r: ItemResult, h: (n: number) => string): string[] {
+  const judge = `${r.judge_model ?? "—"} ${r.judge_version ?? ""}`.trimEnd();
+  const gate = gateLine(r.gate_replay);
+  return [
+    "", `${h(2)} ${r.arm} · ${r.mode} — ${r.verdict}${r.hard_stop ? " (hard stop)" : ""}`, "",
+    `- Result: \`${r.result_id}\` · phase ${r.phase} · judge ${judge}`,
+    `- Failure codes: ${r.failure_codes.length ? r.failure_codes.join(", ") : "none"}`,
+    ...(gate ? [gate] : []),
+    ...(r.output_source === "scored" ? [`- Output: the scored row \`${r.scored_result_id}\``] : []),
+    "", `${h(3)} Flagged claims (${r.claims.length})`, "", ...claimLines(r.claims),
+    "", `${h(3)} Output`, "", ...outputLines(r.output_fields),
+  ];
+}
+
 /** One item of a run as Markdown: the source the judge read, then each row (verdict, gates, claims, output) and an
  *  empty review checklist for the reader's own notes. Pure. */
 export function itemMarkdown(v: ItemView, opts: { withRun?: boolean; level?: number } = {}): string {
-  const h = (n: number) => "#".repeat(Math.min(6, (opts.level ?? 1) + n - 1));
+  const h = headingOf(opts.level);
   const it = v.item;
-  const out: string[] = [];
-  out.push(`${h(1)} ${it.sample_id} (${it.writer}${it.channel ? ` · ${it.channel}` : ""})`);
-  out.push("");
-  if (opts.withRun !== false) out.push(runHeaderMarkdown(v.run));
-  out.push(`- Item: \`${it.item_id}\` · ${it.scope} · split ${it.split} · ${it.kind}` +
-    `${it.country ? ` · ${it.country}` : ""}${it.days ? ` · ${it.days} days` : ""}`);
-  out.push(`- Golden label: ${it.label_verdict} (${it.label_source})`);
-  out.push("");
-  out.push(`${h(2)} Source the judge read`);
-  out.push("");
-  out.push(v.source_text ? fence(v.source_text) : "_Not rebuilt from the stored input (see the raw input)._");
-  for (const r of v.results) {
-    out.push("");
-    out.push(`${h(2)} ${r.arm} · ${r.mode} — ${r.verdict}${r.hard_stop ? " (hard stop)" : ""}`);
-    out.push("");
-    out.push(`- Result: \`${r.result_id}\` · phase ${r.phase} · judge ${r.judge_model ?? "—"} ${r.judge_version ?? ""}`.trimEnd());
-    out.push(`- Failure codes: ${r.failure_codes.length ? r.failure_codes.join(", ") : "none"}`);
-    if (r.gate_replay) {
-      out.push(r.gate_replay.error
-        ? `- Gate replay: could not be replayed (${r.gate_replay.error})`
-        : `- Gate replay: ${r.gate_replay.passed ? "passed" : "failed"}` +
-          `${r.gate_replay.first_failure ? ` · first failure ${r.gate_replay.first_failure}` : ""}` +
-          `${r.gate_replay.blocking?.length ? ` · blocking ${r.gate_replay.blocking.join(", ")}` : ""}`);
-    }
-    if (r.output_source === "scored") out.push(`- Output: the scored row \`${r.scored_result_id}\``);
-    out.push("");
-    out.push(`${h(3)} Flagged claims (${r.claims.length})`);
-    out.push("");
-    if (r.claims.length) {
-      r.claims.forEach((c, i) => out.push(`${i + 1}. [${c.policy_class} · ${c.field}] ${oneLine(c.claim)}` +
-        `${c.why ? ` — ${oneLine(c.why)}` : ""}`));
-    } else {
-      out.push("None.");
-    }
-    out.push("");
-    out.push(`${h(3)} Output`);
-    out.push("");
-    if (r.output_fields.length) {
-      for (const f of r.output_fields) {
-        out.push(`**${f.field}**`);
-        out.push("");
-        out.push(fence(f.text));
-        out.push("");
-      }
-    } else {
-      out.push("No stored output.");
-      out.push("");
-    }
-  }
-  out.push(`${h(2)} Review`);
-  out.push("");
-  out.push("- [ ] Contract violations: ");
-  out.push("- [ ] Unsupported trip promises: ");
-  out.push("- Notes: ");
+  const out: string[] = [
+    `${h(1)} ${it.sample_id} (${it.writer}${it.channel ? ` · ${it.channel}` : ""})`, "",
+    ...itemLines(v, opts.withRun !== false), "",
+    `${h(2)} Source the judge read`, "",
+    v.source_text ? fence(v.source_text) : "_Not rebuilt from the stored input (see the raw input)._",
+    ...v.results.flatMap((r) => resultLines(r, h)),
+    `${h(2)} Review`, "",
+    "- [ ] Contract violations: ", "- [ ] Unsupported trip promises: ", "- Notes: ",
+  ];
   return out.join("\n") + "\n";
 }
 

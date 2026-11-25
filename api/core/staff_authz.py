@@ -759,25 +759,20 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/writing-memory/releases/{release_id}/keep"): AI_ADMIN,
     ("GET", "/admin/writing-memory/disagreements"): _LAB_TEXT_READ,
     ("POST", "/admin/writing-memory/disagreements/{item_id}/resolve"): AI_ADMIN,
-    # AA-1039 R6 slice 3: the Writing Lab stage read (ids, labels, counts, hashes; no text). AA-1035 R2: Writing Lab R
-    # without tenant text, like the release reads (content_lead, tenant_qa, ai_ops, admin)
+    # AA-1039 R6 slice 3 / AA-1035 R2: the Writing Lab stage read, no text (Lab R, as the release reads)
     ("GET", "/admin/writing-memory/lab/{writer}"): _LAB_READ,
-    # AA-1048 W2 (S273): the claim-level ground truth (api/routers/admin_claim_labels.py). Writes ai.admin; the counts
-    # and the split plan carry no text (Writing Lab R); the finals carry claim text (Lab text read, logged).
+    ("GET", "/admin/writing-memory/eval-runs"): _LAB_READ,   # AA-1169 Eval runs: the lists carry no text (Lab R)
+    ("GET", "/admin/writing-memory/eval-runs/{run_id}"): _LAB_READ,
+    ("GET", "/admin/writing-memory/eval-runs/{run_id}/items/{item_id}"): _LAB_TEXT_READ,   # writer text, logged
+    # AA-1048 W2: claim ground truth (admin_claim_labels.py): writes ai.admin, counts Lab R, finals Lab text read
     ("POST", "/admin/writing-memory/claim-labels/import"): AI_ADMIN,
     ("GET", "/admin/writing-memory/claim-labels/split-plan"): _LAB_READ,
-    # AA-1169 — Writing Lab › Eval runs: the runs and a run's items (ids, codes, counts) as the other Lab reads without
-    # text; one item (the stored writer input and output) as a logged Lab tenant-text read (LAB_TEXT_LOGGED).
-    ("GET", "/admin/writing-memory/eval-runs"): _LAB_READ,
-    ("GET", "/admin/writing-memory/eval-runs/{run_id}"): _LAB_READ,
-    ("GET", "/admin/writing-memory/eval-runs/{run_id}/items/{item_id}"): _LAB_TEXT_READ,
     ("GET", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/report"): _LAB_READ,
     ("POST", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/enqueue"): AI_ADMIN,
     ("POST", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/pull-resolutions"): AI_ADMIN,
     ("POST", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/prefilter"): AI_ADMIN,   # AA-1063
     ("GET", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/finals"): _LAB_TEXT_READ,
-    # AA-1063 (S275): the Writing Lab claim review, agent proposals, the label set browser and corrections. Reads that
-    # return claim text are Lab text reads (logged); the set counts carry no text; every write is ai.admin.
+    # AA-1063 (S275): Writing Lab claim review: text reads are Lab text reads (logged), counts Lab R, writes ai.admin
     ("GET", "/admin/writing-memory/claim-labels/review"): _LAB_TEXT_READ,
     ("GET", "/admin/writing-memory/claim-labels/review/{item_id}/context"): _LAB_TEXT_READ,
     ("POST", "/admin/writing-memory/claim-labels/review/accept-proposals"): AI_ADMIN,
