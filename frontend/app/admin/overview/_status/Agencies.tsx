@@ -1,9 +1,11 @@
 "use client";
-// app/admin/overview/_status/Agencies.tsx — AA-1142 (P2): which agency an AI spend, a failed job or a failed AI call
-// comes from, over the page's time range. Without a filter: three rankings of at most cis.ops.status_tenant_top_n
-// agencies (the API says how many) and the platform's own share; with the agency filter (URL key `tenant`): that
-// agency's AI by app and stage, failed AI calls by class and failed jobs by kind (no error text: a job error may quote
-// tenant content). Server errors per agency and the CRM's jobs per agency are "not measured yet" (no source).
+// app/admin/overview/_status/Agencies.tsx — AA-1142 (P2): which agency an AI spend, a failed job, a failed AI call or
+// an API server error comes from, over the page's time range. Without a filter: four rankings of at most
+// cis.ops.status_tenant_top_n agencies (the API says how many) and the platform's own share; with the agency filter (URL
+// key `tenant`): that agency's AI by app and stage, failed AI calls by class, failed jobs by kind (no error text: a job
+// error may quote tenant content) and the API endpoints that answered 5xx. Server errors (S293) come from the metered
+// call log of the agencies' own systems; the card says what that leaves out. The CRM's jobs per agency are "not
+// measured yet" (no source).
 // GET /api/admin/overview/status/tenants (ops.read). Kit only.
 
 import { useQuery } from "@tanstack/react-query";
@@ -42,6 +44,7 @@ function Rankings({ d, t }: { d: TenantsResp; t: PT }) {
   type Spend = NonNullable<TenantsResp["ai_spend"]>[number];
   type Jobs = NonNullable<TenantsResp["failed_jobs"]>[number];
   type Errs = NonNullable<TenantsResp["ai_errors"]>[number];
+  type Server = NonNullable<TenantsResp["server_errors"]>[number];
   const spend: ColumnDef<Spend>[] = [
     { id: "a", header: t("colAgency"), accessorFn: (r) => agencyLabel(r), cell: ({ row }) => nameCell(row.original) },
     { id: "c", header: t("colCost"), accessorFn: (r) => r.cost_usd, cell: ({ row }) => usd(row.original.cost_usd) },
@@ -59,15 +62,65 @@ function Rankings({ d, t }: { d: TenantsResp; t: PT }) {
     { id: "s", header: t("colShare"), accessorFn: (r) => r.failed_pct ?? null,
       cell: ({ row }) => (row.original.failed_pct == null ? "—" : `${fmtNum(row.original.failed_pct)} %`) },
   ];
+  const server: ColumnDef<Server>[] = [
+    { id: "a", header: t("colAgency"), accessorFn: (r) => agencyLabel(r), cell: ({ row }) => nameCell(row.original) },
+    { id: "f", header: t("col5xx"), accessorFn: (r) => r.server_errors },
+    { id: "s", header: t("colShare"), accessorFn: (r) => r.error_pct ?? null,
+      cell: ({ row }) => (row.original.error_pct == null ? "—" : `${fmtNum(row.original.error_pct)} %`) },
+    { id: "l", header: t("colLast"), accessorFn: (r) => r.last ?? "",
+      cell: ({ row }) => <span style={small}>{row.original.last ? formatDateTime(row.original.last) : "—"}</span> },
+  ];
   return (
     <>
       <div style={grid}>
         <Ranking title={t("agSpend")} rows={d.ai_spend ?? []} cols={spend} testId="status-agencies-spend" t={t} />
         <Ranking title={t("agJobs")} rows={d.failed_jobs ?? []} cols={jobs} testId="status-agencies-jobs" t={t} />
         <Ranking title={t("agErrors")} rows={d.ai_errors ?? []} cols={errs} testId="status-agencies-errors" t={t} />
+        {d.server_errors && (
+          <Ranking title={t("agServer")} rows={d.server_errors} cols={server} testId="status-agencies-5xx" t={t} />)}
       </div>
+      {d.api_calls != null && <span style={small}>{t("apiLine", d.api_calls)}</span>}
       {d.platform && <span style={small}>{t("platformLine", usd(d.platform.cost_usd), d.platform.requests,
         d.platform.failed)}</span>}
+    </>
+  );
+}
+
+type Agency = NonNullable<TenantsResp["agency"]>;
+type Endpoint = NonNullable<Agency["server_error_endpoints"]>[number];
+
+/** S293: one agency's API server errors (totals and the endpoints that answered 5xx); nothing before the API has it. */
+function ServerErrors({ a, t }: { a: Agency; t: PT }) {
+  const { formatDateTime } = useFormat();
+  const rows = a.server_error_endpoints;
+  if (!rows) return null;
+  const pct = a.server_error_pct == null ? "—" : `${fmtNum(a.server_error_pct)} %`;
+  return (
+    <div style={{ display: "grid", gap: 6, minWidth: 0 }} data-testid="status-agency-5xx">
+      <b style={{ color: K.ink, fontSize: 13 }}>{t("agServer")}</b>
+      <span style={small}>{t("agServerTotals", a.server_errors ?? 0, a.api_calls ?? 0, pct)}</span>
+      {rows.length === 0 ? <span style={small}>{t("agEmpty")}</span> : (
+        <DataTable<Endpoint> tableId="status-agency-5xx" data={rows} searchable={false} paginate={false} compact
+          tableMinWidth={260} getRowId={(r) => `${r.method} ${r.endpoint}`} columns={[
+            { id: "e", header: t("colEndpoint"), accessorFn: (r) => `${r.method} ${r.endpoint}`,
+              cell: ({ row }) => <span style={{ overflowWrap: "anywhere" }}>{row.original.method}{" "}
+                {row.original.endpoint}</span> },
+            { id: "f", header: t("col5xx"), accessorFn: (r) => r.server_errors },
+            { id: "l", header: t("colLast"), accessorFn: (r) => r.last ?? "",
+              cell: ({ row }) => <span style={small}>{row.original.last ? formatDateTime(row.original.last)
+                : "—"}</span> },
+          ]} />)}
+    </div>
+  );
+}
+
+/** What the card cannot measure: the scope of the server-error figure (S293) and the CRM's jobs per agency. */
+function Limits({ d, t }: { d: TenantsResp; t: PT }) {
+  const scoped = !!d.server_errors_scope;
+  return (
+    <>
+      {scoped && <span style={small} data-testid="status-agencies-5xx-scope">{t("agServerScope")}</span>}
+      <NotMeasured reason={t(scoped ? "agNotMeasuredCrm" : "agNotMeasured")} testId="status-agencies-not-measured" />
     </>
   );
 }
@@ -121,6 +174,7 @@ function OneAgency({ d, t }: { d: TenantsResp; t: PT }) {
                     : "—"}</span> },
               ]} />)}
         </div>
+        <ServerErrors a={a} t={t} />
       </div>
     </>
   );
@@ -155,7 +209,7 @@ export function AgenciesCard({ view }: { view: View }) {
         <>
           {!tenant && <span style={small}>{t("agNote", d.top_n)}</span>}
           {tenant ? <OneAgency d={d} t={t} /> : <Rankings d={d} t={t} />}
-          <NotMeasured reason={t("agNotMeasured")} testId="status-agencies-not-measured" />
+          <Limits d={d} t={t} />
         </>)}
     </Card>
   );

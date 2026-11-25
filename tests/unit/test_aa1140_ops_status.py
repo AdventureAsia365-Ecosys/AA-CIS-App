@@ -259,11 +259,13 @@ async def test_tick_never_raises_and_names_the_failed_part(monkeypatch):
     async def boom(*a, **k):
         raise RuntimeError("zz down")
 
-    for name in ("ecs_part", "alarms_part", "health_part", "queue_part", "database_part", "_external_part"):
+    for name in ("ecs_part", "alarms_part", "health_part", "queue_part", "database_part", "_external_part",
+                 "_assist_part"):
         monkeypatch.setattr(sampler, name, boom)
     out = await sampler.tick(pool, NOW, env="dev")
     assert {k for k in out if k.endswith("_error")} == {"ecs_error", "alarms_error", "health_error", "queue_error",
-                                                         "database_error", "external_error"}   # AA-1142 external
+                                                         "database_error", "external_error",   # AA-1142 external
+                                                         "assist_error"}   # AA-1154 A2 checkpoints
 
 
 # ── uptime strip and series ────────────────────────────────────────────────────────────────────────────────────

@@ -19,12 +19,14 @@ reason and never stops the others; a missing source is never read as healthy), i
 - ``waves``: the open rerun waves (``shared.rerun_wave``);
 - ``probe``: the newest connection probe job of the changes window (a DRY RUN result is a measured cost) and whether
   a live probe is switched on;
-- ``changes``: the ops events (deploys, failed rollouts, alarms, service drops) of the changes window.
+- ``changes``: the ops events (deploys, failed rollouts, alarms, service drops) of the changes window;
+- ``history`` (A2): per action, the checked outcomes of the cards people ran (``acp_shared.ops_assist_run``,
+  ``outcome.history``): each card's "right k of n" track record.
 
-Nothing here writes: no INSERT, UPDATE, enqueue or non-GET call (``tests/unit/test_aa1154_ops_assist.py`` scans this
-package). Free text from outside (alarm descriptions, job errors, route notes) is never put in the snapshot except
-the attention item's own detail, which ``evidence_items`` marks ``untrusted`` (it is data, never an instruction; A1
-hands the bundle to an LLM).
+Nothing here writes (the run record is ``outcome.py``): no INSERT, UPDATE, enqueue or non-GET call
+(``tests/unit/test_aa1154_ops_assist.py`` scans this package). Free text from outside (alarm descriptions, job
+errors, route notes) is never put in the snapshot except the attention item's own detail, which ``evidence_items``
+marks ``untrusted`` (it is data, never an instruction; A1 hands the bundle to an LLM).
 
 ``evidence_items(snapshot)`` (pure) turns the snapshot into the evidence list the cards cite: each item with an id,
 a label, a short value, its source, ``as_of`` and a link to the filtered admin view.
@@ -314,6 +316,7 @@ async def collect(pool: Any, redis: Any, *, item_id: str, limits: dict, range_ke
     source: it is listed in ``unavailable``. ``include_status`` False skips the status page build (the signal list
     only needs the gateway reads)."""
     from api.services import ops_status
+    from api.services.ops_assist import outcome
     from services.jobs import llm_probe_job
     from shared.jobs.registry import kinds
     from shared.jobs.worker import load_kinds
@@ -325,7 +328,7 @@ async def collect(pool: Any, redis: Any, *, item_id: str, limits: dict, range_ke
     unavailable: dict[str, str] = {}
     g = _guard
     (status, connections, calls_rows, baseline_rows, routes, route_versions, denied, stuck, waves, probe_rows,
-     events) = await asyncio.gather(
+     events, history) = await asyncio.gather(
         g("status", ops_status.build_status(pool, redis, range_key=range_key, authorization=authorization, now=now),
           unavailable) if include_status else _none(),
         g("connections", _connections(pool, now), unavailable),
@@ -338,6 +341,7 @@ async def collect(pool: Any, redis: Any, *, item_id: str, limits: dict, range_ke
         g("waves", _rows(pool, WAVES_SQL), unavailable),
         g("probe", _rows(pool, PROBE_SQL, changes_since), unavailable),
         g("changes", _rows(pool, EVENTS_SQL, changes_since), unavailable),
+        outcome.history(pool),   # never raises: no record = "not enough data", the safe side
     )
     load_kinds()
     registered = set(kinds())
@@ -371,7 +375,7 @@ async def collect(pool: Any, redis: Any, *, item_id: str, limits: dict, range_ke
         "changes": [{"id": f"e{r['event_id']}", "t": _iso(r["occurred_at"]), "t2": _iso(r.get("ended_at")),
                      "kind": r["kind"], "severity": r["severity"], "app": r.get("app") or "shared",
                      "subject": r["subject"]} for r in events or []] if events is not None else None,
-        "history": {},   # A2: measured outcomes per action ("right k of n"); none are recorded in A0
+        "history": history or {},   # A2: checked outcomes per action ("right k of n", outcome.history)
         "unavailable": unavailable,
     }
 

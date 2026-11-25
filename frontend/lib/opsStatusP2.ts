@@ -21,13 +21,19 @@ export interface SloRules {
 }
 export interface Slo { rules: SloRules; rows: SloRow[]; sample_minutes: number }
 
+/** Where an external check ran (acp_shared.ops_external_check.source, CIS 492). */
+export type ExternalSource = "worker" | "github";
+export interface ExternalSourceInfo { source: ExternalSource; newest: string | null; interval_minutes: number;
+  stale: boolean }
 export interface ExternalRow {
-  target: string; app: string; host: string; state: string; checked_at: string; http_status: number | null;
+  target: string; source?: ExternalSource; stale?: boolean;
+  app: string; host: string; state: string; checked_at: string; http_status: number | null;
   latency_ms: number | null; dns_ok: boolean | null; tls_ok: boolean | null; error: string | null;
   cert_not_after: string | null; cert_days_left: number | null; cert_level: "ok" | "warn" | "crit" | "none";
   cell_minutes: number; cells: string[]; uptime_pct: number | null;
 }
 export interface External { rows: ExternalRow[]; newest: string; schedule_minutes: number; stale: boolean;
+  sources?: ExternalSourceInfo[];
   cert_days: { warn: number; crit: number; warn_key: string; crit_key: string } }
 
 export type IncidentStatus = "investigating" | "identified" | "monitoring" | "resolved";
@@ -53,12 +59,18 @@ export interface TenantsResp {
   ai_spend?: (AgencyRef & { cost_usd: number; requests: number })[];
   failed_jobs?: (AgencyRef & { failed: number; last: string | null })[];
   ai_errors?: (AgencyRef & { failed: number; requests: number; failed_pct: number | null })[];
+  // S293: API server errors (5xx) per agency, from the metered call log of the agencies' own systems
+  server_errors?: (AgencyRef & { server_errors: number; calls: number; error_pct: number | null; last: string | null })[];
+  api_calls?: number;
+  server_errors_scope?: string[];
   platform?: { cost_usd: number; requests: number; failed: number };
   agencies_seen?: number;
   agency?: AgencyRef & { known: boolean; cost_usd: number; requests: number; ai_failed: number; jobs_failed: number;
     by_stage: { app: string; stage: string | null; cost_usd: number; requests: number; failed: number }[];
     ai_errors: { error_class: string; requests: number }[];
-    failed_jobs: { kind: string; failed: number; last: string | null }[] };
+    failed_jobs: { kind: string; failed: number; last: string | null }[];
+    api_calls?: number; server_errors?: number; server_error_pct?: number | null;
+    server_error_endpoints?: { method: string; endpoint: string; server_errors: number; last: string | null }[] };
 }
 
 export const INCIDENT_STATUSES: readonly IncidentStatus[] = ["investigating", "identified", "monitoring", "resolved"];
@@ -104,6 +116,17 @@ export function externalLevel(r: Pick<ExternalRow, "state" | "cert_level">): "cr
   if (r.state === "down" || r.state === "degraded" || r.cert_level === "crit") return "crit";
   if (r.state === "warn" || r.cert_level === "warn") return "warn";
   return r.state === "ok" ? "ok" : "none";
+}
+
+/** The row key of an external result: one row per target and source (rows from before CIS 492 count as github). */
+export function externalRowId(r: Pick<ExternalRow, "target" | "source">): string {
+  return `${r.target}:${r.source ?? "github"}`;
+}
+
+/** The level a row is drawn with: a row whose source stopped reporting is grey (its state is old), whatever it said. */
+export function externalRowLevel(r: Pick<ExternalRow, "state" | "cert_level" | "stale">):
+  "crit" | "warn" | "ok" | "none" {
+  return r.stale ? "none" : externalLevel(r);
 }
 
 /** Tone of an incident status: resolved is done, monitoring a warning, the others need someone. */

@@ -2,7 +2,8 @@
 migration, CIS 485 and 486 included): an incident is declared with its update and audit rows, refused a second time for
 the same alert, updated (status, SEV, owner, note), resolved and reopened, and read back with its timeline (its own
 trail, the ops events of its app, the acks of its item); the sampler's copy of an external check run is stored once
-and drawn as a strip; the per-agency drill-down reads the hourly usage rollup and failed jobs per agency; the CRM's
+and drawn as a strip; the per-agency drill-down reads the hourly usage rollup and failed jobs per agency, and (S293)
+the API server errors per agency from the metered call log; the CRM's
 availability is counted from its health samples. Invented names only; rows are removed by the test's own keys."""
 import json
 import os
@@ -25,6 +26,7 @@ ITEM = "errors-zz1142"
 ACTOR_A = "admin:00000000-0000-4000-8000-0000000a1142"
 ACTOR_B = "admin:00000000-0000-4000-8000-0000000b1142"
 AGENCY = "00000000-0000-4000-8000-0000000c1142"
+AGENCY_API = "00000000-0000-4000-8000-0000000d1142"   # a real agency row: shared.tenant_api_usage has a tenant FK
 
 
 @pytest_asyncio.fixture
@@ -41,6 +43,8 @@ async def pool():
         await p.execute("DELETE FROM acp_shared.ops_sample WHERE subject = 'zz1142-crm'")
         await p.execute("DELETE FROM shared.ai_usage_hourly WHERE tenant_id = $1::uuid", AGENCY)
         await p.execute("DELETE FROM shared.job WHERE kind = 'zz1142_kind'")
+        await p.execute("DELETE FROM shared.tenant_api_usage WHERE tenant_id = $1::uuid", AGENCY_API)
+        await p.execute("DELETE FROM shared.tenants WHERE tenant_id = $1::uuid", AGENCY_API)
         await p.close()
 
 
@@ -116,6 +120,31 @@ async def test_external_ingest_once_and_strip(pool):
 
 
 @pytest.mark.asyncio
+async def test_worker_and_github_runs_of_one_target_are_kept_apart(pool):
+    """S293 (CIS 492): the worker job and the GitHub copy both store runs of one target, each with its source; a replayed
+    run is stored once and the page draws one strip per source. The worker keeps its time at full precision, so it never
+    meets a GitHub run (whole seconds) on the S292 key (target, checked_at) that stays until a later contract file."""
+    gh_at = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=3)
+    at = gh_at + timedelta(microseconds=250_000)
+    result = {"target": "zz1142-both", "app": "cis", "host": "both.zz1142.example", "mode": "health", "dns_ok": True,
+              "tls_ok": True, "cert_not_after": at + timedelta(days=90), "http_status": 200, "http_ok": True,
+              "latency_ms": 95, "error": None}
+    old = at - timedelta(hours=3)
+    assert await external.store_run(pool, "worker", at, [result]) == 1
+    await external.store_run(pool, "worker", at, [result])                       # a replayed run: stored once
+    await external.store_run(pool, "github", gh_at, [{**result, "http_status": 503, "http_ok": False}])
+    await external.store_run(pool, "github", old, [result])
+    got = await pool.fetch("SELECT source, state FROM acp_shared.ops_external_check WHERE target = 'zz1142-both' "
+                           "AND checked_at >= $1 ORDER BY source", gh_at)
+    assert [(r["source"], r["state"]) for r in got] == [("github", "degraded"), ("worker", "ok")]
+    now = datetime.now(timezone.utc)
+    sec = await external.collect(pool, TimeRange("1h", now - timedelta(hours=1), now, 60), now)
+    rows = [r for r in sec["data"]["rows"] if r["target"] == "zz1142-both"]
+    assert [r["source"] for r in rows] == ["worker", "github"]
+    assert {s["source"] for s in sec["data"]["sources"]} == {"worker", "github"}
+
+
+@pytest.mark.asyncio
 async def test_tenant_drill_down_reads_the_rollup_and_failed_jobs(pool):
     now = datetime.now(timezone.utc)
     hour = now.replace(minute=0, second=0, microsecond=0)
@@ -139,6 +168,30 @@ async def test_tenant_drill_down_reads_the_rollup_and_failed_jobs(pool):
     one = (await tenants.collect(pool, rng, AGENCY, now))["agency"]
     assert one["ai_failed"] == 1 and one["jobs_failed"] == 1 and one["failed_jobs"][0]["kind"] == "zz1142_kind"
     assert one["ai_errors"][0]["error_class"] == "zz1142_error" and one["known"] is False
+
+
+@pytest.mark.asyncio
+async def test_tenant_drill_down_counts_api_server_errors_per_agency(pool):
+    now = datetime.now(timezone.utc)
+    await pool.execute("INSERT INTO shared.tenants (tenant_id, name, slug, plan_tier, posts_per_week) "
+                       "VALUES ($1::uuid, 'Quillmere Voyages synthetic', 'zz1142-quillmere', 'starter', 3) "
+                       "ON CONFLICT DO NOTHING", AGENCY_API)
+    rows = [(200, "/v1/zz-tours", 30), (503, "/v1/zz-tours/{tour_id}", 20), (500, "/v1/zz-tours/{tour_id}", 10),
+            (502, "/v1/zz-places", 5), (200, "/v1/zz-places", 3 * 60 * 2)]   # the last row is outside the range
+    for status, endpoint, minutes_ago in rows:
+        await pool.execute(
+            "INSERT INTO shared.tenant_api_usage (tenant_id, endpoint, method, status_code, response_ms, called_at, "
+            "actor_type) VALUES ($1::uuid, $2, 'GET', $3, 40, $4, 'tenant')",
+            AGENCY_API, endpoint, status, now - timedelta(minutes=minutes_ago))
+    rng = TimeRange("1h", now - timedelta(hours=1), now, 60)
+    out = await tenants.collect(pool, rng, None, now)
+    mine = {r["tenant_id"]: r for r in out["server_errors"]}[AGENCY_API]
+    assert (mine["server_errors"], mine["calls"], mine["error_pct"]) == (3, 4, 75.0)
+    assert mine["name"] == "Quillmere Voyages synthetic"
+    one = (await tenants.collect(pool, rng, AGENCY_API, now))["agency"]
+    assert (one["api_calls"], one["server_errors"], one["server_error_pct"]) == (4, 3, 75.0)
+    assert [(e["endpoint"], e["server_errors"]) for e in one["server_error_endpoints"]] == [
+        ("/v1/zz-tours/{tour_id}", 2), ("/v1/zz-places", 1)]
 
 
 @pytest.mark.asyncio

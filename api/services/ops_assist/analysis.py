@@ -111,6 +111,23 @@ async def analyse(pool: Any, redis: Any, item_id: str, *, range_key: str = "24h"
     return explain.owner_view(out) if business_owner else out
 
 
+async def cached(pool: Any, redis: Any, item_id: str, *, range_key: str = "24h", authorization: Optional[str] = None,
+                 business_owner: bool = False) -> dict:
+    """The rule-made answer with the model's part saved within the card lifetime, when there is one (Deep first, then
+    quick), and never a new call: what a read-only session (a viewer, view-as, the E2E identity) sees, so it reads the
+    explanation someone with the right to ask already paid for (S292 follow-up)."""
+    base = await ops_assist.analyse(pool, redis, item_id, range_key=range_key, authorization=authorization)
+    if base.get("item") is None:
+        return base
+    out = base
+    for depth in ("deep", "quick"):
+        hit = await _get(redis, cache_key(item_id, range_key, depth))
+        if hit and hit.get("part") is not None:
+            out = explain.merge(base, hit["part"], {**hit["meta"], "cached": True, "calls": 0})
+            break
+    return explain.owner_view(out) if business_owner else out
+
+
 async def auto(pool: Any, redis: Any, *, range_key: str = "24h", authorization: Optional[str] = None,
                llm: Any = None) -> dict:
     """One quick analysis per incident of an automatic severity not analysed yet; {analysed, already, failed,
@@ -123,8 +140,8 @@ async def auto(pool: Any, redis: Any, *, range_key: str = "24h", authorization: 
         return {"enabled": False, "reason": "no_severities", "severities": sev, "analysed": [], "already": [],
                 "failed": []}
     ttl_s = marker_ttl_s(lim)
-    snap = await evidence.collect(pool, redis, item_id="", limits=lim, range_key=range_key,
-                                  authorization=authorization)
+    snap = await ops_assist.collect_in_time(pool, redis, lim, item_id="", range_key=range_key,
+                                           authorization=authorization)
     out: dict = {"enabled": True, "severities": sev, "analysed": [], "already": [], "failed": []}
     for t in auto_targets(snap, lim):
         k = auto_key(t)
@@ -143,4 +160,4 @@ async def auto(pool: Any, redis: Any, *, range_key: str = "24h", authorization: 
     return out
 
 
-__all__ = ["analyse", "auto", "auto_key", "auto_severities", "auto_targets", "cache_key", "marker_ttl_s"]
+__all__ = ["analyse", "auto", "cached", "auto_key", "auto_severities", "auto_targets", "cache_key", "marker_ttl_s"]
