@@ -121,20 +121,21 @@ async def test_external_ingest_once_and_strip(pool):
 
 @pytest.mark.asyncio
 async def test_worker_and_github_runs_of_one_target_are_kept_apart(pool):
-    """S293 (CIS 493): the worker job and the GitHub copy may store the same target at the same second; each keeps its
-    row and the page draws one strip per source. A GitHub feed that stopped does not grey the card while the worker is
-    fresh."""
-    at = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=3)
+    """S293 (CIS 493): the worker job and the GitHub copy both store runs of one target, each with its source; a replayed
+    run is stored once and the page draws one strip per source. The worker keeps its time at full precision, so it never
+    meets a GitHub run (whole seconds) on the S292 key (target, checked_at) that stays until a later contract file."""
+    gh_at = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=3)
+    at = gh_at + timedelta(microseconds=250_000)
     result = {"target": "zz1142-both", "app": "cis", "host": "both.zz1142.example", "mode": "health", "dns_ok": True,
               "tls_ok": True, "cert_not_after": at + timedelta(days=90), "http_status": 200, "http_ok": True,
               "latency_ms": 95, "error": None}
     old = at - timedelta(hours=3)
     assert await external.store_run(pool, "worker", at, [result]) == 1
     await external.store_run(pool, "worker", at, [result])                       # a replayed run: stored once
-    await external.store_run(pool, "github", at, [{**result, "http_status": 503, "http_ok": False}])
+    await external.store_run(pool, "github", gh_at, [{**result, "http_status": 503, "http_ok": False}])
     await external.store_run(pool, "github", old, [result])
     got = await pool.fetch("SELECT source, state FROM acp_shared.ops_external_check WHERE target = 'zz1142-both' "
-                           "AND checked_at = $1 ORDER BY source", at)
+                           "AND checked_at >= $1 ORDER BY source", gh_at)
     assert [(r["source"], r["state"]) for r in got] == [("github", "degraded"), ("worker", "ok")]
     now = datetime.now(timezone.utc)
     sec = await external.collect(pool, TimeRange("1h", now - timedelta(hours=1), now, 60), now)

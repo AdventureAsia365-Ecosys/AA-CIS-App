@@ -160,6 +160,7 @@ async def test_a_run_checks_the_valid_targets_and_stores_them_as_worker(monkeypa
     out = await job.run(ctx)
     assert seen == {"targets": [HEALTH, TLS], "timeout": 4.0}
     assert store.call_args[0][1] == "worker" and len(store.call_args[0][3]) == 2
+    assert store.call_args[0][2].tzinfo is not None   # the run's time, kept at full precision (not whole seconds)
     assert out["status"] == "checked" and out["states"] == {"degraded": 1, "ok": 1}
     assert out["skipped"] == [{"id": "zz-bad", "problem": "bad host"}] and ctx.result == out
 

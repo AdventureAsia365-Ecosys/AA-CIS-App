@@ -101,7 +101,9 @@ async def run(ctx: JobContext) -> dict:
     targets, skipped = xs.targets()
     for s in skipped:
         logger.warning("ops_external_check_target_skipped", target=s["id"], problem=s["problem"])
-    checked_at = now.replace(microsecond=0)
+    # Full precision on purpose: the GitHub copy stores whole seconds, and until a later contract file drops the S292
+    # unique key (target, checked_at) a worker row at the same whole second as a GitHub row would be dropped.
+    checked_at = now
     results = await external_probe.run(targets, xs.timeout_s())
     stored = await external.store_run(ctx.pool, "worker", checked_at, results)
     states = Counter(external.state_of(r, checked_at, external.th.cert_days()) for r in results)
