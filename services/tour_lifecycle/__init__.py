@@ -6,14 +6,13 @@ status columns or inserting into raw_tours / published_tours.
 """
 from .batch import open_batch
 from .effects import recompute_after_status_change, run_after_commit
+from .hand_made import SOURCE_HAND_MADE, hand_made_versions
 from .service import (
     LifecycleError,
     Outcome,
     PREVIEW_ACTIONS,
     activate_master,
-    SOURCE_HAND_MADE,
     deleted_key_info,
-    hand_made_versions,
     insert_new_sources,
     key_of,
     key_was_published,

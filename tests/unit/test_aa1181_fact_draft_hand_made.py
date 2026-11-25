@@ -89,7 +89,7 @@ def test_the_publish_checks_of_a_sheet_tour_still_pass():
 
 
 class _MergeConn:
-    """The reads of ``_merge_inputs``: the staging row, the origin probe and (a sheet tour) the tour row, its history."""
+    """The reads of ``_merge_inputs``: the staging row, the origin probe and (a sheet tour) the tour row, history."""
 
     def __init__(self, origin):
         self.origin = origin
@@ -201,3 +201,12 @@ def test_hand_made_versions_is_empty_without_a_key():
     from services.tour_lifecycle import hand_made_versions
     assert _run(hand_made_versions(_LifecycleConn({TOUR}), None)) == set()
     assert _run(hand_made_versions(_LifecycleConn(set()), GROUP)) == set()
+
+
+def test_create_new_and_the_hand_made_version_itself_pass():
+    """Bypass needs no lifecycle call; Create a new tour and setting the hand-made version itself active pass."""
+    from services.tour_lifecycle import hand_made
+    conn = _LifecycleConn({TOUR})
+    assert _run(hand_made.refuse_sheet(conn, GROUP, decision="create_new")) is None
+    assert _run(hand_made.refuse_sheet(conn, GROUP, live_tour_id=TOUR)) is None
+    assert _run(hand_made.refuse_sheet(_LifecycleConn(set()), GROUP, decision="replace")) is None   # a sheet key

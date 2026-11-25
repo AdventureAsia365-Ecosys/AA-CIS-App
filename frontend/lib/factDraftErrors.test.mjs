@@ -50,7 +50,7 @@ test("Duplicate Review offers only Bypass and Create a new tour when the match w
     ["bypass", "restore", "create_new"]);
   assert.deepEqual(Object.keys(decisionLabels({})), ["bypass", "merge", "replace", "keep_both"]);
   const page = read("../app/admin/upload/page.tsx");
-  assert.match(page, /item\.matched_hand_made && \(/);
+  assert.match(page, /else if \(item\.matched_hand_made\)/);
   const msgs = read("../app/admin/upload/messages.ts");
   const lines = msgs.split("\n").filter(l => l.trim().startsWith("handMadeMatch:"));
   assert.equal(lines.length, 2, "handMadeMatch in EN and VI");

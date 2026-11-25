@@ -729,6 +729,27 @@ function UploadHistorySection({ history, loading, onRefresh }: {
 
 // ─── DuplicateReview (Step 5) ─────────────────────────────────────────────────
 
+// The red note above a staged row whose match takes other decisions: a deleted tour (AA-986 L2, Q6: Restore or Create
+// a new tour) or a tour made by hand in the content workspace (AA-1181: Bypass or Create a new tour).
+function MatchNote({ item }: { item: StagingItem }) {
+  const t = useT(UP);
+  let text: string | null = null;
+  if (item.matched_deleted) {
+    text = t("deletedOn", item.matched_deleted_at ? item.matched_deleted_at.slice(0, 10) : t("earlierDate"));
+  } else if (item.matched_hand_made) {
+    text = t("handMadeMatch");
+  }
+  if (!text) return null;
+  return (
+    <div style={{
+      padding: "8px 16px", background: K.dangerTint, borderBottom: `1px solid ${K.line}`,
+      fontSize: 12, color: K.danger, fontWeight: 600,
+    }}>
+      {text}
+    </div>
+  );
+}
+
 function DuplicateReviewStep({
   batchIds,
   onDone,
@@ -854,23 +875,7 @@ function DuplicateReviewStep({
                 )}
               </div>
 
-              {item.matched_deleted && (
-                <div style={{
-                  padding: "8px 16px", background: K.dangerTint, borderBottom: `1px solid ${K.line}`,
-                  fontSize: 12, color: K.danger, fontWeight: 600,
-                }}>
-                  {t("deletedOn", item.matched_deleted_at ? item.matched_deleted_at.slice(0, 10) : t("earlierDate"))}
-                </div>
-              )}
-
-              {!item.matched_deleted && item.matched_hand_made && (
-                <div style={{
-                  padding: "8px 16px", background: K.dangerTint, borderBottom: `1px solid ${K.line}`,
-                  fontSize: 12, color: K.danger, fontWeight: 600,
-                }}>
-                  {t("handMadeMatch")}
-                </div>
-              )}
+              <MatchNote item={item} />
 
               {/* Side-by-side */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
