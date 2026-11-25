@@ -146,6 +146,10 @@ def test_parse_checks_every_field_and_drops_bad_targets():
     ({"tls_ok": False}, "down"),
     ({"http_status": None, "error": "timed out"}, "down"),
     ({"mode": "tls", "http_status": None}, "ok"),                   # TLS-only target: no health path
+    ({"mode": "tls", "http_status": None, "tls_ok": None, "error": "TimeoutError"}, "down"),   # no handshake
+    ({"mode": "tls", "http_status": None, "tls_ok": None, "error": "ConnectionRefusedError"}, "down"),
+    ({"tls_ok": None, "http_status": None, "error": "TimeoutError"}, "down"),   # same case in health mode
+    ({"dns_ok": None, "tls_ok": None, "mode": "tls", "http_status": None}, "unknown"),   # nothing was checked
 ])
 def test_state_of(over, state):
     _, rows = external.parse(_doc(**over))

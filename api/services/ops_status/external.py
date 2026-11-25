@@ -138,8 +138,13 @@ def cert_level(days: Optional[float], limits: dict) -> str:
 
 def state_of(r: dict, now: datetime, limits: dict) -> str:
     """The state of one result: down (DNS, TLS or the request failed), degraded (an unexpected HTTP status, or the
-    certificate at its critical days), warn (certificate at its warn days), ok. Pure."""
+    certificate at its critical days), warn (certificate at its warn days), ok. Pure.
+
+    A name that resolved but gave no TLS handshake (tls_ok None: the connection timed out or was refused) is down in
+    both modes: a TLS-only target has no HTTP status to fall back on, so it must never read as ok."""
     if r.get("dns_ok") is False or r.get("tls_ok") is False:
+        return "down"
+    if r.get("dns_ok") is True and r.get("tls_ok") is not True:
         return "down"
     if r.get("mode") != "tls" and r.get("http_status") is None:
         return "down"
