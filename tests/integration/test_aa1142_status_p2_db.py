@@ -121,7 +121,7 @@ async def test_external_ingest_once_and_strip(pool):
 
 @pytest.mark.asyncio
 async def test_worker_and_github_runs_of_one_target_are_kept_apart(pool):
-    """S293 (CIS 493): the worker job and the GitHub copy both store runs of one target, each with its source; a replayed
+    """S293 (CIS 492): the worker job and the GitHub copy both store runs of one target, each with its source; a replayed
     run is stored once and the page draws one strip per source. The worker keeps its time at full precision, so it never
     meets a GitHub run (whole seconds) on the S292 key (target, checked_at) that stays until a later contract file."""
     gh_at = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=3)

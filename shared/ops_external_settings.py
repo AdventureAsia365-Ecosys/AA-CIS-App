@@ -1,7 +1,7 @@
-"""AA-1142 follow-up (S293; CIS 494) — the settings of the external checks of the Ecosystem status page, on
+"""AA-1142 follow-up (S293; CIS 493) — the settings of the external checks of the Ecosystem status page, on
 Platform › Settings (area "ops").
 
-The checks run from two vantage points (``acp_shared.ops_external_check.source``, CIS 493):
+The checks run from two vantage points (``acp_shared.ops_external_check.source``, CIS 492):
 
 - ``worker``: the CIS worker's monitoring job ``ops_external_check`` (services/jobs/ops_external_check_job.py), every
   ``cis.ops.external_check_interval_min`` minutes, against ``cis.ops.external_check_targets``, each step waiting at
@@ -44,7 +44,7 @@ _warned: set[str] = set()
 
 
 def _seeded(key: str) -> Any:
-    """The CIS 494 seed value of a key (the compiled default); None when not even that can be read."""
+    """The CIS 493 seed value of a key (the compiled default); None when not even that can be read."""
     try:
         return settings.definition(key).default_value
     except Exception:  # noqa: BLE001 — the caller falls back to its own seed

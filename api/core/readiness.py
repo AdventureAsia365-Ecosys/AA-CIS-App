@@ -132,10 +132,10 @@ REQUIRED_CIS_SCHEMA = 322
 # 479 (AA-1173 — Platform › Compliance writes compliance.evidence.object_key / object_sha256 on every ingest and the
 # Exceptions / Reviews tabs read and write compliance.exception / compliance.review; every evidence ingest fails without
 # it).
-# 493 (AA-1142 follow-up — the external checks read and write acp_shared.ops_external_check.source (the worker job and
-# the GitHub copy); the external card and the job fail without it. 494, the settings, is not needed: the reader serves
+# 492 (AA-1142 follow-up — the external checks read and write acp_shared.ops_external_check.source (the worker job and
+# the GitHub copy); the external card and the job fail without it. 493, the settings, is not needed: the reader serves
 # the compiled defaults).
-REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 395, 397, 398, 402, 408, 409, 411, 420, 428, 435, 439, 443, 454, 462, 464, 465, 466, 469, 470, 471, 473, 474, 475, 478, 479, 482, 483, 485, 486, 488, 493)  # noqa: E501
+REQUIRED_CIS_ABOVE_GAP = (362, 363, 364, 370, 374, 375, 378, 393, 395, 397, 398, 402, 408, 409, 411, 420, 428, 435, 439, 443, 454, 462, 464, 465, 466, 469, 470, 471, 473, 474, 475, 478, 479, 482, 483, 485, 486, 488, 492)  # noqa: E501
 # Versions this code needs that were registered after a higher one (reserved numbers): 297 (AA-920 WM-25) was reserved
 # in S255 and applied after 299. max() is already 299 without it, so the version reported is capped below the lowest
 # listed version that is not registered (297 missing -> 296 -> "schema_behind").

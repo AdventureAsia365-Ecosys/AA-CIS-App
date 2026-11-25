@@ -21,7 +21,7 @@ export interface SloRules {
 }
 export interface Slo { rules: SloRules; rows: SloRow[]; sample_minutes: number }
 
-/** Where an external check ran (acp_shared.ops_external_check.source, CIS 493). */
+/** Where an external check ran (acp_shared.ops_external_check.source, CIS 492). */
 export type ExternalSource = "worker" | "github";
 export interface ExternalSourceInfo { source: ExternalSource; newest: string | null; interval_minutes: number;
   stale: boolean }
@@ -118,7 +118,7 @@ export function externalLevel(r: Pick<ExternalRow, "state" | "cert_level">): "cr
   return r.state === "ok" ? "ok" : "none";
 }
 
-/** The row key of an external result: one row per target and source (rows from before CIS 493 count as github). */
+/** The row key of an external result: one row per target and source (rows from before CIS 492 count as github). */
 export function externalRowId(r: Pick<ExternalRow, "target" | "source">): string {
   return `${r.target}:${r.source ?? "github"}`;
 }

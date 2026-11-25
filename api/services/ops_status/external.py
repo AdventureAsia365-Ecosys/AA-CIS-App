@@ -2,7 +2,7 @@
 and its certificate, the public health path), next to the internal checks of the 5-minute sampler (S285 review idea
 11).
 
-Producers (``acp_shared.ops_external_check.source``, CIS 493), each optional (``cis.ops.external_check_sources``):
+Producers (``acp_shared.ops_external_check.source``, CIS 492), each optional (``cis.ops.external_check_sources``):
 
 - ``worker`` (S293): the CIS worker's monitoring job ``ops_external_check`` (services/jobs/ops_external_check_job.py,
   :mod:`api.services.ops_status.external_probe`) every ``cis.ops.external_check_interval_min`` minutes against

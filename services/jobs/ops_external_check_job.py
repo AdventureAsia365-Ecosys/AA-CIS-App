@@ -1,5 +1,5 @@
 """AA-1142 follow-up (S293) — job kind ``ops_external_check``: the external checks of the Ecosystem status page, run
-by the CIS worker (source ``worker`` of ``acp_shared.ops_external_check``, CIS 493).
+by the CIS worker (source ``worker`` of ``acp_shared.ops_external_check``, CIS 492).
 
 Why. The S292 producer, the root repo workflow External checks on GitHub Actions (cron every 15 minutes), had 0
 scheduled runs on its first day, and the other root crons start up to 10 hours late: a GitHub schedule cannot feed a
