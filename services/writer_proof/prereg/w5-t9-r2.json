@@ -2,9 +2,9 @@
   "format": 1,
   "id": "w5-t9-r2",
   "workflow": "t9",
-  "status": "draft",
-  "registered_by": null,
-  "registered_on": null,
+  "status": "registered",
+  "registered_by": "tech_lead",
+  "registered_on": "2026-11-25",
   "golden_set": {
     "name": "aa729",
     "version": "1.7.0"
@@ -127,5 +127,5 @@
     "claims_per_item": 60
   },
   "cap_usd": 5.0,
-  "note": "AA-1169 re-measure of the W5 T9 writer proof after the first-pass fix (DRAFT: register it in a reviewed PR only after the tech lead's yes to the paid run). Same 12 t9_blog GATE items, judge, metrics, decision and power as w5-t9 (registered, S285: first_pass_yield 0.083, fail_claims_per_item 3.5 against A 4.67, non_inferior); golden aa729@1.7.0, the active version, whose t9_blog GATE items are byte-identical to 1.5.0 (runner.null_gate opens it through w5-null-t9-blog-v7-g150 by golden_carry, as for w5-s1 / w5-t2). B = the current t9_blog writer with the setting cis.t9.blog_claim_rule ON (CIS 484: the blog CLAIM CHECK block, t9_write v10 with the prompt fingerprint suffix) during the run; release_id null. The DRY plan names A's control run: it must be written WITHOUT the claim block (the S285 w5-t9 B run 82b394b0 or an earlier control), never a run with the switch on, else B equals A. Targets as w5-t9: first_pass_yield >= 0.3 is the AA-1169 bar; errors per blog must stay non_inferior (margin 4.0). Cost: the S285 T9 proof spent 1.42 USD on the ledger (writer 0.64, judge 0.77) for 12 items, its plan estimated 3.31 USD max; cap 5 USD (AA-1169 scope, inside the D12 T9 cap), the run command uses 4.8 so the last writer item stays within 5. Report: runner report, then runner first-pass for the remaining failure classes."
+  "note": "AA-1169 re-measure of the W5 T9 writer proof after the first-pass fix (registered S292 25/11/2026 after the tech lead's yes to the paid run, cap 5 USD). Same 12 t9_blog GATE items, judge, metrics, decision and power as w5-t9 (registered, S285: first_pass_yield 0.083, fail_claims_per_item 3.5 against A 4.67, non_inferior); golden aa729@1.7.0, the active version, whose t9_blog GATE items are byte-identical to 1.5.0 (runner.null_gate opens it through w5-null-t9-blog-v7-g150 by golden_carry, as for w5-s1 / w5-t2). B = the current t9_blog writer with the setting cis.t9.blog_claim_rule ON (CIS 484: the blog CLAIM CHECK block, t9_write v10 with the prompt fingerprint suffix) during the run; release_id null. The DRY plan names A's control run: it must be written WITHOUT the claim block (the S285 w5-t9 B run 82b394b0 or an earlier control), never a run with the switch on, else B equals A. Targets as w5-t9: first_pass_yield >= 0.3 is the AA-1169 bar; errors per blog must stay non_inferior (margin 4.0). Cost: the S285 T9 proof spent 1.42 USD on the ledger (writer 0.64, judge 0.77) for 12 items, its plan estimated 3.31 USD max; cap 5 USD (AA-1169 scope, inside the D12 T9 cap), the run command uses 4.8 so the last writer item stays within 5. Report: runner report, then runner first-pass for the remaining failure classes."
 }
