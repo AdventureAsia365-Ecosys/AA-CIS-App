@@ -1,0 +1,175 @@
+name: Admin routes
+
+# S292 (follow-up of the S291 hotfix, release safety) — every page of the CIS admin that the ADMINISTRATOR may open,
+# rendered as the administrator before the change reaches main. Why: the per-PR visual run has no session, and the
+# signed-in smoke / visual runs after a deploy use the E2E viewer, which never opens an admin-only page (nor sees the
+# write controls of the shared ones). That gap let the Ecosystem status page reach Dev with controls that called
+# useToast() outside a ToastProvider ("Something went wrong" for the administrator only).
+#
+# How, without any credential: `next build` + `next start` in the runner with NEXT_PUBLIC_API_URL / API_URL pointed at
+# tests/e2e/admin-routes/stub-api.mjs (127.0.0.1), which answers POST /auth/verify-admin with the administrator for
+# any token, GET /admin/session as writable, and 503 to every other read. The browser carries an unsigned stand-in
+# session cookie that only the stub accepts. This build is thrown away; the production image, its sign-in, proxy.ts
+# gate and BFF are unchanged, and nothing of the stub is in the runtime bundle.
+# The pages: tests/e2e/admin-routes/routes.ts walks frontend/app/admin/**/page.tsx and keeps the routes lib/rbac.ts
+# opens to the administrator (plus the query variants of tests/e2e/visual/pages.ts), so a new page is covered the
+# day it lands. A page fails on an uncaught error, a console error (bar the stubbed /api reads), an error boundary,
+# no kit frame or a bounce out of /admin. Three planted faults (provider error, console error, error page) must be
+# caught in the same run, or it is red.
+#
+# Required-check friendly (like visual.yml): no `paths:` filter (a required check reports on every PR, and
+# merge_group ignores path filters), a merge_group trigger, the job name below never changes, and the skip for a PR
+# without a frontend change is step-level (Scope): every later step skipped, the job green. A job-level skip would
+# report "skipped", which passes even when a scope job failed.
+
+on:
+  pull_request:
+    branches: [main]
+  merge_group:
+    types: [checks_requested]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A PR's newer push cancels its older run; a queue group or dispatch has its own run_id group.
+concurrency:
+  group: admin-routes-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Admin routes (next start, stub API, administrator)
+    # Pinned like ui-smoke.yml / visual.yml (WL2): Playwright's Chromium is not supported on ubuntu 26.04 yet.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      BASE_URL: http://localhost:3001
+      STUB_PORT: "55491"
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Frontend, the check's own files and this workflow; renames count by both names. A dispatch runs every step; a
+      # diff that cannot be computed runs the full check (never a silent skip).
+      - name: Scope
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          GROUP_BASE: ${{ github.event.merge_group.base_sha }}
+        run: |
+          case "$EVENT" in
+            pull_request) BASE=${BASE_REF:+origin/$BASE_REF} ;;
+            merge_group) BASE=$GROUP_BASE ;;
+            *) echo "run=true" >> "$GITHUB_OUTPUT"; echo "Scope: $EVENT runs every step"; exit 0 ;;
+          esac
+          if [ -z "$BASE" ] || ! FILES=$(git diff --name-only --no-renames "$BASE...HEAD"); then
+            echo "::warning::no base commit, or git diff ${BASE:-(none)}...HEAD failed: running the full check"
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          MATCHED=$(printf '%s\n' "$FILES" \
+            | grep -E '^(frontend/|tests/e2e/admin-routes/|tests/e2e/visual/pages\.ts$|playwright\.config\.ts$|\.github/workflows/admin-routes\.yml$)' \
+            || true)
+          if [ -n "$MATCHED" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "Scope: $(printf '%s\n' "$MATCHED" | wc -l) frontend / check file(s) changed"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "### Admin routes — no frontend change (nothing to render)" >> "$GITHUB_STEP_SUMMARY"
+            echo "Scope: no frontend change; every later step is skipped and the check is green"
+          fi
+
+      - name: Set up Node 22
+        if: steps.scope.outputs.run == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      # WL4: restore on every ref; only the default branch saves this cache (ci.yml Frontend Build / cache-warm).
+      - name: Restore npm cache
+        if: steps.scope.outputs.run == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-${{ runner.arch }}-
+
+      # The route list, the failure rules, the stub's answers and the summary (dependency-free: before npm ci).
+      - name: Unit tests of the check
+        if: steps.scope.outputs.run == 'true'
+        working-directory: frontend
+        run: node --test --experimental-strip-types --no-warnings lib/adminRoutes.test.mjs
+
+      - name: Start the stub API
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          nohup node tests/e2e/admin-routes/stub-api.mjs "$STUB_PORT" "$RUNNER_TEMP/stub-requests.log" \
+            > "$RUNNER_TEMP/stub.log" 2>&1 &
+          for _ in $(seq 1 20); do
+            curl -sf -o /dev/null "http://127.0.0.1:$STUB_PORT/health" && exit 0
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/stub.log"
+          echo "::error::the stub API did not answer /health"
+          exit 1
+
+      # The API URLs point at the stub for this throwaway build only (proxy.ts reads NEXT_PUBLIC_API_URL, inlined at
+      # build time; the BFF reads API_URL at run time). ADMIN_SECRET is a placeholder: the BFF attaches it to the
+      # stub-bound reads of a legacy-shaped session and refuses to forward without one.
+      - name: Build the frontend against the stub and start it
+        if: steps.scope.outputs.run == 'true'
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:${{ env.STUB_PORT }}
+          API_URL: http://127.0.0.1:${{ env.STUB_PORT }}
+          ADMIN_SECRET: stub
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          nohup npx next start -p 3001 > "$RUNNER_TEMP/next.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -sf -o /dev/null http://localhost:3001/login && exit 0
+            sleep 2
+          done
+          cat "$RUNNER_TEMP/next.log"
+          echo "::error::next start did not answer /login"
+          exit 1
+
+      # `npm install`, not `npm ci`: the repo root's package-lock.json is gitignored (lesson S220).
+      - name: Install Playwright (repo root)
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Render every admin page as the administrator
+        if: steps.scope.outputs.run == 'true'
+        run: npx playwright test -c playwright.config.ts --project=admin-routes --workers=4 --reporter=list
+
+      - name: Summary
+        if: always() && steps.scope.outputs.run == 'true'
+        run: |
+          {
+            echo "### Admin routes — every administrator page on a stub API"
+            echo ""
+            node tests/e2e/admin-routes/summary.mjs tests/e2e/results/admin-routes "$RUNNER_TEMP/stub-requests.log"
+          } >> "$GITHUB_STEP_SUMMARY"
+          tail -n 40 "$RUNNER_TEMP/next.log" || true
+
+      # Failure screenshots and the per-page JSON only (the session is a stand-in: nothing secret to leak).
+      - name: Upload failure screenshots and per-page results
+        if: always() && steps.scope.outputs.run == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: admin-routes-${{ github.run_id }}
+          path: |
+            tests/e2e/results/admin-routes/*.json
+            test-results/**/*.png
+          if-no-files-found: ignore
+          retention-days: 14

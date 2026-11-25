@@ -144,6 +144,22 @@
   (job `deployed`, called by `deploy-admin-dev.yml` job `visual-production`; or a dispatch from `main` with `base_url`):
   the changed pages on the host, staff pages signed in through the smoke setup (Cognito E2E user, environment `e2e`).
   `tests/e2e/visual/pages.ts` lists every route or excludes it with a reason (guard `frontend/lib/visualPages.test.mjs`).
+- **Admin routes (S292, release safety, `.github/workflows/admin-routes.yml`)**: job
+  `Admin routes (next start, stub API, administrator)` on every pull request, the merge queue and dispatch (no `paths:`;
+  its Scope step skips every later step, green, when no frontend or check file changed). It renders every admin page
+  the administrator may open as the administrator, which no other CI run does (the visual run has no session; the
+  signed-in smoke and visual runs use the E2E viewer). Routes come from the code (`tests/e2e/admin-routes/routes.ts`:
+  each `frontend/app/admin/**/page.tsx` that `lib/rbac.ts` opens to the administrator, dynamic segments with an invented
+  id, plus the query variants of `tests/e2e/visual/pages.ts`), so a new page is covered when it lands. The runner builds
+  a throwaway `next build` whose `NEXT_PUBLIC_API_URL` / `API_URL` point at `tests/e2e/admin-routes/stub-api.mjs`
+  (POST `/auth/verify-admin` = the administrator for any token, GET `/admin/session` writable, 503 for every other
+  read); the browser carries an unsigned stand-in session cookie only the stub accepts. No real credential; the
+  production image, sign-in, `proxy.ts` and BFF are unchanged and never contain the stub (guard
+  `tests/unit/test_s292_admin_routes_check.py`). A page fails on an uncaught error, a console error (bar the stubbed
+  `/api` reads), an error boundary in place of the shell, no `[data-kit-frame]`, or a bounce out of `/admin`; three
+  planted faults (provider error, console error, error page) must be caught in the same run. Problems already on main
+  are tolerated by path in `KNOWN_PROBLEMS` (with reason and follow-up) and fail as stale once fixed. Playwright
+  project `admin-routes`, 4 workers; unit guard `frontend/lib/adminRoutes.test.mjs`.
 - **UI smoke (AA-732, `.github/workflows/ui-smoke.yml`)**: called by `deploy-admin-dev.yml` after a
   verified deploy from `main` (`workflow_call`, inputs `base_url` + `sha` + `staff_session`), or run by hand
   (`workflow_dispatch`). A Playwright suite (`tests/e2e/smoke/`)
