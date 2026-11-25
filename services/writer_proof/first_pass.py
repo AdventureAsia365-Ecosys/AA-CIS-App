@@ -186,14 +186,21 @@ def diagnose(rows: Iterable[dict]) -> dict[str, dict]:
 
 
 def _without(row: dict, fixed: frozenset[str]) -> dict:
-    """The row as if the writer had not written any flagged claim of the `fixed` classes."""
+    """The row as if the writer had not written any flagged claim of the `fixed` classes. A fail turns into a pass
+    only when it came from claims alone: a hard stop (QA artefacts, an isolation leak, injection), a fail with no
+    flagged claim and a fail with a failure code that no flagged claim carries stay a fail whatever the claims
+    become. A pass stays a pass (the judge passes a light edit that quotes claims)."""
     if _arm(row) != "B" or row.get("verdict") not in ("pass", "fail"):
         return row
     det = dict(row.get("details") or {})
-    kept = [c for c in det.get("judge_claims") or []
-            if claim_class(c.get("claim") if isinstance(c, dict) else str(c)) not in fixed]
+    orig = det.get("judge_claims") or []
+    kept = [c for c in orig if claim_class(c.get("claim") if isinstance(c, dict) else str(c)) not in fixed]
     det["judge_claims"] = kept
-    return {**row, "details": det, "verdict": "fail" if kept else "pass"}
+    if row.get("verdict") == "pass":
+        return {**row, "details": det}
+    claim_codes = {c.get("class") for c in orig if isinstance(c, dict)}
+    claims_only = bool(orig) and not row.get("hard_stop") and set(row.get("failure_codes") or ()) <= claim_codes
+    return {**row, "details": det, "verdict": "fail" if kept or not claims_only else "pass"}
 
 
 def project(doc: dict, rows: list[dict], fixed: Iterable[str]) -> dict:
@@ -271,7 +278,7 @@ def gate_summary(pairs: Iterable[tuple[dict, dict]]) -> dict:
 
 ROWS_SQL = """
     SELECT r.result_id::text AS result_id, r.run_id::text AS run_id, g.sample_id, r.arm, r.mode, r.verdict,
-           r.details, r.output, g.input
+           r.hard_stop, r.failure_codes, r.details, r.output, g.input
       FROM shared.eval_item_result r
       JOIN shared.eval_golden_item g ON g.item_id = r.item_id
      WHERE r.run_id = $1::uuid

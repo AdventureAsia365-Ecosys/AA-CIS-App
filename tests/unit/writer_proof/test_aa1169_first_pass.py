@@ -112,6 +112,38 @@ def test_project_removes_the_fixed_classes_from_arm_b_only():
         fp.project(_doc(), ROWS, ["typo"])
 
 
+def _b_fail(claims, *, hard_stop=False, codes=()):
+    row = _row("zz-fp-09", "B", claims)
+    return {**row, "verdict": "fail", "hard_stop": hard_stop, "failure_codes": list(codes)}
+
+
+def test_without_turns_only_a_claims_only_fail_into_a_pass():
+    fixed = frozenset({"rarity", "route_timing"})
+    assert fp._without(_b_fail([RARITY, TIMING]), fixed)["verdict"] == "pass"
+    assert fp._without(_b_fail([RARITY, NUMBER]), fixed)["verdict"] == "fail"           # a number claim is left
+    # a fail that does not come from claims alone stays a fail whatever the claims become
+    assert fp._without(_b_fail([], hard_stop=True), fixed)["verdict"] == "fail"          # hard stop, no claim
+    assert fp._without(_b_fail([RARITY], hard_stop=True), fixed)["verdict"] == "fail"    # hard stop, claims all fixed
+    assert fp._without(_b_fail([]), fixed)["verdict"] == "fail"                          # judge fail, no claim
+    assert fp._without(_b_fail([RARITY], codes=["qa.artefact"]), fixed)["verdict"] == "fail"
+    assert fp._without(_b_fail([RARITY], codes=["claim.unsupported"]), fixed)["verdict"] == "pass"
+    # a pass stays a pass, also when it quotes claims of a class that is not fixed
+    passed = {**_row("zz-fp-10", "B", [NUMBER]), "verdict": "pass"}
+    out = fp._without(passed, fixed)
+    assert out["verdict"] == "pass" and len(out["details"]["judge_claims"]) == 1
+
+
+def test_project_keeps_a_hard_stop_fail():
+    rows = [r for r in ROWS if r["sample_id"] != "zz-fp-02"]
+    rows += [_row("zz-fp-02", "A", [NUMBER]), {**_b_fail([RARITY], hard_stop=True), "sample_id": "zz-fp-02"}]
+    p = fp.project(_doc(), rows, ["rarity", "route_timing"])
+    assert p["first_pass_yield"] == 0.5                         # 01, 04 pass; 02 (hard stop) and 03 (number) fail
+
+
+def test_rows_sql_reads_the_hard_stop_and_failure_codes():
+    assert "r.hard_stop" in fp.ROWS_SQL and "r.failure_codes" in fp.ROWS_SQL
+
+
 def test_gate_summary_counts_and_survives_a_bad_input(monkeypatch):
     calls = iter([{"passed": False, "first_failure": "F4_extreme_length", "blocking": ["F4_extreme_length"]},
                   {"passed": True, "first_failure": None, "blocking": []}])

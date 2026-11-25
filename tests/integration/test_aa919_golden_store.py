@@ -177,3 +177,20 @@ async def test_a_new_version_supersedes_the_active_one(conn):
     # re-importing the superseded 1.0.0 (same bytes) is "exists": it writes nothing and supersedes nothing
     again = await importer.run(old, ob, apply=False, conn=conn)
     assert (again["db"]["action"], again["db"]["supersedes"]) == ("exists", None)
+
+
+@pytest.mark.asyncio
+async def test_first_pass_rows_sql_reads_a_stored_run(conn):
+    # AA-1169: the first-pass report's row query (services/writer_proof/first_pass.ROWS_SQL) on the stored results of
+    # one run, as cis_app: the verdict inputs it needs (hard_stop, failure_codes) come back with the item's sample id
+    from services.writer_proof import first_pass as fp
+    await _tenants(conn)
+    gs, b = _gs()
+    await _cis_app(conn)
+    rep = await importer.run(gs, b, apply=True, conn=conn)
+    run_id = rep["db"]["baseline_runs"]["t9_blog"]["run_id"]
+    rows = [dict(r) for r in await conn.fetch(fp.ROWS_SQL, run_id)]
+    assert len(rows) == rep["db"]["baseline_runs"]["t9_blog"]["results"] > 0
+    assert {r["run_id"] for r in rows} == {run_id}
+    assert all(isinstance(r["hard_stop"], bool) and isinstance(r["failure_codes"], list) and r["sample_id"]
+               for r in rows)
