@@ -34,7 +34,8 @@ export default function ContentWorkspacePage() {
     {
       accessorKey: "name", header: t("colName"),
       cell: (c) => (
-        <Link href={tourHref(c.row.original.tour_id)} style={{ color: K.accentDeep, fontWeight: 600 }}>
+        <Link href={tourHref(c.row.original.tour_id)} data-testid="cw-tour-link"
+          style={{ color: K.accentDeep, fontWeight: 600 }}>
           {c.row.original.name || t("untitled")}
         </Link>
       ),

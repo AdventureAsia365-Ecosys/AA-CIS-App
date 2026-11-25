@@ -7,6 +7,8 @@
 //   - no console error and no uncaught page error (allowlist.json for known noise);
 //   - no failed same-origin request (status >= 400 or a network failure), except the document's own expected status;
 //   - the kit frame is on the page (`[data-kit-frame]`), unless the page says frame: false;
+//   - a dynamic route (`openFirst`) is captured on the page its list's first matching link opens (skipped when the
+//     list has none);
 //   - the theme applied is the one asked for (`<html data-theme>`);
 //   - AA-1131: every visible form control, dialog and icon button has an accessible name (helpers/a11yNames.ts). A
 //     control the kit core renders (a data-kit-* hook) must be named on every page; on the kit gallery every control
@@ -57,9 +59,27 @@ async function probeOverflow(page: Page) {
       el.tagName.toLowerCase() + (el.id ? `#${el.id}` : '') +
       (el.getAttribute('data-testid') ? `[data-testid=${el.getAttribute('data-testid')}]` : '') +
       (typeof el.className === 'string' && el.className ? `.${el.className.split(' ').slice(0, 2).join('.')}` : '');
+    // A frame's offenders are measured against the frame's own client edge (its scrollbar excluded), not the viewport:
+    // a child that reaches the viewport edge under a 6 px scrollbar scrolls the frame yet is inside the viewport
+    // (AA-1148, S294: the 25/11 run named no offender for content-workspace-new at 390).
+    const frameOffenders = (frame: HTMLElement) => {
+      const edge = frame.getBoundingClientRect().left + frame.clientLeft + frame.clientWidth;
+      const over = [...frame.querySelectorAll<HTMLElement>('*')].filter((el) => {
+        if (el.closest('[data-kit-scroll], [aria-hidden="true"]')) return false;
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.right > edge + 1;
+      });
+      // the outermost ones: a child of an offender says nothing new
+      return over.filter((el) => !over.includes(el.parentElement as HTMLElement)).slice(0, 5)
+        .map((el) => {
+          const box = el.parentElement?.closest('[data-testid]');
+          const where = box ? ` in [data-testid=${box.getAttribute('data-testid')}]` : '';
+          return `${name(el)}${where} (right ${Math.round(el.getBoundingClientRect().right)} > ${Math.round(edge)})`;
+        });
+    };
     const frames = [...document.querySelectorAll<HTMLElement>('[data-kit-frame], [data-kit-shell="main"]')]
       .filter((el) => el.scrollWidth > el.clientWidth + 1)
-      .map((el) => ({ frame: name(el), scrollWidth: el.scrollWidth, clientWidth: el.clientWidth }));
+      .map((el) => ({ frame: name(el), scrollWidth: el.scrollWidth, clientWidth: el.clientWidth, offenders: frameOffenders(el) }));
     const offenders = [...document.querySelectorAll<HTMLElement>('body *')]
       .filter((el) => {
         if (el.closest('[data-kit-scroll], [data-kit-shell="sidebar"], [aria-hidden="true"]')) return false;
@@ -116,9 +136,18 @@ for (const p of selectPages(PAGES, { auth: AUTH, slugs: SLUGS, gallery: GALLERY,
         if (expected !== null ? r.status() !== expected : r.status() >= 400) failed.push(`${r.status()} ${url}`);
       });
 
-      const res = await page.goto(p.path, { waitUntil: 'load' });
+      let res = await page.goto(p.path, { waitUntil: 'load' });
       // Every wait has its own ceiling (lesson S220: polling pages never reach networkidle).
       await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+      if (p.openFirst) {
+        // A dynamic route: follow the first matching link of the list page (none on this env = nothing to capture).
+        const link = page.locator(p.openFirst).first();
+        const found = await link.waitFor({ state: 'attached', timeout: 10_000 }).then(() => true).catch(() => false);
+        const href = found ? await link.getAttribute('href') : null;
+        test.skip(!href, `no link ${p.openFirst} on ${p.path} to open`);
+        res = await page.goto(href as string, { waitUntil: 'load' });
+        await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
+      }
       await page.evaluate(() => document.fonts.ready.then(() => true));
       await page
         .locator('[data-testid="admin-content-ready"], [data-kit-frame], body')
@@ -164,7 +193,8 @@ for (const p of selectPages(PAGES, { auth: AUTH, slugs: SLUGS, gallery: GALLERY,
       expect.soft(appliedTheme, 'data-theme on <html>').toBe(theme);
       if (p.frame !== false) expect.soft(hasFrame, 'the kit frame [data-kit-frame] is on the page').toBe(true);
       expect.soft(overflow.doc, `page scrolls sideways: ${overflow.offenders.join(', ')}`).toBeLessThanOrEqual(overflow.vw + 1);
-      expect.soft(overflow.frames, `the page frame scrolls sideways: ${overflow.offenders.join(', ')}`).toEqual([]);
+      const frameOffenders = overflow.frames.flatMap((f) => f.offenders).join(', ');
+      expect.soft(overflow.frames, `the page frame scrolls sideways: ${frameOffenders}`).toEqual([]);
       expect.soft(consoleErrors, 'console errors').toEqual([]);
       expect.soft(failed, 'failed same-origin requests').toEqual([]);
       expect.soft(unnamedGate, 'controls with no accessible name (kit controls, or any on the kit gallery)').toEqual([]);

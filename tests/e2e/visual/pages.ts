@@ -24,6 +24,9 @@ export interface VisualPage {
   gallery?: boolean;
   /** "document" or "frame": the planted overflow the self-test expects the run to catch. */
   selftest?: "document" | "frame";
+  /** A dynamic route (its id differs per env): the run opens `path`, follows the first link matching this selector
+   *  and captures the page it lands on; no match = the test is skipped (nothing to open on this env). */
+  openFirst?: string;
 }
 
 export const PAGES: VisualPage[] = [
@@ -37,6 +40,9 @@ export const PAGES: VisualPage[] = [
   { slug: "selftest-frame", route: "/kit-gallery", path: "/kit-gallery?plant=frame", auth: "public", gallery: true, selftest: "frame" },
   { slug: "aa-content", route: "/admin/aa-content", path: "/admin/aa-content", auth: "staff" },
   { slug: "content-workspace", route: "/admin/content-workspace", path: "/admin/content-workspace", auth: "staff" },
+  // AA-1148: a hand-made tour's editor, reached from the first row of the list (the tour ids differ per env).
+  { slug: "content-workspace-tour", route: "/admin/content-workspace/[tourId]", path: "/admin/content-workspace",
+    auth: "staff", openFirst: '[data-testid="cw-tour-link"]' },
   { slug: "content-workspace-new", route: "/admin/content-workspace/new", path: "/admin/content-workspace/new",
     auth: "staff" },
   { slug: "content-workspace-supplier-links", route: "/admin/content-workspace/supplier-links",
@@ -122,6 +128,5 @@ export const EXCLUDED: Record<string, string> = {
   "/admin/lab/[stage]": "a Writing Lab stage, opened from the Lab cards by router push (no stable link to read an id from)",
   "/admin/platform/staff/[id]": "a staff account, opened from the directory rows by router push; staff names are personal data",
   "/admin/supply-content/[id]": "a supplier content item, opened from its list rows by router push",
-  "/admin/content-workspace/[tourId]": "a hand-made tour, opened from the content workspace list (ids differ per env)",
   "/admin/tenants/[id]": "Tenant 360 of one agency, opened from the agency rows by router push",
 };
