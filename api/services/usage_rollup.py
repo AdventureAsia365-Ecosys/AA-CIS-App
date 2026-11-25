@@ -8,7 +8,9 @@ hour); running it again after a late row lands counts that row. Hours older than
 once the retention job has deleted a ledger's raw rows, a re-roll would replace the hour's history by nothing.
 
 ``check_totals(pool, since, until)``: per source, the ledger's own totals (rows, requests, tokens, cost) of [since,
-until) next to the rollup's; ``ok`` when every figure is equal. Cost is compared as numeric, exactly.
+until) next to the rollup's; ``ok`` when every figure is equal. Cost is compared as numeric, exactly (no tolerance):
+the rollup's ``cost_usd`` is numeric(20,8) since CIS 494 (AA-1180), ``COST_SCALE`` decimals, the widest scale of the
+source ledgers (``shared.decision_log``), and every per-row cost is summed as unbounded numeric, never rounded.
 
 ``last_run(pool)``: the newest succeeded ``ai_usage_rollup`` job (when, which hours), what the explorer shows as
 "rolled up to".
@@ -30,6 +32,10 @@ CHUNK = timedelta(hours=24)
 # shared.llm_call_log keeps 180 days of raw rows (DM-7.1); stay clear of the retention edge.
 RAW_WINDOW = timedelta(days=175)
 MAX_RANGE = RAW_WINDOW
+# AA-1180: the decimals of shared.ai_usage_hourly.cost_usd (CIS 494, numeric(20,8)) = the widest cost scale of the
+# source ledgers (shared.decision_log numeric(12,8)). The explorer reports cost figures with this many decimals so a
+# rolled total reads the same as the ledgers' own sum. Not a threshold: the column's scale, fixed by the migration.
+COST_SCALE = 8
 
 _KEY = ("hour", "source") + tuple(ud.ROLLUP_COLUMN[d] for d in ud.STORED_DIMS)
 _METRICS = ("requests", "ledger_rows", "fallback_requests", "tokens_in", "tokens_out", "cache_read_tokens",
