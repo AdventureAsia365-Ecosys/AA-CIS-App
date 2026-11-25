@@ -18,6 +18,9 @@ One tick, each part on its own (a failing part is named in the result, the other
 - ``database``: the busiest login role against its CONNECTION LIMIT, ``max(age(datfrozenxid))``, all sessions
   against ``max_connections`` and the instance's allocated storage (RDS DescribeDBInstances, free, the existing
   ``rds:DescribeDBInstances`` grant): the free storage tile judges free space as a share of it (CIS 477).
+- ``external`` (AA-1142): the newest run of the root repo workflow External checks (one S3 GET of
+  ``docs-reader/ops/external-checks.json``, the docs reader grant), copied once into ``acp_shared.ops_external_check``
+  (:func:`api.services.ops_status.external.ingest`).
 
 Sample states: ok, warn, degraded, down, unknown (did not answer). For the uptime strip ok and warn count as up,
 degraded and down as down, unknown as not measured. Never raises; $0 (free control-plane reads and DB queries).
@@ -453,9 +456,15 @@ async def database_part(pool, at: datetime, job_id: Optional[str], out: dict, en
     out["database_samples"] = await _write_samples(pool, [(at, "database", "rds", "shared", state, value)], job_id)
 
 
+async def _external_part(pool, out: dict, loader: Any = None) -> None:
+    from api.services.ops_status import external
+
+    await external.ingest(pool, out, loader)
+
+
 async def tick(pool, at: datetime, job_id: Optional[str] = None, *, env: Optional[str] = None,
                ecs_client: Any = None, cw_client: Any = None, http_client: Any = None, rds_client: Any = None,
-               part_timeout_s: float = 30.0) -> dict:
+               part_timeout_s: float = 30.0, external_loader: Any = None) -> dict:
     """One sampler tick at ``at`` (the 5-minute bucket). Never raises: ``<part>_error`` names a failed part."""
     from api.services.ops_overview import cloudwatch
 
@@ -467,6 +476,7 @@ async def tick(pool, at: datetime, job_id: Optional[str] = None, *, env: Optiona
         "health": lambda: health_part(pool, at, job_id, out, http_client),
         "queue": lambda: queue_part(pool, at, job_id, out),
         "database": lambda: database_part(pool, at, job_id, out, env, rds_client),
+        "external": lambda: _external_part(pool, out, external_loader),
     }
     for name, part in parts.items():
         try:

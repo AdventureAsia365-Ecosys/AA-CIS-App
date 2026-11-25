@@ -60,6 +60,7 @@ from api.routers.admin_settings import router as admin_settings_router
 from api.routers.admin_atoms import router as admin_atoms_router
 from api.routers.admin_a4 import router as admin_a4_router
 from api.routers.admin_dashboard import router as admin_dashboard_router
+from api.routers.admin_ops_status_p2 import router as admin_ops_status_p2_router  # AA-1142
 from api.routers.admin_overview import router as admin_overview_router  # AA-664
 from api.routers.admin_ops_assist import router as admin_ops_assist_router  # AA-1154 (A0)
 from api.routers.admin_data_coverage import router as admin_data_coverage_router  # AA-992
@@ -392,6 +393,7 @@ app.include_router(admin_settings_router)
 app.include_router(admin_atoms_router)
 app.include_router(admin_a4_router)
 app.include_router(admin_dashboard_router)  # AA-527 (bổ sung) — Segment/Score/Route-Hub/Slate audit panels
+app.include_router(admin_ops_status_p2_router)  # AA-1142 — incidents, per-agency drill-down, SLO drill
 app.include_router(admin_overview_router)  # AA-664 — /admin/overview (whole-system snapshot, cached 60s)
 app.include_router(admin_ops_assist_router)  # AA-1154 (A0) — /admin/ops-assist (evidence + action cards, read-only)
 app.include_router(admin_data_coverage_router)  # AA-992 — /admin/data-coverage (counts, raw upload to CRM)

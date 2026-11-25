@@ -17,6 +17,9 @@
 // (viewer.can_ack), "as of" chips that grey out when stale plus the background producers, a capacity forecast, the AI
 // cost anomaly banner, the OPS-12 digest from the same verdict, named saved views, auto refresh paused on a hidden
 // tab / custom or zoomed range / by hand, and WCAG 2.2 AA (levels in words, table views, aria-live verdict).
+//
+// AA-1142 (P2, S292): availability and error budget burn per app (sections.slo), the external checks strip next to the
+// internal services (sections.external), the incident record with its timeline, and the per-agency drill-down.
 
 import { useQuery } from "@tanstack/react-query";
 import { Suspense, useEffect, useState, useSyncExternalStore } from "react";
@@ -39,6 +42,12 @@ import { SignalsCard } from "./_status/Signals";
 import { DeliveryCard, DrillLinks, EventsCard, SourcesCard } from "./_status/Timeline";
 import { Toolbar } from "./_status/Toolbar";
 import { VerdictCard } from "./_status/Verdict";
+// AA-1142 (P2): availability and error budget, external checks, incidents, by agency
+import { AgenciesCard } from "./_status/Agencies";
+import { ExternalCard } from "./_status/External";
+import { IncidentsCard } from "./_status/Incidents";
+import { SloCard } from "./_status/Slo";
+import { p2Sections } from "@/lib/opsStatusP2";
 import { Freshness, small, useST } from "./_status/ui";
 
 const REFRESH_MS = 60_000; // technical-constant: page refresh of a preset range (the server caches its AWS reads)
@@ -96,16 +105,23 @@ function Body({ data, view, setView }: { data: StatusResp; view: View; setView: 
   const s = data.sections;
   const grid2 = { display: "grid", gap: 18, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 460px), 1fr))" };
   const fresh = { factor: data.thresholds.stale_factor?.value ?? null, nowMs: Date.parse(data.generated_at) };
+  const p2 = p2Sections(data);
   return (
     <Freshness.Provider value={fresh}>
     <div style={{ display: "grid", gap: 18, gridTemplateColumns: "minmax(0, 1fr)" }} data-testid="status-body">
       <AnomalyBanner section={s.anomaly} view={view} />
       <VerdictCard verdict={data.verdict} view={view} setView={setView} rules={data.acks?.rules}
         canAck={!!data.viewer?.can_ack} trail={data.acks?.recent ?? []} />
+
+      <IncidentsCard data={data} />
       <AppsCard section={s.apps} sig={s.signals} view={view} />
+
+      <SloCard section={p2.slo} view={view} />
       <SignalsCard data={data} view={view} setView={setView} />
       <ChangesCard section={s.changes} view={view} setView={setView} />
       <ServicesCard section={s.runtimes} view={view} setView={setView} />
+
+      <ExternalCard section={p2.external} view={view} />
       <div style={grid2}>
         <JobsCard section={s.jobs} view={view} setView={setView} />
         <ResourcesCard section={s.resources} />
@@ -115,6 +131,8 @@ function Body({ data, view, setView }: { data: StatusResp; view: View; setView: 
         <DeliveryCard section={s.delivery} />
       </div>
       <AiCard section={s.ai} view={view} setView={setView} />
+
+      <AgenciesCard view={view} />
       <ForecastCard section={s.forecast} />
       <EventsCard section={s.events} range={data.range} view={view} setView={setView} />
       <SourcesCard rows={data.sources} staleFactor={data.thresholds.stale_factor?.value ?? null}

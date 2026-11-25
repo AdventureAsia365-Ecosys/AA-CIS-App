@@ -339,7 +339,17 @@ _SECTION_ITEMS = (
 _EXTRA_ITEMS = (
     ("forecast", lambda d: forecast_items(d.get("rows") or [])),
     ("anomaly", lambda d: anomaly_items(d.get("rows") or [])),
+    ("slo", lambda d: _p2_items("slo", d)),   # AA-1142: error budget burn, external checks
+    ("external", lambda d: _p2_items("external", d)),
 )
+
+
+def _p2_items(name: str, data: dict) -> list[dict]:
+    """AA-1142: the burn rate and external check rows, built by their own modules (imported here, not at the top, so
+    this pure module does not load the CloudWatch reader)."""
+    from api.services.ops_status import external, slo
+
+    return (slo if name == "slo" else external).verdict_items(data)
 
 
 def _collect(sections: dict[str, Any], th: dict, events: list[dict]) -> tuple[list[dict], list[str]]:

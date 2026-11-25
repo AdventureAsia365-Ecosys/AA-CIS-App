@@ -88,7 +88,8 @@ def no_peers(monkeypatch):
 async def test_tick_writes_samples_and_events_and_closes_them(pool, no_peers):
     at = _now()
     job_id = "00000000-0000-0000-0000-000000001140"
-    out = await sampler.tick(pool, at, job_id, env=ENV, ecs_client=_ecs("IN_PROGRESS", at), cw_client=_cw(True, at))
+    out = await sampler.tick(pool, at, job_id, env=ENV, ecs_client=_ecs("IN_PROGRESS", at), cw_client=_cw(True, at),
+                             external_loader=lambda: None)   # AA-1142: no external run published yet
     assert not [k for k in out if k.endswith("_error")], out
     rows = await pool.fetch("SELECT kind, subject, state FROM acp_shared.ops_sample WHERE job_id = $1::uuid "
                             "ORDER BY kind, subject", job_id)
@@ -110,14 +111,16 @@ async def test_tick_writes_samples_and_events_and_closes_them(pool, no_peers):
 
     # a re-run of the same bucket writes nothing twice
     before = await pool.fetchval("SELECT count(*) FROM acp_shared.ops_sample WHERE job_id = $1::uuid", job_id)
-    await sampler.tick(pool, at, job_id, env=ENV, ecs_client=_ecs("IN_PROGRESS", at), cw_client=_cw(True, at))
+    await sampler.tick(pool, at, job_id, env=ENV, ecs_client=_ecs("IN_PROGRESS", at), cw_client=_cw(True, at),
+                       external_loader=lambda: None)
     assert await pool.fetchval("SELECT count(*) FROM acp_shared.ops_sample WHERE job_id = $1::uuid",
                                job_id) == before
     assert await pool.fetchval("SELECT count(*) FROM acp_shared.ops_event WHERE dedupe_key LIKE '%zz1140%'") == 3
 
     # the next tick: rollout completed, alarm OK, the worker still down
     nxt = at + timedelta(minutes=5)
-    await sampler.tick(pool, nxt, job_id, env=ENV, ecs_client=_ecs("COMPLETED", nxt), cw_client=_cw(False, nxt))
+    await sampler.tick(pool, nxt, job_id, env=ENV, ecs_client=_ecs("COMPLETED", nxt), cw_client=_cw(False, nxt),
+                       external_loader=lambda: None)
     ev = {r["kind"]: r for r in await pool.fetch(
         "SELECT kind, ended_at FROM acp_shared.ops_event WHERE dedupe_key LIKE '%zz1140%'")}
     assert ev["alarm"]["ended_at"] is not None and ev["deploy"]["ended_at"] is not None
@@ -161,7 +164,7 @@ async def test_build_status_reads_the_samples_back(pool, no_peers, monkeypatch):
     at = _now()
     job_id = "00000000-0000-0000-0000-000000001140"
     await sampler.tick(pool, at - timedelta(minutes=5), job_id, env=ENV,
-                       ecs_client=_ecs("COMPLETED", at), cw_client=_cw(True, at))
+                       ecs_client=_ecs("COMPLETED", at), cw_client=_cw(True, at), external_loader=lambda: None)
     from api.services import delivery_metrics, platform_apps
 
     monkeypatch.setattr(platform_apps, "collect_apps", AsyncMock(return_value={"apps": [
