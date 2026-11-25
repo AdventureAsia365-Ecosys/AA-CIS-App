@@ -182,8 +182,9 @@ async def test_ingest_copies_a_run_once_with_its_state():
     out: dict = {}
     doc = _doc(cert_not_after="2026-11-29T00:00:00Z")
     await external.ingest(pool, out, loader=lambda: json.dumps(doc).encode())
-    assert out["external"]["results"] == 1 and "ON CONFLICT (target, checked_at) DO NOTHING" in sink[0][0]
-    assert sink[0][1][0][1] == "zz-api" and sink[0][1][0][4] == "degraded"
+    assert out["external"]["results"] == 1 and "ON CONFLICT DO NOTHING" in sink[0][0]
+    assert sink[0][1][0][:3] == ("github", datetime(2026, 11, 25, 10, 0, tzinfo=timezone.utc), "zz-api")
+    assert sink[0][1][0][5] == "degraded"
     out = {}
     await external.ingest(pool, out, loader=lambda: None)
     assert out["external"] == "not_published"

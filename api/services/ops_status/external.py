@@ -1,24 +1,28 @@
-"""AA-1142 (S292, P2) — external synthetic checks: what a customer outside the VPC meets (DNS, TLS and its certificate,
-the public health path), next to the internal checks of the 5-minute sampler (S285 review idea 11).
+"""AA-1142 (S292, P2; S293 follow-up) — external synthetic checks: what a customer outside the VPC meets (DNS, TLS
+and its certificate, the public health path), next to the internal checks of the 5-minute sampler (S285 review idea
+11).
 
-Producer. The root repo workflow "External checks" (AA-Ecosys ``.github/workflows/external-checks.yml``,
-``tools/ops/external_checks.py``) runs every 15 minutes on GitHub Actions (public repo: 0 USD; no Route 53 health check,
-no new AWS service) and uploads its newest run, next to the delivery summary, with the existing Docs sync role:
+Producers (``acp_shared.ops_external_check.source``, CIS 493), each optional (``cis.ops.external_check_sources``):
 
-  <docs reader prefix>/ops/external-checks.json   format 1: checked_at, results[] {target, app, host, url, mode,
-                                                  dns_ok, tls_ok, cert_not_after, http_status, http_ok, latency_ms,
-                                                  error}
+- ``worker`` (S293): the CIS worker's monitoring job ``ops_external_check`` (services/jobs/ops_external_check_job.py,
+  :mod:`api.services.ops_status.external_probe`) every ``cis.ops.external_check_interval_min`` minutes against
+  ``cis.ops.external_check_targets``, from the worker's internet egress, written by :func:`store_run`. The S292 design
+  relied on GitHub only, whose schedule ran 0 times on its first day (root crons start up to 10 hours late).
+- ``github``: the root repo workflow "External checks" (AA-Ecosys ``.github/workflows/external-checks.yml``,
+  ``tools/ops/external_checks.py``) uploads its newest run with the existing Docs sync role to
+  ``<docs reader prefix>/ops/external-checks.json`` (format 1: checked_at, results[] {target, app, host, url, mode,
+  dns_ok, tls_ok, cert_not_after, http_status, http_ok, latency_ms, error}); the 5-minute status sampler
+  (:func:`ingest`, part ``external`` of :func:`api.services.ops_status.sampler.tick`) copies a run it has not seen yet.
 
-Copy. The 5-minute status sampler (:func:`ingest`, part ``external`` of :func:`api.services.ops_status.sampler.tick`)
-reads that object (one S3 GET, the CIS task role's docs reader grant) and inserts a run it has not seen yet into
-``acp_shared.ops_external_check`` (CIS 485; ``ON CONFLICT (target, checked_at) DO NOTHING``), with the state it derives
-(:func:`state_of`): down when DNS, TLS or the request failed, degraded on an unexpected HTTP status or a certificate
-within ``cis.ops.status_cert_crit_days``, warn within ``cis.ops.status_cert_warn_days``, else ok.
+Both go through :func:`store_run` with the state it derives (:func:`state_of`): down when DNS, TLS or the request
+failed, degraded on an unexpected HTTP status or a certificate within ``cis.ops.status_cert_crit_days``, warn within
+``cis.ops.status_cert_warn_days``, else ok. ``ON CONFLICT DO NOTHING``: a run is stored once.
 
-Page. :func:`collect` gives one row per target: its newest result (the certificate level recomputed with today's
-settings), the strip of the range (the same cells as the internal uptime strip, :func:`store.strip`) and the age of
-the feed, stale after ``cis.ops.status_stale_factor`` x the 15-minute schedule. :func:`items` turns a failing target or
-a certificate at its critical days into a SEV2 Needs-attention item and a feed that stopped into a SEV3 one.
+Page. :func:`collect` gives one row per target and source: its newest result (the certificate level recomputed with
+today's settings), the strip of the range and whether that source is stale (older than ``cis.ops.status_stale_factor``
+x its own interval). The feed is stale only when every source in use is stale. :func:`items` turns a target failing
+from a fresh source, or a certificate at its critical days, into one SEV2 Needs-attention item per target, and a feed
+that stopped into one SEV3 item.
 """
 from __future__ import annotations
 
@@ -32,37 +36,39 @@ import structlog
 
 from api.services.ops_status import store
 from api.services.ops_status.ranges import TimeRange
+from shared import ops_external_settings as xs
 from shared import ops_status_thresholds as th
 
 logger = structlog.get_logger()
 
 OBJECT_NAME = "ops/external-checks.json"
 SUPPORTED_FORMAT = 1
-SCHEDULE_MINUTES = 15  # technical-constant: the workflow's cron (external-checks.yml), the feed's refresh time
+SCHEDULE_MINUTES = 15  # technical-constant: the GitHub workflow's cron (external-checks.yml), its interval
 MAX_BYTES = 256 * 1024  # technical-constant: refuse an absurd results file (today about 3 KB)
 MAX_RESULTS = 40  # technical-constant: the targets one run may report (today 8)
-APPS = ("cis", "tripplanner", "booking", "crm", "shared")
+APPS = xs.APPS
+SOURCES = xs.SOURCES
 _TARGET = re.compile(r"^[a-z0-9][a-z0-9-]{0,59}$")
 _HOST = re.compile(r"^[a-z0-9.-]{1,253}$")
 
 INSERT_SQL = """
-    INSERT INTO acp_shared.ops_external_check (checked_at, target, app, host, state, dns_ok, tls_ok, cert_not_after,
-                                               http_status, latency_ms, error)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-    ON CONFLICT (target, checked_at) DO NOTHING
+    INSERT INTO acp_shared.ops_external_check (source, checked_at, target, app, host, state, dns_ok, tls_ok,
+                                               cert_not_after, http_status, latency_ms, error)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+    ON CONFLICT DO NOTHING
 """
 RANGE_SQL = """
-    SELECT checked_at, target, app, host, state, dns_ok, tls_ok, cert_not_after, http_status, latency_ms, error
+    SELECT source, checked_at, target, app, host, state, dns_ok, tls_ok, cert_not_after, http_status, latency_ms, error
       FROM acp_shared.ops_external_check
-     WHERE checked_at >= $1 AND checked_at < $2
+     WHERE checked_at >= $1 AND checked_at < $2 AND source = ANY($3::text[])
      ORDER BY checked_at
 """
 LATEST_SQL = """
-    SELECT DISTINCT ON (target) checked_at, target, app, host, state, dns_ok, tls_ok, cert_not_after, http_status,
-           latency_ms, error
+    SELECT DISTINCT ON (source, target) source, checked_at, target, app, host, state, dns_ok, tls_ok, cert_not_after,
+           http_status, latency_ms, error
       FROM acp_shared.ops_external_check
-     WHERE checked_at >= $1
-     ORDER BY target, checked_at DESC
+     WHERE checked_at >= $1 AND source = ANY($2::text[])
+     ORDER BY source, target, checked_at DESC
 """
 
 
@@ -163,9 +169,25 @@ def _load_bytes() -> Optional[bytes]:
     return docs_reader._read_bytes(docs_reader._s3_client(), docs_reader._bucket(), key, MAX_BYTES)
 
 
+async def store_run(pool: Any, source: str, checked_at: datetime, results: list[dict]) -> int:
+    """Store one run of one source (rows of the :func:`parse` shape) with the state of each result; a run already
+    stored writes nothing. Returns the rows offered."""
+    limits = th.cert_days()
+    rows = [(source, checked_at, r["target"], r["app"], r["host"], state_of(r, checked_at, limits), r["dns_ok"],
+             r["tls_ok"], r["cert_not_after"], r["http_status"], r["latency_ms"], r["error"]) for r in results]
+    if rows:
+        async with pool.acquire() as conn:
+            await conn.executemany(INSERT_SQL, rows)
+    return len(rows)
+
+
 async def ingest(pool: Any, out: dict, loader: Any = None) -> None:
-    """Sampler part ``external``: copy the newest published run into the table (once per run). Raises on a storage
-    error (the tick names the part)."""
+    """Sampler part ``external``: copy the newest published GitHub run into the table (once per run), unless the
+    source github is left out of ``cis.ops.external_check_sources``. Raises on a storage error (the tick names the
+    part)."""
+    if "github" not in xs.sources():
+        out["external"] = "github_off"
+        return
     raw = await asyncio.to_thread(loader or _load_bytes)
     if raw is None:
         out["external"] = "not_published"
@@ -175,67 +197,116 @@ async def ingest(pool: Any, out: dict, loader: Any = None) -> None:
     except (ValueError, FeedError) as e:
         out["external"] = f"unreadable: {str(e)[:120]}"
         return
-    limits = th.cert_days()
-    rows = [(checked_at, r["target"], r["app"], r["host"], state_of(r, checked_at, limits), r["dns_ok"], r["tls_ok"],
-             r["cert_not_after"], r["http_status"], r["latency_ms"], r["error"]) for r in results]
-    async with pool.acquire() as conn:
-        await conn.executemany(INSERT_SQL, rows)
-    out["external"] = {"checked_at": checked_at.isoformat(), "results": len(rows)}
+    n = await store_run(pool, "github", checked_at, results)
+    out["external"] = {"checked_at": checked_at.isoformat(), "results": n}
 
 
-def stale_after(factor: float) -> timedelta:
-    return timedelta(minutes=SCHEDULE_MINUTES * factor)
+def interval_minutes(source: str) -> int:
+    """A source's own interval: the worker's setting, the GitHub workflow's cron."""
+    return xs.interval_min() if source == "worker" else SCHEDULE_MINUTES
+
+
+def stale_after(factor: float, minutes: int = SCHEDULE_MINUTES) -> timedelta:
+    return timedelta(minutes=minutes * factor)
+
+
+def _src(r: dict) -> str:
+    return r.get("source") or "github"
+
+
+def source_summary(latest: list[dict], intervals: dict[str, int], now: datetime, factor: float) -> list[dict]:
+    """Per source in use: its newest run, its interval and whether it is stale (no run, or older than factor x its
+    interval). Pure."""
+    out = []
+    for src, minutes in intervals.items():
+        times = [r["checked_at"] for r in latest if _src(r) == src]
+        newest = max(times) if times else None
+        out.append({"source": src, "newest": newest.isoformat() if newest else None, "interval_minutes": minutes,
+                    "stale": newest is None or now - newest > stale_after(factor, minutes)})
+    return out
 
 
 def target_rows(in_range: list[dict], latest: list[dict], rng: TimeRange, now: datetime, limits: dict,
-                slo_pct: float) -> list[dict]:
-    """One row per target: newest result (certificate level with today's limits), the strip of the range. Pure."""
-    by_target: dict[str, list[dict]] = {}
+                slo_pct: float, stale_by: Optional[dict[str, bool]] = None) -> list[dict]:
+    """One row per target and source: newest result (certificate level with today's limits), the strip of the range,
+    whether its source is stale. Pure."""
+    by_key: dict[tuple[str, str], list[dict]] = {}
     for r in in_range:
-        by_target.setdefault(r["target"], []).append({"sampled_at": r["checked_at"], "state": r["state"]})
+        by_key.setdefault((_src(r), r["target"]), []).append({"sampled_at": r["checked_at"], "state": r["state"]})
+    order = {s: i for i, s in enumerate(SOURCES)}
     rows = []
-    for r in sorted(latest, key=lambda x: (x.get("app") or "", x["target"])):
+    for r in sorted(latest, key=lambda x: (x.get("app") or "", x["target"], order.get(_src(x), 9))):
+        src = _src(r)
         days = cert_days_left(r.get("cert_not_after"), now)
-        rows.append({"target": r["target"], "app": r.get("app") or "shared", "host": r["host"],
+        rows.append({"target": r["target"], "source": src, "stale": bool((stale_by or {}).get(src, False)),
+                     "app": r.get("app") or "shared", "host": r["host"],
                      "state": r["state"], "checked_at": r["checked_at"].isoformat(),
                      "http_status": r.get("http_status"), "latency_ms": r.get("latency_ms"),
                      "dns_ok": r.get("dns_ok"), "tls_ok": r.get("tls_ok"), "error": r.get("error"),
                      "cert_not_after": r["cert_not_after"].isoformat() if r.get("cert_not_after") else None,
                      "cert_days_left": days, "cert_level": cert_level(days, limits),
-                     **store.strip(by_target.get(r["target"], []), rng, slo_pct)})
+                     **store.strip(by_key.get((src, r["target"]), []), rng, slo_pct)})
     return rows
 
 
 async def collect(pool: Any, rng: TimeRange, now: datetime) -> dict:
-    """The external section: rows per target, the feed's newest run and whether it is stale."""
+    """The external section: rows per target and source, each source's newest run, and whether the feed is stale
+    (every source in use stale)."""
     from api.services.ops_status import sections
 
+    enabled = list(xs.sources())
+    if not enabled:
+        return sections.not_measured("external_checks_off")
     since = now - timedelta(days=th.history_days())
-    in_range, latest = await asyncio.gather(pool.fetch(RANGE_SQL, rng.start, rng.end), pool.fetch(LATEST_SQL, since))
+    in_range, latest = await asyncio.gather(pool.fetch(RANGE_SQL, rng.start, rng.end, enabled),
+                                            pool.fetch(LATEST_SQL, since, enabled))
     latest = [dict(r) for r in latest]
     if not latest:
         return sections.not_measured("no_external_results")
+    intervals = {s: interval_minutes(s) for s in enabled}
+    srcs = source_summary(latest, intervals, now, th.stale_factor())
+    stale_by = {s["source"]: s["stale"] for s in srcs}
     newest = max(r["checked_at"] for r in latest)
-    factor = th.stale_factor()
-    rows = target_rows([dict(r) for r in in_range], latest, rng, now, th.cert_days(), th.uptime_slo_pct())
-    return sections.ok({"rows": rows, "newest": newest.isoformat(), "schedule_minutes": SCHEDULE_MINUTES,
-                        "stale": now - newest > stale_after(factor), "cert_days": th.cert_days()},
-                       SCHEDULE_MINUTES * 60, as_of=newest)
+    refresh = min(intervals.values())
+    rows = target_rows([dict(r) for r in in_range], latest, rng, now, th.cert_days(), th.uptime_slo_pct(), stale_by)
+    return sections.ok({"rows": rows, "newest": newest.isoformat(), "schedule_minutes": refresh, "sources": srcs,
+                        "stale": all(stale_by.values()), "cert_days": th.cert_days()},
+                       refresh * 60, as_of=newest)
 
 
 def items(data: dict) -> list[tuple[str, str, str, dict]]:
-    """(item id, severity, kind, row) for the Needs-attention list: a target down or degraded now (sev2), a certificate
-    at its critical days (sev2), a feed that stopped (sev3, one item). A stale feed raises no target item (the newest
+    """(item id, severity, kind, row) for the Needs-attention list, at most one per target and kind: a certificate at
+    its critical days (sev2), else a target down or degraded now from a source that is not stale (sev2; the row names
+    every fresh source that sees it failing), and a feed that stopped (sev3, one item, nothing else: every newest
     result is old). Pure."""
     if data.get("stale"):
         return [("external-feed", "sev3", "stale", {"newest": data.get("newest")})]
-    out = []
+    fresh: dict[str, list[dict]] = {}
     for r in data.get("rows") or []:
-        if r.get("cert_level") == "crit":
-            out.append((f"external-cert-{r['target']}", "sev2", "cert", r))
-        if r.get("state") in ("down", "degraded") and r.get("cert_level") != "crit":
-            out.append((f"external-{r['target']}", "sev2", "fails", r))
+        if not r.get("stale"):
+            fresh.setdefault(r["target"], []).append(r)
+    out = []
+    for target in sorted(fresh):
+        rows = sorted(fresh[target], key=lambda r: r.get("checked_at") or "", reverse=True)
+        cert = next((r for r in rows if r.get("cert_level") == "crit"), None)
+        failing = [r for r in rows if r.get("state") in ("down", "degraded") and r.get("cert_level") != "crit"]
+        if cert:
+            out.append((f"external-cert-{target}", "sev2", "cert", cert))
+        if failing:
+            out.append((f"external-{target}", "sev2", "fails",
+                        {**failing[0], "sources": [r.get("source") or "github" for r in failing]}))
     return out
+
+
+def what_failed(r: dict) -> tuple[str, Optional[int]]:
+    """(code, HTTP status) of a failing result: dns, tls, http or request. Pure."""
+    if r.get("dns_ok") is False:
+        return "dns", None
+    if r.get("tls_ok") is False:
+        return "tls", None
+    if r.get("http_status"):
+        return "http", r["http_status"]
+    return "request", None
 
 
 def verdict_items(data: dict) -> list[dict]:
@@ -246,7 +317,8 @@ def verdict_items(data: dict) -> list[dict]:
     for iid, sev, kind, r in items(data):
         if kind == "stale":
             out.append(_item(iid, sev, "shared", f"External checks have not reported since {r.get('newest')}",
-                             "The root repo workflow External checks runs every 15 minutes on GitHub Actions",
+                             "No source in use (the CIS worker job, the root repo workflow on GitHub Actions) "
+                             "reported within its interval",
                              since=r.get("newest"), source="external checks",
                              msg={"key": "external_stale", "since": r.get("newest")},
                              links=[("Settings", PAGES["settings"])]))
@@ -257,10 +329,12 @@ def verdict_items(data: dict) -> list[dict]:
                                   "days": r["cert_days_left"]},
                              links=[("Incident response", RUNBOOK_INCIDENT), ("Settings", PAGES["settings"])]))
         else:
-            what = ("DNS" if r.get("dns_ok") is False else "TLS" if r.get("tls_ok") is False
-                    else f"HTTP {r['http_status']}" if r.get("http_status") else "the request")
+            code, status = what_failed(r)
+            what = {"dns": "DNS", "tls": "TLS", "http": f"HTTP {status}"}.get(code, "the request")
+            sources = r.get("sources") or [r.get("source") or "github"]
             out.append(_item(iid, sev, r["app"], f"{r['host']} fails from outside: {what}", r.get("error") or "",
                              since=r.get("checked_at"), source="external checks", detail_source=True,
-                             msg={"key": "external_fails", "app": r["app"], "host": r["host"], "what": what},
+                             msg={"key": "external_fails", "app": r["app"], "host": r["host"], "what": what,
+                                  "code": code, "status": status, "sources": sources},
                              links=[("App health", PAGES["apps"]), ("Incident response", RUNBOOK_INCIDENT)]))
     return out

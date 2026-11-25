@@ -97,6 +97,8 @@ The AA-832 chain (EventBridge -> ops-probe Lambda -> admin POST -> shared.job ->
 - AA-1140: each tick queues the Ecosystem status sampler once per 5-minute bucket (services/jobs/ops_status_sample_job
   .tick_part, $0). Field `ops_status_sample` (the job id, when created) or `ops_status_sample_error`.
 - AA-1173: the daily compliance DB checks job (compliance_db_checks_job.tick_part); `compliance_db_checks[_error]`.
+- AA-1142 (S293): the worker's external checks once per cis.ops.external_check_interval_min bucket
+  (ops_external_check_job.tick_part, $0); `ops_external_check[_error]`.
 - AA-845: every JEV_CREDIT_CHECK_EVERY_S (shared/jev_credit.py, 30 min) the loop also runs the Jev low-credit
   check (estimated TypeSafe credit below the threshold -> throttled bell + operator e-mail). It runs after the
   tick, outside sample_once, under its own PART_TIMEOUT_S, and logs its own line (`jev_credit_low_checked` /
@@ -661,6 +663,8 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
     await _guarded_part(_ops_status_tick(pool, kinds, ts, out), out, "ops_status_sample_error", timeout=5.0)
     from services.jobs.compliance_db_checks_job import tick_part as _compliance_db_tick  # AA-1173, one INSERT a day
     await _guarded_part(_compliance_db_tick(pool, kinds, ts, out), out, "compliance_db_checks_error", timeout=5.0)
+    from services.jobs.ops_external_check_job import tick_part as _external_tick  # AA-1142, one INSERT per bucket
+    await _guarded_part(_external_tick(pool, kinds, ts, out), out, "ops_external_check_error", timeout=5.0)
 
     try:
         await asyncio.wait_for(_jobs_part(pool, kinds, out), timeout=part_timeout_s)

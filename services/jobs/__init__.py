@@ -52,4 +52,5 @@ from . import tenant_erasure_saga_job  # noqa: F401  AA-1093 L2 (tenant offboard
 from . import tripplanner_custom_domain_job  # noqa: F401  AA-1090 R8 (TripPlanner custom host: ACM + CloudFront, $0)
 from . import ops_status_sample_job  # noqa: F401  AA-1140 (Ecosystem status sampler, every 5 min, $0)
 from . import compliance_db_checks_job  # noqa: F401  AA-1173 (daily read-only DB checks of Platform > Compliance, $0)
+from . import ops_external_check_job  # noqa: F401  AA-1142 (external checks of the public hosts from the worker, $0)
 from . import noop_sleep_job  # noqa: F401  AA-993 G1 (test-only kind, registered only when JOB_TEST_KINDS=1)
