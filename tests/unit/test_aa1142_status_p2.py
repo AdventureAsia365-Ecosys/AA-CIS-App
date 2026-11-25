@@ -182,8 +182,9 @@ async def test_ingest_copies_a_run_once_with_its_state():
     out: dict = {}
     doc = _doc(cert_not_after="2026-11-29T00:00:00Z")
     await external.ingest(pool, out, loader=lambda: json.dumps(doc).encode())
-    assert out["external"]["results"] == 1 and "ON CONFLICT (target, checked_at) DO NOTHING" in sink[0][0]
-    assert sink[0][1][0][1] == "zz-api" and sink[0][1][0][4] == "degraded"
+    assert out["external"]["results"] == 1 and "ON CONFLICT DO NOTHING" in sink[0][0]
+    assert sink[0][1][0][:3] == ("github", datetime(2026, 11, 25, 10, 0, tzinfo=timezone.utc), "zz-api")
+    assert sink[0][1][0][5] == "degraded"
     out = {}
     await external.ingest(pool, out, loader=lambda: None)
     assert out["external"] == "not_published"
@@ -296,6 +297,18 @@ def test_rankings_top_n_and_platform_share():
     assert [o["name"] for o in tenants.options(names)] == ["Yy Tours", "Zz Travel"]
 
 
+def test_rankings_server_errors_per_agency():
+    names = {AGENCY_A: {"name": "Zz Travel", "slug": "zz-travel", "is_active": True},
+             AGENCY_B: {"name": "Yy Tours", "slug": "yy-tours", "is_active": True}}
+    api = [{"tenant_id": AGENCY_A, "calls": 200, "server_errors": 4, "last": NOW},
+           {"tenant_id": AGENCY_B, "calls": 50, "server_errors": 0, "last": None}]
+    out = tenants.rankings([], [], names, 10, api)
+    assert out["server_errors"] == [{"tenant_id": AGENCY_A, "name": "Zz Travel", "slug": "zz-travel", "active": True,
+                                     "server_errors": 4, "calls": 200, "error_pct": 2.0, "last": NOW.isoformat()}]
+    assert out["api_calls"] == 250 and out["agencies_seen"] == 2   # an agency with calls but no error is seen
+    assert tenants.rankings([], [], names, 10)["server_errors"] == []
+
+
 @pytest.mark.asyncio
 async def test_collect_one_agency_breakdown():
     pool = MagicMock()
@@ -307,13 +320,22 @@ async def test_collect_one_agency_breakdown():
             return [{"app": "cis", "stage": "zz_stage", "cost_usd": 0.25, "requests": 10, "failed": 1}]
         if sql == tenants.ONE_ERRORS_SQL:
             return [{"error_class": "throttled", "requests": 1}]
+        if sql == tenants.ONE_API_SQL:
+            assert args[-1] == 10                                   # the endpoint list is cut at the top-N setting
+            return [{"method": "GET", "endpoint": "/v1/zz/{id}", "server_errors": 3, "last": NOW}]
+        if sql == tenants.ONE_API_TOTAL_SQL:
+            return [{"calls": 60, "server_errors": 3}]
         return [{"kind": "zz_kind", "failed": 2, "last": NOW}]
 
     pool.fetch = fetch
     out = await tenants.collect(pool, RNG, AGENCY_A, NOW)
     ag = out["agency"]
     assert ag["known"] is True and ag["cost_usd"] == 0.25 and ag["jobs_failed"] == 2 and ag["ai_failed"] == 1
-    assert out["not_measured"] == ["server_errors_per_agency", "crm_jobs_per_agency"] and out["top_n"] == 10
+    assert out["not_measured"] == ["crm_jobs_per_agency"] and out["top_n"] == 10
+    assert "crashed_requests" in out["server_errors_scope"]
+    assert ag["api_calls"] == 60 and ag["server_errors"] == 3 and ag["server_error_pct"] == 5.0
+    assert ag["server_error_endpoints"] == [{"method": "GET", "endpoint": "/v1/zz/{id}", "server_errors": 3,
+                                             "last": NOW.isoformat()}]
 
 
 # ── routes ──────────────────────────────────────────────────────────────────────────────────────────────────────

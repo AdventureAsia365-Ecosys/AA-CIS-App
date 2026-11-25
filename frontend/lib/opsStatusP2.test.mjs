@@ -4,8 +4,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  agencyLabel, budgetBar, budgetLevel, burnLevel, externalLevel, fmtBurn, incidentTone, p2Sections, tenantParam,
-  tenantsQuery, titleFromItem, titleOk,
+  agencyLabel, budgetBar, budgetLevel, burnLevel, externalLevel, externalRowId, externalRowLevel, fmtBurn, incidentTone,
+  p2Sections, tenantParam, tenantsQuery, titleFromItem, titleOk,
 } from "./opsStatusP2.ts";
 
 test("burn and budget levels: not judged is grey, never green", () => {
@@ -67,4 +67,12 @@ test("P2 sections are optional on an older answer", () => {
   assert.deepEqual(p2Sections({ sections: {} }), { slo: undefined, external: undefined });
   const slo = { status: "ok", data: { rows: [] } };
   assert.equal(p2Sections({ sections: { slo } }).slo, slo);
+});
+
+test("S293: one external row per target and source; a stopped source is grey", () => {
+  assert.equal(externalRowId({ target: "zz-api", source: "worker" }), "zz-api:worker");
+  assert.equal(externalRowId({ target: "zz-api" }), "zz-api:github");   // a row from before the source column
+  assert.equal(externalRowLevel({ state: "down", cert_level: "ok", stale: false }), "crit");
+  assert.equal(externalRowLevel({ state: "down", cert_level: "ok", stale: true }), "none");
+  assert.equal(externalRowLevel({ state: "ok", cert_level: "warn" }), "warn");
 });

@@ -249,6 +249,14 @@ def items(rows: list[dict]) -> list[tuple[str, str, dict]]:
     return out
 
 
+def _window_minutes(rules: dict, kind: str) -> Optional[int]:
+    """The length of a burn window in minutes (S293: the page words it in EN or VI); None without rules. Pure."""
+    try:
+        return int(rules["fast"]["window_min"]) if kind == "fast" else int(rules["slow"]["window_hours"]) * 60
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def verdict_items(data: dict) -> list[dict]:
     """The Needs-attention rows of the alerting burns (``verdict._EXTRA_ITEMS``). Pure."""
     from api.services.ops_status.verdict import PAGES, RUNBOOK_INCIDENT, RUNBOOK_ROLLBACK, _item
@@ -268,7 +276,11 @@ def verdict_items(data: dict) -> list[dict]:
                          f"{'–' if r.get('budget_left_pct') is None else format(r['budget_left_pct'], 'g')} %",
                          source="error budget",
                          msg={"key": "slo_burn", "app": r["app"], "window": kind, "value": b["burn"],
-                              "limit": b["factor"], "target": r["target_pct"], "budget_left": r.get("budget_left_pct")},
+                              "limit": b["factor"], "target": r["target_pct"], "budget_left": r.get("budget_left_pct"),
+                              "minutes": _window_minutes(rules, kind)},
+                         detail_msg={"key": "slo_burn_detail", "bad": b["bad"], "events": b["events"],
+                                     "basis": "requests" if r["basis"] == "requests" else "samples",
+                                     "target": r["target_pct"], "budget_left": r.get("budget_left_pct")},
                          links=[("App health", PAGES["apps"]), ("Rollback runbooks", RUNBOOK_ROLLBACK),
                                 ("Incident response", RUNBOOK_INCIDENT), ("Settings", PAGES["settings"])]))
     return out

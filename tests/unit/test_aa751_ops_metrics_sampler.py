@@ -749,9 +749,10 @@ def test_job_kind_removed_and_no_kind_is_exempt():
     # AA-900 W0: and the nightly quality funnel watchdog ($0 database reads; its bells are deduplicated)
     # AA-1140: and the 5-minute status sampler ($0 control-plane reads; a re-run of a bucket writes nothing twice)
     # AA-1173: and the daily compliance DB checks ($0 catalog reads; a re-run adds rows with a new time, harmless)
+    # AA-1142: and the worker's external checks ($0 public requests; a re-run stores a new run, harmless)
     assert sorted(k.name for k in registry.kinds().values() if k.deploy_gate_exempt) == [
         "ai_usage_rollup", "compliance_db_checks", "llm_connection_probe", "llm_model_lifecycle_sync",
-        "llm_route_watch", "ops_status_sample", "quality_funnel_watch"]
+        "llm_route_watch", "ops_external_check", "ops_status_sample", "quality_funnel_watch"]
 
 
 @pytest.fixture
@@ -779,7 +780,7 @@ async def test_deploy_gate_still_excludes_an_exempt_kind(monkeypatch, exempt_tes
     # AA-1018: + the daily LLM probe; AA-1024 D2: + the nightly model lifecycle sync; AA-1045: + the usage rollup
     expected = sorted([exempt_test_kind, "ai_usage_rollup", "llm_connection_probe", "llm_model_lifecycle_sync",
                        "llm_route_watch", "ops_status_sample", "quality_funnel_watch",
-                       "compliance_db_checks"])   # AA-1042, AA-900, AA-1140, AA-1173
+                       "compliance_db_checks", "ops_external_check"])   # AA-1042, AA-900, AA-1140, AA-1173, AA-1142
     assert out["safe_to_deploy"] is True and sorted(out["exempt_kinds"]) == expected
     # AA-990: + the scheduled-later horizon. AA-993 G5: the first fetch is active_count, the second deploy_blockers.
     sql, exempt, *rest = pool.fetch.call_args_list[0][0]

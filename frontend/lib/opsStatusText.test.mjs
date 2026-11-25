@@ -80,3 +80,20 @@ test("AA-1141 forecast, anomaly and change phrases", () => {
   assert.equal(changePhrase({ key: "chg_unknown" }), null);
   assert.deepEqual(changePhrase({ key: "chg_setting", label: "Zz", version: 3, tenant: true }).args, ["Zz", "3", "1"]);
 });
+
+// AA-1142 (S293): the error budget burn and the external check items, worded in EN or VI instead of the API's title
+test("AA-1142 burn and external phrases", () => {
+  const burn = phrase({ key: "slo_burn", app: "cis", window: "fast", value: 20, limit: 14.4, minutes: 60 }, words);
+  assert.deepEqual(burn, { key: "m_slo_burn", args: ["CIS", "1 h", "20", "14.4"] });
+  assert.equal(phrase({ key: "slo_burn", app: "cis", value: 2, limit: 1, minutes: 5 }, words).args[1], "5 min");
+  assert.equal(phrase({ key: "slo_burn", app: "cis", value: 2, limit: 1 }, words).args[1], "—");
+  assert.deepEqual(phrase({ key: "slo_burn_detail", bad: 100, events: 1000, basis: "samples", target: 99.5,
+    budget_left: null }, words).args, ["100", "1000", "samples", "99.5 %", "—"]);
+  assert.deepEqual(phrase({ key: "external_fails", host: "api.zz-example.test", code: "http", status: 503,
+    sources: ["worker", "github", "zz"] }, words).args, ["api.zz-example.test", "http", "503", "worker,github"]);
+  assert.deepEqual(phrase({ key: "external_cert", host: "a.zz-example.test", days: 3.5 }, words).args,
+    ["a.zz-example.test", "3.5"]);
+  assert.deepEqual(phrase({ key: "external_stale", since: "2026-11-25T10:00:00+00:00" },
+    { ...words, time: (iso) => `t:${iso.slice(11, 16)}` }).args, ["t:10:00"]);
+  assert.deepEqual(phrase({ key: "external_stale_detail" }, words), { key: "m_external_stale_detail", args: [] });
+});

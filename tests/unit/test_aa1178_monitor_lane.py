@@ -18,7 +18,8 @@ from shared.jobs.registry import _KINDS, job_kind, kinds
 from shared.jobs.worker import WORKER_MAX_PARALLEL_DEFAULT, load_kinds
 
 MONITOR_KINDS = {"ops_status_sample", "llm_route_watch", "quality_funnel_watch", "compliance_db_checks",
-                 "llm_model_lifecycle_sync", "ai_usage_rollup", "llm_connection_probe"}
+                 "llm_model_lifecycle_sync", "ai_usage_rollup", "llm_connection_probe",
+                 "ops_external_check"}   # AA-1142 follow-up (S293): the worker's external checks
 LONG = "writing_memory_r2"          # the S292 case: expected 5,400 s, background
 NOW = datetime(2026, 11, 25, 3, 13, tzinfo=timezone.utc)
 
