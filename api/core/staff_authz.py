@@ -766,6 +766,11 @@ POLICY: dict[tuple[str, str], Any] = {
     # and the split plan carry no text (Writing Lab R); the finals carry claim text (Lab text read, logged).
     ("POST", "/admin/writing-memory/claim-labels/import"): AI_ADMIN,
     ("GET", "/admin/writing-memory/claim-labels/split-plan"): _LAB_READ,
+    # AA-1169 — Writing Lab › Eval runs: the runs and a run's items (ids, codes, counts) as the other Lab reads without
+    # text; one item (the stored writer input and output) as a logged Lab tenant-text read (LAB_TEXT_LOGGED).
+    ("GET", "/admin/writing-memory/eval-runs"): _LAB_READ,
+    ("GET", "/admin/writing-memory/eval-runs/{run_id}"): _LAB_READ,
+    ("GET", "/admin/writing-memory/eval-runs/{run_id}/items/{item_id}"): _LAB_TEXT_READ,
     ("GET", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/report"): _LAB_READ,
     ("POST", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/enqueue"): AI_ADMIN,
     ("POST", "/admin/writing-memory/claim-labels/{set_id}/{set_version}/pull-resolutions"): AI_ADMIN,
