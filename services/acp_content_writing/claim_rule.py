@@ -7,7 +7,7 @@ on the local proxy (AA-1048 v7 t9_blog pool) rarity / ranking, route and time na
 (pace, ease, what the reader sees or feels) were about 60 % of the expected flags. The repair prompt already forbids
 adding a time of day, an ordinal or a pace word (generate._REPAIR_SYSTEM); the first draft had no such line.
 
-The switch is the setting ``cis.t9.blog_claim_rule`` (CIS 490, Platform › Settings, bool, platform scope,
+The switch is the setting ``cis.t9.blog_claim_rule`` (CIS 484, Platform › Settings, bool, platform scope,
 maker-checker, default off = the blog prompt of main byte for byte, S272 rule for writer behaviour changes). The paid
 re-measure of the W5 T9 sample (prereg w5-t9-r2, about 1.5-3 USD under a 5 USD cap) runs with it on before an
 administrator leaves it on. :func:`enabled` never raises: any read problem is the default (off). A caller that must pin
@@ -25,8 +25,8 @@ from services.quality import settings_keys
 
 logger = structlog.get_logger()
 
-KEY = settings_keys.T9_BLOG_CLAIM_RULE   # "cis.t9.blog_claim_rule" (CIS 490)
-DEFAULT = False          # the CIS 490 seed default; served whenever the setting cannot be read
+KEY = settings_keys.T9_BLOG_CLAIM_RULE   # "cis.t9.blog_claim_rule" (CIS 484)
+DEFAULT = False          # the CIS 484 seed default; served whenever the setting cannot be read
 
 
 def enabled(mode: Optional[bool] = None) -> bool:

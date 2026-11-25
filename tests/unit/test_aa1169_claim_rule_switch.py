@@ -1,5 +1,5 @@
 """AA-1169 — services/acp_content_writing/claim_rule.py: the switch of the blog writer's CLAIM CHECK block and its
-setting cis.t9.blog_claim_rule (CIS 490). The prompt side is guarded by tests/unit/test_aa1169_blog_claim_rule.py."""
+setting cis.t9.blog_claim_rule (CIS 484). The prompt side is guarded by tests/unit/test_aa1169_blog_claim_rule.py."""
 from unittest.mock import patch
 
 from services.acp_content_writing import claim_rule

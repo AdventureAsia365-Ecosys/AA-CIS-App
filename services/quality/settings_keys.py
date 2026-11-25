@@ -47,7 +47,7 @@ T9_BLOG_LENGTH_EXTEND = "cis.t9.blog_length_extend"
 # while T9_BLOG_LENGTH_EXTEND is on for the piece.
 T9_BLOG_EXTEND_MATERIAL = "cis.t9.blog_extend_material"
 T9_BLOG_EXTEND_SHRINK_SECTIONS = "cis.t9.blog_extend_shrink_sections"
-# AA-1169 (CIS 490, S292): the switch of the blog writer's CLAIM CHECK block
+# AA-1169 (CIS 484, S292): the switch of the blog writer's CLAIM CHECK block
 # (services/acp_content_writing/claim_rule.py), bool, platform scope, default off. A writer-prompt switch, not one of
 # the CIS 412 quality keys (ALL_KEYS); the prompt fingerprint counts it (quality_settings.prompt_fp).
 T9_BLOG_CLAIM_RULE = "cis.t9.blog_claim_rule"
