@@ -52,10 +52,14 @@ const PAGES = [
   '/admin/platform/compliance', '/admin/platform/compliance?tab=obligations',
   // AA-1169 (S293): Writing Lab › Eval runs (the run list carries no tenant text; the sample view is not shot).
   '/admin/lab/eval-runs',
+  // S294: Platform › Product map (cards, no table rows: its ready marker is the "Catalogue <sha> · built" line, drawn
+  // only once the catalogue answered; the generic row wait failed on this page while it rendered fine).
+  '/admin/platform/catalogue',
 ] as const;
 // A page whose loaded content is not a table row: its ready marker (rendered only once its data answered).
 const READY: Partial<Record<(typeof PAGES)[number], string>> = {
   '/admin/lab/t9-social': '[data-testid="writing-lab-ready"]',
+  '/admin/platform/catalogue': 'text=/Catalogue [0-9a-f]+ · built /',
   '/admin/lab/t9-social?tab=releases': '[data-testid="lab-releases-ready"]',
   '/admin/lab/t9-social?tab=metrics': '[data-testid="lab-metrics-ready"]',
   '/admin/ai-gateway?tab=routing': '[data-testid="ai-gateway-data-class"]',
