@@ -20,7 +20,7 @@ export function summarize(pages, logLines) {
     out.push("", "| Page | Problem |", "| --- | --- |");
     for (const p of failing) {
       for (const msg of [...(p.problems ?? []), ...(p.stale ?? []).map((s) => `stale tolerated entry: ${s}`)]) {
-        out.push(`| \`${p.path}\` | ${String(msg).replace(/\|/g, "\\|").slice(0, 300)} |`);
+        out.push(`| \`${p.path}\` | ${String(msg).replace(/\\/g, "\\\\").replace(/\|/g, "\\|").slice(0, 300)} |`);
       }
     }
   }
