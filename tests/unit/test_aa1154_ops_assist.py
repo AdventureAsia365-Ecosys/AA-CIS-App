@@ -28,7 +28,7 @@ LIMITS = {"evidence_window_min": 30, "changes_window_min": 120, "refused_trigger
           "spend_spike_floor_usd_h": 0.1, "wide_scope_stages": 5, "small_money_usd": 0.1, "history_min_n": 5,
           "card_ttl_min": 30,
           "reason_min_chars": 20,
-          # A1 (CIS 486)
+          # A1 (CIS 487)
           "auto_severities": ["sev1", "sev2"], "auto_incident_gap_min": 240, "deep_model": "sonnet-5-5",
           "lookup_windows_min": [15, 60, 360, 1440]}
 
@@ -44,7 +44,7 @@ def _replay(**kw) -> dict:
 # ── settings ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
 def test_limits_are_the_compiled_defaults():
-    """Every limit comes from a setting (CIS 481, A1: CIS 486); the defaults are the S285 advisory values."""
+    """Every limit comes from a setting (CIS 481, A1: CIS 487); the defaults are the S285 advisory values."""
     assert ops_assist_settings.snapshot() == LIMITS
     assert set(ops_assist_settings.keys().values()) == set(ops_assist_settings.ALL)
 

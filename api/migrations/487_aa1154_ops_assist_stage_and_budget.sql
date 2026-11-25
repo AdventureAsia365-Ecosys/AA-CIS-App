@@ -1,4 +1,4 @@
--- Migration 486: AA-1154 (S292, phase A1 of the CIS admin assistant) — the AI gateway stage `ops_assist`, its own
+-- Migration 487: AA-1154 (S292, phase A1 of the CIS admin assistant) — the AI gateway stage `ops_assist`, its own
 -- monthly spend cap, and the four A1 choices as settings.
 --
 -- Why. Phase A0 (CIS 481, code PR 149c844c) turns a Needs-attention item of the Ecosystem status page into ranked action
@@ -55,7 +55,7 @@
 --                                              default [15, 60, 360, 1440] (the look-up panel's choices; the API
 --                                              refuses any other window); impact low
 --      Each seed row carries its plain label and its EN + VI operator guide (CIS 416 rule).
---   4. Register 486.
+--   4. Register 487.
 --
 -- Idempotent: ON CONFLICT DO NOTHING keeps a row an admin already edited (a lowered cap, a switched-off stage, a
 -- setting); the guard checks the gateway rows exist with a hard-stop month cap.
@@ -65,9 +65,10 @@
 -- 0017a); the A1 code PR follows. No readiness raise: the code reads both gateway rows before every model call and
 -- answers with the rule-made cards while they are missing. DM-6.1: no personal data. DM-7.1: no new table.
 --
--- Number. Owner main max + 1 once CIS 484-485 (AA-1142, the same S292 CIS migration batch) have landed: this file
--- ships in that batch, after them. If the owner main max + 1 differs at merge, renumber: git grep '486_' and "'486'"
--- (this file, tests/integration/test_aa1154_migration_486.py, compiled_defaults.json's _generated line,
+-- Number. Owner main max + 1 once CIS 484 (AA-1169) and 485-486 (AA-1142) of the same S292 CIS migration batch have
+-- landed: this file ships in that batch, after them. If the owner main max + 1 differs at merge, renumber: git grep
+-- '487_' and "'487'"
+-- (this file, tests/integration/test_aa1154_migration_487.py, compiled_defaults.json's _generated line,
 -- docs/implementation-notes/AA-1154.md).
 --
 -- Locks. Two single-row INSERTs and one INSERT ... ON CONFLICT of four rows (the definition guard trigger allows the
@@ -91,16 +92,16 @@ BEGIN
     FOREACH col IN ARRAY ARRAY['allowed_scopes', 'route_deadline_s', 'degrade_mode', 'pii_class', 'free_text'] LOOP
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'shared'
                           AND table_name = 'llm_role_config' AND column_name = col) THEN
-            RAISE EXCEPTION 'migration 486: shared.llm_role_config.% is missing (apply 311, 320, 326, 373, 451 first)',
+            RAISE EXCEPTION 'migration 487: shared.llm_role_config.% is missing (apply 311, 320, 326, 373, 451 first)',
                 col;
         END IF;
     END LOOP;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'shared'
                       AND table_name = 'spend_budget' AND column_name = 'per_month_usd') THEN
-        RAISE EXCEPTION 'migration 486: shared.spend_budget.per_month_usd is missing (apply 340 first)';
+        RAISE EXCEPTION 'migration 487: shared.spend_budget.per_month_usd is missing (apply 340 first)';
     END IF;
     IF NOT EXISTS (SELECT 1 FROM shared.llm_model_catalog WHERE model_key = 'haiku-5-5' AND enabled) THEN
-        RAISE EXCEPTION 'migration 486: haiku-5-5 is not an enabled catalog model (migration 259)';
+        RAISE EXCEPTION 'migration 487: haiku-5-5 is not an enabled catalog model (migration 259)';
     END IF;
 END $$;
 
@@ -109,13 +110,13 @@ INSERT INTO shared.llm_role_config
      shadow_sample_pct, allowed_scopes, route_deadline_s, degrade_mode, pii_class, free_text, updated_by)
 VALUES
     ('ops_assist', 'writer', 'claude', 'haiku-5-5', NULL, true, ARRAY[]::text[], NULL, 0,
-     ARRAY['aws_only', 'vendor_direct']::text[], 25, 'basic_narration', 'content', true, 'migration-486-aa1154')
+     ARRAY['aws_only', 'vendor_direct']::text[], 25, 'basic_narration', 'content', true, 'migration-487-aa1154')
 ON CONFLICT (stage) DO NOTHING;
 
 INSERT INTO shared.spend_budget
     (provider, scope, per_run_usd, per_day_usd, per_month_usd, hard_stop, alert_pct, updated_by)
 VALUES
-    ('llm', 'stage:ops_assist', NULL, NULL, 10.00, true, 80, 'migration-486-aa1154')
+    ('llm', 'stage:ops_assist', NULL, NULL, 10.00, true, 80, 'migration-487-aa1154')
 ON CONFLICT (provider, scope) DO NOTHING;
 
 -- settings-seed:begin (scripts/settings/gen_compiled_defaults.py reads the JSON array of the dollar-quoted seed)
@@ -142,16 +143,16 @@ ON CONFLICT (key) DO NOTHING;
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM shared.llm_role_config WHERE stage = 'ops_assist' AND role = 'writer') THEN
-        RAISE EXCEPTION 'migration 486: the ops_assist stage row is missing';
+        RAISE EXCEPTION 'migration 487: the ops_assist stage row is missing';
     END IF;
     IF NOT EXISTS (SELECT 1 FROM shared.spend_budget WHERE provider = 'llm' AND scope = 'stage:ops_assist'
                       AND per_month_usd IS NOT NULL) THEN
-        RAISE EXCEPTION 'migration 486: the stage:ops_assist month cap is missing';
+        RAISE EXCEPTION 'migration 487: the stage:ops_assist month cap is missing';
     END IF;
 END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('486', now(), 'AA-1154 A1: AI gateway stage ops_assist (writer, haiku-5-5, deadline 25 s, free-text scrub), '
+VALUES ('487', now(), 'AA-1154 A1: AI gateway stage ops_assist (writer, haiku-5-5, deadline 25 s, free-text scrub), '
                       'its own month cap llm / stage:ops_assist 10 USD hard stop, and four assistant settings')
 ON CONFLICT (version) DO NOTHING;
 

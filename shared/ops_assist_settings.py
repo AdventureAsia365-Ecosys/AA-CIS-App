@@ -20,7 +20,7 @@ setting, maker-checker and audited, with the S285 advisory value as the seeded d
 - ``card_ttl_min``: a card older than this is locked and the item must be analysed again (advisory: 30 minutes);
 - ``reason_min_chars``: the shortest reason an R3 card asks for (tech lead AI7: 20 characters).
 
-A1 (CIS 486, the model ranks and explains the cards):
+A1 (CIS 487, the model ranks and explains the cards):
 
 - ``auto_severities``: the severities that get one automatic quick analysis per incident (AI6: sev1, sev2; empty =
   none), a list of strings;
@@ -30,8 +30,8 @@ A1 (CIS 486, the model ranks and explains the cards):
 - ``lookup_windows_min``: the windows (minutes) the "what changed" look-up offers, ascending, each once.
 
 ``shared.settings.get`` serves the last snapshot and the compiled default before the first refresh, so a read never
-blocks and never fails. The keys equal the CIS 481 and 486 seeds (tests/integration/test_aa1154_migration_481.py,
-test_aa1154_migration_486.py and the settings-lint reader check, tests/unit/test_s279_settings_lint.py).
+blocks and never fails. The keys equal the CIS 481 and 487 seeds (tests/integration/test_aa1154_migration_481.py,
+test_aa1154_migration_487.py and the settings-lint reader check, tests/unit/test_s279_settings_lint.py).
 """
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ SMALL_MONEY_USD = "cis.ops.assist_small_money_usd"
 HISTORY_MIN_N = "cis.ops.assist_history_min_n"
 CARD_TTL_MIN = "cis.ops.assist_card_ttl_min"
 REASON_MIN_CHARS = "cis.ops.assist_reason_min_chars"
-# A1 (CIS 486)
+# A1 (CIS 487)
 AUTO_SEVERITIES = "cis.ops.assist_auto_severities"
 AUTO_INCIDENT_GAP_MIN = "cis.ops.assist_auto_incident_gap_min"
 DEEP_MODEL = "cis.ops.assist_deep_model"
