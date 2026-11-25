@@ -47,7 +47,8 @@ def test_app_row_budget_left_and_states():
 
 
 def _points(app_ts: list[tuple[datetime, float, float]]) -> dict:
-    return {"requests": [(t.isoformat(), r) for t, r, _ in app_ts], "errors": [(t.isoformat(), e) for t, _, e in app_ts]}
+    return {"requests": [(t.isoformat(), r) for t, r, _ in app_ts],
+            "errors": [(t.isoformat(), e) for t, _, e in app_ts]}
 
 
 def test_a_synthetic_error_burst_fires_the_fast_burn_alert_and_the_verdict_lists_it():

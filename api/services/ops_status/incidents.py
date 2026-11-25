@@ -85,9 +85,12 @@ ACKS_SQL = f"""
 
 
 class IncidentError(Exception):
-    def __init__(self, code: str, message: str, *, status: int = 422, incident_id: Optional[int] = None) -> None:
-        super().__init__(message)
-        self.code, self.status, self.incident_id = code, status, incident_id
+    def __init__(self, code: str, message: str, status: int = 422, incident_id: Optional[int] = None) -> None:
+        super().__init__(code, message, status, incident_id)
+        self.code, self.message, self.status, self.incident_id = code, message, status, incident_id
+
+    def __str__(self) -> str:
+        return self.message
 
 
 def _aware(t: datetime) -> datetime:
