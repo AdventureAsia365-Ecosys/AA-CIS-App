@@ -13,6 +13,8 @@ export const MSG_KEYS = [
   "queue_no_worker", "queue_no_worker_detail", "queue_wait", "ecs_tasks", "resource", "ai_cap", "ai_near", "ai_spend",
   "of_requests", "guard_failed", "guard_missing", "guard_value", "guard_age", "main_red", "red_for", "deploy",
   "service_down", "job_failures", "forecast", "anomaly",
+  // AA-1142 (S293): the error budget burn and the external checks (title and detail)
+  "slo_burn", "slo_burn_detail", "external_fails", "external_cert", "external_stale", "external_stale_detail",
 ] as const;
 export type MsgKey = (typeof MSG_KEYS)[number];
 
@@ -23,6 +25,8 @@ export interface Words {
   tile: (id: string) => string;
   unit: (tile: string, unit: string) => string;
   why: (code: string, running: number | null, desired: number | null) => string | null;
+  /** A time of the API (ISO) in the page's format; the ISO text when absent. */
+  time?: (iso: string) => string;
 }
 /** A message key of the page catalogue and its formatted arguments. */
 export interface Phrase { key: string; args: string[] }
@@ -79,7 +83,25 @@ const PHRASES: Readonly<Record<Exclude<MsgKey, "resource" | "forecast">, (m: Msg
   // AA-1141: an AI spend hour above N x its median hour (times is null when the median hour is 0: above the floor)
   anomaly: (m, w) => [w.app(str(m.app)), str(m.route), withUnit(m.value, "USD"),
     num(m.times) == null ? "" : `${withUnit(m.times, "")}×`, withUnit(m.median, "USD")],
+  // AA-1142: a burn window over its factor; its detail (bad of events, the objective, the budget left)
+  slo_burn: (m, w) => [w.app(str(m.app)), windowText(m.minutes), withUnit(m.value, ""), withUnit(m.limit, "")],
+  slo_burn_detail: (m) => [str(m.bad), str(m.events), m.basis === "requests" ? "requests" : "samples",
+    withUnit(m.target, "%"), withUnit(m.budget_left, "%")],
+  // AA-1142 (S293): a public host failing from outside (what failed, the sources that see it), a certificate near its
+  // end, a feed whose every source stopped
+  external_fails: (m) => [str(m.host), str(m.code), num(m.status) == null ? "" : String(m.status),
+    Array.isArray(m.sources) ? m.sources.filter((s) => s === "worker" || s === "github").join(",") : ""],
+  external_cert: (m) => [str(m.host), withUnit(m.days, "")],
+  external_stale: (m, w) => [m.since ? (w.time ? w.time(String(m.since)) : String(m.since)) : "—"],
+  external_stale_detail: () => [],
 };
+
+/** A burn window's length: "5 min" under an hour, "6 h" from an hour up; "—" without it. */
+export function windowText(minutes: unknown): string {
+  const n = num(minutes);
+  if (n == null) return "—";
+  return n < 60 ? withUnit(n, "min") : withUnit(n / 60, "h");
+}
 
 /** AA-1141: a capacity forecast item: the database storage, or one AI connection's monthly cap. */
 function forecastPhrase(m: Msg): Phrase {

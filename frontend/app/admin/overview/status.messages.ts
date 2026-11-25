@@ -196,7 +196,7 @@ export const STATUS = defineMessages(
     m_job_failures: (n: string, kind: string) => (n === "1" ? `1 job failed: ${kind}` : `${n} jobs failed: ${kind}`),
     srcLabel: (source: string) => `As written by ${source}`,
     srcAlarm: "the CloudWatch alarm", srcEcs: "ECS", srcCheck: "the ops check", srcHealth: "the health check",
-    srcJobs: "the job", srcOther: "the source",
+    srcJobs: "the job", srcOther: "the source", srcExternal: "the external check",
     showMore: "Show more", showLess: "Show less",
     freeAlloc: (size: string) => `of ${size} allocated`,
     freeAllocMax: (size: string, max: string) => `of ${size} allocated, autoscaling up to ${max}`,
@@ -283,6 +283,22 @@ export const STATUS = defineMessages(
     anomalyPartial: "hour so far",
     m_anomaly: (app: string, route: string, usd: string, times: string, median: string) =>
       `AI spend of ${app} on ${route}: ${usd} in one hour${times ? `, ${times} its median hour` : ""} (median ${median})`,
+    // AA-1142 (S293): error budget burn and external checks, worded here instead of the API's English title
+    m_slo_burn: (app: string, win: string, burn: string, lim: string) =>
+      `${app} burns its error budget ${burn}× over ${win} (alert above ${lim}×)`,
+    m_slo_burn_detail: (bad: string, events: string, basis: string, target: string, left: string) =>
+      `${bad} of ${events} ${basis === "requests" ? "requests" : "health samples"} failed; objective ${target}, `
+      + `budget left ${left}`,
+    m_external_fails: (host: string, code: string, status: string, sources: string) => {
+      const what = code === "dns" ? "DNS" : code === "tls" ? "TLS" : code === "http" ? `HTTP ${status}` : "the request";
+      const by = sources.split(",").filter(Boolean)
+        .map((s) => (s === "worker" ? "the CIS worker" : "GitHub Actions")).join(" and ");
+      return `${host} fails from outside: ${what}${by ? ` (seen from ${by})` : ""}`;
+    },
+    m_external_cert: (host: string, days: string) => `Certificate of ${host} ends in ${days} days`,
+    m_external_stale: (since: string) => `External checks have not reported since ${since}`,
+    m_external_stale_detail: () => "No source in use (the CIS worker's job, the GitHub Actions workflow) reported "
+      + "within its interval.",
     // saved views + auto refresh
     views: "Saved views",
     viewPick: "Open a saved view",
@@ -483,7 +499,7 @@ export const STATUS = defineMessages(
     m_job_failures: (n: string, kind: string) => `${n} job lỗi: ${kind}`,
     srcLabel: (source: string) => `Nguyên văn từ ${source}`,
     srcAlarm: "cảnh báo CloudWatch", srcEcs: "ECS", srcCheck: "kiểm tra vận hành", srcHealth: "kiểm tra sức khoẻ",
-    srcJobs: "job", srcOther: "nguồn",
+    srcJobs: "job", srcOther: "nguồn", srcExternal: "kiểm tra từ bên ngoài",
     showMore: "Xem thêm", showLess: "Thu gọn",
     freeAlloc: (size: string) => `trên ${size} đã cấp`,
     freeAllocMax: (size: string, max: string) => `trên ${size} đã cấp, autoscaling tới ${max}`,
@@ -571,6 +587,21 @@ export const STATUS = defineMessages(
     anomalyPartial: "giờ đang chạy",
     m_anomaly: (app: string, route: string, usd: string, times: string, median: string) =>
       `Chi phí AI của ${app} trên ${route}: ${usd} trong một giờ${times ? `, ${times} giờ trung vị` : ""} (trung vị ${median})`,
+    m_slo_burn: (app: string, win: string, burn: string, lim: string) =>
+      `${app} đốt ngân sách lỗi ${burn}× trong ${win} (cảnh báo khi vượt ${lim}×)`,
+    m_slo_burn_detail: (bad: string, events: string, basis: string, target: string, left: string) =>
+      `${bad} / ${events} ${basis === "requests" ? "yêu cầu" : "mẫu kiểm tra sức khỏe"} lỗi; mục tiêu ${target}, `
+      + `ngân sách còn ${left}`,
+    m_external_fails: (host: string, code: string, status: string, sources: string) => {
+      const what = code === "dns" ? "DNS" : code === "tls" ? "TLS" : code === "http" ? `HTTP ${status}` : "yêu cầu";
+      const by = sources.split(",").filter(Boolean)
+        .map((s) => (s === "worker" ? "worker của CIS" : "GitHub Actions")).join(" và ");
+      return `${host} lỗi khi truy cập từ bên ngoài: ${what}${by ? ` (thấy từ ${by})` : ""}`;
+    },
+    m_external_cert: (host: string, days: string) => `Chứng chỉ của ${host} hết hạn sau ${days} ngày`,
+    m_external_stale: (since: string) => `Kiểm tra từ bên ngoài không báo kết quả từ ${since}`,
+    m_external_stale_detail: () => "Không nguồn nào đang dùng (job của worker CIS, workflow GitHub Actions) báo kết "
+      + "quả trong chu kỳ của nó.",
     views: "Góc nhìn đã lưu",
     viewPick: "Mở góc nhìn đã lưu",
     viewNone: "Chưa có góc nhìn nào",

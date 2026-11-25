@@ -26,9 +26,13 @@ export const P2 = defineMessages(
     rCloudwatch: "CloudWatch did not answer", rNoSamples: "no health samples yet",
     // external checks
     extTitle: "External checks (from outside)",
-    extNote: (min: number) => `Every ${min} minutes from GitHub Actions against the public hosts: DNS, the TLS `
-      + "certificate and the health path. The internal checks are in Services above.",
-    extStale: (time: string) => `No new result since ${time}: the external checks stopped reporting.`,
+    extNote: () => "Checks of the public hosts from outside: DNS, the TLS certificate and the health path. The "
+      + "internal checks are in Services above.",
+    colSource: "Checked from",
+    srcWorker: "CIS worker", srcGithub: "GitHub Actions", srcStopped: "stopped reporting", srcNever: "never",
+    srcLine: (name: string, min: number, last: string, stale: boolean) =>
+      `${name}: every ${min} min, last ${last}${stale ? " (stopped reporting)" : ""}`,
+    extStale: (time: string) => `No new result since ${time}: every source of the external checks stopped reporting.`,
     certNote: (warn: number, crit: number) => `Certificate: amber at ${warn} days left, red at ${crit}.`,
     colTarget: "Target", colState: "State", colHttp: "HTTP", colLatency: "Time", colCert: "Certificate",
     colStrip: "Over the range",
@@ -79,6 +83,13 @@ export const P2 = defineMessages(
     agEmpty: "Nothing in this range.",
     agNotMeasured: "Not measured yet: server errors per agency (there is no per-agency request log) and the "
       + "partner CRM's jobs per agency.",
+    agNotMeasuredCrm: "Not measured yet: the partner CRM's jobs per agency.",
+    agServer: "API server errors",
+    col5xx: "5xx", colEndpoint: "Endpoint",
+    apiLine: (calls: number) => `${calls} API calls from the agencies' own systems in this range.`,
+    agServerTotals: (n: number, calls: number, pct: string) => `${n} server errors in ${calls} API calls (${pct}).`,
+    agServerScope: "API server errors count the agencies' metered API calls only: not their portal sessions, not a "
+      + "request that crashed before answering, not the Booking or CRM APIs.",
     agUnknown: "This id is not an agency of CIS; its numbers are shown as read.",
     agTotals: (cost: string, calls: number, failedAi: number, failedJobs: number) =>
       `${cost} AI spend, ${calls} calls, ${failedAi} failed AI calls, ${failedJobs} failed jobs.`,
@@ -102,9 +113,13 @@ export const P2 = defineMessages(
     belowTarget: "dưới mục tiêu",
     rCloudwatch: "CloudWatch không trả lời", rNoSamples: "chưa có mẫu kiểm tra sức khỏe",
     extTitle: "Kiểm tra từ bên ngoài",
-    extNote: (min: number) => `Mỗi ${min} phút từ GitHub Actions tới các host công khai: DNS, chứng chỉ TLS và `
-      + "đường health. Kiểm tra nội bộ nằm ở phần Dịch vụ phía trên.",
-    extStale: (time: string) => `Không có kết quả mới từ ${time}: kiểm tra bên ngoài đã ngừng báo.`,
+    extNote: () => "Kiểm tra các host công khai từ bên ngoài: DNS, chứng chỉ TLS và đường health. Kiểm tra nội bộ "
+      + "nằm ở phần Dịch vụ phía trên.",
+    colSource: "Kiểm tra từ",
+    srcWorker: "Worker CIS", srcGithub: "GitHub Actions", srcStopped: "đã ngừng báo", srcNever: "chưa có",
+    srcLine: (name: string, min: number, last: string, stale: boolean) =>
+      `${name}: mỗi ${min} phút, gần nhất ${last}${stale ? " (đã ngừng báo)" : ""}`,
+    extStale: (time: string) => `Không có kết quả mới từ ${time}: mọi nguồn kiểm tra bên ngoài đã ngừng báo.`,
     certNote: (warn: number, crit: number) => `Chứng chỉ: vàng khi còn ${warn} ngày, đỏ khi còn ${crit}.`,
     colTarget: "Đích", colState: "Trạng thái", colHttp: "HTTP", colLatency: "Thời gian", colCert: "Chứng chỉ",
     colStrip: "Trong khoảng",
@@ -154,6 +169,13 @@ export const P2 = defineMessages(
     agEmpty: "Không có gì trong khoảng này.",
     agNotMeasured: "Chưa đo: lỗi máy chủ theo đại lý (không có nhật ký yêu cầu theo đại lý) và job của CRM đối tác "
       + "theo đại lý.",
+    agNotMeasuredCrm: "Chưa đo: job của CRM đối tác theo đại lý.",
+    agServer: "Lỗi máy chủ API",
+    col5xx: "5xx", colEndpoint: "Endpoint",
+    apiLine: (calls: number) => `${calls} lời gọi API từ hệ thống riêng của các đại lý trong khoảng này.`,
+    agServerTotals: (n: number, calls: number, pct: string) => `${n} lỗi máy chủ trong ${calls} lời gọi API (${pct}).`,
+    agServerScope: "Lỗi máy chủ API chỉ tính lời gọi API có đo lường của đại lý: không tính phiên cổng thông tin, "
+      + "yêu cầu bị sập trước khi trả lời, hay API của Booking và CRM.",
     agUnknown: "Mã này không phải đại lý của CIS; số liệu hiển thị như đọc được.",
     agTotals: (cost: string, calls: number, failedAi: number, failedJobs: number) =>
       `${cost} chi phí AI, ${calls} lời gọi, ${failedAi} lời gọi AI lỗi, ${failedJobs} job lỗi.`,

@@ -321,6 +321,7 @@ def verdict_items(data: dict) -> list[dict]:
                              "reported within its interval",
                              since=r.get("newest"), source="external checks",
                              msg={"key": "external_stale", "since": r.get("newest")},
+                             detail_msg={"key": "external_stale_detail"},
                              links=[("Settings", PAGES["settings"])]))
         elif kind == "cert":
             out.append(_item(iid, sev, r["app"], f"Certificate of {r['host']} ends in {r['cert_days_left']:g} days",

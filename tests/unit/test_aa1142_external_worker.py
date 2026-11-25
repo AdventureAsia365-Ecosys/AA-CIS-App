@@ -258,3 +258,37 @@ def test_the_ops_metrics_sampler_queues_the_worker_checks():
 
     src = inspect.getsource(ops_metrics_sampler.sample_once)
     assert "ops_external_check_job import tick_part" in src and '"ops_external_check_error"' in src
+
+
+def test_every_external_and_burn_item_has_a_message_the_page_can_word():
+    """S293: the external check and error budget items carry a structured message (title and detail) the page words
+    in English or Vietnamese; every key is in lib/opsStatusText.ts MSG_KEYS (test_aa1140_status_text reads it)."""
+    import re
+    from pathlib import Path
+
+    from api.services.ops_status import slo
+
+    rules = {"target_pct": 99.5, "window_days": 30, "fast": {"window_min": 60, "factor": 14.4},
+             "slow": {"window_hours": 6, "factor": 6.0}, "min_requests": 50}
+
+    src = (Path(__file__).resolve().parents[2] / "frontend" / "lib" / "opsStatusText.ts").read_text(encoding="utf-8")
+    known = set(re.findall(r'"([a-z0-9_]+)"', re.search(r"export const MSG_KEYS = \[(.*?)\] as const;", src,
+                                                         re.S).group(1)))
+    at = NOW - timedelta(minutes=5)
+    rows = external.target_rows([], [_row("zz-web", "worker", "down", at), _row("zz-auth", "worker", "ok", at,
+                                                                                 days=3.0)],
+                                RNG, NOW, LIMITS, 99.5, {"worker": False})
+    items = (external.verdict_items({"rows": rows, "stale": False})
+             + external.verdict_items({"rows": rows, "stale": True, "newest": at.isoformat()}))
+    burn = {"app": "cis", "label": "CIS", "basis": "requests", "target_pct": 99.5, "budget_left_pct": 12.5,
+            "fast": {"burn": 20.0, "events": 1000, "bad": 100, "factor": 14.4, "state": "alert"},
+            "slow": {"burn": 1.0, "events": 5000, "bad": 25, "factor": 6.0, "state": "ok"}, "measured": True}
+    items += slo.verdict_items({"rules": rules, "rows": [burn]})
+    keys = {i["msg"]["key"] for i in items} | {i["detail_msg"]["key"] for i in items if i["detail_msg"]}
+    assert keys == {"external_fails", "external_cert", "external_stale", "external_stale_detail", "slo_burn",
+                    "slo_burn_detail"}
+    assert keys <= known, keys - known
+    fast = next(i for i in items if i["msg"]["key"] == "slo_burn")
+    assert fast["msg"]["minutes"] == 60
+    assert fast["detail_msg"] == {"key": "slo_burn_detail", "bad": 100, "events": 1000, "basis": "requests",
+                                  "target": 99.5, "budget_left": 12.5}

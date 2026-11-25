@@ -4,6 +4,7 @@
 // app, a tile, a level or a service reason the same way in EN and VI.
 
 import { useMemo } from "react";
+import { useFormat } from "../../../_kit";
 import { APP_LABEL, type Msg, type ResourceTile, type RuntimeRow } from "@/lib/opsStatus";
 import { phrase, type Words } from "@/lib/opsStatusText";
 import { useST, type ST, type SKey } from "./ui";
@@ -17,7 +18,7 @@ const TILE_KEY: Readonly<Record<string, SKey>> = {
 const UNIT_KEY: Readonly<Record<string, SKey>> = { connections: "unitOfMax", role: "unitOfLimit", ecs: "unitTasks" };
 const SOURCE_KEY: Readonly<Record<string, SKey>> = {
   "CloudWatch alarm": "srcAlarm", ECS: "srcEcs", "Ops check": "srcCheck", "health check": "srcHealth",
-  job: "srcJobs",
+  job: "srcJobs", "external checks": "srcExternal",
 };
 
 type Say = (key: string, ...args: string[]) => string;
@@ -36,7 +37,7 @@ function why(say: Say, code: string, running: number | null, desired: number | n
   return byCode[code]?.() ?? null;
 }
 
-function makeWords(t: ST): { words: Words; say: Say } {
+function makeWords(t: ST, time?: (iso: string) => string): { words: Words; say: Say } {
   const say = t as unknown as Say;   // keys come from lib/opsStatusText.ts phraseKeys(), checked in its test
   const app = (id: string) => {
     if (id === "crm") return t("appCrm");
@@ -48,6 +49,7 @@ function makeWords(t: ST): { words: Words; say: Say } {
     tile: (id) => (TILE_KEY[id] ? t(TILE_KEY[id]) : id),
     unit: (tile, unit) => (UNIT_KEY[tile] ? t(UNIT_KEY[tile]) : unit),
     why: (code, running, desired) => why(say, code, running, desired),
+    time,
   };
   return { words, say };
 }
@@ -64,8 +66,9 @@ export interface StatusWords {
 
 export function useWords(): StatusWords {
   const t = useST();
+  const { formatDateTime } = useFormat();
   return useMemo(() => {
-    const { words, say } = makeWords(t);
+    const { words, say } = makeWords(t, (iso) => formatDateTime(iso));
     return {
       text: (m, fallback) => {
         const p = phrase(m, words);
@@ -78,5 +81,5 @@ export function useWords(): StatusWords {
         ?? r.reason ?? null,
       source: (source) => t("srcLabel", SOURCE_KEY[source] ? t(SOURCE_KEY[source]) : t("srcOther")),
     };
-  }, [t]);
+  }, [t, formatDateTime]);
 }
