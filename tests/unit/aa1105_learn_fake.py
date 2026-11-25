@@ -4,6 +4,7 @@ Every name and text here is invented (CI golden-set text guard)."""
 from __future__ import annotations
 
 import copy
+import types
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -23,6 +24,11 @@ ACADEMY = learn_identity.DEV_ACADEMY_WEB_CLIENT_ID
 SUB = "1105aaaa-0000-4000-8000-000000000001"
 ADMIN_ID = "1105bbbb-0000-4000-8000-000000000001"
 SECTION = "adr:0099#sample-rule"
+# S294: the public verify limit counts in a fixed window per minute (time.time() // 60). A test that sends 31 requests
+# and expects the 31st to be refused went red when the requests straddled a minute boundary (the count restarts: 404
+# instead of 429, CIS merge group 25/11). The harness pins the router's clock to this instant (20 s into a minute, so
+# Retry-After is 40) for the life of the harness; a test that needs the window to move sets `Harness.now`.
+FROZEN_EPOCH = 1_795_000_040.0
 
 
 def _q(item_id: str, answer: list[int], suspended: bool = False, kind: str = "single") -> dict:
@@ -273,6 +279,9 @@ class Harness:
 
         self._saved = learn_router.open_store
         learn_router.open_store = fake_store
+        self.now = FROZEN_EPOCH
+        self._saved_time = learn_router.time
+        learn_router.time = types.SimpleNamespace(time=lambda: self.now)
         learn_router._window.clear()
         app = FastAPI()
         app.include_router(learn_router.router)
@@ -284,6 +293,8 @@ class Harness:
 
     def close(self) -> None:
         learn_router.open_store = self._saved
+        learn_router.time = self._saved_time
+        learn_router._window.clear()
         learn_identity.set_academy_verifier(None)
         lb.clear_cache()
 
