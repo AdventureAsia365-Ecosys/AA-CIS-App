@@ -4,7 +4,9 @@
 // a read-only role, or a Dev-only E2E identity whose role cookie says "admin" but whose every write the API refuses
 // with 403 e2e_read_only). One read per session in the react-query cache (5 min). AdminShell hands the answer to the
 // kit core <ReadOnlyProvider>, so every page reads it with useReadOnly() / <WriteOnly>. While the read is pending or
-// when it fails, the role cookie decides (lib/rbac isReadOnlyRole); the API still refuses what it must.
+// when it fails, the role cookie decides (lib/rbac isReadOnlyRole); the API still refuses what it must. `settled` is
+// true once the API answered (or the read failed): a page that sends a POST by itself (the status page's automatic AI
+// analysis, AA-1154) waits for it, so the E2E identity's "admin" cookie never fires a write before the answer.
 
 import { useQuery } from "@tanstack/react-query";
 import { isReadOnlyRole } from "@/lib/rbac";
@@ -14,7 +16,7 @@ import { useAdminIdentity } from "./useAdminIdentity";
 
 export const SESSION_ACCESS_KEY = ["admin", "session"] as const;
 
-export function useSessionAccess(): { readOnly: boolean; reason: SessionHint["reason"] } {
+export function useSessionAccess(): { readOnly: boolean; reason: SessionHint["reason"]; settled: boolean } {
   const role = useAdminIdentity().role;
   const q = useQuery({
     queryKey: SESSION_ACCESS_KEY,
@@ -23,5 +25,8 @@ export function useSessionAccess(): { readOnly: boolean; reason: SessionHint["re
     retry: false,
     enabled: !!role,
   });
-  return { readOnly: sessionReadOnly(q.data, isReadOnlyRole(role)), reason: q.data?.reason ?? null };
+  return {
+    readOnly: sessionReadOnly(q.data, isReadOnlyRole(role)), reason: q.data?.reason ?? null,
+    settled: q.isSuccess || q.isError,
+  };
 }
