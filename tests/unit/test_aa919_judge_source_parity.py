@@ -188,7 +188,10 @@ def test_only_the_r2_runner_imports_the_eval_judge():
                          "services/writer_proof/instrument.py", "services/writer_proof/runner.py",
                          # AA-1051 (S285 C1): the fire share measurement builds the same evidence view of the sample's
                          # stored controls and fires the AA-1048 R1 instrument on them; it never calls the eval judge.
-                         "services/writer_proof/fire_share.py"}
+                         "services/writer_proof/fire_share.py",
+                         # AA-1169 (S292): the first-pass diagnosis reads the judge's OUTPUT view to place a stored
+                         # flagged claim in its field; it never calls the eval judge.
+                         "services/writer_proof/first_pass.py"}
 
 
 def test_r2_judges_with_the_parity_source_and_stores_the_claims(monkeypatch):

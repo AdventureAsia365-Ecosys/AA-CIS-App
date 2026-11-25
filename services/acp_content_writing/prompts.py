@@ -214,6 +214,30 @@ def _blog_length_instructions() -> str:
     )
 
 
+# AA-1169 (S292) — the blog's CLAIM CHECK block, behind the setting cis.t9.blog_claim_rule (claim_rule.py, CIS 484,
+# default off = this module's blog prompt of main byte for byte). Under the W5 measure a first draft fails on any
+# sentence the pinned claim instrument flags (S285: 1 of 12 blogs passed); the classes it targets are the policy topics
+# that carried most of the expected flags on the local proxy (writing_policy.yaml claims: rarity D13, timing D4/D15 with
+# F17 direction, suitability D14, scene D15; the brand pack is never a source, D2). The repair prompt already forbids an
+# added time of day, ordinal or pace word (generate._REPAIR_SYSTEM); the first draft had no such line. Background about
+# a place stays as SOURCE FIDELITY allows it. In the t9_write prompt manifest (v10).
+_BLOG_CLAIM_RULE = """
+
+CLAIM CHECK FOR THIS BLOG (required; an editor reads every sentence against the CONTENT SEED and FACTS alone):
+- Route and time: never write a time of day, an order, a direction or a movement between moments ("by evening",
+  "the day begins with", "first", "then", "before continuing", "heading north", "comes into view", "passes
+  through") unless that moment's own seed line states it. Give each moment its day and its own seed facts.
+- Rank and rarity: never rank, rate or single out a place or the trip ("one of the most", "the last", "rare",
+  "unique", "unchanged for centuries", "few places", "difficult to find elsewhere", "striking") unless a seed or
+  FACTS line says it in those terms.
+- The reader's day: never say how a day feels, its pace, ease or effort, what it asks of the reader, who it suits,
+  what the reader will see, hear or feel there, or how the brand plans or shapes it, unless the seed or the AUDIENCE
+  line states it.
+- Restate a seed fact with the seed's own nouns, numbers and verbs; add no size, age, distance or duration to it.
+- When a sentence would break one of these lines, write the plain seed fact instead or leave the sentence out; reach
+  the length with more seed facts and place background, never with commentary."""
+
+
 # AA-741 (S271 review) — the focus of a Segment-grain Blog walk. Since S271 every Bar-clearing place on a Route is its
 # own Blog Subject and each pick carries the same walk; without a focus, sibling Subjects of one Route were written
 # from the same moments with the same "richest moment" rule, so near-identical articles were likely. The Subject's own
@@ -399,6 +423,7 @@ def build_user_prompt(
     reader_checklist: str | None = None,
     walk_focus: str | None = None,
     fence: bool = False,
+    claim_rule: bool = False,
 ) -> str:
     """`angle` is the chosen `angle_gate_option` row (name/why_it_works/formula_fit/
     best_final_style). `revision_feedback` (AA-450 Phase 1's confirmed retry shape — specific,
@@ -463,7 +488,11 @@ def build_user_prompt(
     `fence` (AA-1167, setting cis.llm.prompt_data_fence, resolved by generate.py): the CONTENT SEED, the Facts
     Entries, the DESTINATION / TRIP / LEAD WITH values and the SEARCH QUESTIONS (web search data) go between
     <untrusted_data> tags (services/ai_safety/prompt_fence.py) and the system prompt gets prompt_fence.SYSTEM_RULE.
-    False (the default) is the prompt byte for byte as before."""
+    False (the default) is the prompt byte for byte as before.
+
+    `claim_rule` (AA-1169, setting cis.t9.blog_claim_rule, resolved by generate.py): a blog prompt gets the CLAIM
+    CHECK block (`_BLOG_CLAIM_RULE`) after its length block; every other channel ignores it. False (the default) is the
+    prompt byte for byte as before."""
     # AA-771 (S233) — the full brand pack (render_brand_block) replaces the AUDIENCE / MINDSET /
     # BRAND NAME lines; the invented "discerning travellers" fallback audience is gone.
 
@@ -604,6 +633,8 @@ def build_user_prompt(
             prompt += _WALK_FOCUS_RULE  # AA-741 (S271 review) — a Segment-grain walk is about its own moment
         # AA-741 (S271) — the blog's length and one-pass budget, write and rewrite alike.
         prompt += _blog_length_instructions()
+        if claim_rule:
+            prompt += _BLOG_CLAIM_RULE  # AA-1169 — the first draft's claim check (setting cis.t9.blog_claim_rule)
         # AA-514 — every blog response is the JSON envelope, revision or not.
         prompt += _SEO_ENVELOPE_INSTRUCTIONS.format(keyword_line=_keyword_line(keyword))
     return prompt

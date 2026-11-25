@@ -26,6 +26,7 @@ from json_repair import repair_json
 from services.acp_angle_gate.brand_audience import BrandAudience
 from services.acp_angle_gate.channel_style import ChannelStyle
 from services.acp_angle_gate.goals import Goal
+from services.acp_content_writing import claim_rule  # AA-1169: the blog CLAIM CHECK block switch
 from services.acp_content_writing.prompts import PLAIN_TEXT_CHANNELS, SYSTEM_PROMPT, build_user_prompt
 from services.acp_content_writing.quality_gates import strip_citation_tags
 from services.ai_safety import prompt_fence  # AA-1167: untrusted text in the writer prompt as fenced data
@@ -211,7 +212,8 @@ def write_content(
     `build_user_prompt()`, which appends it to the CONTENT SEED regardless of channel/route
     branch. `None`/empty (no Facts Entry exists yet for this tenant+platform) is a no-op.
 
-    AA-1167: the setting cis.llm.prompt_data_fence picks the fenced prompt (prompt_fence.enabled, off = main)."""
+    AA-1167: the setting cis.llm.prompt_data_fence picks the fenced prompt (prompt_fence.enabled, off = main).
+    AA-1169: the setting cis.t9.blog_claim_rule adds the blog CLAIM CHECK block (claim_rule.enabled, off = main)."""
     fence = prompt_fence.enabled()
     user_prompt = build_user_prompt(
         content_seed=content_seed, goal=goal, channel_style=channel_style,
@@ -220,6 +222,7 @@ def write_content(
         route_segments=route_segments, keyword=keyword, facts_text=facts_text, scope=scope,
         sibling_openers=sibling_openers, search_questions=search_questions, lead_focus=lead_focus,
         memory_lines=t9_tenant_lines(memory, channel_style["channel"]), walk_focus=walk_focus, fence=fence,
+        claim_rule=claim_rule.enabled(),
     )
     channel = channel_style["channel"]
     system = SYSTEM_PROMPT + t9_platform_block(memory, channel) + prompt_fence.system_rule(fence)
@@ -281,7 +284,7 @@ def rewrite_with_feedback(
 
     `facts_text` (AA-529, defaults to `None`): same as `write_content()`'s own — passed straight
     through, so a rewrite attempt sees the exact same Facts as the first attempt did. AA-1167: the fence mode as in
-    write_content()."""
+    write_content(); AA-1169: the blog CLAIM CHECK switch as in write_content()."""
     fence = prompt_fence.enabled()
     user_prompt = build_user_prompt(
         content_seed=content_seed, goal=goal, channel_style=channel_style,
@@ -290,6 +293,7 @@ def rewrite_with_feedback(
         atom_id=atom_id, route_segments=route_segments, keyword=keyword, facts_text=facts_text, scope=scope,
         sibling_openers=sibling_openers, search_questions=search_questions, lead_focus=lead_focus,
         memory_lines=t9_tenant_lines(memory, channel_style["channel"]), walk_focus=walk_focus, fence=fence,
+        claim_rule=claim_rule.enabled(),
     )
     channel = channel_style["channel"]
     system = SYSTEM_PROMPT + t9_platform_block(memory, channel) + prompt_fence.system_rule(fence)
