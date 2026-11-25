@@ -8,7 +8,7 @@
 //   4. selectPages: public vs staff, the gallery only in a gallery build, the planted pages only in the self-test.
 
 import assert from "node:assert/strict";
-import { readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -18,6 +18,19 @@ const REPO = join(FRONTEND, "..");
 const VISUAL = join(REPO, "tests", "e2e", "visual");
 const { PAGES, EXCLUDED, selectPages } = await import(pathToFileURL(join(VISUAL, "pages.ts")).href);
 const { changedSlugs } = await import(pathToFileURL(join(VISUAL, "changed-pages.mjs")).href);
+const { LAB_STAGES } = await import(pathToFileURL(join(FRONTEND, "lib", "writingLab.ts")).href);
+
+/** Every .tsx source under frontend/app (node_modules and the api routes left out). */
+function appSources(dir = join(FRONTEND, "app")) {
+  const out = [];
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) {
+      if (name !== "node_modules" && name !== "api") out.push(...appSources(p));
+    } else if (name.endsWith(".tsx")) out.push(p);
+  }
+  return out;
+}
 
 function appRoutes(dir = join(FRONTEND, "app")) {
   const out = [];
@@ -89,4 +102,34 @@ test("openFirst: only a dynamic staff route, opened from a list page that is its
   }
   assert.deepEqual(changedSlugs(["frontend/app/admin/content-workspace/_parts/FactsForm.tsx"]),
     ["content-workspace", "content-workspace-new", "content-workspace-supplier-links", "content-workspace-tour"]);
+});
+
+test("AA-1148: every dynamic admin route is captured; each openFirst test id is rendered by a page", () => {
+  assert.deepEqual(Object.keys(EXCLUDED), [], "no route is left out of the visual run");
+  const dynamic = appRoutes().filter((r) => /\[[^\]]+\]/.test(r)).sort();
+  assert.deepEqual(dynamic.filter((r) => !PAGES.some((p) => p.route === r)), []);
+  for (const [slug, route, list, testId] of [
+    ["platform-staff-account", "/admin/platform/staff/[id]", "/admin/platform/staff", "staff-row"],
+    ["supply-content-item", "/admin/supply-content/[id]", "/admin/supply-content", "supply-content-row"],
+    ["tenants-360", "/admin/tenants/[id]", "/admin/tenants", "tenant-row"],
+  ]) {
+    const p = PAGES.find((q) => q.slug === slug);
+    assert.ok(p, `${slug} is listed`);
+    assert.equal(p.route, route);
+    assert.equal(p.path, list);
+    assert.equal(p.openFirst, `[data-testid="${testId}"]`);
+  }
+  // A selector's data-testid must be rendered somewhere (a renamed id would skip the capture silently on every env).
+  const source = appSources().map((f) => readFileSync(f, "utf8")).join("\n");
+  for (const p of PAGES.filter((q) => q.openFirst)) {
+    const id = /\[data-testid="([^"]+)"\]/.exec(p.openFirst)?.[1];
+    assert.ok(id, `${p.slug}: openFirst names a data-testid`);
+    assert.ok(source.includes(`"${id}"`), `${p.slug}: no page renders data-testid "${id}"`);
+  }
+  // The Lab stage is a fixed path: its slug must be a real stage (the same on every env).
+  const lab = PAGES.find((q) => q.route === "/admin/lab/[stage]");
+  assert.ok(lab && !lab.openFirst);
+  assert.ok(LAB_STAGES.some((st) => lab.path === `/admin/lab/${st.slug}`), `${lab.path} is not a Lab stage`);
+  assert.ok(changedSlugs(["frontend/app/admin/lab/WritingLabStage.tsx"]).includes("lab-stage"));
+  assert.ok(changedSlugs(["frontend/app/admin/tenants/page.tsx"]).includes("tenants-360"));
 });

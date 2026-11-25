@@ -401,6 +401,7 @@ function TenantsTable({ tenants, onChanged, onRestored, onOpen, controls }: {
       columns={columns}
       getRowId={(x) => x.tenant_id}
       onRowClick={(x) => onOpen(x.tenant_id)}
+      rowTestId={() => "tenant-row"}
       searchPlaceholder={t("searchTenants")}
       searchText={(x) => [x.name, x.slug, x.tenant_id, x.country].filter(Boolean).join(" ")}
       paginate={false}

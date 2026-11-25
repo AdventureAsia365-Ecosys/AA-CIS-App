@@ -216,6 +216,9 @@ export async function hasContentOrEmptyState(page: Page, readySelector?: string)
 
   // Kit DataTable row / kit EmptyState — the robust UI-v2 signal.
   if ((await page.locator('[data-testid="kit-datatable-row"]').count()) > 0) return true;
+  // A table that names its rows (`rowTestId`, e.g. the Staff / Tenants / Supply content lists, AA-1148) keeps the
+  // kit's own `data-kit-row` hook on every row, in the table and in phone card mode alike.
+  if ((await page.locator('[data-kit-row]').count()) > 0) return true;
   if ((await page.locator('[data-testid="kit-empty-state"]').count()) > 0) return true;
 
   // Legacy fallback: a real data row inside a <main> table body (kit skeleton is <div>, not <tr>).

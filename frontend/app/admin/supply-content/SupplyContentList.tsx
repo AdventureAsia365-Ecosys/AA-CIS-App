@@ -160,6 +160,7 @@ export default function SupplyContentList() {
         emptyTitle={filtered ? t("emptyFiltered") : t("emptyNone")}
         emptyDescription={filtered ? t("emptyFilteredDesc") : t("emptyNoneDesc")}
         onRowClick={(r) => router.push(detailHref(r.id))}
+        rowTestId={() => "supply-content-row"}
         tableMinWidth={640}
       />
     </PageFrame>

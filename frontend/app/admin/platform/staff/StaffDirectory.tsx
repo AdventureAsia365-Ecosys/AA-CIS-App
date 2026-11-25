@@ -279,6 +279,7 @@ export default function StaffDirectory({ initialId = null }: { initialId?: strin
           emptyTitle={t("emptyTitle")}
           emptyDescription={t("emptyDescription")}
           onRowClick={(r) => open(r.id)}
+          rowTestId={() => "staff-row"}
           tableMinWidth={1080}
         />
       )}

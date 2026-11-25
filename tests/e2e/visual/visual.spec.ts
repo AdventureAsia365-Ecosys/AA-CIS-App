@@ -7,8 +7,8 @@
 //   - no console error and no uncaught page error (allowlist.json for known noise);
 //   - no failed same-origin request (status >= 400 or a network failure), except the document's own expected status;
 //   - the kit frame is on the page (`[data-kit-frame]`), unless the page says frame: false;
-//   - a dynamic route (`openFirst`) is captured on the page its list's first matching link opens (skipped when the
-//     list has none);
+//   - a dynamic route (`openFirst`) is captured on the page its list's first matching link or row opens (a row by
+//     Enter, never a click; skipped with the reason when the list has none or the row opens nothing);
 //   - the theme applied is the one asked for (`<html data-theme>`);
 //   - AA-1131: every visible form control, dialog and icon button has an accessible name (helpers/a11yNames.ts). A
 //     control the kit core renders (a data-kit-* hook) must be named on every page; on the kit gallery every control
@@ -93,6 +93,28 @@ async function probeOverflow(page: Page) {
   }, width);
 }
 
+/** The address the first `selector` match of the list page opens, or why there is none (the test is then skipped).
+ *  A link gives its href. A row with no href (a kit DataTable `onRowClick` row: router push, or a drawer whose URL
+ *  follows it by history.replaceState) is focused and opened with Enter, never clicked, so none of its own controls
+ *  (a status switch, an action menu) is hit; the address it moves to is the target. Read-only: nothing is written. */
+async function openFirstTarget(page: Page, selector: string, listPath: string): Promise<{ href: string | null; reason: string }> {
+  const first = page.locator(selector).first();
+  const found = await first.waitFor({ state: 'attached', timeout: 10_000 }).then(() => true).catch(() => false);
+  if (!found) return { href: null, reason: `no link ${selector} on ${listPath} to open (an empty list on this env)` };
+  const href = await first.getAttribute('href');
+  if (href) return { href, reason: '' };
+  const from = new URL(page.url()).pathname;
+  await first.focus();
+  await first.press('Enter');
+  const moved = await page
+    .waitForFunction((start) => window.location.pathname !== start, from, { timeout: 10_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!moved) return { href: null, reason: `the first ${selector} on ${listPath} opened no page` };
+  const url = new URL(page.url());
+  return { href: `${url.pathname}${url.search}`, reason: '' };
+}
+
 for (const p of selectPages(PAGES, { auth: AUTH, slugs: SLUGS, gallery: GALLERY, selftest: SELFTEST })) {
   for (const theme of THEMES) {
     test(`${p.slug} ${theme}`, async ({ page, context }, info) => {
@@ -140,12 +162,11 @@ for (const p of selectPages(PAGES, { auth: AUTH, slugs: SLUGS, gallery: GALLERY,
       // Every wait has its own ceiling (lesson S220: polling pages never reach networkidle).
       await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
       if (p.openFirst) {
-        // A dynamic route: follow the first matching link of the list page (none on this env = nothing to capture).
-        const link = page.locator(p.openFirst).first();
-        const found = await link.waitFor({ state: 'attached', timeout: 10_000 }).then(() => true).catch(() => false);
-        const href = found ? await link.getAttribute('href') : null;
-        test.skip(!href, `no link ${p.openFirst} on ${p.path} to open`);
-        res = await page.goto(href as string, { waitUntil: 'load' });
+        // A dynamic route: open the first matching link or row of the list page (none on this env = nothing to
+        // capture), then load the address it opens on its own (the captured document is the dynamic route's).
+        const target = await openFirstTarget(page, p.openFirst, p.path);
+        test.skip(!target.href, target.reason);
+        res = await page.goto(target.href as string, { waitUntil: 'load' });
         await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => {});
       }
       await page.evaluate(() => document.fonts.ready.then(() => true));
