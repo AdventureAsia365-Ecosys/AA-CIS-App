@@ -22,6 +22,8 @@ from conftest import BATCH_ID, DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # no
 
 RUNNER = "zz712_rds_runner"
 MIGRATION = os.path.join(os.path.dirname(__file__), "..", "..", "api", "migrations", "226_geo_place_pipeline.sql")
+M340 = os.path.join(os.path.dirname(MIGRATION), "340_spend_budget_central_llm_scopes.sql")
+M487 = os.path.join(os.path.dirname(MIGRATION), "487_aa1154_ops_assist_stage_and_budget.sql")
 # AA-990: place_extract writes geo.component_redirect (CIS 285) in the place-row transaction. conftest skips 285 (its
 # catalog view needs 245's owners) and this module rebuilds geo from 226 alone, so the fixture creates 285's table part
 # (CREATE TABLE + CHECKs + indexes, read from the file, not copied) as the runner. write_redirects stays fail-closed.
@@ -68,6 +70,9 @@ def _undo_226(a):
         DELETE FROM shared.llm_role_config WHERE stage IN ('a3_place_days', 'a3_place_locate', 'a3_place_embed');
         DELETE FROM shared.spend_budget
          WHERE provider = 'geocoder' OR scope IN ('job:place_extract', 'job:place_geocode');
+        -- AA-1154 A1 (S292): 487's stage budget row (provider llm) leaves before the pre-226 CHECK; the module
+        -- teardown re-runs 340 (wide CHECK) and 487 to put it back
+        DELETE FROM shared.spend_budget WHERE provider = 'llm';
         ALTER TABLE shared.spend_budget DROP CONSTRAINT IF EXISTS spend_budget_provider_check;
         ALTER TABLE shared.spend_budget ADD CONSTRAINT spend_budget_provider_check
             CHECK (provider IN ('dfs', 'bedrock', 'openai', 'jev'));
@@ -148,6 +153,8 @@ def rds_like_226():
         a.execute("DELETE FROM shared.destinations WHERE name LIKE %s", (f"{SEED_TAG}%",))
         a.execute("DROP SCHEMA IF EXISTS tripplanner CASCADE")
         a.execute(f"REASSIGN OWNED BY {RUNNER} TO CURRENT_USER; DROP OWNED BY {RUNNER}; DROP ROLE {RUNNER}")
+        a.execute(open(M340, encoding="utf-8").read())   # AA-1154 A1 (S292): the live CHECK and 487's llm row back
+        a.execute(open(M487, encoding="utf-8").read())
         admin.close()
 
 
