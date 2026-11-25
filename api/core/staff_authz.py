@@ -606,9 +606,9 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/waves/check"): OPS_WRITE, ("GET", "/admin/waves"): any_of(OPS_READ, WAVE_RUN),
     ("GET", "/admin/waves/{wave_id}/report"): any_of(OPS_READ, WAVE_RUN),   # incl. the wave's LLM cost
     # ── admin_overview — whole-system snapshot incl. spend (admin-only page; CI smoke = machine)
-    ("GET", "/admin/overview"): OPS_READ, **{(m, "/admin/ops-assist/" + p): OPS_READ for m, ps in (  # AA-1154 A0 reads,
-        ("GET", ("catalog", "signals", "items/{item_id}/cards", "replays", "replays/{case}", "changes")),  # A1: the AI
-        ("POST", ("items/{item_id}/analyse", "auto", "changes/phrase"))) for p in ps},  # ranks/explains (stage cap)
+    ("GET", "/admin/overview"): OPS_READ, **{(m, "/admin/ops-assist/" + p): OPS_READ for m, ps in (  # AA-1154 A0-A2
+        ("GET", ("catalog", "signals", "items/{item_id}/cards", "replays", "replays/{case}", "changes", "runs",
+                 "track")), ("POST", ("items/{item_id}/analyse", "auto", "changes/phrase", "runs"))) for p in ps},
     ("GET", "/admin/overview/ops"): OPS_READ, ("GET", "/admin/overview/status"): OPS_READ,  # AA-858, AA-1140 status
     **{("POST", "/admin/overview/status/acks" + p): OPS_WRITE for p in ("", "/{item_id}/clear")},  # AA-1141 ack
     **{(m, "/admin/overview/views" + p): OPS_READ for m, p in (("GET", ""), ("POST", ""), ("DELETE", "/{view_id}"))},

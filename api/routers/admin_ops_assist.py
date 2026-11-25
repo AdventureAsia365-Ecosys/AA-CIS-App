@@ -21,9 +21,19 @@
                                                 model); the answer lists the offered windows
   POST /admin/ops-assist/changes/phrase         the same answer phrased by the model (one call; none when nothing
                                                 changed)
+  A2 (predicted against measured; no model, $0):
+  POST /admin/ops-assist/runs                   mark one card as done (the person ran its call or its runbook): the
+                                                card is rebuilt here, its measures read as the baseline; the status
+                                                sampler checks them at the minutes of cis.ops.assist_check_after_min
+  GET  /admin/ops-assist/runs                   the newest runs (of one item) with their checks and verdicts
+  GET  /admin/ops-assist/track                  the hit rate of the last cis.ops.assist_digest_days days, per action
 
-Every route is ops.read (the status page's capability: admin, per the role matrix): the POST routes call a model
-within the stage's hard-stop month cap and write nothing but the gateway ledger and a Redis cache. The business owner
+Every route is ops.read (the status page's capability: admin, per the role matrix): the A1 POST routes call a model
+within the stage's hard-stop month cap and write nothing but the gateway ledger and a Redis cache; POST /runs writes
+the run record only (acp_shared.ops_assist_run) and needs the card's own capability (the capability of the API the
+card calls, or ops.write for a step with no API). A read-only session gets 403 on every POST (staff_policy). Each
+evidence read is bounded by cis.ops.assist_build_timeout_s: past it the answer is 503 ``assistant_timeout`` with a
+"try again" message (fail soft, never a hang). The business owner
 (``shared.admin_users.is_business_owner``) gets the Summary only, no cards (tech lead AI10). See
 ``api/services/ops_assist/__init__.py``.
 """
@@ -33,12 +43,13 @@ from typing import Optional
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Request
+from pydantic import BaseModel, ConfigDict, Field
 
 from api.core.staff_authz import staff_policy
-from api.core.tenant_scope import staff_id_of
+from api.core.tenant_scope import principal_of, staff_id_of
 from api.routers.admin import verify_admin_secret
 from api.services import ops_assist
-from api.services.ops_assist import analysis, evidence, lookup, replays
+from api.services.ops_assist import analysis, evidence, lookup, outcome, replays
 
 logger = structlog.get_logger()
 
@@ -56,6 +67,22 @@ async def _is_business_owner(request: Request) -> bool:
     return await evidence.business_owner(request.app.state.pool, staff_id_of(request))
 
 
+TIMEOUT_MESSAGE = ("The assistant could not read the evidence in time (a deploy may be replacing the API). "
+                   "Try again in a minute.")
+NOT_SET_UP_MESSAGE = "The assistant's run record is not set up yet on this environment"
+
+
+async def _soft(coro):
+    """The answer, or 503 with a clear "try again" message when the evidence read passed
+    cis.ops.assist_build_timeout_s or failed outright (S292: one 503 and one hang during a deploy)."""
+    try:
+        return await coro
+    except ops_assist.EvidenceTimeout:
+        logger.warning("ops_assist_evidence_timeout")
+        raise HTTPException(status_code=503, detail={"code": "assistant_timeout", "message": TIMEOUT_MESSAGE,
+                                                     "retry": True})
+
+
 @router.get("/catalog", summary="The assistant's action catalogue (read-only)")
 async def get_catalog(x_admin_secret: str = Header(None)) -> dict:
     verify_admin_secret(x_admin_secret)
@@ -65,10 +92,11 @@ async def get_catalog(x_admin_secret: str = Header(None)) -> dict:
 @router.get("/signals", summary="What the assistant sees beyond the Needs-attention list")
 async def get_signals(request: Request, x_admin_secret: str = Header(None)) -> dict:
     verify_admin_secret(x_admin_secret)
-    return await ops_assist.list_signals(request.app.state.pool, getattr(request.app.state, "redis", None))
+    return await _soft(ops_assist.list_signals(request.app.state.pool, getattr(request.app.state, "redis", None)))
 
 
-@router.get("/items/{item_id}/cards", summary="Evidence, ranked action cards and Summary for one item (no LLM)")
+@router.get("/items/{item_id}/cards", summary="Evidence, ranked action cards and Summary for one item (no new LLM "
+                                              "call; the model's part saved within the card lifetime, if any)")
 async def get_cards(
     request: Request,
     item_id: str = _ITEM_ID,
@@ -79,9 +107,9 @@ async def get_cards(
     verify_admin_secret(x_admin_secret)
     from api.services.platform_apps import relay_authorization
 
-    out = await ops_assist.analyse(request.app.state.pool, getattr(request.app.state, "redis", None), item_id,
-                                   range_key=range_, authorization=relay_authorization(request),
-                                   business_owner=await _is_business_owner(request))
+    out = await _soft(analysis.cached(request.app.state.pool, getattr(request.app.state, "redis", None), item_id,
+                                      range_key=range_, authorization=relay_authorization(request),
+                                      business_owner=await _is_business_owner(request)))
     if out.get("item") is None and "status" in (out.get("unavailable") or {}):
         raise HTTPException(status_code=503, detail={"code": "status_unavailable",
                                                      "message": "The status page could not be read; try again"})
@@ -131,10 +159,10 @@ async def post_analyse(
     verify_admin_secret(x_admin_secret)
     from api.services.platform_apps import relay_authorization
 
-    out = await analysis.analyse(request.app.state.pool, getattr(request.app.state, "redis", None), item_id,
-                                 range_key=range_, depth=depth, fresh=fresh,
-                                 authorization=relay_authorization(request),
-                                 business_owner=await _is_business_owner(request))
+    out = await _soft(analysis.analyse(request.app.state.pool, getattr(request.app.state, "redis", None), item_id,
+                                       range_key=range_, depth=depth, fresh=fresh,
+                                       authorization=relay_authorization(request),
+                                       business_owner=await _is_business_owner(request)))
     _no_item(out)
     return out
 
@@ -144,8 +172,8 @@ async def post_auto(request: Request, range_: str = _RANGE, x_admin_secret: str 
     verify_admin_secret(x_admin_secret)
     from api.services.platform_apps import relay_authorization
 
-    return await analysis.auto(request.app.state.pool, getattr(request.app.state, "redis", None), range_key=range_,
-                               authorization=relay_authorization(request))
+    return await _soft(analysis.auto(request.app.state.pool, getattr(request.app.state, "redis", None),
+                                     range_key=range_, authorization=relay_authorization(request)))
 
 
 def _window(window: Optional[int]) -> tuple[int, list[int]]:
@@ -171,3 +199,69 @@ async def post_changes_phrase(request: Request, window: Optional[int] = _WINDOW,
     verify_admin_secret(x_admin_secret)
     minutes, offered = _window(window)
     return await lookup.phrase(request.app.state.pool, minutes, windows=offered)
+
+
+# ── A2: predicted against measured ────────────────────────────────────────────────────────────────────────────────
+
+class RunBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    item_id: str = Field(..., pattern=r"^[A-Za-z0-9_.:-]{1,200}$")
+    card_id: str = Field(..., min_length=1, max_length=300)
+    range: str = Field("24h", pattern="^(1h|6h|24h|7d)$")
+
+
+def may_record(perms: frozenset, card: dict) -> bool:
+    """Only someone who could have run the card marks it as done: one of the capabilities of the API it calls, or
+    ops.write for a step with no API (watch, a copy-only runbook). Pure."""
+    caps = (card.get("approval") or {}).get("capability") or []
+    return any(c in perms for c in caps) if caps else "ops.write" in perms
+
+
+@router.post("/runs", summary="Mark one action card as done; its outcome is checked later (no model, $0)")
+async def post_run(body: RunBody, request: Request, x_admin_secret: str = Header(None)) -> dict:
+    verify_admin_secret(x_admin_secret)
+    from api.routers.admin_overview import _actor
+    from api.services.platform_apps import relay_authorization
+
+    if await _is_business_owner(request):
+        raise HTTPException(status_code=403, detail={"code": "business_owner_reads_only",
+                                                     "message": "The business owner reads the Summary only"})
+    pool = request.app.state.pool
+    answer = await _soft(ops_assist.analyse(pool, getattr(request.app.state, "redis", None), body.item_id,
+                                            range_key=body.range, authorization=relay_authorization(request)))
+    _no_item(answer)
+    card = next((c for c in answer.get("cards") or [] if c["id"] == body.card_id), None)
+    if card is None:
+        raise HTTPException(status_code=409, detail={"code": "card_gone", "message": "This card is no longer "
+                                                     "proposed for the item; analyse it again"})
+    if not may_record(principal_of(request).perms, card):
+        raise HTTPException(status_code=403, detail={"code": "not_your_action", "message": "Only someone allowed to "
+                                                     "run this card's action can mark it as done"})
+    try:
+        return await outcome.record(pool, answer, card, actor=_actor(request), limits=answer["limits"])
+    except outcome.AlreadyRecorded:
+        raise HTTPException(status_code=409, detail={"code": "already_recorded", "message": "This card was already "
+                                                     "marked as done"})
+    except outcome.NotSetUp:
+        raise HTTPException(status_code=503, detail={"code": "not_set_up", "message": NOT_SET_UP_MESSAGE})
+
+
+@router.get("/runs", summary="The newest action cards marked as done, with their checks (no model, $0)")
+async def get_runs(request: Request, item_id: Optional[str] = Query(None, pattern=r"^[A-Za-z0-9_.:-]{1,200}$"),
+                   x_admin_secret: str = Header(None)) -> dict:
+    verify_admin_secret(x_admin_secret)
+    try:
+        rows = await outcome.runs(request.app.state.pool, item_id)
+    except outcome.NotSetUp:
+        raise HTTPException(status_code=503, detail={"code": "not_set_up", "message": NOT_SET_UP_MESSAGE})
+    return {"runs": rows, "check_after_min": ops_assist.limits()["check_after_min"]}
+
+
+@router.get("/track", summary="The assistant's hit rate: right n of m checked cards (no model, $0)")
+async def get_track(request: Request, x_admin_secret: str = Header(None)) -> dict:
+    verify_admin_secret(x_admin_secret)
+    lim = ops_assist.limits()
+    try:
+        return await outcome.track(request.app.state.pool, days=lim["digest_days"])
+    except outcome.NotSetUp:
+        raise HTTPException(status_code=503, detail={"code": "not_set_up", "message": NOT_SET_UP_MESSAGE})

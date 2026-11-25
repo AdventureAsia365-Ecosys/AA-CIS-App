@@ -7,7 +7,10 @@
 // names the API a person would call. The business owner gets the Summary only (the API answers audience "summary").
 // While the page is open it asks the server to analyse each open incident of an automatic severity once (POST
 // .../auto; cis.ops.assist_auto_severities). A read-only session (a viewer, view-as, the Dev E2E identity) sends no AI
-// request at all (the API refuses every POST of it): the rule-made cards still show, the AI buttons are hidden.
+// request at all (the API refuses every POST of it): the rule-made cards still show, the AI buttons are hidden, and the
+// answer carries the model's part saved within the card lifetime when there is one (no new call). A2: each card shows
+// what is checked after it is done and its checks (AssistOutcome); every request gives up after FETCH_TIMEOUT_MS with
+// a "try again" message (the API answers 503 assistant_timeout itself before that).
 
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -16,13 +19,15 @@ import {
   Badge, Button, Drawer, ErrorState, K, LoadingScreen, Tabs, WriteOnly, apiGet, apiSend, useFormat, useT, type Tone,
 } from "../../../_kit";
 import {
-  SIGNALS_PATH, analysePath, autoPath, callText, cardsPath, citedEvidence, confidenceTone, costText, expired,
-  explanationEvidence, extraSignals, llmNotice, ranked, riskTone,
-  type ActionCard, type AssistAnswer, type Depth, type Evidence, type LlmMeta, type LlmNoticeKey, type SignalsAnswer,
+  FETCH_TIMEOUT_MS, SIGNALS_PATH, analysePath, autoPath, callText, cardsPath, citedEvidence, confidenceTone, costText,
+  expired, explanationEvidence, extraSignals, llmNotice, ranked, riskTone, withTimeout,
+  type ActionCard, type AssistAnswer, type AssistRun, type Depth, type Evidence, type LlmMeta, type LlmNoticeKey,
+  type SignalsAnswer,
 } from "@/lib/opsAssist";
 import { levelTone } from "@/lib/opsStatus";
 import { ASSIST } from "../assist.messages";
 import { AssistLookup } from "./AssistLookup";
+import { CardOutcome, TrackRecord, useRuns } from "./AssistOutcome";
 import { useMayAsk } from "./useMayAsk";
 import { rowWrap, small } from "./ui";
 
@@ -115,7 +120,10 @@ function CallInfo({ card }: { card: ActionCard }) {
   );
 }
 
-function Card({ card, evidence, now }: { card: ActionCard; evidence: Evidence[]; now: Date }) {
+/** Where a card sits (A2): the item and range it was built for and the item's runs; none for a replay. */
+type At = { itemId: string; range: string; runs: AssistRun[] } | null;
+
+function Card({ card, evidence, now, at }: { card: ActionCard; evidence: Evidence[]; now: Date; at: At }) {
   const t = useAT();
   const { formatDateTime } = useFormat();
   const cost = card.cost.usd === null ? t("costUnknown") : `${card.cost.usd} USD`;
@@ -152,6 +160,7 @@ function Card({ card, evidence, now }: { card: ActionCard; evidence: Evidence[];
       <CallInfo card={card} />
       <span style={{ ...small, color: expired(card, now) ? K.danger : K.muted }}>
         {t("expires", formatDateTime(card.expires_at))}</span>
+      {at && <CardOutcome card={card} itemId={at.itemId} range={at.range} runs={at.runs} />}
     </div>
   );
 }
@@ -205,11 +214,11 @@ function EvidenceTab({ answer }: { answer: AssistAnswer }) {
   );
 }
 
-function CardsTab({ answer, cards, now }: { answer: AssistAnswer; cards: ActionCard[]; now: Date }) {
+function CardsTab({ answer, cards, now, at }: { answer: AssistAnswer; cards: ActionCard[]; now: Date; at: At }) {
   const t = useAT();
   return (
     <div role="list" style={{ display: "grid", gap: 10 }} data-testid="assist-cards">
-      {cards.map((c) => <Card key={c.id} card={c} evidence={answer.evidence} now={now} />)}
+      {cards.map((c) => <Card key={c.id} card={c} evidence={answer.evidence} now={now} at={at} />)}
       {cards.length === 0 && <span style={small}>{t("noCards")}</span>}
       {answer.not_proposed.length > 0 && (
         <details data-testid="assist-not-proposed">
@@ -265,9 +274,9 @@ function AiButtons({ depth, busy, onAsk }: { depth: Depth; busy: boolean; onAsk:
   );
 }
 
-function Body({ answer, running, depth, onAsk, onRefresh }: {
+function Body({ answer, running, depth, onAsk, onRefresh, at }: {
   answer: AssistAnswer; running: boolean; depth: Depth; onAsk: (d: Depth, fresh: boolean) => void;
-  onRefresh: () => void;
+  onRefresh: () => void; at: At;
 }) {
   const t = useAT();
   const [tab, setTab] = useState<string>("cards");
@@ -284,18 +293,20 @@ function Body({ answer, running, depth, onAsk, onRefresh }: {
           { key: "evidence", label: t("tabEvidence"), count: answer.evidence.length }]} variant="underline" />
       {tab === "summary" && <Summary answer={answer} />}
       {tab === "evidence" && <EvidenceTab answer={answer} />}
-      {tab === "cards" && <CardsTab answer={answer} cards={cards} now={now} />}
+      {tab === "cards" && <CardsTab answer={answer} cards={cards} now={now} at={answer.replay ? null : at} />}
     </div>
   );
 }
 
 /** The rule-made cards at once (GET, no AI call) and the AI's ranking of them (POST) for one open drawer. */
 function useAnalysis(itemId: string, range: string, open: boolean) {
+  const t = useAT();
   const [ask, setAsk] = useState<{ depth: Depth; fresh: boolean; n: number }>({ depth: "quick", fresh: false, n: 0 });
   const mayAsk = useMayAsk();
   const rules = useQuery({
     queryKey: ["ops-assist", itemId, range],
-    queryFn: () => apiGet<AssistAnswer>(cardsPath(itemId, range), { admin: true }),
+    queryFn: () => withTimeout(apiGet<AssistAnswer>(cardsPath(itemId, range), { admin: true }), FETCH_TIMEOUT_MS,
+      t("timeout")),
     enabled: open,
     staleTime: 60_000,
     refetchOnWindowFocus: false,
@@ -303,8 +314,8 @@ function useAnalysis(itemId: string, range: string, open: boolean) {
   });
   const ai = useQuery({
     queryKey: ["ops-assist-ai", itemId, range, ask.depth, ask.fresh, ask.n],
-    queryFn: () => apiSend<AssistAnswer>(analysePath(itemId, range, ask.depth, ask.fresh), { method: "POST",
-      admin: true }),
+    queryFn: () => withTimeout(apiSend<AssistAnswer>(analysePath(itemId, range, ask.depth, ask.fresh),
+      { method: "POST", admin: true }), FETCH_TIMEOUT_MS, t("timeout")),
     enabled: open && mayAsk,
     placeholderData: (prev) => prev,
     staleTime: Infinity,
@@ -328,12 +339,13 @@ export function AssistDrawer({ itemId, title, range, open, onClose }: {
 }) {
   const t = useAT();
   const a = useAnalysis(itemId, range, open);
+  const runs = useRuns(itemId, open);
   return (
     <Drawer open={open} onClose={onClose} title={t("analyseFor", title)} width={560} testId="assist-drawer">
       {a.loading && <LoadingScreen message={t("loading")} />}
       {a.failed && <ErrorState message={a.failed.message || t("failed")} onRetry={a.retry} />}
       {a.answer && <Body answer={a.answer} running={a.running} depth={a.depth} onAsk={a.onAsk}
-        onRefresh={a.refresh} />}
+        onRefresh={a.refresh} at={{ itemId, range, runs: runs.data?.runs ?? [] }} />}
     </Drawer>
   );
 }
@@ -377,14 +389,14 @@ export function AssistSignals({ attentionIds, range }: { attentionIds: string[];
   useAutoAnalysis(range);
   const res = useQuery({
     queryKey: ["ops-assist-signals"],
-    queryFn: () => apiGet<SignalsAnswer>(SIGNALS_PATH, { admin: true }),
+    queryFn: () => withTimeout(apiGet<SignalsAnswer>(SIGNALS_PATH, { admin: true }), FETCH_TIMEOUT_MS, t("timeout")),
     staleTime: 60_000,
     refetchInterval: 120_000,
     refetchOnWindowFocus: false,
     retry: false,
   });
   const extra = extraSignals(res.data?.signals ?? [], attentionIds);
-  if (extra.length === 0) return <AssistLookup />;
+  if (extra.length === 0) return <><TrackRecord /><AssistLookup /></>;
   return (
     <div data-testid="assist-signals" style={{ display: "grid", gap: 6 }}>
       <span style={label}>{t("signalsTitle")}</span>
@@ -397,6 +409,7 @@ export function AssistSignals({ attentionIds, range }: { attentionIds: string[];
           <span style={{ marginLeft: "auto" }}><AssistButton itemId={s.id} title={s.title} range={range} /></span>
         </div>
       ))}
+      <TrackRecord />
       <AssistLookup />
     </div>
   );

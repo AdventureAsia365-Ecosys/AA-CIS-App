@@ -2,9 +2,13 @@
 // (backend api/services/ops_assist/, /api/admin/ops-assist/...). Pure helpers only: the paths, the tones of a risk
 // level and a confidence, the order the panel shows. A0: rule-made cards, no model. A1: "Analyse" asks the AI gateway
 // (stage ops_assist, its own month cap) to rank and explain those same cards; the model has no tools and nothing is
-// executed from the panel: each card names the API a person would call.
+// executed from the panel: each card names the API a person would call. A2: a person marks a card as done once they ran
+// it (POST .../runs); the status sampler checks its measures again at the minutes of cis.ops.assist_check_after_min
+// and the page shows each check (hit, miss, unclear) and the hit rate of the last days (GET .../track).
 
 export type RiskLevel = "R0" | "R1" | "R2" | "R3" | "R4";
+
+const RANGES = new Set(["1h", "6h", "24h", "7d"]);
 export type Confidence = "code" | "measured" | "history" | "not_enough_data";
 
 export interface Prediction { text: string; confidence: Confidence; basis: string }
@@ -23,6 +27,72 @@ export interface ActionCard {
   precondition: string | null; precondition_met: boolean; check_after: string[]; expires_at: string;
   /** A1: the rank the rules gave (the model may reorder inside the rule's groups) and the model's words. */
   rule_rank?: number; explanation?: { text: string; evidence: string[] } | null;
+  /** A2: what is read again after the card is marked as done, and the direction the card predicts. */
+  measures?: Measure[];
+}
+
+/** A2: one measure of a card: zero (it is gone), nonzero (it happened), down / up against the value when marked done. */
+export type Expect = "zero" | "nonzero" | "down" | "up";
+export interface Measure {
+  metric: string; params: Record<string, unknown>; expect: Expect; label: string; baseline?: number | null;
+}
+export type Verdict = "hit" | "miss" | "unclear";
+export interface Checkpoint {
+  after_min: number; at: string; verdict: Verdict; late: boolean;
+  measures: { value: number | null; verdict: Verdict }[];
+}
+export interface AssistRun {
+  run_id: number; item_id: string; card_id: string; action: string; measures: Measure[]; check_after_min: number[];
+  checks: Checkpoint[]; verdict: Verdict | null; recorded_at: string; recorded_by: string;
+  checked_at?: string | null; incident_id?: number | null;
+}
+export interface RunsAnswer { runs: AssistRun[]; check_after_min: number[] }
+export interface TrackAnswer {
+  days: number; recorded: number; checked: number; hits: number; unclear: number; open: number; text: string;
+  by_action: { action: string; title: string; recorded: number; checked: number; hits: number }[];
+}
+
+export const RUNS_PATH = "/api/admin/ops-assist/runs";
+export const TRACK_PATH = "/api/admin/ops-assist/track";
+
+/** The runs of one item (GET), newest first. */
+export function runsPath(itemId: string): string {
+  return `${RUNS_PATH}?item_id=${encodeURIComponent(itemId)}`;
+}
+
+/** The newest run of a card, if it was marked as done. */
+export function runOfCard(runs: AssistRun[], cardId: string): AssistRun | undefined {
+  return runs.filter((r) => r.card_id === cardId).sort((a, b) => b.recorded_at.localeCompare(a.recorded_at))[0];
+}
+
+/** The checkpoints (minutes) of a run that are still to come. */
+export function pendingChecks(run: AssistRun): number[] {
+  const taken = new Set(run.checks.map((c) => c.after_min));
+  return run.check_after_min.filter((m) => !taken.has(m));
+}
+
+export function verdictTone(v: Verdict | null): "success" | "danger" | "neutral" | "info" {
+  if (v === "hit") return "success";
+  if (v === "miss") return "danger";
+  return v === "unclear" ? "neutral" : "info";
+}
+
+/** The page range a card was built for (a custom range reads the page default, as cardsPath does). */
+export function assistRange(range: string): string {
+  return RANGES.has(range) ? range : "24h";
+}
+
+/** technical-constant: API Gateway ends every request at 30 s; a BFF call still open after this is stuck (S292: a
+ * GET hung for more than 5 minutes during a deploy). The API itself answers 503 "try again" before that
+ * (cis.ops.assist_build_timeout_s). */
+export const FETCH_TIMEOUT_MS = 35_000;
+
+/** ``p``, or a rejection with ``message`` once ``ms`` have passed (the page then offers Retry instead of waiting). */
+export function withTimeout<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    p.then((v) => { clearTimeout(timer); resolve(v); }, (e) => { clearTimeout(timer); reject(e); });
+  });
 }
 
 /** A1: what the model did for an answer (or why it did not). */
@@ -53,7 +123,6 @@ export interface AssistAnswer {
 export interface AssistSignal { id: string; severity: string; app: string; kind: string; title: string; detail: string }
 export interface SignalsAnswer { as_of: string; signals: AssistSignal[]; window_min: number }
 
-const RANGES = new Set(["1h", "6h", "24h", "7d"]);
 
 /** The cards path of one Needs-attention item or signal; a custom range reads the page default (24 h). */
 export function cardsPath(itemId: string, range: string): string {

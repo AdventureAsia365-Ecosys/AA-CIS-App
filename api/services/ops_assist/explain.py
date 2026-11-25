@@ -19,7 +19,11 @@ and answers JSON; it can reorder the cards it was given and add words, nothing e
   before the prompt is built; the stage row also says ``free_text`` (CIS 487), so the gateway scrubs the whole prompt
   again before any attempt and refuses the call when it cannot (fail closed).
 - **Every call is logged** in ``shared.llm_call_log`` (``record_call_with_pool`` with ``**billed_fields(resp)``); the
-  gateway writes its own rows for refused and failed attempts.
+  gateway writes its own rows for refused and failed attempts. A2 (S292 follow-up): the answered row carries the
+  free-text scrub receipt (``quality_signal.pii_scrub``: version, counts per label, ``scrubbed_hash``), because the
+  gateway puts its receipt on its own attempt rows only. The request is scrubbed here with the gateway's own function
+  (:func:`scrub_request`) before it is sent, so the hash names exactly what the model received (the gateway's second
+  scrub of a scrubbed text changes nothing); a scrub that fails means no call (fail closed).
 - **Untrusted data**: the whole bundle goes inside one ``<untrusted_data>`` fence (``services/ai_safety/prompt_fence``)
   and the system prompt says it is data, never instructions. Whatever the reply says, :func:`validate` keeps only card
   ids and evidence ids the rules produced, so a sentence planted in an alarm text or a job error can at most change the
@@ -44,6 +48,7 @@ from typing import Any, Callable, Optional
 import structlog
 
 from services.ai_safety.prompt_fence import fence
+from shared.llm_client import free_text_scrub
 from shared.llm_client.free_text_scrub import scrub_text
 from shared.llm_client.json_reply import JsonReplyError, first_json_value
 
@@ -278,6 +283,16 @@ def error_code(exc: BaseException) -> str:
     return "gateway_error"
 
 
+def scrub_request(req: Any) -> tuple[Any, dict]:
+    """(the scrubbed request, its receipt) with the gateway's free-text scrub: the receipt has the gateway's shape
+    (version, status, counts per label, the sha256 of what is sent), never a value. Raises when the scrub cannot run
+    (the caller makes no call). Pure."""
+    scrubbed, counts = free_text_scrub.scrub_request(req)
+    return scrubbed, {"version": free_text_scrub.VERSION, "status": free_text_scrub.SCRUB_STATUS_OK,
+                      "redacted": dict(sorted(counts.items())),
+                      "scrubbed_hash": free_text_scrub.scrubbed_hash(scrubbed)}
+
+
 # ── the call ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
 async def preflight(pool: Any, model: Optional[str] = None) -> tuple[Optional[str], bool]:
@@ -317,6 +332,11 @@ async def call_gateway(pool: Any, *, system: str, user: str, schema: dict, depth
     req = LLMRequest(system_prompt=system, user_prompt=user, stage=STAGE, max_tokens=OUTPUT_CEILING,
                      json_schema=schema, model_tier=tier)
     try:
+        req, receipt = scrub_request(req)
+    except Exception as e:  # noqa: BLE001 — fail closed: nothing unscrubbed is sent
+        logger.warning("ops_assist_scrub_failed", task=task, error_type=type(e).__name__)
+        return None, None, "scrub_failed"
+    try:
         resp = await asyncio.to_thread(llm or LLMClient().generate, req)
     except Exception as e:  # noqa: BLE001 — the page keeps the rule-made answer
         logger.warning("ops_assist_llm_failed", task=task, depth=depth, error=repr(e)[:300])
@@ -331,7 +351,7 @@ async def call_gateway(pool: Any, *, system: str, user: str, schema: dict, depth
             pool, stage=STAGE, role=ROLE, model=resp.model_used, tokens_in=resp.input_tokens,
             tokens_out=resp.output_tokens, cost_usd=resp.cost_usd,
             quality_signal={"task": task, "depth": depth, "prompt_version": PROMPT_VERSION,
-                            "parsed": parsed is not None, **quality(parsed)},
+                            "parsed": parsed is not None, "pii_scrub": receipt, **quality(parsed)},
             stop_reason=getattr(resp, "stop_reason", None), account=getattr(resp, "satellite_account", None),
             fallback_used=getattr(resp, "fallback_used", None), **billed_fields(resp),
         )
