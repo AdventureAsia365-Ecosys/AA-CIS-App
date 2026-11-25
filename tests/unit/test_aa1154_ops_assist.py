@@ -30,7 +30,9 @@ LIMITS = {"evidence_window_min": 30, "changes_window_min": 120, "refused_trigger
           "reason_min_chars": 20,
           # A1 (CIS 487)
           "auto_severities": ["sev1", "sev2"], "auto_incident_gap_min": 240, "deep_model": "sonnet-5-5",
-          "lookup_windows_min": [15, 60, 360, 1440]}
+          "lookup_windows_min": [15, 60, 360, 1440],
+          # A2 (CIS 491)
+          "check_after_min": [10, 30], "digest_days": 7, "build_timeout_s": 20}
 
 
 def _snap() -> dict:
@@ -44,7 +46,8 @@ def _replay(**kw) -> dict:
 # ── settings ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
 def test_limits_are_the_compiled_defaults():
-    """Every limit comes from a setting (CIS 481, A1: CIS 487); the defaults are the S285 advisory values."""
+    """Every limit comes from a setting (CIS 481, A1: CIS 487, A2: CIS 491); the defaults are the S285 advisory
+    values."""
     assert ops_assist_settings.snapshot() == LIMITS
     assert set(ops_assist_settings.keys().values()) == set(ops_assist_settings.ALL)
 

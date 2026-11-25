@@ -29,9 +29,17 @@ A1 (CIS 487, the model ranks and explains the cards):
 - ``deep_model``: the catalog model key of "Deep analysis" (AI2: sonnet-5-5), a string;
 - ``lookup_windows_min``: the windows (minutes) the "what changed" look-up offers, ascending, each once.
 
+A2 (CIS 491, predicted against measured outcomes):
+
+- ``check_after_min``: the minutes after a card is marked done when the status sampler checks its measures again
+  (advisory: +10 and +30), ascending, each once; the last one gives the run's verdict;
+- ``digest_days``: the days of the hit rate ("right n of m") on the status page and in the OPS-12 digest (weekly: 7);
+- ``build_timeout_s``: the longest the evidence read of one item may take before the API answers 503 "try again".
+
 ``shared.settings.get`` serves the last snapshot and the compiled default before the first refresh, so a read never
-blocks and never fails. The keys equal the CIS 481 and 487 seeds (tests/integration/test_aa1154_migration_481.py,
-test_aa1154_migration_487.py and the settings-lint reader check, tests/unit/test_s279_settings_lint.py).
+blocks and never fails. The keys equal the CIS 481, 487 and 491 seeds (tests/integration/test_aa1154_migration_481.py,
+test_aa1154_migration_487.py, test_aa1154_migration_490_491.py and the settings-lint reader check,
+tests/unit/test_s279_settings_lint.py).
 """
 from __future__ import annotations
 
@@ -54,18 +62,23 @@ AUTO_SEVERITIES = "cis.ops.assist_auto_severities"
 AUTO_INCIDENT_GAP_MIN = "cis.ops.assist_auto_incident_gap_min"
 DEEP_MODEL = "cis.ops.assist_deep_model"
 LOOKUP_WINDOWS_MIN = "cis.ops.assist_lookup_windows_min"
+# A2 (CIS 491)
+CHECK_AFTER_MIN = "cis.ops.assist_check_after_min"
+DIGEST_DAYS = "cis.ops.assist_digest_days"
+BUILD_TIMEOUT_S = "cis.ops.assist_build_timeout_s"
 
 A0 = (EVIDENCE_WINDOW_MIN, CHANGES_WINDOW_MIN, REFUSED_TRIGGER_CALLS, THROTTLED_TRIGGER_CALLS, SPEND_SPIKE_FACTOR,
       SPEND_BASELINE_DAYS, SPEND_SPIKE_FLOOR_USD_H, WIDE_SCOPE_STAGES, SMALL_MONEY_USD, HISTORY_MIN_N, CARD_TTL_MIN,
       REASON_MIN_CHARS)
 A1 = (AUTO_SEVERITIES, AUTO_INCIDENT_GAP_MIN, DEEP_MODEL, LOOKUP_WINDOWS_MIN)
-ALL = A0 + A1
+A2 = (CHECK_AFTER_MIN, DIGEST_DAYS, BUILD_TIMEOUT_S)
+ALL = A0 + A1 + A2
 
 # The values kept as float; every other one is a count, minutes or days (int).
 FLOATS = ("spend_spike_factor", "spend_spike_floor_usd_h", "small_money_usd")
 # The values that are not numbers: a list of strings, a list of minutes, a string.
 STR_LISTS = ("auto_severities",)
-INT_LISTS = ("lookup_windows_min",)
+INT_LISTS = ("lookup_windows_min", "check_after_min")
 STRINGS = ("deep_model",)
 
 # The names the rules use; ``snapshot()`` maps them to their current values.
@@ -86,6 +99,9 @@ NAMES = {
     "auto_incident_gap_min": AUTO_INCIDENT_GAP_MIN,
     "deep_model": DEEP_MODEL,
     "lookup_windows_min": LOOKUP_WINDOWS_MIN,
+    "check_after_min": CHECK_AFTER_MIN,
+    "digest_days": DIGEST_DAYS,
+    "build_timeout_s": BUILD_TIMEOUT_S,
 }
 
 
