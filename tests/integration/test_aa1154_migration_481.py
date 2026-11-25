@@ -52,7 +52,7 @@ async def conn():
 
 
 def test_every_reader_key_is_seeded():
-    assert set(EXPECTED) == set(a.ALL) == set(a.NAMES.values())
+    assert set(EXPECTED) == set(a.A0) and set(a.ALL) == set(a.NAMES.values())
 
 
 @pytest.mark.asyncio

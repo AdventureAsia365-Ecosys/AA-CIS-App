@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql, 469_aa1171_ops_thresholds_and_recipient_topic.sql, 471_aa1174_compliance_obligations.sql, 472_aa1172_fact_instruction_guard.sql, 474_aa1160_tenant_crm_agency_marker.sql, 475_aa1140_ops_status_samples_and_thresholds.sql, 476_aa1152_tp_agency_price_stale_hours.sql, 477_aa1140_rds_free_storage_pct.sql, 478_aa1148_manual_tours_supplier_link.sql, 479_aa1173_compliance_exceptions_reviews.sql, 481_aa1154_ops_assist_settings.sql, 483_aa1141_ops_status_p1_settings.sql, 484_aa1169_blog_claim_rule.sql, 486_aa1142_ops_status_p2_settings.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql, 469_aa1171_ops_thresholds_and_recipient_topic.sql, 471_aa1174_compliance_obligations.sql, 472_aa1172_fact_instruction_guard.sql, 474_aa1160_tenant_crm_agency_marker.sql, 475_aa1140_ops_status_samples_and_thresholds.sql, 476_aa1152_tp_agency_price_stale_hours.sql, 477_aa1140_rds_free_storage_pct.sql, 478_aa1148_manual_tours_supplier_link.sql, 479_aa1173_compliance_exceptions_reviews.sql, 481_aa1154_ops_assist_settings.sql, 483_aa1141_ops_status_p1_settings.sql, 484_aa1169_blog_claim_rule.sql, 486_aa1142_ops_status_p2_settings.sql, 487_aa1154_ops_assist_stage_and_budget.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -3805,6 +3805,85 @@
    }
   },
   {
+   "key": "cis.ops.assist_auto_incident_gap_min",
+   "app": "cis",
+   "area": "ops",
+   "label": "Assistant: minutes away before an alert is a new incident",
+   "description": "On the CIS admin assistant (Ecosystem status page; api/services/ops_assist/analysis.py) the automatic analysis keeps one marker per alert while it stays open (renewed each time the status page asks, every few minutes). An alert the automatic analysis has not seen open for this many minutes counts as a new incident the next time it is open, and gets one new automatic analysis. Never shorter than the card lifetime (cis.ops.assist_card_ttl_min). Default 240.",
+   "value_type": "int",
+   "unit": "minutes",
+   "min_value": 30,
+   "max_value": 2880,
+   "allowed_values": null,
+   "default_value": 240,
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How long an alert must be gone (or unwatched) before its return counts as a new incident with a new automatic AI analysis.",
+     "raise": "Fewer repeat analyses of an alert that comes and goes; a real new incident on the same alert may reuse the old analysis until someone clicks Analyse again.",
+     "lower": "An alert that returns gets a fresh automatic analysis sooner: more paid calls for flapping alerts.",
+     "when": "Keep a few hours; raise it if a flapping alert keeps paying for new analyses.",
+     "example": "With the default 240, an alert that closes at 10:00 and opens again at 12:00 keeps its analysis; opening again at 15:00 gets a new one."
+    },
+    "vi": {
+     "what": "Cảnh báo phải vắng (hoặc không ai xem) bao lâu thì lần quay lại được tính là sự cố mới và được AI tự phân tích lại.",
+     "raise": "Ít phân tích lặp cho cảnh báo chập chờn; sự cố mới thật trên cùng cảnh báo có thể dùng lại phân tích cũ tới khi có người bấm Analyse lại.",
+     "lower": "Cảnh báo quay lại được phân tích tự động mới sớm hơn: nhiều lần gọi trả phí hơn với cảnh báo chập chờn.",
+     "when": "Giữ vài giờ; tăng nếu một cảnh báo chập chờn cứ tốn tiền phân tích mới.",
+     "example": "Với mặc định 240, cảnh báo đóng lúc 10:00 và mở lại lúc 12:00 giữ phân tích cũ; mở lại lúc 15:00 thì được phân tích mới."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.assist_auto_severities",
+   "app": "cis",
+   "area": "ops",
+   "label": "Assistant: severities analysed automatically",
+   "description": "On the CIS admin assistant (Ecosystem status page; api/services/ops_assist/analysis.py) an open Needs-attention item or assistant signal of one of these severities gets one quick AI analysis per incident while the status page is open (one paid call of the AI gateway stage ops_assist, inside its month cap); every other item waits for a click on Analyse. Each one of sev1, sev2 or sev3. An empty list turns the automatic analysis off. The S285 advisory (AI6) sets SEV1 and SEV2. Default [sev1, sev2].",
+   "value_type": "list",
+   "unit": null,
+   "min_value": null,
+   "max_value": null,
+   "allowed_values": [
+    "sev1",
+    "sev2",
+    "sev3"
+   ],
+   "default_value": [
+    "sev1",
+    "sev2"
+   ],
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "Which alert severities get an AI analysis by themselves, once per incident, while the status page is open.",
+     "raise": "Adding sev3 analyses minor alerts too: more paid calls, the month cap of the assistant is reached sooner.",
+     "lower": "Fewer automatic calls; the other alerts are analysed only when someone clicks Analyse.",
+     "when": "Keep SEV1 and SEV2; empty it to stop automatic calls when the month cap runs low.",
+     "example": "With the default [sev1, sev2], a SEV2 alert gets one analysis when it opens; a SEV3 alert waits for a click."
+    },
+    "vi": {
+     "what": "Những mức cảnh báo nào được AI tự phân tích, mỗi sự cố một lần, khi trang trạng thái đang mở.",
+     "raise": "Thêm sev3 thì cả cảnh báo nhẹ cũng được phân tích: nhiều lần gọi trả phí hơn, trần tháng của trợ lý chạm sớm hơn.",
+     "lower": "Ít lần gọi tự động hơn; cảnh báo còn lại chỉ phân tích khi có người bấm Analyse.",
+     "when": "Giữ SEV1 và SEV2; để trống khi trần tháng sắp hết để dừng gọi tự động.",
+     "example": "Với mặc định [sev1, sev2], cảnh báo SEV2 được phân tích một lần khi mở; cảnh báo SEV3 chờ người bấm."
+    }
+   }
+  },
+  {
    "key": "cis.ops.assist_card_ttl_min",
    "app": "cis",
    "area": "ops",
@@ -3877,6 +3956,46 @@
    }
   },
   {
+   "key": "cis.ops.assist_deep_model",
+   "app": "cis",
+   "area": "ops",
+   "label": "Assistant: model of Deep analysis",
+   "description": "On the CIS admin assistant (Ecosystem status page, the Analyse drawer; api/services/ops_assist/explain.py) \"Deep analysis\" asks this catalog model on the same AI gateway stage ops_assist (same kill switch, data scope and month cap); the quick analysis uses the stage route (AI gateway > Routing). Before each call the code checks the model is still an enabled catalog model and uses the stage route when it is not. The S285 advisory (AI2) sets Sonnet 5.5. Default sonnet-5-5.",
+   "value_type": "enum",
+   "unit": null,
+   "min_value": null,
+   "max_value": null,
+   "allowed_values": [
+    "haiku-5-5",
+    "sonnet-5-5",
+    "opus-5-5"
+   ],
+   "default_value": "sonnet-5-5",
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "Which AI model answers when someone clicks Deep analysis on an alert.",
+     "raise": "A larger model (opus-5-5) reasons better on hard incidents and costs more per click.",
+     "lower": "A smaller model (haiku-5-5) is cheaper and faster, and Deep analysis then adds little over the quick one.",
+     "when": "Keep sonnet-5-5; change it when a newer model is added to the catalog or this one is retired.",
+     "example": "With the default sonnet-5-5, Deep analysis costs a few cents per click; a disabled model falls back to the quick route."
+    },
+    "vi": {
+     "what": "Model AI nào trả lời khi có người bấm Phân tích sâu trên một cảnh báo.",
+     "raise": "Model lớn hơn (opus-5-5) suy luận tốt hơn với sự cố khó và tốn tiền hơn mỗi lần bấm.",
+     "lower": "Model nhỏ hơn (haiku-5-5) rẻ và nhanh hơn, khi đó Phân tích sâu không hơn bản nhanh là mấy.",
+     "when": "Giữ sonnet-5-5; đổi khi danh mục có model mới hơn hoặc model này bị ngừng.",
+     "example": "Với mặc định sonnet-5-5, Phân tích sâu tốn vài cent mỗi lần bấm; model bị tắt thì dùng tuyến nhanh."
+    }
+   }
+  },
+  {
    "key": "cis.ops.assist_evidence_window_min",
    "app": "cis",
    "area": "ops",
@@ -3945,6 +4064,56 @@
      "lower": "Con số lịch sử hiện sớm hơn nhưng có thể gây hiểu nhầm khi ít kết quả.",
      "when": "Giữ mặc định cho tới khi một loại hành động có vài tháng kết quả.",
      "example": "Với mặc định 5, hành động có 4 kết quả đã đo vẫn hiện \"chưa đủ dữ liệu\"."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.assist_lookup_windows_min",
+   "app": "cis",
+   "area": "ops",
+   "label": "Assistant: look-up windows offered (minutes)",
+   "description": "On the CIS admin assistant (Ecosystem status page, the \"What changed in the last ...\" look-up; api/services/ops_assist/lookup.py) the windows the panel offers, in minutes, each one of 15, 30, 60, 120, 180, 360, 720 or 1440. The API refuses any other window (GET /admin/ops-assist/changes). The answer from the records is free; Phrase with AI is one paid call. Default [15, 60, 360, 1440].",
+   "value_type": "list",
+   "unit": "minutes",
+   "min_value": null,
+   "max_value": null,
+   "allowed_values": [
+    15,
+    30,
+    60,
+    120,
+    180,
+    360,
+    720,
+    1440
+   ],
+   "default_value": [
+    15,
+    60,
+    360,
+    1440
+   ],
+   "scope_kind": "platform",
+   "impact": "low",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The time windows the \"What changed\" look-up offers on the status page.",
+     "raise": "More or longer windows: a long window lists more changes and a phrased answer reads more rows.",
+     "lower": "Fewer choices keep the panel short.",
+     "when": "Add 180 (3 hours) if incidents usually start a few hours after a change.",
+     "example": "With the default [15, 60, 360, 1440], the panel offers 15 minutes, 1 hour, 6 hours and 24 hours."
+    },
+    "vi": {
+     "what": "Các khoảng thời gian mà ô tra cứu \"Điều gì đã thay đổi\" trên trang trạng thái đưa ra.",
+     "raise": "Nhiều hoặc dài hơn: khoảng dài liệt kê nhiều thay đổi hơn và câu trả lời AI đọc nhiều dòng hơn.",
+     "lower": "Ít lựa chọn giữ ô tra cứu gọn.",
+     "when": "Thêm 180 (3 giờ) nếu sự cố thường bắt đầu vài giờ sau một thay đổi.",
+     "example": "Với mặc định [15, 60, 360, 1440], ô tra cứu đưa ra 15 phút, 1 giờ, 6 giờ và 24 giờ."
     }
    }
   },

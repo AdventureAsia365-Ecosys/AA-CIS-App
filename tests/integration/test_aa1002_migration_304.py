@@ -40,6 +40,8 @@ def _run(c):
     c.execute("DO $$ BEGIN IF to_regclass('shared.llm_provider_connection') IS NOT NULL THEN "
               "DELETE FROM shared.llm_provider_connection WHERE kind NOT IN "
               "('bedrock', 'anthropic', 'openai', 'azure_openai', 'mock'); END IF; END $$")
+    # AA-1154 A1 (S292): 304's CHECK has no 'llm'; 487's stage budget row leaves before a 304 re-run, LATER puts it back
+    c.execute("DELETE FROM shared.spend_budget WHERE provider = 'llm'")
     c.execute(open(MIGRATION, encoding="utf-8").read())
 
 
@@ -74,7 +76,10 @@ LATER = [os.path.join(os.path.dirname(MIGRATION), f) for f in
           # account env CHECK replaces 304's
           "406_llm_acc1_bedrock_connection.sql",
           # AA-1143 (S285): 455's budget rows reference the connection table (dropped by _undo); empty in the replay
-          "455_aa1143_connection_budget_rows.sql")]
+          "455_aa1143_connection_budget_rows.sql",
+          # AA-1154 A1 (S292): 487's spend_budget row has provider 'llm', which 304's CHECK refuses; _undo parks it and
+          # this re-run (after 340 widens the CHECK again) puts it back
+          "487_aa1154_ops_assist_stage_and_budget.sql")]
 # AA-1024 l22 (G8): every migration after 304 that names a table _undo drops (or 304's catalog capabilities column)
 # is in LATER above or here, with the reason it need not be re-run; tests/unit/test_aa1024_replay_later_list.py fails
 # on a new one in neither list (lessons S259..S270: a new FK / CHECK / grant / row on these tables broke this module

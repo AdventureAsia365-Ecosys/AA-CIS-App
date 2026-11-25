@@ -25,6 +25,10 @@ M304 = os.path.join(MIGRATIONS, "304_llm_connection_deployment.sql")
 M306 = os.path.join(MIGRATIONS, "306_llm_anthropic_deployments.sql")
 M310 = os.path.join(MIGRATIONS, "310_llm_connection_admin_edit_grant.sql")   # S4: a 304 re-run drops its column grant
 M322 = os.path.join(MIGRATIONS, "322_provider_connection_v2.sql")            # AA-1017: re-revokes what 310 re-grants
+# AA-1154 A1 (S292): 304 re-adds spend_budget_provider_check without 'llm'; 340 widens it again and 487 puts back the
+# ops_assist stage budget row (provider 'llm') that leaves before every 304 re-run
+M340 = os.path.join(MIGRATIONS, "340_spend_budget_central_llm_scopes.sql")
+M487 = os.path.join(MIGRATIONS, "487_aa1154_ops_assist_stage_and_budget.sql")
 
 
 # AA-1026 (S267): CIS 367's disabled acc3 candidates (Claude Sonnet 4.5, Opus 4.5 / 4.6) are Anthropic Converse rows
@@ -45,6 +49,7 @@ def _run(c, path):
         c.execute("DO $$ BEGIN IF to_regclass('shared.llm_provider_connection') IS NOT NULL THEN "
                   "DELETE FROM shared.llm_provider_connection WHERE kind NOT IN "
                   "('bedrock', 'anthropic', 'openai', 'azure_openai', 'mock'); END IF; END $$")
+        c.execute("DELETE FROM shared.spend_budget WHERE provider = 'llm'")
     c.execute(open(path, encoding="utf-8").read())
 
 
@@ -57,6 +62,8 @@ def cur():
     _run(c, M306)
     _run(c, M310)
     _run(c, M322)
+    _run(c, M340)
+    _run(c, M487)
     try:
         yield c
     finally:
@@ -69,6 +76,8 @@ def cur():
         _run(c, M306)
         _run(c, M310)
         _run(c, M322)
+        _run(c, M340)
+        _run(c, M487)
         conn.close()
 
 
