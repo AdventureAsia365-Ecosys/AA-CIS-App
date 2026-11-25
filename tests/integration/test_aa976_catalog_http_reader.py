@@ -115,8 +115,28 @@ def test_served_tour_is_assembled_from_the_views_and_matches_the_contract(seeded
     assert errors == []
     assert body["content_hash"].startswith("sha256:")
     # the text_updated_at probe (AA-1040; this state has no CIS 359, so it runs every time) + v_tour + days, places,
-    # photos, components (tour_id = ANY each)
-    assert conn.statements == 6
+    # photos, components, day routes (contract 1.4; tour_id = ANY each)
+    assert conn.statements == 7
+
+
+def test_overnight_destination_comes_from_the_day_route_view(seeded):
+    """Contract 1.4 (AA-1152): a day's overnight_destination_id is catalog.v_tour_day_route's, read as aa_app_user; it
+    may be a place that is none of the day's stops, and a hidden (suspect) overnight place is served as null."""
+    c, stop = seeded
+    tid, grp = c.seeded["served"]
+    night = t228._dest(c, f"Ban Nightfall {grp[:8]}", country="Laos", lat=19.7, lng=102.3)
+    hidden = t228._dest(c, f"Ban Hushfield {grp[:8]}", country="Laos", lat=19.4, lng=102.4, geo_status="suspect")
+    c.execute("DELETE FROM geo.tour_day WHERE source_id = %s AND day_index IN (1, 2)", (grp,))
+    t228._day(c, grp, tid, day=1, overnight="Ban Nightfall", overnight_destination_id=night)
+    t228._day(c, grp, tid, day=2, overnight="Ban Hushfield", overnight_destination_id=hidden)
+    body = _run(reader.get_tour(PgConn(c), grp, photo_base=BASE)).body
+    day1, day2, day3 = body["days"]
+    assert day1["overnight_destination_id"] == night
+    assert night not in [p["destination_id"] for p in day1["places"]] and stop in [p["destination_id"]
+                                                                                for p in day1["places"]]
+    assert day2["overnight_destination_id"] is None          # v_tour_day_route hides a suspect place
+    assert day3["overnight_destination_id"] is None
+    assert [e.message for e in _tour_validator().iter_errors(body)] == []
 
 
 def test_before_359_the_reader_falls_back_to_updated_at(seeded):

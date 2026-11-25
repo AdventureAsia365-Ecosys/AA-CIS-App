@@ -25,9 +25,9 @@ from tests.unit.aa976_m2m import OTHER_CLIENT, install_m2m
 
 CONTRACT = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "catalog.http.v1.openapi.yaml"
 DOC = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
-# sha256 of AA-Ecosys docs/contracts/catalog.http.v1.openapi.yaml (info.version 1.3). Update the root file first,
+# sha256 of AA-Ecosys docs/contracts/catalog.http.v1.openapi.yaml (info.version 1.4). Update the root file first,
 # copy it here byte for byte, then set this to `sha256sum` of the root file.
-ROOT_CONTRACT_SHA256 = "4ab152c10900a56b457dbff16dba9803cc6d9fe5330a0a0064a827c5953f6eaa"
+ROOT_CONTRACT_SHA256 = "6e641b5a623bf3358bf0788c8c506e33a57061637fc0dc18f93d555a5b30b8b0"
 
 
 def test_copy_is_the_pinned_root_contract():

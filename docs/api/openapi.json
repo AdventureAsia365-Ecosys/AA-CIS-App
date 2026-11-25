@@ -2418,6 +2418,17 @@
             ],
             "title": "Description"
           },
+          "overnight_destination_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overnight Destination Id"
+          },
           "places": {
             "items": {
               "$ref": "#/components/schemas/CatalogPlace"

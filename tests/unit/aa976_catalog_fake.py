@@ -21,6 +21,7 @@ SID_PAUSED = "1f0e8c1e-0000-4000-8000-0000000000d2"
 DEST_HANOI = "2a2a2a2a-0000-4000-8000-000000000001"
 DEST_HALONG = "2a2a2a2a-0000-4000-8000-000000000002"
 DEST_BALI = "2a2a2a2a-0000-4000-8000-000000000003"
+DEST_ISLET = "2a2a2a2a-0000-4000-8000-000000000004"   # an overnight place that is none of the day's stops
 T0 = datetime(2026, 10, 20, 8, 0, tzinfo=timezone.utc)
 
 
@@ -45,8 +46,8 @@ def tour_row(source_id: str, *, title: str = "Hanoi and Ha Long", country: str =
 
 
 class CatalogViews:
-    """The rows of catalog.v_tour, v_tour_day, v_tour_place, v_tour_photo, v_tour_component, v_tour_retired and
-    v_destination, answering exactly the statements of services/catalog_http/reader.py."""
+    """The rows of catalog.v_tour, v_tour_day, v_tour_place, v_tour_photo, v_tour_component, v_tour_day_route,
+    v_tour_retired and v_destination, answering exactly the statements of services/catalog_http/reader.py."""
 
     def __init__(self) -> None:
         self.tours: dict[str, dict] = {}
@@ -93,6 +94,12 @@ class CatalogViews:
             "components": [
                 {"source_id": source_id, "activity": "kayaking", "intensity_level": "moderate"},
                 {"source_id": source_id, "activity": "cycling", "intensity_level": "active"},
+            ],
+            # catalog.v_tour_day_route (contract 1.4): day 1 sleeps at a stop, day 2 on an islet that is no stop,
+            # day 3 has no night (the view answers rows WHERE overnight_destination_id IS NOT NULL only)
+            "routes": [
+                {"source_id": source_id, "day_index": 2, "overnight_destination_id": DEST_ISLET},
+                {"source_id": source_id, "day_index": 1, "overnight_destination_id": DEST_HANOI},
             ],
         }
         return row

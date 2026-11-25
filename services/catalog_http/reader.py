@@ -85,6 +85,9 @@ _DETAIL_SQL = {
     "photos": "SELECT source_id, photo_id, path, place_label, position FROM catalog.v_tour_photo WHERE {cond}",
     "components": ("SELECT DISTINCT source_id, activity, intensity_level FROM catalog.v_tour_component "
                    "WHERE {cond}"),
+    # contract 1.4 (AA-1152): the overnight destination of each day, the value TripPlanner's day cards read
+    "routes": ("SELECT source_id, day_index, overnight_destination_id FROM catalog.v_tour_day_route "
+               "WHERE overnight_destination_id IS NOT NULL AND {cond}"),
 }
 # tour_id, not source_id: see the module docstring (pushdown through DISTINCT ON / window functions).
 DETAIL_COND = "source_system = 'cis' AND tour_id = ANY($1::uuid[])"
@@ -230,7 +233,7 @@ def _group(rows: list[Any]) -> dict[str, list[dict]]:
 
 
 async def _details(conn: Any, tour_rows: list[Any]) -> dict[str, dict[str, list[dict]]]:
-    """The day, place, photo and component rows of some served ``v_tour`` rows, keyed by source_id."""
+    """The day, place, photo, component and day-route rows of some served ``v_tour`` rows, keyed by source_id."""
     details: dict[str, dict[str, list[dict]]] = {str(r["source_id"]): {} for r in tour_rows}
     tour_ids = [str(r["tour_id"]) for r in tour_rows]
     for name, sql in _DETAIL_SQL.items():
@@ -244,7 +247,7 @@ async def _details(conn: Any, tour_rows: list[Any]) -> dict[str, dict[str, list[
 def _assemble(tour_row: Any, detail: dict[str, list[dict]], photo_base: str) -> Optional[dict]:
     return tour_body(dict(tour_row), days=detail.get("days", ()), places=detail.get("places", ()),
                      photos=detail.get("photos", ()), components=detail.get("components", ()),
-                     photo_base=photo_base)
+                     routes=detail.get("routes", ()), photo_base=photo_base)
 
 
 async def list_tours(conn: Any, *, after: Optional[str], updated_since: Optional[datetime],
