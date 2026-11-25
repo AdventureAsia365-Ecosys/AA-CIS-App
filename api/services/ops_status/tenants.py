@@ -4,15 +4,23 @@ which agency an AI spend, a failed job or an AI error comes from, over the page'
 ``GET /admin/overview/status/tenants?range=&from=&to=&tenant=`` (ops.read):
 
 - without ``tenant``: three rankings of at most ``cis.ops.status_tenant_top_n`` agencies (CIS 486, default 10): AI
-  spend (USD) and AI calls, failed jobs, failed AI calls; plus the platform's own share (calls without an agency);
+  spend (USD) and AI calls, failed jobs, failed AI calls, API server errors (S293); plus the platform's own share
+  (calls without an agency);
 - with ``tenant`` (an agency's id): that agency only, its AI spend and failures by app x stage, its failed jobs by
-  kind (count and last time; no error text: a job error may quote tenant content), its failed AI calls by error class.
+  kind (count and last time; no error text: a job error may quote tenant content), its failed AI calls by error class,
+  its API calls and server errors with the endpoints that answered 5xx (route templates, at most the top-N setting).
 
 Sources (free reads, no new grant): ``shared.ai_usage_hourly`` (the quarter-hour rollup, live traffic, ``tenant_id``)
 for spend and AI failures, ``shared.job`` (``payload ->> 'tenant_id'``, status failed, finished in the range) for failed
-jobs, ``shared.tenants`` for names. Not measured: server errors per agency (no per-agency request log: API Gateway and
-the load balancer have no tenant dimension) and the partner CRM's jobs per agency (the crm.ops.v1 contract has no tenant
-breakdown); the answer says so in ``not_measured``.
+jobs, ``shared.tenant_api_usage`` (S293: the metered ``/v1/*`` call log, one row per call of an agency's own systems,
+``actor_type = 'tenant'``, kept ``cis.retention.tenant_api_usage_days``) for server errors (HTTP 5xx) per agency,
+``shared.tenants`` for names.
+
+Not measured, said in ``not_measured``: the partner CRM's jobs per agency (the crm.ops.v1 contract has no tenant
+breakdown). Partly measured, said in ``server_errors_scope``: the server-error count covers the agencies' metered API
+calls only, not their portal sessions (not metered, AA-760: only in the request log lines), not a request whose route
+crashed before answering (Starlette answers that 500 outside the metering middleware, so it has no usage row), and not
+the Booking or CRM APIs (no tenant dimension at API Gateway or the load balancer).
 """
 from __future__ import annotations
 
@@ -62,7 +70,31 @@ ONE_JOBS_SQL = """
      GROUP BY kind
      ORDER BY 2 DESC
 """
-NOT_MEASURED = ("server_errors_per_agency", "crm_jobs_per_agency")
+API_SQL = """
+    SELECT tenant_id::text AS tenant_id, count(*)::bigint AS calls,
+           count(*) FILTER (WHERE status_code >= 500)::bigint AS server_errors,
+           max(called_at) FILTER (WHERE status_code >= 500) AS last
+      FROM shared.tenant_api_usage
+     WHERE called_at >= $1 AND called_at < $2 AND actor_type = 'tenant' AND tenant_id IS NOT NULL
+     GROUP BY tenant_id
+"""
+ONE_API_SQL = """
+    SELECT method, endpoint, count(*)::bigint AS server_errors, max(called_at) AS last
+      FROM shared.tenant_api_usage
+     WHERE called_at >= $1 AND called_at < $2 AND actor_type = 'tenant' AND tenant_id = $3::uuid
+       AND status_code >= 500
+     GROUP BY method, endpoint
+     ORDER BY 3 DESC, 2
+     LIMIT $4
+"""
+ONE_API_TOTAL_SQL = """
+    SELECT count(*)::bigint AS calls, count(*) FILTER (WHERE status_code >= 500)::bigint AS server_errors
+      FROM shared.tenant_api_usage
+     WHERE called_at >= $1 AND called_at < $2 AND actor_type = 'tenant' AND tenant_id = $3::uuid
+"""
+NOT_MEASURED = ("crm_jobs_per_agency",)
+# What the server-error figure leaves out (see the module docstring); the page says it next to the ranking.
+SERVER_ERRORS_SCOPE = ("metered_api_calls_only", "portal_sessions", "crashed_requests", "booking_crm_apis")
 
 
 class TenantError(ValueError):
@@ -92,8 +124,17 @@ def _label(tid: Optional[str], names: dict[str, dict]) -> dict:
     return {"tenant_id": tid, "name": n.get("name"), "slug": n.get("slug"), "active": n.get("is_active")}
 
 
-def rankings(ai: list[dict], jobs: list[dict], names: dict[str, dict], top_n: int) -> dict:
-    """Top agencies by AI spend, failed jobs and failed AI calls; the platform's own AI share (no agency). Pure."""
+def _pct(part: int, whole: int) -> Optional[float]:
+    return round(100.0 * part / whole, 2) if whole else None
+
+
+def rankings(ai: list[dict], jobs: list[dict], names: dict[str, dict], top_n: int,
+             api: Optional[list[dict]] = None) -> dict:
+    """Top agencies by AI spend, failed jobs, failed AI calls and API server errors; the platform's own AI share (no
+    agency). Pure."""
+    api = api or []
+    server = sorted((r for r in api if r.get("tenant_id") and r.get("server_errors")),
+                    key=lambda r: (-r["server_errors"], -(r.get("calls") or 0)))
     agencies = [r for r in ai if r.get("tenant_id")]
     platform = next((r for r in ai if not r.get("tenant_id")), None)
     spend = sorted((r for r in agencies if (r.get("cost_usd") or 0) > 0 or r.get("requests")),
@@ -109,10 +150,16 @@ def rankings(ai: list[dict], jobs: list[dict], names: dict[str, dict], top_n: in
                        "requests": int(r.get("requests") or 0),
                        "failed_pct": round(100.0 * r["failed"] / r["requests"], 2) if r.get("requests") else None}
                       for r in failed_ai[:top_n]],
+        "server_errors": [{**_label(r["tenant_id"], names), "server_errors": int(r["server_errors"]),
+                           "calls": int(r.get("calls") or 0),
+                           "error_pct": _pct(int(r["server_errors"]), int(r.get("calls") or 0)),
+                           "last": r["last"].isoformat() if r.get("last") else None} for r in server[:top_n]],
+        "api_calls": sum(int(r.get("calls") or 0) for r in api if r.get("tenant_id")),
         "platform": {"cost_usd": round((platform or {}).get("cost_usd") or 0.0, 4),
                      "requests": int((platform or {}).get("requests") or 0),
                      "failed": int((platform or {}).get("failed") or 0)},
-        "agencies_seen": len({r["tenant_id"] for r in agencies} | {r["tenant_id"] for r in jobs if r.get("tenant_id")}),
+        "agencies_seen": len({r["tenant_id"] for r in agencies} | {r["tenant_id"] for r in jobs if r.get("tenant_id")}
+                             | {r["tenant_id"] for r in api if r.get("tenant_id")}),
     }
 
 
@@ -128,13 +175,18 @@ async def collect(pool: Any, rng: TimeRange, tenant: Optional[str], now: Optiona
     names = {r["tenant_id"]: dict(r) for r in await pool.fetch(NAMES_SQL)}
     out: dict[str, Any] = {"range": rng.as_dict(), "generated_at": now.isoformat(), "tenant": tenant,
                            "top_n": th.tenant_top_n(), "top_n_key": th.TENANT_TOP_N, "options": options(names),
-                           "not_measured": list(NOT_MEASURED)}
+                           "not_measured": list(NOT_MEASURED), "server_errors_scope": list(SERVER_ERRORS_SCOPE)}
     if tenant is None:
-        ai, jobs = await asyncio.gather(pool.fetch(AI_SQL, h0, h1), pool.fetch(JOBS_SQL, rng.start, rng.end))
-        return {**out, **rankings([dict(r) for r in ai], [dict(r) for r in jobs], names, th.tenant_top_n())}
-    ai, errors, jobs = await asyncio.gather(pool.fetch(ONE_AI_SQL, h0, h1, tenant),
-                                            pool.fetch(ONE_ERRORS_SQL, h0, h1, tenant),
-                                            pool.fetch(ONE_JOBS_SQL, rng.start, rng.end, tenant))
+        ai, jobs, api = await asyncio.gather(pool.fetch(AI_SQL, h0, h1), pool.fetch(JOBS_SQL, rng.start, rng.end),
+                                             pool.fetch(API_SQL, rng.start, rng.end))
+        return {**out, **rankings([dict(r) for r in ai], [dict(r) for r in jobs], names, th.tenant_top_n(),
+                                  [dict(r) for r in api])}
+    ai, errors, jobs, api, api_total = await asyncio.gather(
+        pool.fetch(ONE_AI_SQL, h0, h1, tenant), pool.fetch(ONE_ERRORS_SQL, h0, h1, tenant),
+        pool.fetch(ONE_JOBS_SQL, rng.start, rng.end, tenant), pool.fetch(ONE_API_SQL, rng.start, rng.end, tenant, th.tenant_top_n()),
+        pool.fetch(ONE_API_TOTAL_SQL, rng.start, rng.end, tenant))
+    total = dict(api_total[0]) if api_total else {}
+    calls, server_errors = int(total.get("calls") or 0), int(total.get("server_errors") or 0)
     by_stage = [{"app": r["app"], "stage": r["stage"] or None, "cost_usd": round(r["cost_usd"] or 0.0, 4),
                  "requests": int(r["requests"] or 0), "failed": int(r["failed"] or 0)} for r in ai]
     return {**out, "agency": {**_label(tenant, names), "known": tenant in names,
@@ -142,6 +194,12 @@ async def collect(pool: Any, rng: TimeRange, tenant: Optional[str], now: Optiona
                               "requests": sum(r["requests"] for r in by_stage),
                               "ai_failed": sum(r["failed"] for r in by_stage),
                               "jobs_failed": sum(int(r["failed"]) for r in jobs),
+                              "api_calls": calls, "server_errors": server_errors,
+                              "server_error_pct": _pct(server_errors, calls),
+                              "server_error_endpoints": [
+                                  {"method": r["method"], "endpoint": r["endpoint"],
+                                   "server_errors": int(r["server_errors"]),
+                                   "last": r["last"].isoformat() if r.get("last") else None} for r in api],
                               "by_stage": by_stage,
                               "ai_errors": [{"error_class": r["error_class"], "requests": int(r["requests"])}
                                             for r in errors],
