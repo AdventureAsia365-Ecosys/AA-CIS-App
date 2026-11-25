@@ -59,18 +59,15 @@ CONTENT_READ = "content.read"
 CONTENT_WRITE = "content.write"              # upload, S1 rewrite, regenerate
 REVIEW_ACT = "review.act"
 CONTENT_PUBLISH = "content.publish"   # AA-1146 D1: publish a tour version; two-person rule: content_publish_gate.py
-MASTER_ADMIN = "master.admin"
-ATOMS_WRITE = "atoms.write"
-PHOTOS_WRITE = "photos.write"
-A4_UNPUBLISH = "a4.unpublish"
+MASTER_ADMIN, ATOMS_WRITE = "master.admin", "atoms.write"
+PHOTOS_WRITE, A4_UNPUBLISH = "photos.write", "a4.unpublish"
 QUALITY_WRITE = "quality.write"              # T2/T9 quality: sentence cut/rewrite, labels, place cards
 CONTENT_SETTINGS_WRITE = "content.settings.write"   # gates, brand, SEO
 TENANT_READ, TENANT_WRITE = "tenant.read", "tenant.write"
 OPS_READ = "ops.read"
 OPS_WRITE = "ops.write"                      # job cancel/retry/retention, scheduled ops checks
 AI_ADMIN = "ai.admin"                        # stage models + routes, model catalog, Jev questions
-SPEND_READ = "spend.read"
-SPEND_WRITE = "spend.write"                  # budgets, Jev credit ledger, Cost Explorer fetch
+SPEND_READ, SPEND_WRITE = "spend.read", "spend.write"   # write: budgets, Jev credit ledger, Cost Explorer fetch
 STAFF_READ = "staff.read"
 STAFF_WRITE = "staff.write"                  # change a staff role / active flag: owners only
 STAFF_VIEW_AS_ROLE = "staff.view_as_role"    # AA-1157: start a read-only view as a lower role (staff_view_as.py)
@@ -615,6 +612,9 @@ POLICY: dict[tuple[str, str], Any] = {
     ("GET", "/admin/overview/ops"): OPS_READ, ("GET", "/admin/overview/status"): OPS_READ,  # AA-858, AA-1140 status
     **{("POST", "/admin/overview/status/acks" + p): OPS_WRITE for p in ("", "/{item_id}/clear")},  # AA-1141 ack
     **{(m, "/admin/overview/views" + p): OPS_READ for m, p in (("GET", ""), ("POST", ""), ("DELETE", "/{view_id}"))},
+    **{("POST", "/admin/overview/incidents" + p): OPS_WRITE for p in ("", "/{incident_id}")},  # AA-1142 incidents
+    **{("GET", "/admin/overview/" + p): OPS_READ for p in (  # AA-1142: incidents, per-agency drill-down, SLO drill
+        "incidents", "incidents/{incident_id}", "status/tenants", "status/slo/drill")},
     ("GET", "/admin/my-work/summary"): any_of(REVIEW_ACT, CONTENT_WRITE, QUALITY_WRITE),  # AA-1156 My work (per tile)
     ("GET", "/admin/data-coverage"): OPS_READ,  # AA-992 data coverage counts, incl. CRM over crm.ops.v1 (admin-only)
     # ── admin_reports (AA-1003) — report register, runs, generate now (admin-only page)

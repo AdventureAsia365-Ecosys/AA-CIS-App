@@ -591,6 +591,14 @@
     "capability": "ops.read",
     "module": "api.routers.admin_overview"
   },
+  "GET /admin/overview/incidents": {
+    "capability": "ops.read",
+    "module": "api.routers.admin_ops_status_p2"
+  },
+  "GET /admin/overview/incidents/{incident_id}": {
+    "capability": "ops.read",
+    "module": "api.routers.admin_ops_status_p2"
+  },
   "GET /admin/overview/ops": {
     "capability": "ops.read",
     "module": "api.routers.admin_overview"
@@ -598,6 +606,14 @@
   "GET /admin/overview/status": {
     "capability": "ops.read",
     "module": "api.routers.admin_overview"
+  },
+  "GET /admin/overview/status/slo/drill": {
+    "capability": "ops.read",
+    "module": "api.routers.admin_ops_status_p2"
+  },
+  "GET /admin/overview/status/tenants": {
+    "capability": "ops.read",
+    "module": "api.routers.admin_ops_status_p2"
   },
   "GET /admin/overview/views": {
     "capability": "ops.read",
@@ -1614,6 +1630,14 @@
   "POST /admin/llm-connections/{connection_key}/test": {
     "capability": "ai.admin",
     "module": "api.routers.admin_llm_ops"
+  },
+  "POST /admin/overview/incidents": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_ops_status_p2"
+  },
+  "POST /admin/overview/incidents/{incident_id}": {
+    "capability": "ops.write",
+    "module": "api.routers.admin_ops_status_p2"
   },
   "POST /admin/overview/status/acks": {
     "capability": "ops.write",

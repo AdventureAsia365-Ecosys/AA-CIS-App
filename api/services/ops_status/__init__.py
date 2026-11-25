@@ -30,6 +30,14 @@ AA-1141 (P1, S291) adds, all free:
                ``viewer.can_ack`` says whether this caller may act (ops.write, never the business owner);
 - ``pipelines`` freshness of the background producers (sampler, digest, probes, delivery summary, schema dump).
 
+AA-1142 (P2, S292), all free but two small cached CloudWatch reads:
+- ``slo``      availability per app against its objective, error budget left over the budget window, the 1 h and 6 h
+               burn rates; a burn above its factor is a Needs-attention item (:mod:`.slo`);
+- ``external`` the external synthetic checks (root repo workflow, every 15 min on GitHub Actions): DNS, TLS and the
+               certificate's end date, the health path, per public target, as a strip next to the internal one
+               (:mod:`.external`). The incident record (:mod:`.incidents`) and the per-agency drill-down
+               (:mod:`.tenants`) have their own routes (api/routers/admin_ops_status_p2.py).
+
 ``verdict`` (``verdict.decide``) turns them into one sentence and the Needs attention list; ``thresholds`` lists every
 limit with its settings key (``shared/ops_status_thresholds.py``, CIS 475) so the page draws it and links Settings;
 ``sources`` gives each section's source, refresh time, ``as_of`` and whether it is stale (older than
@@ -50,7 +58,7 @@ import structlog
 from api.services.issue_refs import clean
 from api.services.ops_overview import cache
 from api.services.ops_status import (
-    acks, anomaly, changes, cw_series, forecast, pipelines, sections, session_checks, store, verdict,
+    acks, anomaly, changes, cw_series, external, forecast, pipelines, sections, session_checks, slo, store, verdict,
 )
 from api.services.ops_status.ranges import RangeError, TimeRange, resolve
 from shared import ops_status_thresholds as th
@@ -78,6 +86,10 @@ SOURCES = {
                "versions of this range",
     "forecast": "CloudWatch RDS free storage trend (cached 6 h), the AI connection budgets and their month to date",
     "anomaly": "The hourly AI usage rollup (shared.ai_usage_hourly): the last two hours against the median hour",
+    "slo": "CloudWatch requests and server errors per app (5-minute period cached 5 min, hourly period cached 1 h); "
+           "the partner CRM by its 5-minute health samples (acp_shared.ops_sample)",
+    "external": "The root repo workflow External checks (GitHub Actions, every 15 minutes), copied by the 5-minute "
+                "sampler into acp_shared.ops_external_check",
 }
 
 
@@ -232,7 +244,7 @@ async def build_status(pool: Any, redis: Any = None, *, range_key: Optional[str]
         _signals(redis, rng), _signals(redis, prev, previous=True) if prev else none(), _cards(pool, redis),
         sections.run("activity", sections.activity(pool, rng)), _health(pool, now))
     run = sections.run
-    rt, res, jobs, ai, cost, ev_src, dl, chg, fc, an, ack_rows, ack_trail = await asyncio.gather(
+    rt, res, jobs, ai, cost, ev_src, dl, chg, fc, an, ack_rows, ack_trail, sl, ext = await asyncio.gather(
         run("runtimes", sections.runtimes(pool, rng, now)),
         run("resources", sections.resources(pool, sig, rng, now)),
         run("jobs", sections.jobs(pool, rng, authorization)),
@@ -244,13 +256,14 @@ async def build_status(pool: Any, redis: Any = None, *, range_key: Optional[str]
         run("forecast", forecast.collect(pool, redis, now)),
         run("anomaly", anomaly.collect(pool, redis, now)),
         _guarded(acks.read_in_force(pool, now), ({}, {})),
-        _guarded(acks.history(pool, rng.start), []))
+        _guarded(acks.history(pool, rng.start), []),
+        run("slo", slo.collect(pool, redis, now)), run("external", external.collect(pool, rng, now)))
     events_rows = ev_src.get("data", []) if ev_src.get("status") == "ok" else []
     apps = sections.ok(sections.app_tiles(sig, cards, acts if isinstance(acts, dict) and "status" not in acts else {},
                                           health), 300, as_of=_as_of(sig, now))
     secs = {"signals": {**series_view(sig, rng), "refresh_s": SIGNALS_TTL_S}, "apps": apps, "runtimes": rt,
             "resources": res, "jobs": jobs, "ai": ai, "cost": cost, "events": ev_src, "delivery": dl,
-            "changes": chg, "forecast": fc, "anomaly": an}
+            "changes": chg, "forecast": fc, "anomaly": an, "slo": sl, "external": ext}
     if prev is not None:
         secs["signals"]["previous"] = {**series_view(sig_prev or {}, prev), "range": prev.as_dict()}
     deploys = [e for e in events_rows if e["lane"] == "deploy"]
