@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql, 469_aa1171_ops_thresholds_and_recipient_topic.sql, 471_aa1174_compliance_obligations.sql, 472_aa1172_fact_instruction_guard.sql, 474_aa1160_tenant_crm_agency_marker.sql, 475_aa1140_ops_status_samples_and_thresholds.sql, 476_aa1152_tp_agency_price_stale_hours.sql, 477_aa1140_rds_free_storage_pct.sql, 478_aa1148_manual_tours_supplier_link.sql, 479_aa1173_compliance_exceptions_reviews.sql, 481_aa1154_ops_assist_settings.sql, 483_aa1141_ops_status_p1_settings.sql, 484_aa1169_blog_claim_rule.sql, 486_aa1142_ops_status_p2_settings.sql, 487_aa1154_ops_assist_stage_and_budget.sql, 488_aa1141_ops_role_connections_samples.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql, 469_aa1171_ops_thresholds_and_recipient_topic.sql, 471_aa1174_compliance_obligations.sql, 472_aa1172_fact_instruction_guard.sql, 474_aa1160_tenant_crm_agency_marker.sql, 475_aa1140_ops_status_samples_and_thresholds.sql, 476_aa1152_tp_agency_price_stale_hours.sql, 477_aa1140_rds_free_storage_pct.sql, 478_aa1148_manual_tours_supplier_link.sql, 479_aa1173_compliance_exceptions_reviews.sql, 481_aa1154_ops_assist_settings.sql, 483_aa1141_ops_status_p1_settings.sql, 484_aa1169_blog_claim_rule.sql, 486_aa1142_ops_status_p2_settings.sql, 487_aa1154_ops_assist_stage_and_budget.sql, 488_aa1141_ops_role_connections_samples.sql, 489_aa1178_job_lane_settings.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -4546,6 +4546,78 @@
      "lower": "Không dưới 1 giờ: route watch chạy theo nhịp ngắn và sẽ rung chuông mỗi lần chạy.",
      "when": "Tăng khi một sự cố nhà cung cấp đã biết làm đầy chuông; đặt lại sau đó.",
      "example": "Với mặc định 1 giờ, dùng dự phòng từ 10:00 tới 13:00 sẽ rung chuông lúc 10:00, 11:00, 12:00 và 13:00."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.jobs_background_max_running",
+   "app": "cis",
+   "area": "ops",
+   "label": "Job runner: long background jobs running at once (per worker)",
+   "description": "The CIS job worker (shared/jobs/worker.py claim_caps_for) runs at most this many long background jobs at once on each worker: the place pipeline, retention, the writing-memory runs, reports and the other background kinds, all together. Monitoring kinds have their own lane (cis.ops.jobs_monitor_max_running) and are not counted here. Background jobs also never take the worker's last two free slots, so a wave keeps its slots. The ops metrics sampler (shared/jobs/backlog.py) applies the same rule. Default 1, the value the worker has used since the S217 Nepal wave.",
+   "value_type": "int",
+   "unit": "jobs",
+   "min_value": 1,
+   "max_value": 4,
+   "allowed_values": null,
+   "default_value": 1,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many long background jobs (place pipeline, retention, writing-memory runs, reports) one worker runs at the same time.",
+     "raise": "A backlog of background batches drains sooner, but each one holds a worker slot a wave's rewrites or atomize jobs could use.",
+     "lower": "1 is the lowest: background batches run one after another and leave the most slots to waves and content jobs.",
+     "when": "Raise it for a large background backlog while no wave runs; set it back to 1 before a wave starts.",
+     "example": "With the default 1, while a 90-minute writing-memory run is going, the next background batch waits for it to finish."
+    },
+    "vi": {
+     "what": "Số job nền dài (pipeline địa điểm, retention, các lượt writing-memory, báo cáo) một worker chạy cùng lúc.",
+     "raise": "Hàng đợi job nền chạy xong sớm hơn, nhưng mỗi job giữ một slot worker mà job viết lại hoặc atomize của wave có thể dùng.",
+     "lower": "Thấp nhất là 1: các job nền chạy lần lượt và để lại nhiều slot nhất cho wave và job nội dung.",
+     "when": "Tăng khi tồn nhiều job nền mà không có wave nào chạy; đặt lại 1 trước khi bắt đầu wave.",
+     "example": "Với mặc định 1, khi một lượt writing-memory 90 phút đang chạy, job nền tiếp theo chờ nó xong."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.jobs_monitor_max_running",
+   "app": "cis",
+   "area": "ops",
+   "label": "Job runner: monitoring jobs running at once (per worker)",
+   "description": "The CIS job worker (shared/jobs/worker.py claim_caps_for) runs the short monitoring kinds (the status page sampler, the AI route and quality watchers, the usage rollup, the connection probe, the model lifecycle sync and the compliance database checks; registered with monitor=True) in their own lane: they never wait behind a long background job and never count toward cis.ops.jobs_background_max_running. At most this many of them run at once on each worker, in slots of their own on top of the worker's main slots, so they never take a slot a wave or a content job could use, and they keep running while a wave fills the main slots. The ops metrics sampler (shared/jobs/backlog.py) applies the same rule. Default 2.",
+   "value_type": "int",
+   "unit": "jobs",
+   "min_value": 1,
+   "max_value": 4,
+   "allowed_values": null,
+   "default_value": 2,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many monitoring jobs (status page sampler, route and quality watchers, usage rollup, connection probe) one worker runs at the same time, in their own slots beside the long background jobs and the waves.",
+     "raise": "A slow monitoring job (a usage backfill, a connection probe) holds up the others less, but more of them use the worker's database connections and CPU at the same time.",
+     "lower": "1 is the lowest: monitoring jobs run one after another, so a slow one delays the status page sample behind it.",
+     "when": "Raise it when the status page or the route watcher falls behind while a slow monitoring job runs; keep the default otherwise.",
+     "example": "With the default 2, the 5-minute status sample still runs while the usage rollup backfill, a long writing-memory run and a wave are all going."
+    },
+    "vi": {
+     "what": "Số job giám sát (bộ lấy mẫu trang trạng thái, theo dõi tuyến AI và chất lượng, tổng hợp mức dùng, kiểm kết nối) một worker chạy cùng lúc, trong slot riêng bên cạnh các job nền dài và các wave.",
+     "raise": "Một job giám sát chậm (backfill mức dùng, kiểm kết nối) ít làm các job khác phải chờ hơn, nhưng nhiều job hơn dùng kết nối database và CPU của worker cùng lúc.",
+     "lower": "Thấp nhất là 1: các job giám sát chạy lần lượt, nên một job chậm làm mẫu của trang trạng thái phía sau phải chờ.",
+     "when": "Tăng khi trang trạng thái hoặc bộ theo dõi tuyến bị trễ trong lúc một job giám sát chậm đang chạy; còn lại giữ mặc định.",
+     "example": "Với mặc định 2, mẫu trạng thái 5 phút vẫn chạy khi backfill tổng hợp mức dùng, một lượt writing-memory dài và một wave cùng đang chạy."
     }
    }
   },
