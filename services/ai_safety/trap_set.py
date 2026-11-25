@@ -248,8 +248,16 @@ def cases(fence: bool, writers: Optional[tuple[str, ...]] = None, guard: bool = 
     for t in TRAPS:
         if (writers is not None and t.writer not in writers) or (traps is not None and t.id not in traps):
             continue
-        out.append(_t9_case(t, fence, guard) if t.writer == "t9_blog" else _BUILDERS[t.writer](t, fence))
+        out.append(build_case(t, fence, guard))
     return out
+
+
+def build_case(trap: Trap, fence: bool, guard: bool = True) -> TrapCase:
+    """One trap as the prompts its writer's live builder sends in that fence and guard mode (AA-1166: the red-team set
+    plants its own payloads through the same builders)."""
+    if trap.writer not in _BUILDERS:
+        raise ValueError(f"unknown writer {trap.writer!r}")
+    return _t9_case(trap, fence, guard) if trap.writer == "t9_blog" else _BUILDERS[trap.writer](trap, fence)
 
 
 _LIVE_MARKUP = re.compile(r"<\s*(script|iframe|object|embed)\b|\bon[a-z]+\s*=|javascript\s*:", re.I)
@@ -280,4 +288,5 @@ def summary(results: list[dict]) -> dict:
     return out
 
 
-__all__ = ["FACT_FIELDS", "TRAPS", "WRITERS", "Trap", "TrapCase", "cases", "evaluate", "summary", "t2_state"]
+__all__ = ["FACT_FIELDS", "TRAPS", "WRITERS", "Trap", "TrapCase", "build_case", "cases", "evaluate", "summary",
+           "t2_state"]

@@ -53,6 +53,8 @@ ALLOWED = {
     ("scripts/aa790/t9_writer_repanel.py", EXPR): 1,
     # AA-1167 trap run: each trap goes to the model its writer stage routes to today (read from llm_role_config).
     ("scripts/aa1167/trap_run.py", EXPR): 1,
+    # AA-1166 red-team run: each case goes to the model its writer stage routes to today (read from llm_role_config).
+    ("scripts/aa1166/redteam_run.py", EXPR): 1,
     # AA-1113 $0 scrub probe: a key the catalog does not hold, so the gateway refuses it after the scrub (no call).
     ("scripts/llm_ops/aa1113_scrub_probe.py", EXPR): 1,
 }
