@@ -94,10 +94,9 @@ The AA-832 chain (EventBridge -> ops-probe Lambda -> admin POST -> shared.job ->
   latest not_before, dry_run, apply, verify) has one live `tenant_erasure_saga` job ($0; services/jobs/
   tenant_erasure_saga_job.ensure_jobs), only while the kind is registered and CIS 408 is applied. Field
   `tenant_erasure` (the jobs created) or `tenant_erasure_error`.
-- AA-1140: each tick queues the Ecosystem status sampler once per 5-minute bucket (services/jobs/ops_status_sample_job
-  .tick_part, $0). Field `ops_status_sample` (the job id, when created) or `ops_status_sample_error`.
-- AA-1173: the daily compliance DB checks job (compliance_db_checks_job.tick_part); `compliance_db_checks[_error]`.
-  AA-1142 (S293): the worker's external checks per external_check_interval_min (`ops_external_check[_error]`).
+- AA-1140 / AA-1173 / AA-1142 (S293): each tick queues once per bucket ($0; field `<kind>` with the job id, or
+  `<kind>_error`) the Ecosystem status sampler (5 minutes, services/jobs/ops_status_sample_job), the compliance DB
+  checks (daily, compliance_db_checks_job) and the worker's external checks (cis.ops.external_check_interval_min).
 - AA-845: every JEV_CREDIT_CHECK_EVERY_S (shared/jev_credit.py, 30 min) the loop also runs the Jev low-credit
   check (estimated TypeSafe credit below the threshold -> throttled bell + operator e-mail). It runs after the
   tick, outside sample_once, under its own PART_TIMEOUT_S, and logs its own line (`jev_credit_low_checked` /
@@ -658,9 +657,10 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
     except Exception as e:
         out["ai_usage_rollup_error"] = _err(e)
 
-    from services.jobs import compliance_db_checks_job, ops_external_check_job, ops_status_sample_job
-    for _job in (ops_status_sample_job, compliance_db_checks_job, ops_external_check_job):  # AA-1140, 1173, 1142
-        await _guarded_part(_job.tick_part(pool, kinds, ts, out), out, f"{_job.KIND}_error", timeout=5.0)
+    from services.jobs import compliance_db_checks_job as _c, ops_external_check_job as _x, ops_status_sample_job as _s
+    await _guarded_part(_s.tick_part(pool, kinds, ts, out), out, "ops_status_sample_error", timeout=5.0)  # AA-1140
+    await _guarded_part(_c.tick_part(pool, kinds, ts, out), out, "compliance_db_checks_error", timeout=5.0)  # AA-1173
+    await _guarded_part(_x.tick_part(pool, kinds, ts, out), out, "ops_external_check_error", timeout=5.0)  # AA-1142
 
     try:
         await asyncio.wait_for(_jobs_part(pool, kinds, out), timeout=part_timeout_s)
