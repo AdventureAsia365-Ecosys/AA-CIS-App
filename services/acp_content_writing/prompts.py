@@ -214,7 +214,7 @@ def _blog_length_instructions() -> str:
     )
 
 
-# AA-1169 (S292) — the blog's CLAIM CHECK block, behind the setting cis.t9.blog_claim_rule (claim_rule.py, CIS 490,
+# AA-1169 (S292) — the blog's CLAIM CHECK block, behind the setting cis.t9.blog_claim_rule (claim_rule.py, CIS 484,
 # default off = this module's blog prompt of main byte for byte). Under the W5 measure a first draft fails on any
 # sentence the pinned claim instrument flags (S285: 1 of 12 blogs passed); the classes it targets are the policy topics
 # that carried most of the expected flags on the local proxy (writing_policy.yaml claims: rarity D13, timing D4/D15 with
