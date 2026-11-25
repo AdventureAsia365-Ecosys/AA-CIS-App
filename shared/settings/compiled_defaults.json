@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql, 469_aa1171_ops_thresholds_and_recipient_topic.sql, 471_aa1174_compliance_obligations.sql, 472_aa1172_fact_instruction_guard.sql, 474_aa1160_tenant_crm_agency_marker.sql, 475_aa1140_ops_status_samples_and_thresholds.sql, 476_aa1152_tp_agency_price_stale_hours.sql, 477_aa1140_rds_free_storage_pct.sql, 478_aa1148_manual_tours_supplier_link.sql, 479_aa1173_compliance_exceptions_reviews.sql, 481_aa1154_ops_assist_settings.sql, 483_aa1141_ops_status_p1_settings.sql, 484_aa1169_blog_claim_rule.sql, 486_aa1142_ops_status_p2_settings.sql, 487_aa1154_ops_assist_stage_and_budget.sql, 488_aa1141_ops_role_connections_samples.sql, 489_aa1178_job_lane_settings.sql, 491_aa1154_ops_assist_a2_settings.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql, 469_aa1171_ops_thresholds_and_recipient_topic.sql, 471_aa1174_compliance_obligations.sql, 472_aa1172_fact_instruction_guard.sql, 474_aa1160_tenant_crm_agency_marker.sql, 475_aa1140_ops_status_samples_and_thresholds.sql, 476_aa1152_tp_agency_price_stale_hours.sql, 477_aa1140_rds_free_storage_pct.sql, 478_aa1148_manual_tours_supplier_link.sql, 479_aa1173_compliance_exceptions_reviews.sql, 481_aa1154_ops_assist_settings.sql, 483_aa1141_ops_status_p1_settings.sql, 484_aa1169_blog_claim_rule.sql, 486_aa1142_ops_status_p2_settings.sql, 487_aa1154_ops_assist_stage_and_budget.sql, 488_aa1141_ops_role_connections_samples.sql, 489_aa1178_job_lane_settings.sql, 491_aa1154_ops_assist_a2_settings.sql, 493_aa1142_external_check_worker_settings.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -4667,6 +4667,249 @@
      "lower": "Không dưới 1 giờ: route watch chạy theo nhịp ngắn và sẽ rung chuông mỗi lần chạy.",
      "when": "Tăng khi một sự cố nhà cung cấp đã biết làm đầy chuông; đặt lại sau đó.",
      "example": "Với mặc định 1 giờ, dùng dự phòng từ 10:00 tới 13:00 sẽ rung chuông lúc 10:00, 11:00, 12:00 và 13:00."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.external_check_interval_min",
+   "app": "cis",
+   "area": "ops",
+   "label": "External checks: worker run every (minutes)",
+   "description": "How often the CIS worker runs the external checks (job kind ops_external_check, monitoring lane, queued by the api's ops metrics sampler once per bucket of this many minutes, aligned to the UTC hour). Each run checks every target of cis.ops.external_check_targets: DNS, a verified TLS handshake and the certificate's end date, one GET of the health path without following redirects. The status page judges the worker strip stale after cis.ops.status_stale_factor x this interval. A run that starts more than one interval late writes nothing (the next bucket is the retry). Default 15.",
+   "value_type": "int",
+   "unit": "minutes",
+   "min_value": 5,
+   "max_value": 60,
+   "allowed_values": null,
+   "default_value": 15,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How many minutes apart the CIS worker checks the public hosts from outside.",
+     "raise": "Fewer runs and rows (about 8 rows a run); an outage of a public host is seen later.",
+     "lower": "A DNS, certificate or health failure shows sooner, at the price of more rows and requests to the hosts.",
+     "when": "Lower it during an incident on a public host; raise it if the table grows too fast.",
+     "example": "With the default 15, a host that stops answering at 10:02 is on the page as down by about 10:15."
+    },
+    "vi": {
+     "what": "Số phút giữa hai lần worker của CIS kiểm tra các host công khai từ bên ngoài.",
+     "raise": "Ít lượt và ít dòng hơn (khoảng 8 dòng mỗi lượt); host công khai hỏng sẽ được thấy muộn hơn.",
+     "lower": "Lỗi DNS, chứng chỉ hay đường health hiện ra sớm hơn, đổi lại nhiều dòng và nhiều yêu cầu tới host hơn.",
+     "when": "Giảm khi đang có sự cố ở một host công khai; tăng nếu bảng phình quá nhanh.",
+     "example": "Với mặc định 15, một host ngừng trả lời lúc 10:02 sẽ hiện là hỏng trên trang vào khoảng 10:15."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.external_check_sources",
+   "app": "cis",
+   "area": "ops",
+   "label": "External checks: sources the status page counts",
+   "description": "Where the external checks of the Ecosystem status page (/admin/overview, External checks card) are measured from: worker (the CIS worker's monitoring job ops_external_check, services/jobs/ops_external_check_job.py, every cis.ops.external_check_interval_min minutes from the worker's internet egress) and github (the root repo workflow External checks on GitHub Actions, copied by the 5-minute status sampler; GitHub may start it hours late). A source left out is not run (worker) or not copied (github), and the page ignores its rows. The feed counts as stopped only when every listed source is older than cis.ops.status_stale_factor x its own interval. Default both.",
+   "value_type": "list",
+   "unit": null,
+   "min_value": null,
+   "max_value": null,
+   "allowed_values": [
+    "worker",
+    "github"
+   ],
+   "default_value": [
+    "worker",
+    "github"
+   ],
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "Which vantage points run the outside checks of the public hosts: the CIS worker, GitHub Actions, or both.",
+     "raise": "Listing both: two independent vantage points; the page stays fresh while one of them is late or down.",
+     "lower": "Removing one: that source stops (worker) or is no longer copied (github) and its strips leave the page; an empty list turns the external checks off.",
+     "when": "Remove github if its schedule keeps running hours late and the grey strips distract; remove worker only to stop the checks from AWS.",
+     "example": "With the default, every host shows a worker strip every 15 minutes and a GitHub strip whenever the workflow ran."
+    },
+    "vi": {
+     "what": "Những điểm đo chạy kiểm tra từ bên ngoài tới các host công khai: worker của CIS, GitHub Actions, hoặc cả hai.",
+     "raise": "Để cả hai: hai điểm đo độc lập; trang vẫn tươi khi một nguồn bị trễ hoặc hỏng.",
+     "lower": "Bỏ một nguồn: nguồn đó ngừng chạy (worker) hoặc không còn được chép (github) và dải của nó rời trang; danh sách rỗng là tắt kiểm tra bên ngoài.",
+     "when": "Bỏ github nếu lịch của nó liên tục trễ hàng giờ và dải xám gây nhiễu; chỉ bỏ worker khi muốn dừng kiểm tra từ AWS.",
+     "example": "Với mặc định, mỗi host có một dải worker mỗi 15 phút và một dải GitHub mỗi khi workflow chạy."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.external_check_targets",
+   "app": "cis",
+   "area": "ops",
+   "label": "External checks: public hosts the worker checks",
+   "description": "The public hosts the CIS worker checks from outside (job kind ops_external_check), a list of objects: id (lower-case letters, digits and hyphens, at most 60), app (cis, tripplanner, booking, crm or shared), host (a public host name), mode (health: DNS, TLS and one GET of path; tls: DNS and TLS only), and for mode health: path (starting with /) and expect (the HTTP statuses that count as up; a sign-in redirect is an answer). A target with a bad field is skipped and named in the job's result. Public host names only, never a secret or an internal address. The default equals the root repo's tools/ops/external_checks.json (the GitHub workflow's list); keep both in step when a public host is added.",
+   "value_type": "json",
+   "unit": null,
+   "min_value": null,
+   "max_value": null,
+   "allowed_values": null,
+   "default_value": [
+    {
+     "id": "cis-api",
+     "app": "cis",
+     "host": "api-cis.lumiguides.it.com",
+     "mode": "health",
+     "path": "/health",
+     "expect": [
+      200
+     ]
+    },
+    {
+     "id": "cis-admin",
+     "app": "cis",
+     "host": "aa-cis.lumiguides.it.com",
+     "mode": "health",
+     "path": "/",
+     "expect": [
+      200,
+      301,
+      302,
+      307,
+      308
+     ]
+    },
+    {
+     "id": "booking-api",
+     "app": "booking",
+     "host": "api-booking.lumiguides.it.com",
+     "mode": "health",
+     "path": "/booking/health",
+     "expect": [
+      200
+     ]
+    },
+    {
+     "id": "booking-admin",
+     "app": "booking",
+     "host": "booking.lumiguides.it.com",
+     "mode": "health",
+     "path": "/",
+     "expect": [
+      200,
+      301,
+      302,
+      307,
+      308
+     ]
+    },
+    {
+     "id": "crm-api",
+     "app": "crm",
+     "host": "partner-dev.lumiguides.it.com",
+     "mode": "health",
+     "path": "/crm/health",
+     "expect": [
+      200
+     ]
+    },
+    {
+     "id": "crm-portal",
+     "app": "crm",
+     "host": "portal.lumiguides.it.com",
+     "mode": "health",
+     "path": "/",
+     "expect": [
+      200,
+      301,
+      302,
+      307,
+      308
+     ]
+    },
+    {
+     "id": "tripplanner-web",
+     "app": "tripplanner",
+     "host": "tripplanner.lumiguides.it.com",
+     "mode": "health",
+     "path": "/",
+     "expect": [
+      200,
+      301,
+      302,
+      307,
+      308
+     ]
+    },
+    {
+     "id": "staff-sign-in",
+     "app": "shared",
+     "host": "staff-auth.lumiguides.it.com",
+     "mode": "tls"
+    }
+   ],
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "The list of public addresses (APIs, admin sites, sign-in page) the worker checks from outside every few minutes.",
+     "raise": "Adding a host: its DNS, certificate and health path show on the status page and raise an alert when they fail.",
+     "lower": "Removing a host: it is no longer checked by the worker; its old rows stay until they leave the history window.",
+     "when": "Add a host when a new public site or API goes live; remove one when it is retired.",
+     "example": "With the default list, the CIS API's /health must answer 200 and the admin site may answer 200 or a sign-in redirect."
+    },
+    "vi": {
+     "what": "Danh sách địa chỉ công khai (API, trang quản trị, trang đăng nhập) worker kiểm tra từ bên ngoài sau mỗi vài phút.",
+     "raise": "Thêm host: DNS, chứng chỉ và đường health của nó hiện trên trang trạng thái và báo động khi lỗi.",
+     "lower": "Bỏ host: worker không kiểm tra nó nữa; các dòng cũ còn lại tới khi ra khỏi cửa sổ lịch sử.",
+     "when": "Thêm host khi một trang hay API công khai mới chạy; bỏ khi nó ngừng dùng.",
+     "example": "Với danh sách mặc định, /health của API CIS phải trả 200 và trang quản trị được trả 200 hoặc chuyển hướng sang đăng nhập."
+    }
+   }
+  },
+  {
+   "key": "cis.ops.external_check_timeout_s",
+   "app": "cis",
+   "area": "ops",
+   "label": "External checks: time limit per step (seconds)",
+   "description": "The longest the CIS worker's external checks (job kind ops_external_check) wait for one step of one target: the TCP connection and TLS handshake, and the GET of the health path. A step that takes longer fails: the target is down for that run (no connection) or its request failed. Targets are checked in parallel, so one run lasts at most about three times this value. Default 10, the value of the root repo workflow (tools/ops/external_checks.py).",
+   "value_type": "int",
+   "unit": "seconds",
+   "min_value": 2,
+   "max_value": 30,
+   "allowed_values": null,
+   "default_value": 10,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "How long the worker waits for a public host to connect, finish the TLS handshake or answer its health path before calling it failed.",
+     "raise": "A slow host is less often reported down, but a hung host holds the run longer.",
+     "lower": "A slow answer counts as a failure sooner; too low and a busy but working host reads as down.",
+     "when": "Raise it if a host is reported down while it answers in a browser; keep the default otherwise.",
+     "example": "With the default 10, a health path that answers after 12 seconds is reported as a failed request."
+    },
+    "vi": {
+     "what": "Worker chờ bao lâu để một host công khai kết nối, xong bắt tay TLS hoặc trả lời đường health trước khi coi là lỗi.",
+     "raise": "Host chậm ít bị báo hỏng hơn, nhưng host treo giữ lượt kiểm tra lâu hơn.",
+     "lower": "Trả lời chậm bị tính là lỗi sớm hơn; đặt quá thấp thì host bận nhưng vẫn chạy sẽ bị báo hỏng.",
+     "when": "Tăng nếu một host bị báo hỏng trong khi trình duyệt vẫn mở được; còn lại giữ mặc định.",
+     "example": "Với mặc định 10, đường health trả lời sau 12 giây bị báo là yêu cầu lỗi."
     }
    }
   },
