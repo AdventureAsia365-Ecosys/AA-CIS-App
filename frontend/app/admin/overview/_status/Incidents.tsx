@@ -13,7 +13,7 @@ import {
   Badge, Button, DataTable, Drawer, Field, Input, K, LinkButton, Modal, Select, Textarea, apiErrorMessage, apiGet,
   apiSend, useFormat, useToast, type ColumnDef, type Tone,
 } from "../../../_kit";
-import { levelTone, type AttentionItem } from "@/lib/opsStatus";
+import { levelTone, type AttentionItem, type StatusResp } from "@/lib/opsStatus";
 import {
   INCIDENTS_QUERY_KEY, INCIDENT_STATUSES, SEVERITIES, incidentTone, titleFromItem, titleOk, type Incident,
   type IncidentDetail, type IncidentList, type IncidentStatus, type TimelineRow,
@@ -109,15 +109,24 @@ function DeclareDialog({ items, range, onClose }: { items: AttentionItem[]; rang
   );
 }
 
-function timelineText(r: TimelineRow, t: PT, when: (s: string | null | undefined) => string): string {
+type When = (s: string | null | undefined) => string;
+const UPDATE_TEXT: Readonly<Record<string, (r: TimelineRow, t: PT, by: string) => string>> = {
+  declared: (r, t, by) => t("tlDeclared", by, (r.to ?? "").toUpperCase()),
+  status: (r, t, by) => t("tlStatus", r.from ?? "", r.to ?? "", by),
+  severity: (r, t, by) => t("tlSeverity", (r.from ?? "").toUpperCase(), (r.to ?? "").toUpperCase(), by),
+  owner: (_r, t, by) => t("tlOwner", by),
+};
+
+function ackText(r: TimelineRow, t: PT, by: string, when: When): string {
+  return t("tlAck", r.type, by, when(r.until)) + (r.note ? `: ${r.note}` : "");
+}
+
+function timelineText(r: TimelineRow, t: PT, when: When): string {
   const by = r.by_name ?? t("someone");
   if (r.kind === "event") return r.text ?? r.type;
-  if (r.kind === "ack") return t("tlAck", r.type, by, when(r.until)) + (r.note ? `: ${r.note}` : "");
-  if (r.type === "declared") return t("tlDeclared", by, (r.to ?? "").toUpperCase());
-  if (r.type === "status") return t("tlStatus", r.from ?? "", r.to ?? "", by);
-  if (r.type === "severity") return t("tlSeverity", (r.from ?? "").toUpperCase(), (r.to ?? "").toUpperCase(), by);
-  if (r.type === "owner") return t("tlOwner", by);
-  return `${t("tlNote", by)}: ${r.note ?? ""}`;
+  if (r.kind === "ack") return ackText(r, t, by, when);
+  const build = UPDATE_TEXT[r.type];
+  return build ? build(r, t, by) : `${t("tlNote", by)}: ${r.note ?? ""}`;
 }
 
 function UpdateForm({ inc, onDone }: { inc: IncidentDetail; onDone: () => void }) {
@@ -247,36 +256,46 @@ function columns(t: PT, when: (s: string | null) => string, open: (id: number) =
   ];
 }
 
-export function IncidentsCard({ attention, canWrite, range }: {
-  attention: AttentionItem[]; canWrite: boolean; range: string;
+function IncidentTable({ data, isError, onOpen }: {
+  data: IncidentList | undefined; isError: boolean; onOpen: (id: number) => void;
 }) {
   const t = useP2();
   const w = useWords();
   const { formatDateTime } = useFormat();
+  const [showResolved, setShowResolved] = useState(false);
+  if (isError) return <span style={small}>{t("loadFailed")}</span>;
+  const all = data?.incidents ?? [];
+  const rows = all.filter((i) => showResolved || i.status !== "resolved");
+  const when = (s: string | null) => (s ? formatDateTime(s) : "—");
+  return (
+    <>
+      {rows.length === 0 ? <span style={small} data-testid="status-incidents-none">{t("incNone")}</span> : (
+        <DataTable<Incident> tableId="status-incidents" data={rows} getRowId={(r) => String(r.incident_id)}
+          columns={columns(t, when, onOpen, w.app)} searchable={false} paginate={false} compact
+          tableMinWidth={720} />)}
+      {all.some((i) => i.status === "resolved") && (
+        <span><LinkButton size="sm" tone="muted" onClick={() => setShowResolved((v) => !v)}
+          aria-pressed={showResolved}>{t("showResolved")}</LinkButton></span>)}
+    </>
+  );
+}
+
+/** The incidents card; the controls show only when the status answer says this viewer may act (viewer.can_ack). */
+export function IncidentsCard({ data }: { data: StatusResp }) {
+  const t = useP2();
+  const canWrite = data.viewer?.can_ack === true;
   const [declaring, setDeclaring] = useState(false);
   const [openId, setOpenId] = useState<number | null>(null);
-  const [showResolved, setShowResolved] = useState(false);
   const res = useQuery({ queryKey: [INCIDENTS_QUERY_KEY],
     queryFn: () => apiGet<IncidentList>("/api/admin/overview/incidents", { admin: true }), refetchInterval: 60_000 });
-  const rows = (res.data?.incidents ?? []).filter((i) => showResolved || i.status !== "resolved");
-  const alerts = attention.filter((i) => i.status === "open");
-  const when = (s: string | null) => (s ? formatDateTime(s) : "—");
+  const alerts = data.verdict.attention.filter((i) => i.status === "open");
   return (
     <Card title={t("incTitle")} testId="status-incidents"
       actions={canWrite ? <Button size="sm" variant="secondary" onClick={() => setDeclaring(true)}
         testId="status-incident-declare">{t("declare")}</Button> : undefined}>
       {!canWrite && <span style={small}>{t("incReadOnly")}</span>}
-      {res.isError ? <span style={small}>{t("loadFailed")}</span> : (
-        <>
-          {rows.length === 0 ? <span style={small} data-testid="status-incidents-none">{t("incNone")}</span> : (
-            <DataTable<Incident> tableId="status-incidents" data={rows} getRowId={(r) => String(r.incident_id)}
-              columns={columns(t, when, setOpenId, w.app)} searchable={false} paginate={false} compact
-              tableMinWidth={720} />)}
-          {(res.data?.incidents ?? []).some((i) => i.status === "resolved") && (
-            <span><LinkButton size="sm" tone="muted" onClick={() => setShowResolved((v) => !v)}
-              aria-pressed={showResolved}>{t("showResolved")}</LinkButton></span>)}
-        </>)}
-      {declaring && <DeclareDialog items={alerts} range={range} onClose={() => setDeclaring(false)} />}
+      <IncidentTable data={res.data} isError={res.isError} onOpen={setOpenId} />
+      {declaring && <DeclareDialog items={alerts} range={data.range.key} onClose={() => setDeclaring(false)} />}
       {openId != null && <IncidentDrawer id={openId} canWrite={canWrite} onClose={() => setOpenId(null)} />}
     </Card>
   );

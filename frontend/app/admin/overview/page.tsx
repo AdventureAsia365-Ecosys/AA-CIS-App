@@ -113,7 +113,7 @@ function Body({ data, view, setView }: { data: StatusResp; view: View; setView: 
       <VerdictCard verdict={data.verdict} view={view} setView={setView} rules={data.acks?.rules}
         canAck={!!data.viewer?.can_ack} trail={data.acks?.recent ?? []} />
 
-      <IncidentsCard attention={data.verdict.attention} canWrite={!!data.viewer?.can_ack} range={data.range.key} />
+      <IncidentsCard data={data} />
       <AppsCard section={s.apps} sig={s.signals} view={view} />
 
       <SloCard section={p2.slo} view={view} />
