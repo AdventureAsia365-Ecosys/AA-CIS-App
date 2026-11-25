@@ -25,7 +25,8 @@
   POST /admin/ops-assist/runs                   mark one card as done (the person ran its call or its runbook): the
                                                 card is rebuilt here, its measures read as the baseline; the status
                                                 sampler checks them at the minutes of cis.ops.assist_check_after_min
-  GET  /admin/ops-assist/runs                   the newest runs (of one item) with their checks and verdicts
+  GET  /admin/ops-assist/runs                   the newest runs (of one item) with their checks and verdicts, and
+                                                the card lifetime the page matches them to a card with
   GET  /admin/ops-assist/track                  the hit rate of the last cis.ops.assist_digest_days days, per action
 
 Every route is ops.read (the status page's capability: admin, per the role matrix): the A1 POST routes call a model
@@ -242,6 +243,9 @@ async def post_run(body: RunBody, request: Request, x_admin_secret: str = Header
     except outcome.AlreadyRecorded:
         raise HTTPException(status_code=409, detail={"code": "already_recorded", "message": "This card was already "
                                                      "marked as done"})
+    except outcome.NoCheckpoint:
+        raise HTTPException(status_code=409, detail={"code": "no_checkpoint", "message": "No checkpoint is set; set "
+                                                     "cis.ops.assist_check_after_min on Platform › Settings"})
     except outcome.NotSetUp:
         raise HTTPException(status_code=503, detail={"code": "not_set_up", "message": NOT_SET_UP_MESSAGE})
 
@@ -254,7 +258,10 @@ async def get_runs(request: Request, item_id: Optional[str] = Query(None, patter
         rows = await outcome.runs(request.app.state.pool, item_id)
     except outcome.NotSetUp:
         raise HTTPException(status_code=503, detail={"code": "not_set_up", "message": NOT_SET_UP_MESSAGE})
-    return {"runs": rows, "check_after_min": ops_assist.limits()["check_after_min"]}
+    lim = ops_assist.limits()
+    # card_ttl_min: the page shows a run under a card only when it was recorded within that card's lifetime (the same
+    # card id comes back when the item recurs; an older run is history and the card can be marked as done again).
+    return {"runs": rows, "check_after_min": lim["check_after_min"], "card_ttl_min": lim["card_ttl_min"]}
 
 
 @router.get("/track", summary="The assistant's hit rate: right n of m checked cards (no model, $0)")

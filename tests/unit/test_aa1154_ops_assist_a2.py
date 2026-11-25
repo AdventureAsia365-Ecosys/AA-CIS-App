@@ -247,6 +247,23 @@ def test_record_reads_the_baselines_links_the_incident_and_refuses_a_second_clic
         run(outcome.record(pool, a, card, actor="admin:zz", limits=LIMITS, now=T0 + timedelta(minutes=5)))
     with pytest.raises(outcome.NotSetUp):
         run(outcome.record(RunPool(missing=True), a, card, actor="admin:zz", limits=LIMITS, now=T0))
+    # the same card id comes back later (the item recurs): past the card lifetime it is recorded again
+    again = run(outcome.record(pool, a, card, actor="admin:zz", limits=LIMITS, now=T0 + timedelta(days=7)))
+    assert again["run_id"] == 2 and len(pool.rows) == 2
+
+
+def test_record_refuses_limits_without_a_checkpoint_before_any_write():
+    """An empty checkpoint list never reaches the insert (the CIS 490 CHECK needs 1..10): NoCheckpoint, a 409 at the
+    route. ops_assist_settings.snapshot() already reads an empty setting as its default; this is the last guard."""
+    pool = RunPool(values={"status = 'queued')": 1.0, "min(run_after)": 42.0})
+    a = _queue_answer()
+    with pytest.raises(outcome.NoCheckpoint):
+        run(outcome.record(pool, a, _card(a, "job_cancel"), actor="admin:zz",
+                           limits={**LIMITS, "check_after_min": []}, now=T0))
+    assert pool.rows == []
+    out = run(outcome.record(pool, a, _card(a, "job_cancel"), actor="admin:zz",
+                             limits={**LIMITS, "check_after_min": [30, 10, 30]}, now=T0))
+    assert out["check_after_min"] == [10, 30] and pool.rows[0]["check_after_min"] == [10, 30]
 
 
 def test_check_due_takes_each_checkpoint_once_and_finishes_the_run():
@@ -477,6 +494,7 @@ def test_post_run_maps_already_recorded_and_not_set_up(client, monkeypatch):
     monkeypatch.setattr(ops_assist, "analyse", analyse)
     card_id = _card(a, "job_cancel")["id"]
     for exc, status, code in ((outcome.AlreadyRecorded("zz"), 409, "already_recorded"),
+                              (outcome.NoCheckpoint("zz"), 409, "no_checkpoint"),
                               (outcome.NotSetUp("zz"), 503, "not_set_up")):
         async def record(*args, _e=exc, **kw):
             raise _e
@@ -497,7 +515,7 @@ def test_runs_and_track_routes(client, monkeypatch):
     monkeypatch.setattr(outcome, "runs", runs)
     monkeypatch.setattr(outcome, "track", track)
     r = client.get("/admin/ops-assist/runs?item_id=queue-shared", headers=_h()).json()
-    assert r == {"runs": [{"run_id": 1, "item_id": "queue-shared"}], "check_after_min": [10, 30]}
+    assert r == {"runs": [{"run_id": 1, "item_id": "queue-shared"}], "check_after_min": [10, 30], "card_ttl_min": 30}
     assert client.get("/admin/ops-assist/track", headers=_h()).json()["days"] == 7
 
     async def missing(*a, **kw):

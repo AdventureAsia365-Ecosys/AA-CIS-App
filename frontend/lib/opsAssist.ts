@@ -46,7 +46,8 @@ export interface AssistRun {
   checks: Checkpoint[]; verdict: Verdict | null; recorded_at: string; recorded_by: string;
   checked_at?: string | null; incident_id?: number | null;
 }
-export interface RunsAnswer { runs: AssistRun[]; check_after_min: number[] }
+/** card_ttl_min: the card lifetime (cis.ops.assist_card_ttl_min) the page matches a run to the card shown with. */
+export interface RunsAnswer { runs: AssistRun[]; check_after_min: number[]; card_ttl_min: number }
 export interface TrackAnswer {
   days: number; recorded: number; checked: number; hits: number; unclear: number; open: number; text: string;
   by_action: { action: string; title: string; recorded: number; checked: number; hits: number }[];
@@ -63,6 +64,20 @@ export function runsPath(itemId: string): string {
 /** The newest run of a card, if it was marked as done. */
 export function runOfCard(runs: AssistRun[], cardId: string): AssistRun | undefined {
   return runs.filter((r) => r.card_id === cardId).sort((a, b) => b.recorded_at.localeCompare(a.recorded_at))[0];
+}
+
+/** The run that marks the card shown as done: the newest run of its id recorded within that card's lifetime. Card ids
+ * are stable (item:action), so the same card comes back when the item recurs; a run older than the card's lifetime
+ * (built at expires_at - ttl, and a record is refused for ttl minutes after one) belongs to an earlier incident: it is
+ * history and the card can be marked as done again. Every run the server would refuse a new record for counts here,
+ * so the page never offers a click the API answers "already recorded". */
+export function currentRun(runs: AssistRun[], card: Pick<ActionCard, "id" | "expires_at">,
+  ttlMin: number): AssistRun | undefined {
+  const run = runOfCard(runs, card.id);
+  const end = Date.parse(card.expires_at);
+  if (!run || !Number.isFinite(end) || !Number.isFinite(ttlMin) || ttlMin <= 0) return undefined;
+  const at = Date.parse(run.recorded_at);
+  return Number.isFinite(at) && at > end - 2 * ttlMin * 60_000 ? run : undefined;
 }
 
 /** The checkpoints (minutes) of a run that are still to come. */

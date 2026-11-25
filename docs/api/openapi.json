@@ -35851,7 +35851,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Evidence, ranked action cards and Summary for one item (no new LLM call; the model's part saved within the card lifetime when there is one)",
+        "summary": "Evidence, ranked action cards and Summary for one item (no new LLM call; the model's part saved within the card lifetime, if any)",
         "tags": [
           "admin-ops-assist"
         ]

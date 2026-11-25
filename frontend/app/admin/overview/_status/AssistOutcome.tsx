@@ -4,16 +4,19 @@
 // direction); "I ran this" marks the card as done once the person ran its API call or runbook elsewhere (POST
 // /api/admin/ops-assist/runs: the server rebuilds the card, reads the baselines and the status sampler checks the
 // measures at the minutes of cis.ops.assist_check_after_min); the card then shows each checkpoint (right, wrong,
-// unclear). The track record line shows the hit rate of the last cis.ops.assist_digest_days days (GET .../track), the
-// same paragraph the OPS-12 digest carries. Nothing here runs an action, and a read-only session (a viewer, view-as,
-// the Dev E2E identity) gets no button (the API refuses its POSTs). Kit components only (ADR 0016).
+// unclear). Only a run recorded within the card's lifetime counts: the same card comes back when the item recurs, and
+// then offers "I ran this" again with the earlier run as one line of history. The track record line shows the hit rate
+// of the last cis.ops.assist_digest_days days (GET .../track), the same paragraph the OPS-12 digest carries. Nothing
+// here runs an action, and a read-only session (a viewer, view-as, the Dev E2E identity) gets no button (the API
+// refuses its POSTs). Kit components only (ADR 0016).
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Badge, Button, K, WriteOnly, apiGet, apiSend, useFormat, useT,
 } from "../../../_kit";
 import {
-  FETCH_TIMEOUT_MS, RUNS_PATH, TRACK_PATH, assistRange, expired, pendingChecks, runOfCard, runsPath, verdictTone,
+  FETCH_TIMEOUT_MS, RUNS_PATH, TRACK_PATH, assistRange, currentRun, expired, pendingChecks, runOfCard, runsPath,
+  verdictTone,
   withTimeout, type ActionCard, type AssistRun, type Expect, type RunsAnswer, type TrackAnswer, type Verdict,
 } from "@/lib/opsAssist";
 import { ASSIST } from "../assist.messages";
@@ -87,14 +90,28 @@ function DoneButton({ card, itemId, range }: { card: ActionCard; itemId: string;
   );
 }
 
-/** Under a card: what is checked after it is done, then either its checks or "I ran this". */
-export function CardOutcome({ card, itemId, range, runs }: {
-  card: ActionCard; itemId: string; range: string; runs: AssistRun[];
+/** The run of an earlier incident of the same card, in one line (its checks were shown back then). */
+function LastRun({ run }: { run: AssistRun }) {
+  const t = useT(ASSIST);
+  const { formatDateTime } = useFormat();
+  return (
+    <div style={rowWrap} data-testid={`assist-last-run-${run.action}`}>
+      <span style={small}>{t("lastRun", formatDateTime(run.recorded_at))}</span>
+      {run.verdict && <Badge tone={verdictTone(run.verdict)}>{t(VERDICT_KEY[run.verdict])}</Badge>}
+    </div>
+  );
+}
+
+/** Under a card: what is checked after it is done, then either its checks (a run within this card's lifetime) or
+ * "I ran this", with the last run of an earlier incident of the same card as history. */
+export function CardOutcome({ card, itemId, range, runs, ttlMin }: {
+  card: ActionCard; itemId: string; range: string; runs: AssistRun[]; ttlMin: number;
 }) {
   const t = useT(ASSIST);
   const mayAsk = useMayAsk();
   const measures = card.measures ?? [];
-  const run = runOfCard(runs, card.id);
+  const run = currentRun(runs, card, ttlMin);
+  const last = run ? undefined : runOfCard(runs, card.id);
   return (
     <div style={{ display: "grid", gap: 6, paddingTop: 6, borderTop: `1px dashed ${K.line}` }}
       data-testid={`assist-outcome-${card.action}`}>
@@ -103,6 +120,7 @@ export function CardOutcome({ card, itemId, range, runs }: {
           {measures.map((m) => `${m.label} (${t(EXPECT_KEY[m.expect])})`).join("; ")}</span>)}
       {run ? <Checks run={run} /> : mayAsk && (
         <WriteOnly><DoneButton card={card} itemId={itemId} range={range} /></WriteOnly>)}
+      {last && <LastRun run={last} />}
     </div>
   );
 }

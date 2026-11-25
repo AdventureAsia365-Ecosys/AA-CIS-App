@@ -8,7 +8,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   RUNS_PATH, SIGNALS_PATH, TRACK_PATH, analysePath, assistRange, autoPath, callText, cardsPath, changesPath,
-  citedEvidence, confidenceTone, costText, expired, explanationEvidence, extraSignals, llmNotice, pendingChecks,
+  citedEvidence, confidenceTone, costText, currentRun, expired, explanationEvidence, extraSignals, llmNotice, pendingChecks,
   ranked, riskTone, runOfCard, runsPath, verdictTone, windowWords, withTimeout,
 } from "./opsAssist.ts";
 
@@ -153,6 +153,26 @@ test("A2 runs, checks and the hit rate helpers", () => {
   assert.equal(verdictTone("miss"), "danger");
   assert.equal(verdictTone("unclear"), "neutral");
   assert.equal(verdictTone(null), "info");
+});
+
+test("A2 a run counts for the card shown only within that card's lifetime; an earlier incident's run is history", () => {
+  // the card was built at 09:00 with a 30-minute lifetime (expires 09:30); a record is refused for 30 minutes after one
+  const shown = card({ id: "x:observe", expires_at: "2026-11-25T09:30:00+00:00" });
+  const at = (recorded_at) => [{ card_id: "x:observe", recorded_at, check_after_min: [10, 30], checks: [] }];
+  assert.equal(currentRun(at("2026-11-25T09:05:00+00:00"), shown, 30)?.recorded_at, "2026-11-25T09:05:00+00:00");
+  // marked on the previous build of the same card (the server still refuses a second record at 09:00): it counts
+  assert.ok(currentRun(at("2026-11-25T08:40:00+00:00"), shown, 30));
+  // the same card a week earlier (the item recurred): stale, so the page offers "I ran this" again
+  assert.equal(currentRun(at("2026-11-18T09:05:00+00:00"), shown, 30), undefined);
+  assert.equal(currentRun(at("2026-11-25T08:00:00+00:00"), shown, 30), undefined);
+  assert.equal(runOfCard(at("2026-11-18T09:05:00+00:00"), "x:observe").recorded_at, "2026-11-18T09:05:00+00:00");
+  // no lifetime known (an older API answer) or no run: nothing counts
+  assert.equal(currentRun(at("2026-11-25T09:05:00+00:00"), shown, 0), undefined);
+  assert.equal(currentRun([], shown, 30), undefined);
+  // the drawer wires the lifetime from GET /runs and keeps the older run as history under the button
+  const outcome = read("app/admin/overview/_status/AssistOutcome.tsx");
+  assert.ok(outcome.includes("currentRun(runs, card, ttlMin)") && outcome.includes("<LastRun"));
+  assert.ok(read("app/admin/overview/_status/Assist.tsx").includes("runs.data?.card_ttl_min"));
 });
 
 test("A2 withTimeout gives up with the message, and passes a fast answer through", async () => {

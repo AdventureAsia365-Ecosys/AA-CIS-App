@@ -80,6 +80,9 @@ FLOATS = ("spend_spike_factor", "spend_spike_floor_usd_h", "small_money_usd")
 STR_LISTS = ("auto_severities",)
 INT_LISTS = ("lookup_windows_min", "check_after_min")
 STRINGS = ("deep_model",)
+# The lists a rule cannot work without. The settings list type has no minimum length, so an admin may save []: that
+# reads as the compiled default here (a run needs at least one checkpoint: CIS 490 ops_assist_run_check_after_chk).
+NON_EMPTY = ("check_after_min",)
 
 # The names the rules use; ``snapshot()`` maps them to their current values.
 NAMES = {
@@ -108,7 +111,7 @@ NAMES = {
 def snapshot() -> dict:
     """{name: value} of every assistant limit, read once per analysis so one set of cards uses one set of limits.
     Numbers as float, except the counts and minutes (int); the lists ascending, each value once; the model key a
-    string."""
+    string. An empty list in ``NON_EMPTY`` reads as its compiled default."""
     out: dict = {}
     for name, key in NAMES.items():
         v = settings.get(key)
@@ -116,6 +119,8 @@ def snapshot() -> dict:
             out[name] = sorted({str(x) for x in v or []})
         elif name in INT_LISTS:
             out[name] = sorted({int(x) for x in v or []})
+            if not out[name] and name in NON_EMPTY:
+                out[name] = sorted({int(x) for x in settings.definition(key).default_value or []})
         elif name in STRINGS:
             out[name] = str(v or "")
         else:

@@ -44,6 +44,7 @@ EXPECTS = ("zero", "nonzero", "down", "up")
 VERDICTS = ("hit", "miss", "unclear")
 OPEN_ROWS = 50  # technical-constant: open runs read per sampler tick (a few a month on Dev)
 RUN_ROWS = 20  # technical-constant: runs listed per answer
+MAX_CHECKPOINTS = 10  # technical-constant: the CIS 490 CHECK ops_assist_run_check_after_chk (1..10 checkpoints)
 ACCESS_CLASSES = ("access_denied", "credential", "quota_exhausted")   # evidence.ACCESS_CLASSES (kept in step by test)
 
 
@@ -53,6 +54,11 @@ class NotSetUp(RuntimeError):
 
 class AlreadyRecorded(RuntimeError):
     """The same card was marked as done within the card lifetime."""
+
+
+class NoCheckpoint(RuntimeError):
+    """``check_after_min`` of the limits is empty (``ops_assist_settings.snapshot`` reads an empty setting as its
+    compiled default, so only limits built elsewhere get here): a run needs 1..10 checkpoints (CIS 490)."""
 
 
 # ── measures (pure) ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -406,8 +412,11 @@ async def record(pool: Any, answer: dict, card: dict, *, actor: str, limits: dic
                  now: Optional[datetime] = None) -> dict:
     """Mark ``card`` of ``answer`` (both rebuilt on the server) as done: its baselines read now, the checkpoints of the
     setting, the open incident of the item. Raises :class:`AlreadyRecorded` within the card lifetime, :class:`NotSetUp`
-    while the table is missing."""
+    while the table is missing, :class:`NoCheckpoint` when the limits name no checkpoint."""
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    checkpoints = sorted({int(x) for x in limits.get("check_after_min") or []})
+    if not 1 <= len(checkpoints) <= MAX_CHECKPOINTS:
+        raise NoCheckpoint(card["id"])
     ctx = {"now": now, "since": now, "limits": limits}
     measures = [{**ms, "baseline": await read(pool, ms, ctx)} for ms in card.get("measures") or []]
     predicted = [{k: p.get(k) for k in ("text", "confidence", "basis")} for p in card.get("predictions") or []]
@@ -419,13 +428,13 @@ async def record(pool: Any, answer: dict, card: dict, *, actor: str, limits: dic
             _INSERT_SQL, answer.get("item_id"), card["id"], card["action"], answer.get("playbook"),
             (card.get("risk") or {}).get("level"), answer.get("range") or "24h", incident,
             json.dumps(predicted, default=str), json.dumps(measures, default=str),
-            [int(x) for x in limits["check_after_min"]], actor, now)
+            checkpoints, actor, now)
     except asyncpg.UndefinedTableError as e:
         raise NotSetUp("acp_shared.ops_assist_run") from e
     logger.info("ops_assist_run_recorded", run_id=run_id, card_id=card["id"], action=card["action"],
                 measures=len(measures))
     return {"run_id": run_id, "item_id": answer.get("item_id"), "card_id": card["id"], "action": card["action"],
-            "incident_id": incident, "measures": measures, "check_after_min": list(limits["check_after_min"]),
+            "incident_id": incident, "measures": measures, "check_after_min": checkpoints,
             "recorded_at": now.isoformat(), "recorded_by": actor, "verdict": None, "checks": []}
 
 
@@ -500,6 +509,6 @@ async def history(pool: Any) -> dict[str, dict]:
         return {}
 
 
-__all__ = ["AlreadyRecorded", "METRICS", "NotSetUp", "check_due", "checkpoint", "combine", "final_verdict",
+__all__ = ["AlreadyRecorded", "METRICS", "MAX_CHECKPOINTS", "NoCheckpoint", "NotSetUp", "check_due", "checkpoint", "combine", "final_verdict",
            "hit_rate_text", "history", "item_source", "judge", "m", "record", "run_view", "runs", "summarize",
            "track"]

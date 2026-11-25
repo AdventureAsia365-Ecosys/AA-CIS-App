@@ -120,8 +120,9 @@ function CallInfo({ card }: { card: ActionCard }) {
   );
 }
 
-/** Where a card sits (A2): the item and range it was built for and the item's runs; none for a replay. */
-type At = { itemId: string; range: string; runs: AssistRun[] } | null;
+/** Where a card sits (A2): the item and range it was built for, the item's runs and the card lifetime they are matched
+ * with; none for a replay. */
+type At = { itemId: string; range: string; runs: AssistRun[]; ttlMin: number } | null;
 
 function Card({ card, evidence, now, at }: { card: ActionCard; evidence: Evidence[]; now: Date; at: At }) {
   const t = useAT();
@@ -160,7 +161,8 @@ function Card({ card, evidence, now, at }: { card: ActionCard; evidence: Evidenc
       <CallInfo card={card} />
       <span style={{ ...small, color: expired(card, now) ? K.danger : K.muted }}>
         {t("expires", formatDateTime(card.expires_at))}</span>
-      {at && <CardOutcome card={card} itemId={at.itemId} range={at.range} runs={at.runs} />}
+      {at && <CardOutcome card={card} itemId={at.itemId} range={at.range} runs={at.runs}
+        ttlMin={at.ttlMin} />}
     </div>
   );
 }
@@ -345,7 +347,8 @@ export function AssistDrawer({ itemId, title, range, open, onClose }: {
       {a.loading && <LoadingScreen message={t("loading")} />}
       {a.failed && <ErrorState message={a.failed.message || t("failed")} onRetry={a.retry} />}
       {a.answer && <Body answer={a.answer} running={a.running} depth={a.depth} onAsk={a.onAsk}
-        onRefresh={a.refresh} at={{ itemId, range, runs: runs.data?.runs ?? [] }} />}
+        onRefresh={a.refresh}
+        at={{ itemId, range, runs: runs.data?.runs ?? [], ttlMin: runs.data?.card_ttl_min ?? 0 }} />}
     </Drawer>
   );
 }
