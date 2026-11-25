@@ -1175,6 +1175,18 @@
     "capability": "tenant_content.read|lab.tenant_text.read",
     "module": "api.routers.admin_writing_memory"
   },
+  "GET /admin/writing-memory/eval-runs": {
+    "capability": "tenant_content.read|lab.read",
+    "module": "api.routers.admin_eval_runs"
+  },
+  "GET /admin/writing-memory/eval-runs/{run_id}": {
+    "capability": "tenant_content.read|lab.read",
+    "module": "api.routers.admin_eval_runs"
+  },
+  "GET /admin/writing-memory/eval-runs/{run_id}/items/{item_id}": {
+    "capability": "tenant_content.read|lab.tenant_text.read",
+    "module": "api.routers.admin_eval_runs"
+  },
   "GET /admin/writing-memory/exemplars": {
     "capability": "tenant_content.read|lab.tenant_text.read",
     "module": "api.routers.admin_writing_memory"
