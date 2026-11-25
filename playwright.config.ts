@@ -20,6 +20,7 @@ import { defineConfig, devices } from '@playwright/test';
 //     (set only by .github/workflows/e2e-cognito.yml), so a plain `playwright test` never signs in. The
 //     MIME parser unit test in the same folder needs nothing. No retries (a retry asks for another code),
 //     no automatic screenshots or traces (the code page could be captured); the spec takes its own.
+// S292: one more, "admin-routes" — every admin page rendered as the administrator on a stub API (see below).
 // AA-816 A10b (S252, root ADR 0006a A10b): one more, agent-only:
 //   • "admin-evidence" — tests/e2e/admin-evidence/*.spec.ts, the Dev-only E2E CIS admin (e2e-cis-admin@) signs in on
 //     the production admin host and screenshots the admin-only pages. Skipped unless E2EADMIN=1, which no workflow
@@ -41,7 +42,7 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      testIgnore: /(smoke|cognito|admin-evidence|visual)\//,
+      testIgnore: /(smoke|cognito|admin-evidence|admin-routes|visual)\//,
       use: { ...devices['Desktop Chrome'] },
     },
     {
@@ -85,6 +86,17 @@ export default defineConfig({
         },
       ];
     }),
+    // S292 (follow-up of the S291 hotfix) — the admin route check (tests/e2e/admin-routes, .github/workflows/
+    // admin-routes.yml): every admin page the administrator may open, on the runner's own `next start` with the CIS API
+    // replaced by tests/e2e/admin-routes/stub-api.mjs and an unsigned stand-in session only the stub accepts (no real
+    // credential). Parallel inside the file (each page is independent); no retries (a flaky page is a finding).
+    {
+      name: 'admin-routes',
+      testMatch: /admin-routes\/.*\.spec\.ts$/,
+      retries: 0,
+      timeout: 60000,
+      use: { ...devices['Desktop Chrome'], screenshot: 'only-on-failure', trace: 'off', video: 'off' },
+    },
     {
       name: 'cognito',
       testMatch: /cognito\/.*\.spec\.ts$/,
