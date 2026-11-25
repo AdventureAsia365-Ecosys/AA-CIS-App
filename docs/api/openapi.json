@@ -58163,7 +58163,7 @@
     },
     "/admin/upload-staging/{batch_id}": {
       "get": {
-        "description": "Return staging rows + existing tour fields for side-by-side comparison. AA-986 L2 (Q6): `existing` carries the\nmatched row's source_status / deleted_at, and `matched_deleted` / `matched_deleted_at` say the matched tour was\ndeleted at S0/A0 (the UI then offers Restore or Create a new tour).",
+        "description": "Return staging rows + existing tour fields for side-by-side comparison. AA-986 L2 (Q6): `existing` carries the\nmatched row's source_status / deleted_at, and `matched_deleted` / `matched_deleted_at` say the matched tour was\ndeleted at S0/A0 (the UI then offers Restore or Create a new tour). AA-1181: `matched_hand_made` says the matched\ntour was made by hand in the content workspace (the UI then offers Bypass or Create a new tour).",
         "operationId": "list_upload_staging_admin_upload_staging__batch_id__get",
         "parameters": [
           {
@@ -58236,7 +58236,7 @@
     },
     "/admin/upload-staging/{staging_id}/decide": {
       "post": {
-        "description": "Apply decision for one staged duplicate row.\n\nbypass     → discard incoming; delete staging row\nreplace    → incoming INSERT as active; old active → superseded (its Master switched off); delete staging\nupdate     → same as replace (alias)\nkeep_both  → incoming INSERT as superseded; active unchanged; delete staging\nrestore    → (matched tour deleted at S0/A0 only) restore the deleted tour, discard incoming (Q6)\ncreate_new → incoming INSERT as a new tour (new key), the matched one untouched (Q6)\n\nAA-986 L2: every write goes through services/tour_lifecycle; replace / update / keep_both on a deleted tour → 409\nsource_deleted (never a silent revival).",
+        "description": "Apply decision for one staged duplicate row.\n\nbypass     → discard incoming; delete staging row\nreplace    → incoming INSERT as active; old active → superseded (its Master switched off); delete staging\nupdate     → same as replace (alias)\nkeep_both  → incoming INSERT as superseded; active unchanged; delete staging\n             (replace / update / keep_both / merge on a hand-made match → 409, AA-1181: Bypass or Create new)\nrestore    → (matched tour deleted at S0/A0 only) restore the deleted tour, discard incoming (Q6)\ncreate_new → incoming INSERT as a new tour (new key), the matched one untouched (Q6)\n\nAA-986 L2: every write goes through services/tour_lifecycle; replace / update / keep_both on a deleted tour → 409\nsource_deleted (never a silent revival).",
         "operationId": "decide_staging_admin_upload_staging__staging_id__decide_post",
         "parameters": [
           {
