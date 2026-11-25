@@ -45,7 +45,9 @@ def test_a3_atomize_keeps_a_slot_with_every_other_kind_at_its_cap():
     assert free <= w.background_reserve()                    # 8 - 6 = 2 free → only reserved slots
     caps = w.claim_caps(free)
     assert "a3_atomize" in caps
-    assert not {n for n, k in kinds().items() if k.background} & set(caps)
+    assert not {n for n, k in kinds().items() if k.background and not k.monitor} & set(caps)
+    # AA-1178: the monitoring kinds run in slots of their own, never in the one left for atomize
+    assert worker.monitor_kinds() <= set(caps) and w.free_main_slots() == WORKER_MAX_PARALLEL_DEFAULT
 
 
 @pytest.mark.parametrize("free", range(0, WORKER_MAX_PARALLEL_DEFAULT + 1))
@@ -113,7 +115,9 @@ def test_background_kind_never_claimed_with_two_or_fewer_free_slots(free):
                           "ops_status_sample",
                           # AA-1173: the daily read-only compliance DB checks ($0: catalog and CIS table reads)
                           "compliance_db_checks"}
-    assert bool(background & set(w.claim_caps(free))) == (free > worker.BACKGROUND_RESERVE)
+    # AA-1178: the monitoring kinds (background too) have their own slots, so only the long ones depend on `free`
+    long_background = background - worker.monitor_kinds()
+    assert bool(long_background & set(w.claim_caps(free))) == (free > worker.BACKGROUND_RESERVE)
 
 
 def test_place_kinds_are_cap_one():
@@ -161,7 +165,10 @@ def test_background_jobs_running_before_a_wave_cannot_starve_atomize():
     running, _ = _simulate(w, ["place_extract", "place_geocode", "tour_graph_build"], [])
     assert running == ["place_extract"]                        # one background job at a time
     w._running_kinds = {"j1": "place_extract"}
-    assert not {n for n, k in kinds().items() if k.background} & set(w.claim_caps(7, w.running_background()))
+    # the long background kinds wait; the monitoring lane (AA-1178) does not wait behind them
+    caps = w.claim_caps(7, w.running_background(), w.running_monitor())
+    assert not {n for n, k in kinds().items() if k.background and not k.monitor} & set(caps)
+    assert worker.monitor_kinds() <= set(caps)
     # the wave arrives: s1_rewrite floods the queue ahead of atomize
     running, queued = _simulate(w, ["s1_rewrite"] * 20 + ["a3_atomize"] * 5 + ["place_geocode"], running)
     assert running.count("s1_rewrite") == 6 and running.count("a3_atomize") == 1

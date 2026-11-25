@@ -125,7 +125,6 @@
   "shared/jobs/queue.py:RETRY_REASON_MAX_LIMIT",
   "shared/jobs/registry.py:RESCHEDULE_MAX_COUNT",
   "shared/jobs/registry.py:RESCHEDULE_MAX_DELAY_SECONDS",
-  "shared/jobs/worker.py:BACKGROUND_MAX_RUNNING",
   "shared/jobs/worker.py:WORKER_MAX_PARALLEL_DEFAULT"
  ]
 }

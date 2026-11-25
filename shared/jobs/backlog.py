@@ -15,7 +15,8 @@ when it is starved:
       queue.WORKER_ALIVE_SECONDS, the Jobs page rule), or no live worker has the kind in its caps
       (unregistered: never claimable, a bug or a dropped kind);
   (b) or some live, non-yielding worker would claim it right now: it has a free slot
-      (max_parallel - running rows locked_by it), the kind survives that worker's claim rule
+      (max_parallel - running rows locked_by it outside the monitoring lane; a monitoring kind: a free slot of that
+      lane, AA-1178), the kind survives that worker's claim rule
       (worker.claim_caps_for, the same function Worker.claim_caps runs), and the kind's global
       running count is below that worker's cap for it.
 
@@ -36,7 +37,7 @@ import json
 from datetime import datetime
 from typing import Any, Iterable, Mapping, Optional
 
-from . import queue
+from . import lanes, queue
 from .worker import claim_caps_for
 
 DEFAULT_EXPECTED_SECONDS = 600
@@ -124,7 +125,7 @@ def backlog_sample(queued: Iterable[Mapping], running: Iterable[Mapping], worker
                    kinds: Mapping[str, Any], now: datetime,
                    last_freed_at: Optional[datetime] = None, held: Iterable[str] = ()) -> dict:
     """Pure. `queued`: rows of QUEUED_DUE_SQL (per kind); `running`: RUNNING_SQL; `workers`:
-    WORKERS_SQL; `kinds`: the registry (name -> JobKind: background, expected_seconds); `now` and
+    WORKERS_SQL; `kinds`: the registry (name -> JobKind: background, monitor, expected_seconds); `now` and
     `last_freed_at`: CLOCK_SQL (the DB clock, so ages never mix two clocks). AA-1025 H2: `held` = the kinds the
     workers hold back now (capacity backpressure): their due rows wait by design and are not starved."""
     held = frozenset(held)
@@ -142,6 +143,10 @@ def backlog_sample(queued: Iterable[Mapping], running: Iterable[Mapping], worker
 
     # ── starved queued ──
     background = frozenset(name for name, k in kinds.items() if getattr(k, "background", False))
+    # AA-1178: the monitoring lane (its own slots and running cap, outside the background group cap); the caps in
+    # force are read once per sample, so every worker of this sample is judged on the same values.
+    monitor = frozenset(name for name in background if getattr(kinds[name], "monitor", False))
+    background_max, monitor_max = lanes.background_max_running(), lanes.monitor_max_running()
     running_by_kind: dict[str, int] = {}
     for r in running:
         running_by_kind[r["kind"]] = running_by_kind.get(r["kind"], 0) + 1
@@ -151,12 +156,14 @@ def backlog_sample(queued: Iterable[Mapping], running: Iterable[Mapping], worker
         if _yielding(w, workers):
             continue
         mine = [r for r in running if r.get("locked_by") == w["worker_id"]]
-        free = int(w["max_parallel"]) - len(mine)
-        if free <= 0:
+        running_mon = sum(1 for r in mine if r["kind"] in monitor)
+        running_bg = sum(1 for r in mine if r["kind"] in background and r["kind"] not in monitor)
+        free = int(w["max_parallel"]) - (len(mine) - running_mon)      # main slots (AA-1178: monitors have their own)
+        claim_caps = claim_caps_for(int(w["max_parallel"]), _caps(w["caps"]), free, running_bg, background,
+                                    running_monitor=running_mon, monitor=monitor,
+                                    background_max=background_max, monitor_max=monitor_max)
+        if not claim_caps:
             continue
-        caps = _caps(w["caps"])
-        running_bg = sum(1 for r in mine if r["kind"] in background)
-        claim_caps = claim_caps_for(int(w["max_parallel"]), caps, free, running_bg, background)
         claimers.append((w, claim_caps, _latest(last_freed_at, _ts(w.get("started_at")))))
     live_kinds = set().union(*(_caps(w["caps"]) for w in live)) if live else set()
     last_seen = _latest(*(_ts(w.get("last_seen_at")) for w in workers))

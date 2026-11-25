@@ -76,7 +76,8 @@ def plan(payload: dict, now: datetime) -> tuple[str, datetime, datetime]:
     return mode, a, b
 
 
-@job_kind(KIND, concurrency=1, max_attempts=2, expected_seconds=1200, background=True, deploy_gate_exempt=True)
+@job_kind(KIND, concurrency=1, max_attempts=2, expected_seconds=1200, background=True, deploy_gate_exempt=True,
+          monitor=True)
 async def run(ctx: JobContext) -> dict:
     payload = ctx.payload or {}
     mode, since, until = plan(payload, datetime.now(timezone.utc))

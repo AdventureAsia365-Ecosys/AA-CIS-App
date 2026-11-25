@@ -107,6 +107,11 @@ class JobKind:
     # old task would claim it before its SIGTERM); a queued row due later does not block.
     # Today: data_erasure, s1_batch_ingest, writing_memory_r2, writing_memory_shadow (AA-919).
     deploy_blocking: bool = False
+    # AA-1178: a short periodic monitoring kind (status sampler, route / quality watchers, usage rollup, connection
+    # probe, ...). It is also background (never takes the worker's last BACKGROUND_RESERVE free slots), but it runs in
+    # its own lane: never counted toward, nor held by, the background group cap, with its own running cap
+    # (worker.claim_caps_for; settings cis.ops.jobs_background_max_running / cis.ops.jobs_monitor_max_running).
+    monitor: bool = False
 
 
 _KINDS: dict[str, JobKind] = {}
@@ -126,15 +131,19 @@ def job_kind(name: str, *, concurrency: int = 1, max_attempts: int = 3,
              on_terminal: Optional[Callable[[Any, dict], Awaitable[None]]] = None,
              expected_seconds: int = 600, background: bool = False, deploy_gate_exempt: bool = False,
              retry_refusal: Optional[Callable[[dict], Optional[str]]] = None,
-             release_delay_seconds: int = 0, deploy_blocking: bool = False):
+             release_delay_seconds: int = 0, deploy_blocking: bool = False, monitor: bool = False):
     if release_delay_seconds < 0:
         raise ValueError(f"job kind {name!r}: release_delay_seconds must be >= 0")
     if deploy_blocking and deploy_gate_exempt:
         raise ValueError(f"job kind {name!r}: deploy_blocking and deploy_gate_exempt contradict each other")
+    if monitor and (not background or deploy_blocking):
+        # AA-1178: the monitoring lane is a lane of the background slots (the wave reserve applies) for short runs a
+        # deploy may interrupt; a deploy-blocking or foreground kind does not belong in it.
+        raise ValueError(f"job kind {name!r}: monitor=True needs background=True and not deploy_blocking")
 
     def deco(fn):
         _KINDS[name] = JobKind(name, fn, concurrency, max_attempts, on_terminal, expected_seconds, background,
-                               deploy_gate_exempt, retry_refusal, release_delay_seconds, deploy_blocking)
+                               deploy_gate_exempt, retry_refusal, release_delay_seconds, deploy_blocking, monitor)
         return fn
     return deco
 

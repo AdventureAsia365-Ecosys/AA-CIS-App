@@ -499,7 +499,8 @@ async def run_probes(pool, plan: dict, *, test=None, embed_test=None, geo_test=N
     return results
 
 
-@job_kind(KIND, concurrency=1, max_attempts=1, expected_seconds=600, background=True, deploy_gate_exempt=True)
+@job_kind(KIND, concurrency=1, max_attempts=1, expected_seconds=600, background=True, deploy_gate_exempt=True,
+          monitor=True)
 async def run(ctx: JobContext) -> dict:
     payload = ctx.payload or {}
     trigger = payload.get("trigger", "manual")
