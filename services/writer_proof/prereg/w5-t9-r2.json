@@ -1,0 +1,131 @@
+{
+  "format": 1,
+  "id": "w5-t9-r2",
+  "workflow": "t9",
+  "status": "draft",
+  "registered_by": null,
+  "registered_on": null,
+  "golden_set": {
+    "name": "aa729",
+    "version": "1.7.0"
+  },
+  "eval_split": "gate",
+  "sample_ids": [
+    "t9b-006",
+    "t9b-008",
+    "t9b-013",
+    "t9b-014",
+    "t9b-019",
+    "t9b-020",
+    "t9b-024",
+    "t9b-025",
+    "t9b-028",
+    "t9b-029",
+    "t9b-033",
+    "t9b-034"
+  ],
+  "noise_sample_ids": [],
+  "release_id": null,
+  "judge": {
+    "model_key": "gpt-6-luna-openai",
+    "connection": "openai-direct",
+    "instrument": "aa1048-two-step-v7",
+    "advisory": true
+  },
+  "metrics": [
+    {
+      "name": "fail_claims_per_item",
+      "kind": "computed",
+      "direction": "lower",
+      "primary": true
+    },
+    {
+      "name": "item_fail_rate",
+      "kind": "computed",
+      "direction": "lower"
+    },
+    {
+      "name": "first_pass_yield",
+      "kind": "computed",
+      "direction": "higher",
+      "target": {
+        "op": ">=",
+        "value": 0.3
+      }
+    },
+    {
+      "name": "writer_requests_per_object",
+      "kind": "computed",
+      "direction": "lower",
+      "target": {
+        "op": "<=",
+        "value": 5
+      }
+    },
+    {
+      "name": "writer_cost_per_object_usd",
+      "kind": "computed",
+      "direction": "lower",
+      "target": {
+        "op": "<=",
+        "value": 0.25
+      }
+    },
+    {
+      "name": "cost_per_object_usd",
+      "kind": "computed",
+      "direction": "lower"
+    },
+    {
+      "name": "requests_per_object",
+      "kind": "computed",
+      "direction": "lower"
+    },
+    {
+      "name": "hard_stops",
+      "kind": "computed",
+      "direction": "lower",
+      "target": {
+        "op": "<=",
+        "value": 0
+      }
+    },
+    {
+      "name": "contract_violations",
+      "kind": "external",
+      "direction": "lower",
+      "target": {
+        "op": "<=",
+        "value": 0
+      }
+    },
+    {
+      "name": "unsupported_trip_promises_human_read_10",
+      "kind": "external",
+      "direction": "lower",
+      "target": {
+        "op": "<=",
+        "value": 0
+      }
+    }
+  ],
+  "decision": {
+    "rule": "non_inferior",
+    "metric": "fail_claims_per_item",
+    "margin_abs": 4.0,
+    "alpha": 0.05,
+    "noise_se_k": 2.0
+  },
+  "requirements": {
+    "paired_all": true,
+    "max_mixed_judges": 0,
+    "max_hard_stop_1": 0
+  },
+  "power": {
+    "min_power": 0.8,
+    "writer_sd": 4.6,
+    "claims_per_item": 60
+  },
+  "cap_usd": 5.0,
+  "note": "AA-1169 re-measure of the W5 T9 writer proof after the first-pass fix (DRAFT: register it in a reviewed PR only after the tech lead's yes to the paid run). Same 12 t9_blog GATE items, judge, metrics, decision and power as w5-t9 (registered, S285: first_pass_yield 0.083, fail_claims_per_item 3.5 against A 4.67, non_inferior); golden aa729@1.7.0, the active version, whose t9_blog GATE items are byte-identical to 1.5.0 (runner.null_gate opens it through w5-null-t9-blog-v7-g150 by golden_carry, as for w5-s1 / w5-t2). B = the current t9_blog writer with the setting cis.t9.blog_claim_rule ON (CIS 490: the blog CLAIM CHECK block, t9_write v10 with the prompt fingerprint suffix) during the run; release_id null. The DRY plan names A's control run: it must be written WITHOUT the claim block (the S285 w5-t9 B run 82b394b0 or an earlier control), never a run with the switch on, else B equals A. Targets as w5-t9: first_pass_yield >= 0.3 is the AA-1169 bar; errors per blog must stay non_inferior (margin 4.0). Cost: the S285 T9 proof spent 1.42 USD on the ledger (writer 0.64, judge 0.77) for 12 items, its plan estimated 3.31 USD max; cap 5 USD (AA-1169 scope, inside the D12 T9 cap), the run command uses 4.8 so the last writer item stays within 5. Report: runner report, then runner first-pass for the remaining failure classes."
+}

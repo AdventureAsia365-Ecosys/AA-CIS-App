@@ -245,9 +245,10 @@ def prompt_fp() -> str:
 
     AA-1167: the writer prompts' untrusted-data fence switch (cis.llm.prompt_data_fence) is one of them: with it on,
     the S1 v2 / T2 / T9 prompts differ from the registered version's default render, so the ledger's prompt_version
-    carries the '.s<fp>' suffix (shared/llm_client/prompt_registry.settings_suffix)."""
+    carries the '.s<fp>' suffix (shared/llm_client/prompt_registry.settings_suffix). AA-1169: the blog writer's CLAIM
+    CHECK switch (cis.t9.blog_claim_rule) likewise."""
     from services.ai_safety import prompt_fence
-    return _fp(K.PROMPT_KEYS + (prompt_fence.KEY,))
+    return _fp(K.PROMPT_KEYS + (prompt_fence.KEY, K.T9_BLOG_CLAIM_RULE))
 
 
 __all__ = ["START_TIME_REASON", "cross_problem", "governs", "prompt_fp", "settings_fp", "ui_values"]

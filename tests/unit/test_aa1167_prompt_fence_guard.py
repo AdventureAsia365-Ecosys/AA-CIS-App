@@ -120,6 +120,7 @@ T9_TRUSTED_PARAMS = {
     "sibling_openers": "our own writer's earlier openers",
     "memory_lines": "the writing-memory release (our approved lines)",
     "brief_grounding": "a mode key",
+    "claim_rule": "a mode switch (AA-1169, setting cis.t9.blog_claim_rule)",
     "reader_checklist": "a mode key (off by default; its quotes come from the fenced seed)",
     "walk_focus": "our atom id",
     "fence": "the fence mode itself",

@@ -177,3 +177,18 @@ def test_first_pass_report_counts(monkeypatch):
     assert out["ok"] and out["run_b"] == "run-b" and out["rows"] == len(ROWS)
     assert out["diagnosis"]["B"]["first_pass_yield"] == 0.25 and out["projection"]["first_pass_yield"] == 0.5
     assert out["advisory"]                                            # the pinned v7 instrument is advisory
+
+
+# ── the re-measure draft ───────────────────────────────────────────────────────────────────────────────────────────
+
+def test_the_re_measure_draft_mirrors_w5_t9():
+    """w5-t9-r2 (a DRAFT until the tech lead's yes) measures the same thing as w5-t9 on the active golden version."""
+    base = json.loads(pr.path_for("w5-t9").read_text())
+    r2 = json.loads(pr.path_for("w5-t9-r2").read_text())
+    for key in ("workflow", "eval_split", "sample_ids", "noise_sample_ids", "release_id", "judge", "metrics",
+                "decision", "requirements", "power"):
+        assert r2[key] == base[key], key
+    assert r2["status"] == "draft" and r2["golden_set"] == {"name": "aa729", "version": "1.7.0"}
+    assert 0 < r2["cap_usd"] <= 5.0
+    assert pr.registration_problems(r2) == []
+    assert "w5-t9-r2" not in pr.read_lock()
