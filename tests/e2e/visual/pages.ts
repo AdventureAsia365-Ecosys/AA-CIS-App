@@ -24,8 +24,11 @@ export interface VisualPage {
   gallery?: boolean;
   /** "document" or "frame": the planted overflow the self-test expects the run to catch. */
   selftest?: "document" | "frame";
-  /** A dynamic route (its id differs per env): the run opens `path`, follows the first link matching this selector
-   *  and captures the page it lands on; no match = the test is skipped (nothing to open on this env). */
+  /** A dynamic route (its id differs per env): the run opens `path`, opens the first element matching this selector
+   *  and captures the page it lands on, loaded on its own. A link is followed by its href; a list row that opens by
+   *  router push (a kit DataTable `onRowClick` row, `rowTestId` naming it) is focused and opened with Enter (never a
+   *  click: a row's own controls, e.g. a status switch, must not be hit), and the address it moves to is loaded.
+   *  No match, or a row that opens nothing = the test is skipped with the reason (nothing to open on this env). */
   openFirst?: string;
 }
 
@@ -60,6 +63,9 @@ export const PAGES: VisualPage[] = [
   { slug: "lab", route: "/admin/lab", path: "/admin/lab", auth: "staff" },
   { slug: "lab-writing-memory", route: "/admin/lab/writing-memory", path: "/admin/lab/writing-memory", auth: "staff" },
   { slug: "lab-eval-runs", route: "/admin/lab/eval-runs", path: "/admin/lab/eval-runs", auth: "staff" },   // AA-1169
+  // AA-1148: a Writing Lab stage. The stage slugs are code (lib/writingLab.ts LAB_STAGES), the same on every env, so a
+  // fixed path; "lab" above lands on the first stage (/admin/lab redirects there), this one on the T2 rewrite.
+  { slug: "lab-stage", route: "/admin/lab/[stage]", path: "/admin/lab/t2-rewrite", auth: "staff" },
   { slug: "master-content", route: "/admin/master-content", path: "/admin/master-content", auth: "staff" },
   { slug: "overview", route: "/admin/overview", path: "/admin/overview", auth: "staff" },
   { slug: "my-work", route: "/admin/my-work", path: "/admin/my-work", auth: "staff" },
@@ -86,6 +92,9 @@ export const PAGES: VisualPage[] = [
   // AA-1127 (S285): the search view (Area column, long TripPlanner keys) ran 58 px past a phone frame
   { slug: "platform-settings-search", route: "/admin/platform/settings", path: "/admin/platform/settings?app=tripplanner&key=tripplanner.spend", auth: "staff" },
   { slug: "platform-staff", route: "/admin/platform/staff", path: "/admin/platform/staff", auth: "staff" },
+  // AA-1148: one staff account (the directory with its drawer open), from the directory's first row.
+  { slug: "platform-staff-account", route: "/admin/platform/staff/[id]", path: "/admin/platform/staff", auth: "staff",
+    openFirst: '[data-testid="staff-row"]' },
   { slug: "platform-roles", route: "/admin/platform/roles", path: "/admin/platform/roles", auth: "staff" },   // AA-1155
   { slug: "platform-ui-kit", route: "/admin/platform/ui-kit", path: "/admin/platform/ui-kit", auth: "staff" },
   { slug: "reports", route: "/admin/reports", path: "/admin/reports", auth: "staff" },
@@ -95,6 +104,9 @@ export const PAGES: VisualPage[] = [
   { slug: "settings", route: "/admin/settings", path: "/admin/settings", auth: "staff" },
   { slug: "spend", route: "/admin/spend", path: "/admin/spend", auth: "staff" },
   { slug: "supply-content", route: "/admin/supply-content", path: "/admin/supply-content", auth: "staff" },
+  // AA-1148: one supplier content item, from the list's first row.
+  { slug: "supply-content-item", route: "/admin/supply-content/[id]", path: "/admin/supply-content", auth: "staff",
+    openFirst: '[data-testid="supply-content-row"]' },
   { slug: "tenant-qa", route: "/admin/tenant-qa", path: "/admin/tenant-qa", auth: "staff" },
   { slug: "tenant-qa-compliance", route: "/admin/tenant-qa/compliance", path: "/admin/tenant-qa/compliance", auth: "staff" },
   { slug: "tenant-qa-quality", route: "/admin/tenant-qa/quality", path: "/admin/tenant-qa/quality", auth: "staff" },
@@ -102,6 +114,9 @@ export const PAGES: VisualPage[] = [
   { slug: "tenant-qa-slate", route: "/admin/tenant-qa/slate", path: "/admin/tenant-qa/slate", auth: "staff" },
   { slug: "tenant-qa-trace", route: "/admin/tenant-qa/trace", path: "/admin/tenant-qa/trace", auth: "staff" },
   { slug: "tenants", route: "/admin/tenants", path: "/admin/tenants", auth: "staff" },
+  // AA-1148: Tenant 360 of one agency, from the Directory's first row.
+  { slug: "tenants-360", route: "/admin/tenants/[id]", path: "/admin/tenants", auth: "staff",
+    openFirst: '[data-testid="tenant-row"]' },
   { slug: "tenants-agencies", route: "/admin/tenants/agencies", path: "/admin/tenants/agencies", auth: "staff" },
   { slug: "tenants-assignments", route: "/admin/tenants/assignments", path: "/admin/tenants/assignments", auth: "staff" },
   { slug: "tenants-data-erasure", route: "/admin/tenants/data-erasure", path: "/admin/tenants/data-erasure", auth: "staff" },
@@ -123,10 +138,6 @@ export function selectPages(pages: VisualPage[], opts: { auth: "public" | "staff
   });
 }
 
-/** Routes with a page.tsx that the run does not open, each with its reason. */
-export const EXCLUDED: Record<string, string> = {
-  "/admin/lab/[stage]": "a Writing Lab stage, opened from the Lab cards by router push (no stable link to read an id from)",
-  "/admin/platform/staff/[id]": "a staff account, opened from the directory rows by router push; staff names are personal data",
-  "/admin/supply-content/[id]": "a supplier content item, opened from its list rows by router push",
-  "/admin/tenants/[id]": "Tenant 360 of one agency, opened from the agency rows by router push",
-};
+/** Routes with a page.tsx that the run does not open, each with its reason (none today: AA-1148 brought the last four
+ *  dynamic admin routes in through `openFirst` or a fixed path). */
+export const EXCLUDED: Record<string, string> = {};
