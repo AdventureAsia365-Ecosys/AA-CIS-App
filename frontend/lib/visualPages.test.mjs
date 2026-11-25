@@ -78,3 +78,15 @@ test("selectPages: public vs staff, the gallery only in a gallery build, the pla
   const self = selectPages(PAGES, { auth: "public", slugs: "all", gallery: true, selftest: true }).map((p) => p.slug);
   assert.deepEqual(self, ["selftest-document", "selftest-frame"]);
 });
+
+test("openFirst: only a dynamic staff route, opened from a list page that is itself listed (AA-1148)", () => {
+  const dyn = PAGES.filter((p) => p.openFirst);
+  assert.ok(dyn.some((p) => p.slug === "content-workspace-tour"), "the hand-made tour editor is captured");
+  for (const p of dyn) {
+    assert.match(p.route, /\[[^\]]+\]/, `${p.slug}: openFirst is for a dynamic route`);
+    assert.equal(p.auth, "staff");
+    assert.ok(PAGES.some((q) => q.path === p.path && !q.openFirst), `${p.slug}: its list page ${p.path} is captured too`);
+  }
+  assert.deepEqual(changedSlugs(["frontend/app/admin/content-workspace/_parts/FactsForm.tsx"]),
+    ["content-workspace", "content-workspace-new", "content-workspace-supplier-links", "content-workspace-tour"]);
+});

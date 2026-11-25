@@ -14,6 +14,7 @@ import {
   type FactsForm, type Options, type Supplier,
 } from "@/lib/contentWorkspace";
 import { CW } from "../messages";
+import { stack } from "./stack";
 
 type T = Translator<typeof CW.en>;
 type SetForm = (patch: Partial<FactsForm>) => void;
@@ -26,7 +27,7 @@ export function FactsForm({ form, set, options, suppliers, supplierQuery, setSup
 }) {
   const t = useT(CW);
   return (
-    <div style={{ display: "grid", gap: 16, gridTemplateColumns: "minmax(0, 1fr)" }}>
+    <div style={stack(16)}>
       <Basics form={form} set={set} options={options} suppliers={suppliers} supplierQuery={supplierQuery}
         setSupplierQuery={setSupplierQuery} readOnly={readOnly} t={t} tourTypeLabel={tourTypeLabel} />
       <Days form={form} set={set} maxDays={options?.limits.max_days ?? 0} readOnly={readOnly} t={t} />
@@ -53,7 +54,7 @@ function SupplierField({ value, onChange, suppliers, query, setQuery, readOnly, 
   if (value && !options.some((o) => o.value === value)) options.unshift({ value, label: value });
   return (
     <Field label={t("supplier")} required hint={down ? t("suppliersDown") : t("supplierHint")}>
-      <div style={{ display: "grid", gap: 6 }}>
+      <div style={stack(6)}>
         {!readOnly && !down && (
           <Input value={query} placeholder={t("supplierSearch")} aria-label={t("supplierSearch")}
             onChange={(e) => setQuery(e.target.value)} style={{ width: "100%" }} />
@@ -88,7 +89,7 @@ function Basics({ form, set, options, suppliers, supplierQuery, setSupplierQuery
   };
   return (
     <Section title={t("basics")} description={t("basicsDesc")} testId="cw-basics">
-      <div style={{ display: "grid", gap: 12 }}>
+      <div style={stack(12)}>
         <Field label={t("name")} required>
           <Input value={form.name} maxLength={200} disabled={readOnly} onChange={(e) => set({ name: e.target.value })}
             style={{ width: "100%" }} />
@@ -143,7 +144,7 @@ function Days({ form, set, maxDays, readOnly, t }: { form: FactsForm; set: SetFo
   const full = maxDays > 0 && form.days.length >= maxDays;
   return (
     <Section title={t("days")} description={t("daysDesc", maxDays)} testId="cw-days">
-      <div style={{ display: "grid", gap: 12 }}>
+      <div style={stack(12)}>
         {form.days.map((d, i) => (
           <DayCard key={i} n={i + 1} day={d} last={i === form.days.length - 1} readOnly={readOnly} t={t}
             onChange={(patch) => setDay(i, patch)}
@@ -250,7 +251,7 @@ function ItemList({ title, items, quick, readOnly, t, testId, onChange }: {
   const offers = quick.filter((q) => !lower.has(q.toLowerCase()));
   return (
     <Section title={title} testId={testId} actions={<Badge tone="neutral" dot={false}>{items.length}</Badge>}>
-      <div style={{ display: "grid", gap: 8 }}>
+      <div style={stack(8)}>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {items.map((x) => (
             <ChipButton key={x} size="sm" selected disabled={readOnly} aria-label={t("removeItem", x)}

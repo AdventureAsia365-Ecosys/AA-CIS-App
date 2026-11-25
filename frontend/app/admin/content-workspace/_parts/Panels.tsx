@@ -12,6 +12,7 @@ import {
 } from "../../../_kit";
 import { MEALS, type CheckItem, type FactsForm, type TourView } from "@/lib/contentWorkspace";
 import { CW } from "../messages";
+import { stack } from "./stack";
 
 type T = Translator<typeof CW.en>;
 
@@ -135,7 +136,7 @@ export function Preview({ tourId, form }: { tourId: string | null; form: FactsFo
   const phone = device === "phone";
   const summary = w.aa_summary || form.summary;
   return (
-    <div style={{ display: "grid", gap: 12 }}>
+    <div style={stack(12)}>
       <p style={{ margin: 0, fontSize: 13, color: K.muted }}>{t("previewIntro")}</p>
       <SegmentedControl label={t("previewDevice")} value={device} onChange={setDevice} size="sm"
         options={[{ value: "desktop", label: t("desktop") }, { value: "phone", label: t("phone") }]} />

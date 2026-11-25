@@ -26,6 +26,7 @@ import {
 import { CW } from "../messages";
 import { FactsForm as FactsSections } from "./FactsForm";
 import { Checklist, History, PricePanel, Preview } from "./Panels";
+import { stack } from "./stack";
 
 type Status = "idle" | "saving" | "saved" | "error" | "stale";
 type T = Translator<typeof CW.en>;
@@ -190,8 +191,8 @@ function Layout({ aside, children }: { aside: React.ReactNode; children: React.R
   return (
     <div style={{ display: "grid", gap: 16, alignItems: "start",
       gridTemplateColumns: phone ? "minmax(0, 1fr)" : "minmax(0, 1fr) 300px" }}>
-      <div style={{ minWidth: 0, display: "grid", gap: 12 }}>{children}</div>
-      <aside style={{ minWidth: 0, display: "grid", gap: 12 }}>{aside}</aside>
+      <div style={{ minWidth: 0, ...stack(12) }}>{children}</div>
+      <aside style={{ minWidth: 0, ...stack(12) }}>{aside}</aside>
     </div>
   );
 }
@@ -289,7 +290,7 @@ function SaveBar({ tourId, view, readOnly, form, dirty, status, reason, setReaso
   }
   if (!view?.reason_required) return null;
   return (
-    <div style={{ display: "grid", gap: 8 }}>
+    <div style={stack(8)}>
       <Field label={t("reason")} hint={t("reasonHint")}>
         <Input value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} style={{ width: "100%" }} />
       </Field>
