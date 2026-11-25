@@ -370,7 +370,7 @@ def finish(acc: dict, unit: Optional[dict] = None) -> dict:
         "requests": req, "ledger_rows": int(acc["ledger_rows"]), "tokens_in": int(acc["tokens_in"]),
         "tokens_out": int(acc["tokens_out"]), "cache_read_tokens": int(acc["cache_read_tokens"]),
         "cache_write_tokens": int(acc["cache_write_tokens"]), "reasoning_tokens": int(acc["reasoning_tokens"]),
-        "cost_usd": round(float(acc["cost_usd"]), 6),
+        "cost_usd": round(float(acc["cost_usd"]), ur.COST_SCALE),
         "avg_latency_ms": (round(acc["latency_ms_sum"] / acc["latency_ms_count"]) if acc["latency_ms_count"]
                            else None),
         "p95_latency_ms": ud.percentile_ms(acc["hist"]),
@@ -382,8 +382,8 @@ def finish(acc: dict, unit: Optional[dict] = None) -> dict:
     if unit is not None:
         tours, pieces = int(unit.get("tours") or 0), int(unit.get("pieces") or 0)
         out["tours"], out["pieces"] = tours, pieces
-        out["cost_per_tour"] = round(float(unit.get("tour_cost") or 0) / tours, 6) if tours else None
-        out["cost_per_piece"] = round(float(unit.get("piece_cost") or 0) / pieces, 6) if pieces else None
+        out["cost_per_tour"] = round(float(unit.get("tour_cost") or 0) / tours, ur.COST_SCALE) if tours else None
+        out["cost_per_piece"] = round(float(unit.get("piece_cost") or 0) / pieces, ur.COST_SCALE) if pieces else None
     return out
 
 
@@ -589,7 +589,7 @@ async def explore(pool, q: ExplorerQuery, *, crm_usage_rows: Optional[CrmUsageRo
         series_out.append({**bucket_span(t, q.granularity, since, until),
                            "requests": int(acc["requests"]), "tokens": int(acc["tokens_in"]) + int(acc["tokens_out"]),
                            "tokens_in": int(acc["tokens_in"]), "tokens_out": int(acc["tokens_out"]),
-                           "cost_usd": round(float(acc["cost_usd"]), 6)})
+                           "cost_usd": round(float(acc["cost_usd"]), ur.COST_SCALE)})
 
     tenant_ids = [r["dims"].get("tenant") for r in rows if r["dims"].get("tenant")]
     tenant_ids += [t for t in q.filters.get("tenant", ()) if t != NONE_VALUE]
@@ -729,7 +729,7 @@ async def invoices(pool, month: Optional[str], now: Optional[datetime] = None) -
     for r in sorted(ledger, key=lambda r: -float(r["cost_usd"] or 0)):
         x = rec.get(r["account"])
         rows.append({"provider": r["provider"], "account": r["account"] or None, "requests": int(r["requests"]),
-                     "ledger_usd": round(float(r["cost_usd"] or 0), 6),
+                     "ledger_usd": round(float(r["cost_usd"] or 0), ur.COST_SCALE),
                      "provider_usd": round(float(x["provider_usd"]), 6) if x and x["provider_usd"] is not None
                      else None,
                      "provider_days": int(x["days_with_figure"]) if x else 0,
