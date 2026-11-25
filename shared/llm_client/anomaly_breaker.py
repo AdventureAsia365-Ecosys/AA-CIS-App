@@ -55,8 +55,13 @@ TODAY_SQL = f"""
      WHERE l.created_at >= $1 AND {_APP_EXPR} = $2
 """
 # $1 / $2 = the UTC dates [start, end), $3 = the app. A day is either rolled up or raw, never both (platform_cost): a
-# raw day is kept only when shared.llm_call_daily has no row for it, tested once per grouped day, not per ledger row
-# (AA-838, S291, C4.3 W48 finding 3).
+# raw day is read only when shared.llm_call_daily has no row for it (AA-838, S291, C4.3 W48 finding 3).
+# AA-1179 (S293): each raw day is its own sum over a [day 00:00 UTC, next day 00:00 UTC) range of the raw created_at
+# (a LATERAL per day: an index range on llm_call_log_created_id_idx, no expression on the column), instead of one scan
+# of the whole window grouped by (created_at AT TIME ZONE 'UTC')::date. The grouped form sorted every ledger row of the
+# window (~52,000 rows for 28 days on Dev) and spilled the sort to temp; the per-day sums need no sort, and a rolled day
+# skips its scan (the NOT EXISTS is a one-time filter of the day). Same median (tests/integration/
+# test_aa1126_gateway_caps_sql.py compares it with both earlier statements).
 BASELINE_SQL = f"""
     WITH days AS (
         SELECT generate_series($1::date, $2::date - 1, interval '1 day')::date AS day
@@ -65,22 +70,18 @@ BASELINE_SQL = f"""
           FROM shared.llm_call_daily d
          WHERE d.day >= $1 AND d.day < $2 AND d.app = $3
          GROUP BY 1
-    ), raw_days AS (
-        SELECT (l.created_at AT TIME ZONE 'UTC')::date AS day, coalesce(sum(l.cost_usd), 0)::float AS usd
-          FROM shared.llm_call_log l
-         WHERE l.created_at >= ($1::date::timestamp AT TIME ZONE 'UTC')
-           AND l.created_at < ($2::date::timestamp AT TIME ZONE 'UTC')
-           AND {_APP_EXPR} = $3
-         GROUP BY 1
-    ), raw AS (
-        SELECT g.day, g.usd
-          FROM raw_days g
-         WHERE NOT EXISTS (SELECT 1 FROM shared.llm_call_daily d WHERE d.day = g.day)
     )
     SELECT coalesce(percentile_cont(0.5) WITHIN GROUP (ORDER BY coalesce(r.usd, w.usd, 0)), 0)::float AS median
       FROM days
       LEFT JOIN rolled r USING (day)
-      LEFT JOIN raw w USING (day)
+      LEFT JOIN LATERAL (
+            SELECT sum(l.cost_usd)::float AS usd
+              FROM shared.llm_call_log l
+             WHERE l.created_at >= (days.day::timestamp AT TIME ZONE 'UTC')
+               AND l.created_at < ((days.day + 1)::timestamp AT TIME ZONE 'UTC')
+               AND {_APP_EXPR} = $3
+               AND NOT EXISTS (SELECT 1 FROM shared.llm_call_daily d WHERE d.day = days.day)
+           ) w ON true
 """
 
 
