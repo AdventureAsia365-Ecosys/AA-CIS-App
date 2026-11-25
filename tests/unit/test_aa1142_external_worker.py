@@ -174,6 +174,8 @@ def _row(target, source, state, at, days=40.0):
             "cert_not_after": at + timedelta(days=days)}
 
 
+WINDOW = timedelta(minutes=45)   # 3 x 15 minutes: a row checked within it is not stale
+
 def test_each_source_is_stale_on_its_own_interval():
     latest = [_row("zz-api", "worker", "ok", NOW - timedelta(minutes=20)),
               _row("zz-api", "github", "ok", NOW - timedelta(hours=9))]
@@ -223,7 +225,7 @@ def test_one_item_per_target_naming_the_fresh_sources_that_see_it_fail():
                                      _row("zz-api", "worker", "ok", at), _row("zz-api", "github", "down", at),
                                      _row("zz-auth", "worker", "ok", at, days=3.0),
                                      _row("zz-auth", "github", "ok", at, days=3.0)],
-                                RNG, NOW, LIMITS, 99.5, {"worker": False, "github": False})
+                                RNG, NOW, LIMITS, 99.5, {"worker": WINDOW, "github": WINDOW})
     got = {i[0]: i for i in external.items({"rows": rows, "stale": False})}
     assert set(got) == {"external-zz-web", "external-zz-api", "external-cert-zz-auth"}
     assert got["external-zz-web"][3]["sources"] == ["worker", "github"]
@@ -233,6 +235,30 @@ def test_one_item_per_target_naming_the_fresh_sources_that_see_it_fail():
                                            "what": "DNS", "code": "dns", "status": None,
                                            "sources": ["worker", "github"]}
 
+
+
+@pytest.mark.asyncio
+async def test_a_target_no_longer_checked_goes_grey_while_its_source_reports_the_others(monkeypatch):
+    """Review S293: staleness is judged per row. A host retired and removed from the worker's list keeps its last
+    'down' result in the table for the history days; while the worker keeps checking the other targets, that old row
+    is stale (grey, "stopped reporting") and raises no SEV2 item, nor does an old critical certificate on it."""
+    from shared import ops_status_thresholds as th
+
+    monkeypatch.setattr(xs, "sources", lambda: ("worker",))
+    monkeypatch.setattr(xs, "interval_min", lambda: 15)
+    monkeypatch.setattr(th, "stale_factor", lambda: 3.0)
+    retired = _row("zz-old", "worker", "down", NOW - timedelta(days=2))
+    old_cert = _row("zz-gone", "worker", "ok", NOW - timedelta(hours=1), days=1.0)
+    live = _row("zz-api", "worker", "ok", NOW - timedelta(minutes=10))
+    sec = await external.collect(_pool([live], [retired, old_cert, live]), RNG, NOW)
+    d = sec["data"]
+    assert d["stale"] is False and [s["stale"] for s in d["sources"]] == [False]
+    by = {r["target"]: r for r in d["rows"]}
+    assert by["zz-old"]["stale"] is True and by["zz-gone"]["stale"] is True and by["zz-api"]["stale"] is False
+    assert external.items(d) == []
+    late = _row("zz-api", "worker", "down", NOW - timedelta(minutes=44))     # inside 3 x 15 minutes: still live
+    d = (await external.collect(_pool([], [retired, late]), RNG, NOW))["data"]
+    assert [i[0] for i in external.items(d)] == ["external-zz-api"]
 
 @pytest.mark.parametrize("r, code", [
     ({"dns_ok": False}, ("dns", None)), ({"dns_ok": True, "tls_ok": False}, ("tls", None)),
@@ -279,7 +305,7 @@ def test_every_external_and_burn_item_has_a_message_the_page_can_word():
     at = NOW - timedelta(minutes=5)
     rows = external.target_rows([], [_row("zz-web", "worker", "down", at), _row("zz-auth", "worker", "ok", at,
                                                                                  days=3.0)],
-                                RNG, NOW, LIMITS, 99.5, {"worker": False})
+                                RNG, NOW, LIMITS, 99.5, {"worker": WINDOW})
     items = (external.verdict_items({"rows": rows, "stale": False})
              + external.verdict_items({"rows": rows, "stale": True, "newest": at.isoformat()}))
     burn = {"app": "cis", "label": "CIS", "basis": "requests", "target_pct": 99.5, "budget_left_pct": 12.5,

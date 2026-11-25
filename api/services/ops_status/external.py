@@ -19,10 +19,13 @@ failed, degraded on an unexpected HTTP status or a certificate within ``cis.ops.
 ``cis.ops.status_cert_warn_days``, else ok. ``ON CONFLICT DO NOTHING``: a run is stored once.
 
 Page. :func:`collect` gives one row per target and source: its newest result (the certificate level recomputed with
-today's settings), the strip of the range and whether that source is stale (older than ``cis.ops.status_stale_factor``
-x its own interval). The feed is stale only when every source in use is stale. :func:`items` turns a target failing
-from a fresh source, or a certificate at its critical days, into one SEV2 Needs-attention item per target, and a feed
-that stopped into one SEV3 item.
+today's settings), the strip of the range and whether that row is stale (its newest result older than
+``cis.ops.status_stale_factor`` x its source's interval). Each row is judged on its own age, not its source's: a target
+removed from ``cis.ops.external_check_targets`` (or from the root repo's list) keeps its last result in the table, and
+while the source keeps checking the other targets that old result must read as stopped, not as a live failure. The
+feed is stale only when every source in use is stale. :func:`items` turns a target failing in a row that is not stale,
+or a certificate at its critical days, into one SEV2 Needs-attention item per target, and a feed that stopped into
+one SEV3 item.
 """
 from __future__ import annotations
 
@@ -227,9 +230,11 @@ def source_summary(latest: list[dict], intervals: dict[str, int], now: datetime,
 
 
 def target_rows(in_range: list[dict], latest: list[dict], rng: TimeRange, now: datetime, limits: dict,
-                slo_pct: float, stale_by: Optional[dict[str, bool]] = None) -> list[dict]:
+                slo_pct: float, stale_windows: Optional[dict[str, timedelta]] = None) -> list[dict]:
     """One row per target and source: newest result (certificate level with today's limits), the strip of the range,
-    whether its source is stale. Pure."""
+    whether the row is stale: its own newest result older than its source's window (``stale_windows``, source ->
+    factor x interval). Judged per row, so a target no longer checked (removed from the list, skipped as invalid)
+    goes grey while its source keeps reporting the others. A source without a window is never stale. Pure."""
     by_key: dict[tuple[str, str], list[dict]] = {}
     for r in in_range:
         by_key.setdefault((_src(r), r["target"]), []).append({"sampled_at": r["checked_at"], "state": r["state"]})
@@ -238,7 +243,9 @@ def target_rows(in_range: list[dict], latest: list[dict], rng: TimeRange, now: d
     for r in sorted(latest, key=lambda x: (x.get("app") or "", x["target"], order.get(_src(x), 9))):
         src = _src(r)
         days = cert_days_left(r.get("cert_not_after"), now)
-        rows.append({"target": r["target"], "source": src, "stale": bool((stale_by or {}).get(src, False)),
+        window = (stale_windows or {}).get(src)
+        rows.append({"target": r["target"], "source": src,
+                     "stale": window is not None and now - r["checked_at"] > window,
                      "app": r.get("app") or "shared", "host": r["host"],
                      "state": r["state"], "checked_at": r["checked_at"].isoformat(),
                      "http_status": r.get("http_status"), "latency_ms": r.get("latency_ms"),
@@ -264,11 +271,13 @@ async def collect(pool: Any, rng: TimeRange, now: datetime) -> dict:
     if not latest:
         return sections.not_measured("no_external_results")
     intervals = {s: interval_minutes(s) for s in enabled}
-    srcs = source_summary(latest, intervals, now, th.stale_factor())
+    factor = th.stale_factor()
+    srcs = source_summary(latest, intervals, now, factor)
     stale_by = {s["source"]: s["stale"] for s in srcs}
     newest = max(r["checked_at"] for r in latest)
     refresh = min(intervals.values())
-    rows = target_rows([dict(r) for r in in_range], latest, rng, now, th.cert_days(), th.uptime_slo_pct(), stale_by)
+    windows = {s: stale_after(factor, m) for s, m in intervals.items()}
+    rows = target_rows([dict(r) for r in in_range], latest, rng, now, th.cert_days(), th.uptime_slo_pct(), windows)
     return sections.ok({"rows": rows, "newest": newest.isoformat(), "schedule_minutes": refresh, "sources": srcs,
                         "stale": all(stale_by.values()), "cert_days": th.cert_days()},
                        refresh * 60, as_of=newest)
@@ -276,9 +285,9 @@ async def collect(pool: Any, rng: TimeRange, now: datetime) -> dict:
 
 def items(data: dict) -> list[tuple[str, str, str, dict]]:
     """(item id, severity, kind, row) for the Needs-attention list, at most one per target and kind: a certificate at
-    its critical days (sev2), else a target down or degraded now from a source that is not stale (sev2; the row names
-    every fresh source that sees it failing), and a feed that stopped (sev3, one item, nothing else: every newest
-    result is old). Pure."""
+    its critical days (sev2), else a target down or degraded now in a row that is not stale (sev2; the row names
+    every source whose fresh result sees it failing; a target no longer checked has only stale rows, so no item), and
+    a feed that stopped (sev3, one item, nothing else: every newest result is old). Pure."""
     if data.get("stale"):
         return [("external-feed", "sev3", "stale", {"newest": data.get("newest")})]
     fresh: dict[str, list[dict]] = {}
