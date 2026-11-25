@@ -3,7 +3,7 @@ style; the minimal ``ops_incident`` the S285 AI-assistant advisory names).
 
 - **Declare** from a Needs-attention item (or by hand): title, SEV (sev1-sev3, root docs/ops/incident-response.md), the
   app, the item id, an optional summary; the person who declares owns it until someone takes it over. At most one
-  unresolved incident per item (a partial unique index, CIS 484): declaring the same alert twice answers 409 with the
+  unresolved incident per item (a partial unique index, CIS 485): declaring the same alert twice answers 409 with the
   open incident.
 - **Update**: status (investigating, identified, monitoring, resolved; ``resolved_at`` set when resolved, cleared when
   reopened), SEV, owner (the caller takes it over), a note. Every change is an ``acp_shared.ops_incident_update`` row
@@ -34,7 +34,7 @@ AUDIT_DECLARED, AUDIT_UPDATED = "ops_incident_declared", "ops_incident_updated"
 RESOURCE_TYPE = "ops_incident"
 LIST_ROWS = 50  # technical-constant: rows of a read (the incidents list on the page)
 TIMELINE_ROWS = 300  # technical-constant: rows of a read (one incident's timeline)
-NOT_MIGRATED = "the incident tables need database migration 484"
+NOT_MIGRATED = "the incident tables need database migration 485"
 LESSONS_URL = "https://github.com/AdventureAsia365-Ecosys/AA-Ecosys/blob/master/skill/aa-lessons/lessons.md"
 
 COLUMNS = ("incident_id, title, severity, status, app, item_id, owner, summary, declared_by, declared_at, updated_at, "

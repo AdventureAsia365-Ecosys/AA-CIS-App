@@ -1,5 +1,5 @@
 """AA-1142 (S292) — the P2 reads and writes of the Ecosystem status page on a real Postgres (conftest replays every
-migration, CIS 484 and 485 included): an incident is declared with its update and audit rows, refused a second time for
+migration, CIS 485 and 486 included): an incident is declared with its update and audit rows, refused a second time for
 the same alert, updated (status, SEV, owner, note), resolved and reopened, and read back with its timeline (its own
 trail, the ops events of its app, the acks of its item); the sampler's copy of an external check run is stored once
 and drawn as a strip; the per-agency drill-down reads the hourly usage rollup and failed jobs per agency; the CRM's

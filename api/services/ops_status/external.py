@@ -11,7 +11,7 @@ no new AWS service) and uploads its newest run, next to the delivery summary, wi
 
 Copy. The 5-minute status sampler (:func:`ingest`, part ``external`` of :func:`api.services.ops_status.sampler.tick`)
 reads that object (one S3 GET, the CIS task role's docs reader grant) and inserts a run it has not seen yet into
-``acp_shared.ops_external_check`` (CIS 484; ``ON CONFLICT (target, checked_at) DO NOTHING``), with the state it derives
+``acp_shared.ops_external_check`` (CIS 485; ``ON CONFLICT (target, checked_at) DO NOTHING``), with the state it derives
 (:func:`state_of`): down when DNS, TLS or the request failed, degraded on an unexpected HTTP status or a certificate
 within ``cis.ops.status_cert_crit_days``, warn within ``cis.ops.status_cert_warn_days``, else ok.
 

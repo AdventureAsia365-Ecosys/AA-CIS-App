@@ -3,7 +3,7 @@ which agency an AI spend, a failed job or an AI error comes from, over the page'
 
 ``GET /admin/overview/status/tenants?range=&from=&to=&tenant=`` (ops.read):
 
-- without ``tenant``: three rankings of at most ``cis.ops.status_tenant_top_n`` agencies (CIS 485, default 10): AI
+- without ``tenant``: three rankings of at most ``cis.ops.status_tenant_top_n`` agencies (CIS 486, default 10): AI
   spend (USD) and AI calls, failed jobs, failed AI calls; plus the platform's own share (calls without an agency);
 - with ``tenant`` (an agency's id): that agency only, its AI spend and failures by app x stage, its failed jobs by
   kind (count and last time; no error text: a job error may quote tenant content), its failed AI calls by error class.
