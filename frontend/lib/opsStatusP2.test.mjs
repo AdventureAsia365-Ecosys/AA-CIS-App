@@ -13,10 +13,15 @@ test("burn and budget levels: not judged is grey, never green", () => {
   assert.equal(burnLevel({ burn: 20, events: 400, bad: 40, factor: 14.4, state: "alert" }), "crit");
   assert.equal(burnLevel({ burn: 20, events: 10, bad: 4, factor: 14.4, state: "few" }), "none");
   assert.equal(burnLevel({ burn: 1, events: 400, bad: 2, factor: 14.4, state: "ok" }), "ok");
-  assert.equal(budgetLevel(null), "none");
-  assert.equal(budgetLevel(-3), "crit");
-  assert.equal(budgetLevel(10), "warn");
-  assert.equal(budgetLevel(60), "ok");
+  assert.equal(budgetLevel(null, 25), "none");
+  assert.equal(budgetLevel(-3, 25), "crit");
+  assert.equal(budgetLevel(0, 25), "crit");
+  assert.equal(budgetLevel(10, 25), "warn");
+  assert.equal(budgetLevel(25, 25), "warn");   // at the warn line: amber
+  assert.equal(budgetLevel(60, 25), "ok");
+  // the warn line is the API's setting, not a constant: a higher line turns the same budget amber
+  assert.equal(budgetLevel(40, 25), "ok");
+  assert.equal(budgetLevel(40, 50), "warn");
   assert.equal(budgetBar(-40), 0);
   assert.equal(budgetBar(140), 100);
   assert.equal(budgetBar(null), 0);

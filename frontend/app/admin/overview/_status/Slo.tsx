@@ -1,7 +1,7 @@
 "use client";
 // app/admin/overview/_status/Slo.tsx — AA-1142 (P2): availability per app against its objective, the error budget
 // left over the budget window and the fast / slow burn rates (SRE Workbook multiwindow alert). The objective, the
-// windows and the factors come from the API (cis.ops.status_slo_* / status_burn_* settings, editable on Platform ›
+// windows, the budget-left warn line and the factors come from the API (cis.ops.status_slo_* / status_burn_* settings, editable on Platform ›
 // Settings); a burn above its factor is also a Needs-attention item (SEV2 fast, SEV3 slow). A level is said in words
 // and a glyph, never by colour alone; a window with too few events is grey ("few events"), never green. Kit only.
 
@@ -31,9 +31,9 @@ function burnCell(w: BurnWindow | undefined, t: PT) {
   );
 }
 
-function budgetCell(r: SloRow, t: PT) {
+function budgetCell(r: SloRow, warnPct: number, t: PT) {
   const left = r.budget_left_pct;
-  const level = budgetLevel(left);
+  const level = budgetLevel(left, warnPct);
   return (
     <span style={{ display: "grid", gap: 3, minWidth: 110 }}>
       <span role="img" aria-label={left == null ? "—" : t("budgetLeft", fmtNum(left))}
@@ -66,7 +66,7 @@ function columns(s: Slo, t: PT, app: (id: string) => string): ColumnDef<SloRow>[
         );
       } },
     { id: "budget", header: t("colBudget"), accessorFn: (r) => r.budget_left_pct ?? null,
-      cell: ({ row }) => (row.original.measured ? budgetCell(row.original, t) : "—") },
+      cell: ({ row }) => (row.original.measured ? budgetCell(row.original, s.rules.budget_warn_pct, t) : "—") },
     { id: "fast", header: t("colFast", s.rules.fast.window_min), accessorFn: (r) => r.fast?.burn ?? null,
       cell: ({ row }) => (row.original.measured ? burnCell(row.original.fast, t) : "—") },
     { id: "slow", header: t("colSlow", s.rules.slow.window_hours), accessorFn: (r) => r.slow?.burn ?? null,
@@ -90,7 +90,8 @@ export function SloCard({ section, view }: { section: Section<Slo> | undefined; 
           <>
             <span style={small}>
               {t("sloNote", s.rules.target_pct, s.rules.window_days, s.rules.fast.window_min, s.rules.fast.factor,
-                s.rules.slow.window_hours, s.rules.slow.factor)}{" "}{t("sloFew", s.rules.min_requests)}
+                s.rules.slow.window_hours, s.rules.slow.factor)}{" "}{t("sloBudgetWarn", s.rules.budget_warn_pct)}{" "}
+              {t("sloFew", s.rules.min_requests)}
             </span>
             <DataTable<SloRow> tableId="status-slo" data={s.rows.filter((r) => inApps(r.app, view.apps))}
               columns={columns(s, t, w.app)} getRowId={(r) => r.app} searchable={false} paginate={false} compact

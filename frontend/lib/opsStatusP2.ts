@@ -14,7 +14,8 @@ export interface SloRow {
   bad?: number; below_target?: boolean; fast?: BurnWindow; slow?: BurnWindow;
 }
 export interface SloRules {
-  target_pct: number; window_days: number; fast: { window_min: number; factor: number };
+  target_pct: number; window_days: number; budget_warn_pct: number; budget_warn_key: string;
+  fast: { window_min: number; factor: number };
   slow: { window_hours: number; factor: number }; min_requests: number; target_key: string; window_key: string;
   fast_window_key: string; fast_factor_key: string; slow_window_key: string; slow_factor_key: string;
 }
@@ -78,11 +79,12 @@ export function burnLevel(w: BurnWindow | undefined): "crit" | "ok" | "none" {
   return w.state === "ok" ? "ok" : "none";
 }
 
-/** Budget left: crit when spent (≤ 0), warn under a quarter left, ok otherwise; none when unknown. */
-export function budgetLevel(left: number | null | undefined): "crit" | "warn" | "ok" | "none" {
+/** Budget left: crit when spent (≤ 0), warn at or under the warn line (`warnPct`, the API's
+ * rules.budget_warn_pct = cis.ops.status_slo_budget_warn_pct), ok otherwise; none when unknown. */
+export function budgetLevel(left: number | null | undefined, warnPct: number): "crit" | "warn" | "ok" | "none" {
   if (left == null) return "none";
   if (left <= 0) return "crit";
-  return left < 25 ? "warn" : "ok";
+  return left <= warnPct ? "warn" : "ok";
 }
 
 /** A bar width (0-100) for the budget left; a spent budget draws an empty bar. */

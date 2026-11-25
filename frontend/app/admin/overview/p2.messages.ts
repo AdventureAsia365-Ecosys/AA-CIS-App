@@ -14,6 +14,7 @@ export const P2 = defineMessages(
     sloNote: (target: number, days: number, fastMin: number, fastF: number, slowH: number, slowF: number) =>
       `Objective ${target} % of requests without a server error over ${days} days. An alert opens when the `
       + `${fastMin}-minute burn is above ${fastF}× (SEV2) or the ${slowH}-hour burn above ${slowF}× (SEV3).`,
+    sloBudgetWarn: (pct: number) => `The budget turns amber at ${pct} % left or less.`,
     sloFew: (n: number) => `Windows with fewer than ${n} events are shown, not judged.`,
     colApp: "App", colAvailability: "Availability", colBudget: "Budget left", colBasis: "Counted from",
     colFast: (min: number) => `Burn ${min} min`, colSlow: (h: number) => `Burn ${h} h`,
@@ -90,6 +91,7 @@ export const P2 = defineMessages(
     sloNote: (target: number, days: number, fastMin: number, fastF: number, slowH: number, slowF: number) =>
       `Mục tiêu ${target} % yêu cầu không lỗi máy chủ trong ${days} ngày. Cảnh báo khi tốc độ cháy ${fastMin} phút `
       + `vượt ${fastF}× (SEV2) hoặc tốc độ cháy ${slowH} giờ vượt ${slowF}× (SEV3).`,
+    sloBudgetWarn: (pct: number) => `Ngân sách chuyển vàng khi còn ${pct} % trở xuống.`,
     sloFew: (n: number) => `Cửa sổ có ít hơn ${n} sự kiện chỉ hiển thị, không đánh giá.`,
     colApp: "App", colAvailability: "Khả dụng", colBudget: "Ngân sách còn", colBasis: "Tính từ",
     colFast: (min: number) => `Cháy ${min} phút`, colSlow: (h: number) => `Cháy ${h} giờ`,
