@@ -199,6 +199,10 @@
     `expected_refusal: true` and in `known_refused_models`; it does not make the connection `open` / `degraded`).
     An account-wide refusal is never expected (the connection's access_state is not `ok`), and a model whose last
     probe answered still counts as an error when it starts refusing, until the next probe records the refusal.
+  - **Route digest scope** (AA-1141, S292): the daily route digest judges only routed stages
+    (`route_watch.routed_stage`: a `shared.llm_role_config` row or a code route in `role_config.SAFE_DEFAULTS`, never
+    an `adhoc_` name). The connection probe `adhoc_conn_test` (every model of every connection, refused ones included)
+    and ad-hoc scripts are listed in the digest's `unrouted` field only and never raise its bell.
 - **Data scopes per stage** (AA-1002 slice S5, migration 311 contract, app ADR 0012): `shared.llm_role_config.
   allowed_scopes` (`{aws_only}` or `{aws_only, vendor_direct}`, default `{aws_only}`, migration-only: `cis_app` has no
   INSERT / UPDATE on the column) says which connections (`data_scope`) a stage's content may use. Backfilled from the

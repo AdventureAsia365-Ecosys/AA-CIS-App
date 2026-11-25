@@ -109,7 +109,8 @@ def test_a_cost_shift_over_24h_alerts_with_a_baseline_only():
 
 
 def test_the_digest_lists_stages_with_fallbacks_or_lost_requests_only():
-    d = rw.digest({"stage_a": _st(10, fb=2), "stage_b": _st(8), "stage_c": _st(3, lost=1)}, {}, ROUTES)
+    routes = {**ROUTES, "stage_c": {**ROUTES["stage_b"], "stage": "stage_c"}}   # AA-1141: only routed stages count
+    d = rw.digest({"stage_a": _st(10, fb=2), "stage_b": _st(8), "stage_c": _st(3, lost=1)}, {}, routes)
     assert [s["stage"] for s in d["attention"]] == ["stage_a", "stage_c"] and d["answered"] == 21
     f = rw.digest_finding(d)
     assert f.check == "route_digest" and "2 stage(s)" in f.summary

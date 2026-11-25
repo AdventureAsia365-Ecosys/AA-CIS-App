@@ -339,7 +339,7 @@ async def test_the_sampler_measures_only_when_due_and_the_checks_read_it(due, mo
     monkeypatch.setattr(rc, "measure", measure)
     seen = {}
 
-    async def fake_checks(pool, client, out):
+    async def fake_checks(pool, client, out, *_):   # AA-1141: + the loop's role streaks
         seen["findings"] = ops_checks.state_findings(out)
 
     with patch.object(sampler, "_ops_checks_part", side_effect=fake_checks):

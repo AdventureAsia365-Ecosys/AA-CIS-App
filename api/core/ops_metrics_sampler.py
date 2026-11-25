@@ -201,12 +201,12 @@ async def _jobs_part(pool, kinds: dict, out: dict) -> None:
                held_kinds=b.get("held", []))     # AA-1025 H2: kinds the capacity backpressure holds (not starved)
 
 
-async def _ops_checks_part(pool, client, out: dict) -> None:
+async def _ops_checks_part(pool, client, out: dict, role_runs: Optional[dict] = None) -> None:
     """S263: the state checks of this tick plus the log events this process counted -> bell + e-mail."""
     from shared import ops_checks
 
     # AA-1025 H1b: + the app spend checks (TripPlanner against its app profile budget: the llm_spend_alert signal).
-    findings = ops_checks.state_findings(out) + await ops_checks.app_spend_findings(pool)
+    findings = ops_checks.state_findings(out, role_runs) + await ops_checks.app_spend_findings(pool)
     # AA-1026 (S267): + one check per active LLM stage without a model that answers ($0 registry reads)
     try:
         coverage = await ops_checks.stage_coverage_findings(pool)
@@ -513,7 +513,7 @@ def _err(e: BaseException) -> str:
 
 async def sample_once(pool, client, kinds: Optional[dict] = None,
                       part_timeout_s: float = PART_TIMEOUT_S, redis: Any = None,
-                      recompute_sweep: bool = False, research_stale: bool = False) -> dict:
+                      recompute_sweep: bool = False, research_stale: bool = False, role_runs: Any = None) -> dict:
     """One tick: the role connections and XID age, the alert-recipient reconcile (AA-913), the retired-kind sweep,
     the TripPlanner purge sweep (AA-987), the Booking supply feed pull (AA-835), the daily writing-memory fact filter
     (AA-917), the shared.job backlog, then the S263 ops checks, each part on its own and under part_timeout_s (one
@@ -669,7 +669,7 @@ async def sample_once(pool, client, kinds: Optional[dict] = None,
 
     # S263: after the backlog, so the job checks see this tick's sample (a failed part simply checks nothing)
     try:
-        await asyncio.wait_for(_ops_checks_part(pool, client, out), timeout=part_timeout_s)
+        await asyncio.wait_for(_ops_checks_part(pool, client, out, role_runs), timeout=part_timeout_s)
     except Exception as e:
         out["ops_checks_error"] = _err(e)
     return out
@@ -739,7 +739,7 @@ async def run_ops_metrics_sampler(app, interval_s: float = OPS_METRICS_INTERVAL_
         from services.acp_contract.research_coverage import CHECK_EVERY_S
 
         research_stale_every_s = CHECK_EVERY_S
-    client = None
+    client, role_runs = None, {}  # AA-1141: ticks in a row each DB role is above its line (shared/ops_checks.py)
     next_jev_check = 0.0          # time.monotonic() deadline of the next AA-845 Jev credit check
     next_recompute_sweep = 0.0    # time.monotonic() deadline of the next AA-1056 lifecycle recompute sweep
     next_research_stale = 0.0     # time.monotonic() deadline of the next AA-1055 research stale-share measure
@@ -758,7 +758,7 @@ async def run_ops_metrics_sampler(app, interval_s: float = OPS_METRICS_INTERVAL_
                     next_research_stale = time.monotonic() + research_stale_every_s
                 _log(await sample_once(pool, client, part_timeout_s=part_timeout_s,
                                        redis=getattr(app.state, "redis", None), recompute_sweep=sweep_due,
-                                       research_stale=research_due))
+                                       research_stale=research_due, role_runs=role_runs))
         except Exception as e:  # never kill the loop (CancelledError is not an Exception)
             logger.warning("ops_metrics_sampled", error=_err(e))
         pool = getattr(app.state, "pool", None)

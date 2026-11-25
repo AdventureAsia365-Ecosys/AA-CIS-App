@@ -12,9 +12,10 @@ Two kinds of checks:
   the tick already read: ``jobs_starved`` (capacity-aware oldest starved queued row > 15 min, was
   ``aa-cis-dev-jobs-queue-age``), ``jobs_overdue`` (a running attempt past 2 x its kind's expected seconds, was
   ``-jobs-overdue-running``), ``rds_role_connections`` (a LOGIN role above 80 % of its CONNECTION LIMIT, was the six
-  ``-rds-role-connections-*``), ``rds_xid_age`` (``max(age(datfrozenxid))`` above 1,000,000,000, was
-  ``-rds-max-used-xid-high``), ``recompute_lifecycle_lag`` (AA-1056: a tour retired / paused / restored more than
-  30 minutes ago with no finished recompute since), ``research_stale_share`` (AA-1055: once a day, more than 20 % of
+  ``-rds-role-connections-*``; AA-1141: ``cis.ops.role_connections_samples`` ticks in a row, :func:`observe_role_runs`),
+  ``rds_xid_age`` (``max(age(datfrozenxid))`` above 1,000,000,000, was ``-rds-max-used-xid-high``),
+  ``recompute_lifecycle_lag`` (AA-1056: a tour retired / paused / restored more than 30 minutes ago with no finished
+  recompute since), ``research_stale_share`` (AA-1055: once a day, more than 20 % of
   the research scope stale in a market an active tenant targets; ``services/acp_contract/research_coverage``, the
   number the Data coverage page shows). See :func:`state_findings`.
 - **App spend** (AA-1025 H1b), evaluated on the same tick from the database (:func:`app_spend_findings`): for each app
@@ -115,9 +116,11 @@ CHECKS: dict[str, Check] = {
     "jobs_overdue": Check("Job running too long", "A running job is past its kind's expected time times the overdue "
                           "factor (cis.ops.jobs_overdue_factor) and may hold a worker slot. Check the running rows on "
                           "the Jobs page.", JOB_RUNNER_PAGE),
-    "rds_role_connections": Check("Database role near its connection limit", "A login role is above the alert share "
-                                  "of its CONNECTION LIMIT (cis.ops.role_connections_pct); new connections fail at the "
-                                  "limit. Check that app's pool sizes (data standard C2.2) before raising the limit."),
+    "rds_role_connections": Check("Database role near its connection limit", "A login role stayed above the alert "
+                                  "share of its CONNECTION LIMIT (cis.ops.role_connections_pct) on several sampler "
+                                  "ticks in a row (cis.ops.role_connections_samples; a rolling deploy's short overlap "
+                                  "of old and new tasks does not count); new connections fail at the limit. Check "
+                                  "that app's pool sizes (data standard C2.2) before raising the limit."),
     "rds_xid_age": Check("Database transaction ID age high", "max(age(datfrozenxid)) is above the alert limit "
                          "(cis.ops.xid_age_limit): autovacuum is not freezing some table (wraparound guard). Find it "
                          "with age(relfrozenxid)."),
@@ -427,8 +430,27 @@ def capture(_logger: Any, _method: str, event_dict: dict) -> dict:
 XID_AGE_SQL = "SELECT max(age(datfrozenxid))::bigint FROM pg_database"
 
 
-def state_findings(tick: dict) -> list[Finding]:
-    """The state checks of one sampler tick, from the fields the tick logged (``ops_metrics_sampled``). Pure."""
+def observe_role_runs(runs: dict, roles: dict, line_pct: float) -> dict[str, int]:
+    """AA-1141 (S292): count one tick's role sample (``{role: {"pct": ...}}``) into ``runs`` ({role: ticks in a row
+    above the line}, held by the api's ops sampler loop; an api restart starts every count again): a role above
+    ``line_pct`` adds one to its run, a role at or below it (or missing from the sample) drops out. Returns this tick's
+    run per sampled role (0 at or below the line); ``runs`` keeps only the roles above it.
+
+    Why: a role's CONNECTION LIMIT is sized for a rolling deploy, when the old and the new task of its app overlap for a
+    few minutes (the partner CRM: pool max_size 3 x 2 tasks = limit 6, AA-Partner api/app/db.py, data standard C2.2).
+    One tick above the line during that overlap is expected; ``rds_role_connections`` alerts only when the role stays
+    above it on ``cis.ops.role_connections_samples`` ticks in a row. One sampler loop per process (no lock)."""
+    now = {r: (runs.get(r, 0) + 1 if float(v.get("pct") or 0) > line_pct else 0) for r, v in roles.items()}
+    runs.clear()
+    runs.update({r: n for r, n in now.items() if n})
+    return now
+
+
+def state_findings(tick: dict, role_runs: Optional[dict] = None) -> list[Finding]:
+    """The state checks of one sampler tick, from the fields the tick logged (``ops_metrics_sampled``). Pure, except
+    that ``role_runs`` (the sampler loop's dict, AA-1141, :func:`observe_role_runs`) counts this tick's role sample and
+    the runs above the line are noted on the tick (``roles_above_samples``, logged); without it a role above the line
+    alerts on this one sample (the check before S292)."""
     out: list[Finding] = []
     age = tick.get("oldest_queued_age_seconds")
     starved_after = ops_thresholds.jobs_starved_after_s()
@@ -442,13 +464,23 @@ def state_findings(tick: dict) -> list[Finding]:
     if overdue:
         out.append(Finding("jobs_overdue", f"{int(overdue)} running job(s) past twice their expected time",
                            {"overdue_running_jobs": int(overdue), "overdue": (tick.get("overdue") or [])[:10]}))
-    roles = tick.get("roles") or {}
+    roles = tick.get("roles")
     role_pct = ops_thresholds.role_connections_pct()
-    hot = {r: v for r, v in roles.items() if float(v.get("pct") or 0) > role_pct}
+    hot = {r: v for r, v in (roles or {}).items() if float(v.get("pct") or 0) > role_pct}
+    need = None
+    if role_runs is not None and roles is not None:   # a tick whose role read failed neither adds nor resets
+        need = ops_thresholds.role_connections_samples()
+        runs = observe_role_runs(role_runs, roles, role_pct)
+        hot = {r: {**v, "samples": runs.get(r, 0)} for r, v in hot.items() if runs.get(r, 0) >= need}
+        if role_runs:
+            tick["roles_above_samples"] = dict(role_runs)
     if hot:
+        details = {"roles": hot, "threshold_pct": role_pct}
+        if need is not None:
+            details["samples_needed"] = need
         out.append(Finding("rds_role_connections",
                            ", ".join(f"{r} {v['connections']}/{v['limit']}" for r, v in sorted(hot.items())),
-                           {"roles": hot, "threshold_pct": role_pct}))
+                           details))
     xid = tick.get("xid_age")
     xid_limit = ops_thresholds.xid_age_limit()
     if xid is not None and int(xid) > xid_limit:

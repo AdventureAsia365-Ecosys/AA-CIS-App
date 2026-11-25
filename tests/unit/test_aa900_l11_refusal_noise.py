@@ -315,9 +315,10 @@ def test_an_account_wide_refusal_is_never_expected():
 def test_the_digest_reports_expected_refusals_apart_and_does_not_alert_on_them():
     st = {"answered": 10, "fallback_answered": 0, "lost": 0, "failed_attempts": 0, "expected_refusals": 14,
           "cost_usd": 0.01}
-    quiet = route_watch.digest({"invented_judge": st}, {}, {})
+    routes = {"invented_judge": {"stage": "invented_judge", "model_id": "m"}}   # AA-1141: a routed stage
+    quiet = route_watch.digest({"invented_judge": st}, {}, routes)
     assert quiet["attention_total"] == 0 and route_watch.digest_finding(quiet) is None
-    lost = route_watch.digest({"invented_judge": {**st, "lost": 1}}, {}, {})
+    lost = route_watch.digest({"invented_judge": {**st, "lost": 1}}, {}, routes)
     (s,) = lost["attention"]
     assert (s["failed_attempts"], s["expected_refusals"], s["lost_requests"]) == (0, 14, 1)
 
