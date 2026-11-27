@@ -252,10 +252,10 @@ async def _judge_all(units: list[dict], sources: dict[int, str],
     caches per unit."""
     import asyncpg
     from shared.llm_client.decide import decide
+    from shared.pg_connection import StableSavepointConnection
     from shared.secrets import get_database_url
-
-    pool = await asyncpg.create_pool(get_database_url(), ssl="require", min_size=1, max_size=POOL_SIZE,
-                                     server_settings={"application_name": "cis-job"})  # AA-824
+    pool = await asyncpg.create_pool(get_database_url(), ssl="require", connection_class=StableSavepointConnection,
+                                     min_size=1, max_size=POOL_SIZE, server_settings={"application_name": "cis-job"})
     sem = asyncio.Semaphore(CONCURRENCY)
 
     async def one(i: int, u: dict, src: str):

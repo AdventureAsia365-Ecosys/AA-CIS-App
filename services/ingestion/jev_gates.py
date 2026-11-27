@@ -107,10 +107,12 @@ async def assess_rows_standalone(rows: list[dict], source: str) -> list[RowVerdi
     duration of the assessment. Never raises — any failure yields empty verdicts (fail-open)."""
     import asyncpg
 
+    from shared.pg_connection import StableSavepointConnection
     from shared.secrets import get_database_url
     try:
         pool = await asyncpg.create_pool(get_database_url(), min_size=1, max_size=4,
-                                         server_settings={"application_name": "cis-job"})  # AA-824
+                                         server_settings={"application_name": "cis-job"},  # AA-824
+                                         connection_class=StableSavepointConnection)  # S291
     except Exception:
         return [RowVerdict() for _ in rows]
     try:
