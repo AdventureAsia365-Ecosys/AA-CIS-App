@@ -807,7 +807,6 @@ function DuplicateReviewStep({
         results[item.staging_id] = res.ok;
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
-          // a {code, message} refusal (a merge into a hand-made key) shows its text, not the bare HTTP status
           const why = refusalText(body, String(res.status), { [FACT_DRAFT_HAND_MADE]: t("handMadeMatch") });
           failures.push(`${item.incoming.src_name || "—"}: ${why}`);
         }
