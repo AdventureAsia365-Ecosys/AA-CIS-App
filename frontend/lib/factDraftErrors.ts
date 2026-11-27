@@ -1,5 +1,5 @@
 // frontend/lib/factDraftErrors.ts — AA-1181: the text of a refused sheet-draft action (the tour drawer's sheet draft,
-// TourFactDraft.tsx, and the upload merge panel, upload/MergePanel.tsx). The API answers {detail: {code, message}};
+// TourFactDraft.tsx, the upload merge panel, upload/MergePanel.tsx, and the upload page's Confirm all). The API answers {detail: {code, message}};
 // a code the page knows is shown in the reader's language, anything else as the API's (English) message.
 
 /** A supplier sheet never changes a tour made by hand in the content workspace (merge and publish refuse it). */

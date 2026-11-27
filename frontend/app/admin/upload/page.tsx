@@ -11,6 +11,7 @@ import {
   Button, PageFrame, PageHeader, useFormat, useT, Input, Select, K, serif, sans, mono, Section, Eyebrow, Badge,
   DataTable, IconButton, KX, LinkButton, useIsPhone, type ColumnDef,
 } from "../../_kit";
+import { FACT_DRAFT_HAND_MADE, refusalText } from "@/lib/factDraftErrors";
 import { phoneCardColumns } from "@/lib/tableSort";
 import { UP } from "./messages";
 import { MergeSlot, type MergeChoice } from "./MergePanel";
@@ -806,7 +807,9 @@ function DuplicateReviewStep({
         results[item.staging_id] = res.ok;
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
-          failures.push(`${item.incoming.src_name || "—"}: ${typeof body.detail === "string" ? body.detail : res.status}`);
+          // a {code, message} refusal (a merge into a hand-made key) shows its text, not the bare HTTP status
+          const why = refusalText(body, String(res.status), { [FACT_DRAFT_HAND_MADE]: t("handMadeMatch") });
+          failures.push(`${item.incoming.src_name || "—"}: ${why}`);
         }
       } catch {
         results[item.staging_id] = false;

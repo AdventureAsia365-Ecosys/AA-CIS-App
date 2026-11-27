@@ -11,8 +11,10 @@ stage a row against one (the match is tenant + name + provider), so the lifecycl
 - ``set_active`` of a version that is not hand-made on a key that has one.
 
 The origin is read through ``to_jsonb`` (as services/content_workspace/store._ORIGIN_SQL): before CIS 478 a key has no
-hand-made version instead of an error. The fact-draft merge and publish refuse a hand-made tour on their own
-(api/routers/admin_pipeline/fact_drafts.py, 409 ``fact_draft_hand_made``).
+hand-made version instead of an error. The fact-draft merge, merge-preview and publish refuse on their own (409
+``fact_draft_hand_made``, api/routers/admin_pipeline/fact_drafts.py) with :func:`key_is_hand_made`: the same per-key
+rule, so a key whose live version came from a sheet but which holds a hand-made version (left by a Replace before this
+rule) is refused too.
 """
 from __future__ import annotations
 
@@ -34,6 +36,13 @@ async def hand_made_versions(conn, source_id: Optional[str]) -> set[str]:
     if not source_id:
         return set()
     return {r["tour_id"] for r in await conn.fetch(HAND_MADE_VERSIONS_SQL, source_id)}
+
+
+async def key_is_hand_made(conn, tour_id: Optional[str]) -> bool:
+    """True when the tour's key has a hand-made version (any version, not only this row); False for a sheet key, an
+    unknown id or before CIS 478. The fact-draft merge, merge-preview, publish and the drawer's ``hand_made`` use it."""
+    from .service import key_of     # service imports this module
+    return bool(await hand_made_versions(conn, await key_of(conn, tour_id)))
 
 
 async def refuse_sheet(conn, source_id: Optional[str], *, decision: str = "",

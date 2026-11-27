@@ -4,7 +4,12 @@ stays pending, no draft); a sheet draft opened before the tour was hand-made is 
 is refused with the tour untouched (it can still be discarded); a normal sheet tour still merges and publishes. The
 other staging decisions (replace / update / keep_both) are refused on a hand-made match too (409 ``source_hand_made``,
 services/tour_lifecycle), the staged row is listed with ``matched_hand_made`` and Create a new tour still works; an
-older sheet version never goes live over a hand-made one (set-active).
+older sheet version never goes live over a hand-made one (set-active). The rule is per key: a key whose live version
+came from a sheet but which holds a hand-made version (left by a Replace before AA-1181) refuses merge, merge-preview
+and publish too.
+
+Tours are built in the real shape of a source version (``source_group_id`` = own id, version 1, active; a staged row
+carries ``matched_source_group_id``), so the refusals stop the real data loss, not only a short cut of the code.
 
 Needs CIS 457 and 478 (skipped without them). Each test runs in one transaction that is rolled back. Invented names and
 places only."""
@@ -69,20 +74,31 @@ async def conn():
 
 
 async def _tour(conn, *, origin="sheet"):
+    """A live source version 1 of its own key (the shape supersede(create_new) and the content workspace write)."""
     tour_id = str(uuid.uuid4())
     await conn.execute(
         "INSERT INTO silver_aa_internal.raw_tours (tour_id, tenant_id, batch_id, src_name, country, duration, "
-        "inclusions, src_itineraries, entry_origin) VALUES ($1, $2, $3, 'Tarnwick Valley Ride 3D', 'Thailand', "
-        "'3 days', 'Water', 'Day 1: Arrive in Tarnwick. Day 2: Ride the valley. Day 3: Home.', $4)",
+        "inclusions, src_itineraries, entry_origin, source_group_id, source_version, source_status) VALUES ($1, $2, "
+        "$3, 'Tarnwick Valley Ride 3D', 'Thailand', '3 days', 'Water', 'Day 1: Arrive in Tarnwick. Day 2: Ride the "
+        "valley. Day 3: Home.', $4, $1, 1, 'active')",
         uuid.UUID(tour_id), MASTER, BATCH_ID, origin)
     return tour_id
 
 
 async def _staged(conn, tour_id, payload):
     return str(await conn.fetchval(
-        "INSERT INTO silver_aa_internal.upload_staging (batch_id, tenant_id, parsed_payload, matched_tour_id) "
-        "VALUES ($1, $2, $3::jsonb, $4) RETURNING id", uuid.UUID(BATCH_ID), MASTER, json.dumps(payload),
-        uuid.UUID(tour_id)))
+        "INSERT INTO silver_aa_internal.upload_staging (batch_id, tenant_id, parsed_payload, matched_tour_id, "
+        "matched_source_group_id) VALUES ($1, $2, $3::jsonb, $4, $4) RETURNING id", uuid.UUID(BATCH_ID), MASTER,
+        json.dumps(payload), uuid.UUID(tour_id)))
+
+
+async def _join_as_superseded(conn, tour_id, key):
+    """Make ``tour_id`` the superseded version 1 of ``key``'s tour key, whose live version becomes version 2: the shape
+    a Replace on a hand-made match left before AA-1181 (a sheet version live over a hand-made one)."""
+    await conn.execute("UPDATE silver_aa_internal.raw_tours SET source_version = 2 WHERE tour_id = $1::uuid", key)
+    await conn.execute(
+        "UPDATE silver_aa_internal.raw_tours SET source_group_id = $2::uuid, source_version = 1, source_status = "
+        "'superseded' WHERE tour_id = $1::uuid", tour_id, key)
 
 
 async def _duration(conn, tour_id):
@@ -132,6 +148,55 @@ async def test_a_sheet_draft_never_publishes_over_a_hand_made_tour(conn):
                                    "WHERE tour_id = $1::uuid AND source = 'excel_merge'", tour_id)
     gone = await ap.discard_fact_draft(tour_id, _request(conn), x_admin_secret="s")   # Discard still works
     assert gone["discarded"] == out["fact_draft_id"]
+
+
+@pytest.mark.asyncio
+async def test_a_sheet_never_merges_into_a_key_with_a_hand_made_version(conn):
+    """The live version came from a sheet, but the key holds a superseded hand-made version: refused like the list."""
+    sheet = await _tour(conn)
+    hand = await _tour(conn, origin="manual")
+    await _join_as_superseded(conn, hand, sheet)
+    staging = await _staged(conn, sheet, {"duration": "4 days"})
+    listed = await ap.list_upload_staging(BATCH_ID, _request(conn), x_admin_secret="s")
+    assert next(i for i in listed["items"] if i["staging_id"] == staging)["matched_hand_made"] is True
+    with pytest.raises(HTTPException) as e:
+        await ap.merge_preview(staging, _request(conn), x_admin_secret="s")
+    assert e.value.status_code == 409 and e.value.detail["code"] == "fact_draft_hand_made"
+    with pytest.raises(HTTPException) as e:
+        await ap.decide_staging(staging, ap.DecideRequest(decision="merge", resolutions={}, reason="zz new sheet"),
+                                _request(conn), x_admin_secret="s")
+    assert e.value.status_code == 409 and e.value.detail["code"] == "fact_draft_hand_made"
+    assert await conn.fetchval("SELECT decision FROM silver_aa_internal.upload_staging WHERE id = $1::uuid",
+                               staging) == "pending"
+    assert not await conn.fetchval("SELECT count(*) AS n FROM silver_aa_internal.raw_tour_fact_draft "
+                                   "WHERE tour_id = $1::uuid", sheet)
+    state = await ap.get_fact_draft(sheet, _request(conn), x_admin_secret="s")
+    assert state["hand_made"] is True and state["draft"] is None          # the drawer offers no Publish either
+    assert await _duration(conn, sheet) == "3 days"
+    assert await _origin_and_status(conn, sheet) == ("sheet", "active")
+    assert await _origin_and_status(conn, hand) == ("manual", "superseded")
+
+
+@pytest.mark.asyncio
+async def test_a_sheet_draft_never_publishes_into_a_key_with_a_hand_made_version(conn):
+    """A draft opened before a hand-made version joined the key is refused at publish, with nothing written."""
+    sheet = await _tour(conn)
+    staging = await _staged(conn, sheet, {"duration": "4 days"})
+    out = await ap.decide_staging(staging, ap.DecideRequest(decision="merge", resolutions={}, reason="zz new sheet"),
+                                  _request(conn), x_admin_secret="s")
+    hand = await _tour(conn, origin="manual")
+    await _join_as_superseded(conn, hand, sheet)
+    fan = AsyncMock()
+    with patch.object(ap.tour_detail, "_source_fanout_raw", fan):
+        with pytest.raises(HTTPException) as e:
+            await ap.publish_fact_draft(sheet, _request(conn, user=LEAD), x_admin_secret="s")
+    assert e.value.status_code == 409 and e.value.detail["code"] == "fact_draft_hand_made"
+    fan.assert_not_awaited()
+    assert await _duration(conn, sheet) == "3 days"
+    assert await conn.fetchval("SELECT status FROM silver_aa_internal.raw_tour_fact_draft WHERE id = $1",
+                               out["fact_draft_id"]) == "draft"
+    assert not await conn.fetchval("SELECT count(*) AS n FROM silver_aa_internal.raw_tour_revision "
+                                   "WHERE tour_id = $1::uuid AND source = 'excel_merge'", sheet)
 
 
 @pytest.mark.asyncio

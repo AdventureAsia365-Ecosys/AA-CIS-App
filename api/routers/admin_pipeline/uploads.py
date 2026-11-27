@@ -293,8 +293,9 @@ def _merge_cols() -> str:
 
 async def _merge_inputs(conn, staging_id: str) -> tuple:
     """(staging row, matched raw tour row, hand-edited fields, plan) of a staged re-import. 404 / 409 when it cannot
-    merge: no pending row, no matched tour, the matched tour is not live (deleted: Restore or Create new) or it is a
-    hand-made tour (409 ``fact_draft_hand_made``, AA-1181: Bypass or Create new)."""
+    merge: no pending row, no matched tour, the matched tour is not live (deleted: Restore or Create new) or its key
+    has a hand-made version (409 ``fact_draft_hand_made``, AA-1181: Bypass or Create new; per key, as the list's
+    ``matched_hand_made``)."""
     from api.routers.admin_pipeline.fact_drafts import refuse_hand_made
     from services.ingestion import excel_merge as em
     staging = await conn.fetchrow("""
@@ -310,7 +311,7 @@ async def _merge_inputs(conn, staging_id: str) -> tuple:
     if not src.live:
         raise HTTPException(status_code=409, detail=source_not_live_message(src, "merge this sheet into it"),
                             headers={"X-Error-Code": SOURCE_NOT_LIVE})
-    await refuse_hand_made(conn, tour_id, "merge")     # AA-1181: a supplier sheet never merges into a hand-made tour
+    await refuse_hand_made(conn, tour_id, "merge")     # AA-1181: a supplier sheet never merges into a hand-made key
     current = await conn.fetchrow(
         f"SELECT tour_id::text AS tour_id, {_merge_cols()} FROM silver_aa_internal.raw_tours "
         "WHERE tour_id = $1::uuid FOR UPDATE", tour_id)
