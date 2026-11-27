@@ -8,7 +8,7 @@ What counts as a fact is what the FactSheet tour builder already extracts from a
 day markers, figures bound to a unit, place names, "not included" lines); this module reuses those extractors, it adds
 no new parser. An edit (PATCH /v1/tours/versions/{id}, action=edit) is checked against its base: the version it edits
 (the AA-written T2 copy, or an earlier accepted edit), the Master text (published_tours aa_*) and the raw source
-(raw_tours src_*, duration, price, inclusions, exclusions). Refused (HTTP 422 ``fact_locked``) when it:
+(raw_tours src_*, duration, inclusions, exclusions; not price_raw, AA-1188). Refused (HTTP 422 ``fact_locked``) if it:
 
 * sets a key that is not wording (WORDING_FIELDS): duration, price, inclusions, a day list ... (``field``);
 * changes the day structure of the itinerary: another set of "Day N" markers than the base itinerary (``days``);
@@ -360,11 +360,12 @@ def audit_changes(parent: dict, new: dict) -> list[dict]:
 
 
 # The base of an edit besides the version itself: the Master text and the raw source of the tour (tenant pool: CIS 239
-# master read on published_tours / raw_tours; admin pool: cis_app).
+# master read on published_tours / raw_tours; admin pool: cis_app). AA-1188 (DB-01): not raw_tours.price_raw, so the
+# accept / refuse answer is no oracle on the source price text and an agency edit cannot bring it into its copy.
 BASE_SQL = """
     SELECT pt.aa_name, pt.aa_subtitle, pt.aa_summary, pt.aa_description, pt.aa_highlights, pt.aa_itineraries,
            rt.src_name, rt.src_subtitle, rt.src_summary, rt.src_description, rt.src_highlights, rt.src_itineraries,
-           rt.duration, rt.price_raw, rt.inclusions, rt.exclusions
+           rt.duration, rt.inclusions, rt.exclusions
       FROM gold_aa_internal.published_tours pt
       LEFT JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = pt.tour_id
      WHERE pt.id = $1::uuid

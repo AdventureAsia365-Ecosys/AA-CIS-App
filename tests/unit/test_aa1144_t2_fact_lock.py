@@ -199,10 +199,14 @@ def test_content_dict(value, expected):
 @pytest.mark.asyncio
 async def test_check_against_base_reads_master_and_raw():
     conn = AsyncMock()
-    conn.fetchrow = AsyncMock(return_value={"aa_itineraries": ITINERARY, "duration": "4 days", "price_raw": "USD 450"})
+    conn.fetchrow = AsyncMock(return_value={"aa_itineraries": ITINERARY, "duration": "4 days"})
+    _new, locked = await lock.check_against_base(conn, uuid4(), {"summary": "Short."},
+                                                 {"summary": "Lumora in 4 days."})
+    assert locked == []
+    # AA-1188 (DB-01): the base never holds the source price text, so a price only raw_tours.price_raw states is refused
     _new, locked = await lock.check_against_base(conn, uuid4(), {"summary": "Short."},
                                                  {"summary": "Lumora in 4 days from USD 450."})
-    assert locked == []
+    assert locked == [lock.Locked("summary", "figure", "450")]
     assert conn.fetchrow.call_args.args[0] is lock.BASE_SQL
     conn.fetchrow = AsyncMock(return_value=None)                     # no Master row: the version is the only base
     _new, locked = await lock.check_against_base(conn, uuid4(), {"summary": "Short."}, {"summary": "In 4 days."})
@@ -213,6 +217,7 @@ def test_base_sql_reads_master_and_raw_of_one_tour():
     sql = lock.BASE_SQL
     assert "gold_aa_internal.published_tours pt" in sql and "silver_aa_internal.raw_tours rt" in sql
     assert "WHERE pt.id = $1::uuid" in sql
+    assert "price_raw" not in sql   # AA-1188 (DB-01)
 
 
 # ── the route ─────────────────────────────────────────────────────────────────
