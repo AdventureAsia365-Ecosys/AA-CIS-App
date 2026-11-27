@@ -93,26 +93,13 @@ async def ingest_s3(
             parser = _ExcelParser(tmp_path, source_file=req.s3_key)
             records = parser.parse()
 
-            all_names = [r["src_name"] for r in records if r.get("src_name")]
-            duplicate_names: set = set()
-            deleted_names: dict = {}   # AA-986 L2 (Q6): name -> date its tour was deleted (no live version left)
-            if all_names:
-                norm_names = [n.lower().strip() for n in all_names]
-                dup_rows = await conn.fetch(
-                    "SELECT lower(trim(rt.src_name)) AS n, "
-                    "       bool_or(EXISTS (SELECT 1 FROM silver_aa_internal.raw_tours k "
-                    "                        WHERE COALESCE(k.source_group_id, k.tour_id) "
-                    "                              = COALESCE(rt.source_group_id, rt.tour_id) "
-                    "                          AND k.source_status = 'active' AND k.deleted_at IS NULL)) AS live, "
-                    "       max(rt.deleted_at) AS deleted_at "
-                    "FROM silver_aa_internal.raw_tours rt "
-                    "WHERE lower(trim(rt.src_name)) = ANY($1::text[]) "
-                    "GROUP BY lower(trim(rt.src_name))",
-                    norm_names,
-                )
-                duplicate_names = {r["n"] for r in dup_rows}
-                deleted_names = {r["n"]: r["deleted_at"] for r in dup_rows
-                                 if not r["live"] and r["deleted_at"] is not None}
+            # AA-1187: which existing tour a row is comes from the same function Commit calls
+            # (services/ingestion/tour_match.py: same Name + Provider, else same Name + country). The old preview
+            # matched the Name alone, so a row with another Provider read "already exists" here and then made a new
+            # tour on Commit.
+            from services.ingestion.tour_match import match_existing as _match_existing
+            from services.ingestion.tour_match import preview_message as _match_message
+            _tenant = "00000000-0000-0000-0000-000000000001"
 
             # AA-490 (follow-up AA-488 Gap 1): the real Commit path (process_file() ->
             # services/ingestion/handler.py) already drops in-file duplicates (two rows in the
@@ -155,15 +142,35 @@ async def ingest_s3(
                         "message": "Another row earlier in this file has the same name + "
                                    "provider — this row will be skipped on Commit.",
                     })
-                elif src_name.lower().strip() in duplicate_names:
-                    deleted_on = deleted_names.get(src_name.lower().strip())
+                elif not (r.get("src_itineraries") or "").strip():
+                    # AA-604: a row with no itinerary body cannot be rewritten by S1
+                    # (S1 get_all_tours + acp_contract.v_trip_registry require a non-empty
+                    # itinerary). Surface it here at preview time instead of silently
+                    # committing it as "ingested" and having it vanish between S0 and S1.
+                    # Covers POI/attraction rows (museums, rentals, single activities) and
+                    # source files that simply lack itinerary content.
+                    # AA-1187: checked before the match, in Commit's order: Commit skips the row even when it is an
+                    # existing tour, so a re-upload that left Itineraries empty is told so, not "already exists".
+                    match = await _match_existing(conn, _tenant, r)
+                    blocked_tours.append({
+                        "src_name": src_name, "country": r.get("country"),
+                        "reason": "empty_itinerary",
+                        "message": ("Itineraries is empty — this row matches an existing tour but will be skipped "
+                                    "on Commit; copy the tour's Itineraries into the row to update it."
+                                    if match is not None else
+                                    "No itinerary content — this looks like a point of interest "
+                                    "or activity, not a multi-day tour. It cannot be rewritten and "
+                                    "will be skipped on Commit."),
+                    })
+                elif (match := await _match_existing(conn, _tenant, r)) is not None:
+                    deleted_on = match["key_deleted_at"] if not match["live"] else None
                     blocked_tours.append({
                         "src_name": src_name, "country": r.get("country"),
                         "reason": "duplicate_tour",
-                        "message": (f"This tour was deleted on {deleted_on.date().isoformat()} — Duplicate Review "
-                                    "will offer Restore or Create a new tour." if deleted_on
-                                    else "This tour already exists in the system."),
+                        "message": _match_message(match, r),
                         "deleted_at": deleted_on.isoformat() if deleted_on else None,
+                        "matched_tour_id": str(match["tour_id"]),
+                        "matched_provider": match["provider"],
                     })
                 elif (r.get("src_itineraries") or "").strip() and \
                         (near := await near_dups.check(r)).duplicate is not None:
@@ -177,20 +184,6 @@ async def ingest_s3(
                         "reason": "missing_fields", "missing_fields": missing,
                         "message": f"Missing fields: {', '.join(missing)}",
                         "jev_notes": list(jev.notes) if jev is not None else [],
-                    })
-                elif not (r.get("src_itineraries") or "").strip():
-                    # AA-604: a row with no itinerary body cannot be rewritten by S1
-                    # (S1 get_all_tours + acp_contract.v_trip_registry require a non-empty
-                    # itinerary). Surface it here at preview time instead of silently
-                    # committing it as "ingested" and having it vanish between S0 and S1.
-                    # Covers POI/attraction rows (museums, rentals, single activities) and
-                    # source files that simply lack itinerary content.
-                    blocked_tours.append({
-                        "src_name": src_name, "country": r.get("country"),
-                        "reason": "empty_itinerary",
-                        "message": "No itinerary content — this looks like a point of interest "
-                                   "or activity, not a multi-day tour. It cannot be rewritten and "
-                                   "will be skipped on Commit.",
                     })
                 elif jev is not None and jev.drop_reason:
                     blocked_tours.append({
@@ -333,7 +326,11 @@ async def _merge_inputs(conn, staging_id: str) -> tuple:
         else:
             incoming["country"] = c.name
     owned = em.hand_edited_fields([dict(r) for r in revisions])
-    return staging, dict(current), owned, em.plan(dict(current), incoming, owned)
+    # AA-1187: a row matched on Name + country may name another Provider (a typo, another spelling, or another
+    # operator); the merge never changes the tour's Provider unless the person takes the sheet's value.
+    from services.ingestion.tour_match import same_provider
+    ask = () if same_provider(incoming.get("provider"), current["provider"]) else ("provider",)
+    return staging, dict(current), owned, em.plan(dict(current), incoming, owned, ask=ask)
 
 
 @router.get("/upload-staging/{staging_id}/merge-preview")
@@ -446,7 +443,10 @@ async def list_upload_staging(
     """Return staging rows + existing tour fields for side-by-side comparison. AA-986 L2 (Q6): `existing` carries the
     matched row's source_status / deleted_at, and `matched_deleted` / `matched_deleted_at` say the matched tour was
     deleted at S0/A0 (the UI then offers Restore or Create a new tour). AA-1181: `matched_hand_made` says the matched
-    tour was made by hand in the content workspace (the UI then offers Bypass or Create a new tour)."""
+    tour was made by hand in the content workspace (the UI then offers Bypass or Create a new tour). AA-1187:
+    `matched_other_provider` says the row names another Provider than the matched tour (it matched on Name + country):
+    the UI then also offers Create a new tour (another operator's tour of the same name)."""
+    from services.ingestion.tour_match import same_provider
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
@@ -474,6 +474,10 @@ async def list_upload_staging(
             ORDER BY us.created_at
         """, batch_id)
 
+    def _incoming(r) -> dict:
+        p = r["parsed_payload"]
+        return json.loads(p) if isinstance(p, str) else dict(p or {})
+
     return {
         "batch_id": batch_id,
         "items": [
@@ -487,11 +491,9 @@ async def list_upload_staging(
                 "matched_deleted_at":      (r["key_deleted_at"].isoformat()
                                             if r["matched_deleted"] and r["key_deleted_at"] else None),
                 "matched_hand_made":       bool(r["matched_hand_made"]),
-                "incoming": (
-                    json.loads(r["parsed_payload"])
-                    if isinstance(r["parsed_payload"], str)
-                    else dict(r["parsed_payload"] or {})
-                ),
+                "matched_other_provider":  (bool(r["matched_tour_id"])
+                                            and not same_provider(incoming.get("provider"), r["provider"])),
+                "incoming": incoming,
                 "existing": {
                     "src_name":  r["src_name"],
                     "src_summary": r["src_summary"],
@@ -504,6 +506,7 @@ async def list_upload_staging(
                 },
             }
             for r in rows
+            for incoming in (_incoming(r),)
         ],
         "total": len(rows),
     }

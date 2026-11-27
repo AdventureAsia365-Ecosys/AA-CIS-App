@@ -15,7 +15,7 @@ import { FACT_DRAFT_HAND_MADE, refusalText } from "@/lib/factDraftErrors";
 import { phoneCardColumns } from "@/lib/tableSort";
 import { UP } from "./messages";
 import { MergeSlot, type MergeChoice } from "./MergePanel";
-import { canConfirm, decisionBody, decisionLabels, type Decision } from "./stagingDecisions";
+import { canConfirm, decisionBody, decisionLabels, type Decision, type StagingItem } from "./stagingDecisions";
 
 const TENANT_ID = "00000000-0000-0000-0000-000000000001";
 
@@ -96,28 +96,6 @@ interface CommitResponse {
   tours_written?: number;
   tours_staged?: number;
   staged_ids?: string[];
-}
-
-interface StagingItem {
-  staging_id: string;
-  matched_tour_id: string | null;
-  decision: string;
-  // AA-986 L2 (Q6): the matched tour was deleted at S0/A0 (no live version left).
-  matched_deleted?: boolean;
-  matched_deleted_at?: string | null;
-  // AA-1181: the matched tour was made by hand in the content workspace (Bypass or Create a new tour only).
-  matched_hand_made?: boolean;
-  incoming: Record<string, string | null>;
-  existing: {
-    src_name: string | null;
-    src_summary: string | null;
-    country: string | null;
-    price_raw: string | null;
-    provider: string | null;
-    ingest_at: string | null;
-    source_status?: string | null;
-    deleted_at?: string | null;
-  };
 }
 
 interface FileState {
@@ -731,7 +709,8 @@ function UploadHistorySection({ history, loading, onRefresh }: {
 // ─── DuplicateReview (Step 5) ─────────────────────────────────────────────────
 
 // The red note above a staged row whose match takes other decisions: a deleted tour (AA-986 L2, Q6: Restore or Create
-// a new tour) or a tour made by hand in the content workspace (AA-1181: Bypass or Create a new tour).
+// a new tour), a tour made by hand in the content workspace (AA-1181: Bypass or Create a new tour) or a tour of
+// another Provider (AA-1187: Create a new tour is offered too).
 function MatchNote({ item }: { item: StagingItem }) {
   const t = useT(UP);
   let text: string | null = null;
@@ -739,6 +718,8 @@ function MatchNote({ item }: { item: StagingItem }) {
     text = t("deletedOn", item.matched_deleted_at ? item.matched_deleted_at.slice(0, 10) : t("earlierDate"));
   } else if (item.matched_hand_made) {
     text = t("handMadeMatch");
+  } else if (item.matched_other_provider) {
+    text = t("otherProviderMatch", item.existing.provider || "—", item.incoming.provider || "—");
   }
   if (!text) return null;
   return (

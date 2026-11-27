@@ -44,11 +44,18 @@ def _no_near_duplicate_rule():
         yield
 
 
-def _make_request_and_pool(existing_hash_row=None, duplicate_names_rows=None, sources_rows=None):
+def _make_request_and_pool(existing_hash_row=None, matches=None, sources_rows=None):
+    """``matches``: normalized name -> the existing-tour row services/ingestion/tour_match.py returns (AA-1187)."""
     conn = AsyncMock()
-    conn.fetchrow = AsyncMock(return_value=existing_hash_row)
+
+    async def fetchrow(sql, *args):
+        if "file_hash" in sql:
+            return existing_hash_row
+        assert "FROM silver_aa_internal.raw_tours rt" in sql
+        return (matches or {}).get(args[1])
+
+    conn.fetchrow = AsyncMock(side_effect=fetchrow)
     conn.fetch = AsyncMock(side_effect=[
-        duplicate_names_rows or [],  # dup_rows query
         sources_rows or [],          # upload_history sources query
     ])
     pool = MagicMock()
@@ -59,6 +66,14 @@ def _make_request_and_pool(existing_hash_row=None, duplicate_names_rows=None, so
     return request, conn
 
 
+def _match(**kw):
+    row = {"tour_id": "aa118700-0000-4000-8000-000000000001", "source_group_id": None, "src_name": "x",
+           "provider": "Horizon Voyages", "country": "Vietnam", "same_provider": True, "live": True,
+           "key_deleted_at": None}
+    row.update(kw)
+    return row
+
+
 def _req(**kw):
     defaults = dict(s3_key="test.xlsx", dry_run=True, max_tours=500)
     defaults.update(kw)
@@ -67,11 +82,9 @@ def _req(**kw):
 
 @pytest.mark.asyncio
 class TestAA490DryRunInFileDedup:
-    async def _run(self, monkeypatch, records, existing_hash_row=None, duplicate_names_rows=None):
+    async def _run(self, monkeypatch, records, existing_hash_row=None, matches=None):
         monkeypatch.setattr(admin_pipeline, "verify_admin_secret", lambda *a, **k: None)
-        request, conn = _make_request_and_pool(
-            existing_hash_row=existing_hash_row, duplicate_names_rows=duplicate_names_rows,
-        )
+        request, conn = _make_request_and_pool(existing_hash_row=existing_hash_row, matches=matches)
 
         mock_s3 = MagicMock()
         mock_parser_instance = MagicMock()
@@ -132,8 +145,8 @@ class TestAA490DryRunInFileDedup:
             {"src_name": "Halong Bay Cruise", "provider": "Horizon Voyages",
              "country": "Vietnam", "duration": "3 days", "price_raw": "500", "src_itineraries": "Day 1 — Arrival"},
         ]
-        dup_rows = [{"n": "halong bay cruise", "live": True, "deleted_at": None}]
-        result = await self._run(monkeypatch, records, duplicate_names_rows=dup_rows)
+        found = {"halong bay cruise": _match(live=True, key_deleted_at=None)}
+        result = await self._run(monkeypatch, records, matches=found)
 
         assert result["ready_count"] == 0
         assert result["blocked_count"] == 1
@@ -148,9 +161,9 @@ class TestAA490DryRunInFileDedup:
             {"src_name": "Halong Bay Cruise", "provider": "Horizon Voyages",
              "country": "Vietnam", "duration": "3 days", "price_raw": "500", "src_itineraries": "Day 1 — Arrival"},
         ]
-        dup_rows = [{"n": "halong bay cruise", "live": False,
-                     "deleted_at": datetime(2026, 10, 20, 8, 0, tzinfo=timezone.utc)}]
-        result = await self._run(monkeypatch, records, duplicate_names_rows=dup_rows)
+        found = {"halong bay cruise": _match(live=False,
+                                             key_deleted_at=datetime(2026, 10, 20, 8, 0, tzinfo=timezone.utc))}
+        result = await self._run(monkeypatch, records, matches=found)
         blocked = result["blocked_tours"][0]
         assert blocked["reason"] == "duplicate_tour"
         assert blocked["message"].startswith("This tour was deleted on 2026-10-20")
@@ -176,3 +189,42 @@ async def test_dry_run_never_writes_jevs_country_guess(monkeypatch):
     assert blocked["reason"] == "missing_fields" and "country" in blocked["missing_fields"]
     assert any("Jev suggests India" in n and "not written" in n for n in blocked["jev_notes"])
     assert records[0]["country"] is None
+
+
+@pytest.mark.asyncio
+class TestAA1187PreviewMatchesLikeCommit:
+    """AA-1187: the preview asks the same match as Commit (services/ingestion/tour_match.py), so a row with another
+    Provider reads "already exists" only when Commit will send it to Duplicate Review, and an empty Itineraries says
+    the row is skipped."""
+
+    async def test_another_provider_reads_as_the_existing_tour_and_names_both_providers(self, monkeypatch):
+        records = [{"src_name": "Zorvane Ridge Walk", "provider": "Quillon Trek Co", "country": "Laos",
+                    "duration": "3 days", "price_raw": "500", "src_itineraries": "Day 1 — Arrive"}]
+        found = {"zorvane ridge walk": _match(provider="Quillon Treks", same_provider=False, country="Laos")}
+        result = await TestAA490DryRunInFileDedup()._run(monkeypatch, records, matches=found)
+        (blocked,) = result["blocked_tours"]
+        assert blocked["reason"] == "duplicate_tour" and result["ready_count"] == 0
+        assert "another provider (Quillon Treks; this row: Quillon Trek Co)" in blocked["message"]
+        assert "Duplicate Review will offer Merge (the provider changes only if you choose it) or Create a new tour" \
+            in blocked["message"]
+        assert blocked["matched_provider"] == "Quillon Treks"
+
+    async def test_no_match_is_a_new_tour(self, monkeypatch):
+        records = [{"src_name": "Velmora Lake Loop", "provider": "Brisk Paths", "country": "Cambodia",
+                    "duration": "2 days", "price_raw": "300", "src_itineraries": "Day 1 — Lake"}]
+        result = await TestAA490DryRunInFileDedup()._run(monkeypatch, records)
+        assert result["ready_count"] == 1 and result["blocked_count"] == 0
+
+    async def test_an_existing_tour_without_itineraries_is_told_it_will_be_skipped(self, monkeypatch):
+        records = [
+            {"src_name": "Zorvane Ridge Walk", "provider": "Quillon Treks", "country": "Laos",
+             "duration": "3 days", "price_raw": "500", "src_itineraries": "  ", "inclusions": "Guide"},
+            {"src_name": "Velmora Lake Loop", "provider": "Brisk Paths", "country": "Cambodia",
+             "duration": "2 days", "price_raw": "300", "src_itineraries": None},
+        ]
+        found = {"zorvane ridge walk": _match()}
+        result = await TestAA490DryRunInFileDedup()._run(monkeypatch, records, matches=found)
+        first, second = result["blocked_tours"]
+        assert first["reason"] == "empty_itinerary" and "matches an existing tour" in first["message"]
+        assert "copy the tour's Itineraries" in first["message"]
+        assert second["reason"] == "empty_itinerary" and "point of interest" in second["message"]
