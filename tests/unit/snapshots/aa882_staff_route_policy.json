@@ -552,7 +552,7 @@
     "module": "api.routers.admin_pipeline"
   },
   "GET /admin/my-work/summary": {
-    "capability": "review.act|content.write|quality.write",
+    "capability": "review.act|content.write|quality.write|settings.approve|compliance.write|tenant.write|ops.write|ops.read",
     "module": "api.routers.admin_my_work"
   },
   "GET /admin/notifications": {

@@ -1,8 +1,9 @@
 // frontend/lib/myWork.ts
-// AA-1156 — My work (/admin/my-work): the content queues of the signed-in role, one tile per queue. The backend
-// (GET /admin/my-work/summary, api/routers/admin_my_work.py) answers the tiles the caller's role may work, each with
-// its count, the oldest item's time and the target page's filter; this file keeps the page path of each tile, builds
-// the link (path + that filter) and orders / labels nothing else. tests/unit/test_aa1156_my_work.py keeps the keys and
+// AA-1156 — My work (/admin/my-work): the landing page of every staff role (AA-1190), one tile per queue. The backend
+// (GET /admin/my-work/summary, api/routers/admin_my_work.py) answers the tiles the caller may act on, each with its
+// count, the oldest item's time, its band (group), whether it counts toward the total and the target page's filter;
+// this file keeps the page path of each tile, builds the link (path + that filter), groups the tiles into bands and
+// splits the tiles with work from the empty ones (collapsed into one line). tests/unit/test_aa1156_my_work.py keeps the keys and
 // capabilities below equal to the backend's TILES; lib/myWork.test.mjs checks every role that sees a tile may open
 // its target page (lib/rbac.ts PAGE_RULES).
 //
@@ -11,8 +12,13 @@
 import type { Capability } from "./rbac";
 
 export type MyWorkKey =
-  | "review_waiting" | "supply_drafts" | "supply_no_description" | "aa_content_drafts"
-  | "place_cards_to_review" | "compliance_holds";
+  | "settings_to_approve" | "compliance_exceptions_to_approve" | "erasure_to_approve"
+  | "review_waiting" | "supply_drafts" | "supply_no_description" | "aa_content_drafts" | "compliance_holds"
+  | "ops_open_problems" | "review_held_by_policy" | "place_cards_to_review";
+
+/** AA-1190: the bands of the page, in display order (the backend sends each tile's band). */
+export type MyWorkGroup = "approve" | "work" | "platform" | "watch";
+export const MY_WORK_GROUPS: readonly MyWorkGroup[] = ["approve", "work", "platform", "watch"];
 
 export interface MyWorkTileDef {
   key: MyWorkKey;
@@ -24,18 +30,27 @@ export interface MyWorkTileDef {
 
 /** Display order = the backend's TILES order. */
 export const MY_WORK_TILES: readonly MyWorkTileDef[] = [
+  { key: "settings_to_approve", capability: "settings.approve", path: "/admin/platform/settings" },
+  { key: "compliance_exceptions_to_approve", capability: "compliance.write", path: "/admin/platform/compliance" },
+  { key: "erasure_to_approve", capability: "tenant.write", path: "/admin/tenants/data-erasure" },
   { key: "review_waiting", capability: "review.act", path: "/admin/review" },
   { key: "supply_drafts", capability: "content.write", path: "/admin/supply-content" },
   { key: "supply_no_description", capability: "content.write", path: "/admin/supply-content" },
   { key: "aa_content_drafts", capability: "content.write", path: "/admin/aa-content" },
-  { key: "place_cards_to_review", capability: "quality.write", path: "/admin/places/cards" },
   { key: "compliance_holds", capability: "quality.write", path: "/admin/tenant-qa/compliance" },
+  { key: "ops_open_problems", capability: "ops.write", path: "/admin/overview" },
+  { key: "review_held_by_policy", capability: "review.act", path: "/admin/review" },
+  { key: "place_cards_to_review", capability: "quality.write", path: "/admin/places/cards" },
 ];
 
 /** One tile of GET /api/admin/my-work/summary. */
 export interface MyWorkTile {
   key: string;
   capability: string;
+  /** AA-1190: the band (approve, work, platform, watch); a build that does not know it draws the tile in "work". */
+  group?: string;
+  /** AA-1190: false for backlog and policy decisions (shown, never added to the total). */
+  counts_toward_total?: boolean;
   filter: Record<string, string>;
   /** false: its table is not there yet (a migration not applied); count and oldest_at are null. */
   available: boolean;
@@ -74,7 +89,32 @@ export function knownTiles(summary: MyWorkSummary | null | undefined): { tile: M
   return out;
 }
 
-/** Total of the counted tiles (unavailable tiles count 0). */
-export function totalWaiting(tiles: readonly Pick<MyWorkTile, "count">[]): number {
-  return tiles.reduce((n, t) => n + (t.count ?? 0), 0);
+/** Total of the counted tiles (unavailable tiles and the tiles that do not count toward the total count 0). */
+export function totalWaiting(tiles: readonly Pick<MyWorkTile, "count" | "counts_toward_total">[]): number {
+  return tiles.reduce((n, t) => n + (t.counts_toward_total === false ? 0 : (t.count ?? 0)), 0);
+}
+
+/** The band of a tile (an unknown or missing band reads as "work"). */
+export function groupOf(tile: Pick<MyWorkTile, "group">): MyWorkGroup {
+  return (MY_WORK_GROUPS as readonly string[]).includes(tile.group ?? "") ? (tile.group as MyWorkGroup) : "work";
+}
+
+/** A tile with something to show: an available count above zero, or not available (it says so). */
+export function hasWork(tile: Pick<MyWorkTile, "available" | "count">): boolean {
+  return !tile.available || (tile.count ?? 0) > 0;
+}
+
+export interface MyWorkBand<T> { group: MyWorkGroup; tiles: T[] }
+
+/** AA-1190: the bands of the page with the tiles that have work, in band order (a band with none is left out), and
+ *  the empty tiles of every band, collapsed into one line at the end ("Nothing waiting in N queues"). */
+export function splitBands<T extends { tile: Pick<MyWorkTile, "group" | "available" | "count"> }>(
+  rows: readonly T[],
+): { bands: MyWorkBand<T>[]; empty: T[] } {
+  const bands: MyWorkBand<T>[] = [];
+  for (const group of MY_WORK_GROUPS) {
+    const tiles = rows.filter((r) => groupOf(r.tile) === group && hasWork(r.tile));
+    if (tiles.length) bands.push({ group, tiles });
+  }
+  return { bands, empty: rows.filter((r) => !hasWork(r.tile)) };
 }

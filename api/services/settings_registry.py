@@ -46,6 +46,8 @@ logger = structlog.get_logger()
 
 RESOURCE = "setting"
 TWO_PERSON_KEY = "cis.settings.two_person_approval"
+# AA-1190: the app tabs whose proposals Platform › Settings lists from this table (the My work tile counts those)
+PAGE_APPS = ("cis", "tripplanner")
 APPS = ("cis", "tripplanner", "booking", "crm")
 NOT_MIGRATED = "The settings registry is not available yet: the database update (CIS 407) is not applied"
 REASON_MIN = 20  # technical-constant: mirrors the CHECK of CIS 407 (one break-glass minimum for the platform)
@@ -96,8 +98,10 @@ _LATEST_SQL = f"""
      WHERE v.key LIKE $1 AND v.tenant_id IS NULL AND v.status IN ('approved', 'superseded')
      ORDER BY v.key, v.decided_at DESC
 """
-_OPEN_SQL = f"SELECT {_ROW_COLS} FROM shared.setting_value v WHERE v.key LIKE $1 AND v.status = 'proposed' " \
-            "ORDER BY v.proposed_at"
+# The open proposals the page lists (one WHERE for the list and the My work tile, AA-1190).
+OPEN_WHERE = "v.key LIKE $1 AND v.status = 'proposed'"
+_OPEN_SQL = f"SELECT {_ROW_COLS} FROM shared.setting_value v WHERE {OPEN_WHERE} ORDER BY v.proposed_at"
+OPEN_SUMMARY_SQL = f"SELECT v.key, v.proposed_by, v.proposed_at FROM shared.setting_value v WHERE {OPEN_WHERE}"
 # AA-1096 (S280): the approved tenant values in force of every tenant-scoped key, one row per (key, tenant): the page
 # counts them on the row and names each tenant's value (the reader's own resolution order: latest in force wins).
 _TENANT_SQL = """
@@ -230,6 +234,33 @@ async def list_settings(pool: Any, *, app: Optional[str] = "cis", area: Optional
     areas = sorted({d.area for d in defs})
     return {"app": app, "areas": areas, "settings": rows, "two_person_approval": bool(settings.get(TWO_PERSON_KEY)),
             "reader_error": settings.READER.last_error}
+
+
+async def open_proposals_summary(conn: Any, *, viewer: Optional[str] = None) -> dict:
+    """AA-1190 My work: the open proposals a checker may decide, by app tab of Platform › Settings (the page lists
+    the same rows: ``OPEN_WHERE``, keys of the compiled defaults only). While two-person approval is on, ``viewer``'s
+    own proposals are left out (the approve route refuses them: second_person_required); while it is off the
+    administrator may approve their own (recorded self-approval), so they count. ``viewer`` = ``admin:<id>`` of a
+    verified sign-in, None for any other caller (nothing is left out). One read of a table of a few dozen rows."""
+    rows = await conn.fetch(OPEN_SUMMARY_SQL, "%")
+    skip_own = viewer is not None and rows and await two_person_on(conn)
+    by_app: dict[str, int] = {}
+    oldest: dict[str, datetime] = {}
+    for r in rows:
+        try:
+            app = settings.definition(r["key"]).app
+        except KeyError:            # not a registry key: the page does not show it either
+            continue
+        if app not in PAGE_APPS:    # the Booking tab links to Booking's own page; the CRM keeps its own registry
+            continue
+        if skip_own and r["proposed_by"] == viewer:
+            continue
+        by_app[app] = by_app.get(app, 0) + 1
+        if app not in oldest or r["proposed_at"] < oldest[app]:
+            oldest[app] = r["proposed_at"]
+    first = min(oldest, key=lambda a: (oldest[a], a)) if oldest else None
+    return {"count": sum(by_app.values()), "oldest_at": oldest.get(first) if first else None, "by_app": by_app,
+            "app": first}
 
 
 async def history(pool: Any, key: str, tenant_id: Optional[str] = None) -> dict:

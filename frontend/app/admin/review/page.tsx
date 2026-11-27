@@ -50,7 +50,9 @@ import {
   codeSeverity,
   mapRow,
   BLOCK_STYLE,
+  NO_POLICY_FILTER,
   POLICY_FILTER,
+  policyFromSearch,
   policyEvidenceText,
   type ReviewItem,
 } from "./reviewModel";
@@ -134,7 +136,10 @@ function ReviewQueueInner() {
   const [filterStatus, setFilterStatusRaw] = useState("pending");
   const [filterCountry, setCountryRaw] = useState("all");
   const [filterScore, setScoreRaw] = useState("all");
-  const [filterPolicy, setPolicyRaw] = useState("all");
+  // AA-1190: a link may open the queue filtered by policy (?policy=none from My work's "ready to review" tile,
+  // ?policy=elephant_riding from "Held by policy"); read once as a lazy initial value (client-only), like ?tour_id=.
+  const [filterPolicy, setPolicyRaw] = useState(() =>
+    typeof window === "undefined" ? "all" : policyFromSearch(window.location.search));
   // AA-739: server-side paging. Any filter change goes back to the first page.
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(25);
@@ -578,6 +583,7 @@ function ReviewQueueInner() {
               aria-label={t("policyBadge")}>
               <option value="all">{t("allReviews")}</option>
               <option value={POLICY_FILTER}>{t("policyFilter", policyCount)}</option>
+              <option value={NO_POLICY_FILTER}>{t("noPolicyFilter")}</option>
             </Select>
             <Button variant="ghost" size="sm" onClick={() => refetch()}>
               <RotateCcw size={12} style={{ animation: isFetching ? "spin .8s linear infinite" : undefined }} /> {t("refresh")}

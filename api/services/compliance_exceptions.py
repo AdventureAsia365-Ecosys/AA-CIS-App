@@ -93,6 +93,10 @@ SQL_ONE = f"SELECT {SQL_COLS} FROM compliance.exception WHERE exception_id = $1"
 SQL_ACTIVE = (f"SELECT {SQL_COLS} FROM compliance.exception WHERE status = 'approved' AND expires_on >= $1 "
               "ORDER BY expires_on")
 LIST_LIMIT = 500   # technical-constant: the page lists every exception; a few dozen a year
+# AA-1190 My work: the open proposals (the Exceptions tab's "proposed" count) a checker may decide; $1 = the viewer's
+# own proposals to leave out (two-person approval on), NULL = none left out.
+PROPOSED_SUMMARY_SQL = ("SELECT count(*) AS n, min(proposed_at) AS oldest FROM compliance.exception "
+                        "WHERE status = 'proposed' AND ($1::text IS NULL OR proposed_by <> $1)")
 
 
 async def max_days() -> int:
@@ -106,6 +110,14 @@ async def list_exceptions(pool: Any, now: Optional[datetime] = None) -> dict:
     counts = {s: sum(1 for r in rows if r["state"] == s) for s in (*STATUSES, "expired")}
     return {"exceptions": rows, "counts": counts, "max_days": await max_days(),
             "two_person_approval": await _two_person(pool)}
+
+
+async def proposed_summary(conn: Any, *, viewer: Optional[str] = None) -> dict:
+    """AA-1190 My work: the proposed exceptions ``viewer`` may approve. Their own count only while two-person approval
+    is off (a recorded self-approval, as :func:`decide`); ``viewer`` None (not a verified sign-in) leaves none out."""
+    own = viewer if viewer is not None and await _two_person(conn) else None
+    row = await conn.fetchrow(PROPOSED_SUMMARY_SQL, own)
+    return {"count": int(row["n"] or 0), "oldest_at": row["oldest"]}
 
 
 async def active_by_subject(conn: Any, now: Optional[datetime] = None) -> dict[tuple[str, str], dict]:

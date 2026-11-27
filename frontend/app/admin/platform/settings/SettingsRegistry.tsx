@@ -46,7 +46,7 @@ import { useAdminIdentity } from "../../../_kit/useAdminIdentity";
 import { BOOKING_ADMIN_URL } from "@/lib/apps";
 import {
   APPS, badgesOf, boundsText, formatValue, lastChangeState, loadProblem, openProposal, registryPath, scheduledOf,
-  hasScopeChoice, nextScheduleDelay, valuesInForce, type BadgeKey, type RegistryResp, type SettingApp,
+  hasScopeChoice, nextScheduleDelay, openProposalCount, valuesInForce, withOpenProposal, type BadgeKey, type RegistryResp, type SettingApp,
   type SettingItem, type ValueOf,
 } from "@/lib/settingsRegistry";
 import { SETTINGS } from "./messages";
@@ -220,7 +220,9 @@ function RegistryState({ q, crmReadOnly, empty }: {
   );
 }
 
-function AppSettings({ app, initialArea, initialQuery }: { app: SettingApp; initialArea: string; initialQuery: string }) {
+function AppSettings({ app, initialArea, initialQuery, initialPending = false }: {
+  app: SettingApp; initialArea: string; initialQuery: string; initialPending?: boolean;
+}) {
   const qc = useQueryClient();
   const { isAdmin } = useAdminIdentity();
   const { words } = useSettingWords();
@@ -228,6 +230,7 @@ function AppSettings({ app, initialArea, initialQuery }: { app: SettingApp; init
     enabled: app !== "booking" });
   const items = useMemo(() => q.data?.settings ?? [], [q.data]);
   const valueOf = useMemo(() => valuesInForce(items), [items]);
+  const pending = usePendingOnly(items, initialPending);
   // the CRM checks its own group (crm-platform-admin writes): offer the writes only when it says this person may
   const crmReadOnly = app === "crm" && q.data?.can_write === false;
   const canWrite = isAdmin && !crmReadOnly;
@@ -256,7 +259,9 @@ function AppSettings({ app, initialArea, initialQuery }: { app: SettingApp; init
   return (
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 12 }}>
       <RegistryState q={q} crmReadOnly={isAdmin && crmReadOnly} empty={items.length === 0} />
-      <SettingsTable app={app} settings={items} initialArea={initialArea} initialQuery={initialQuery} columns={columns} />
+      <PendingOnlyNotice pending={pending} items={items} />
+      <SettingsTable app={app} settings={pending.shown} initialArea={initialArea} initialQuery={initialQuery}
+        columns={columns} />
       {editing && (
         <ProposeModal item={editing} twoPerson={!!q.data?.two_person_approval} canWrite={canWrite} valueOf={valueOf}
           onClose={() => setEditing(null)} onDone={() => { setEditing(null); refresh(); }} />
@@ -269,6 +274,27 @@ function AppSettings({ app, initialArea, initialQuery }: { app: SettingApp; init
   );
 }
 
+/** AA-1190: `?pending=1` (the My work tile "Settings to approve") shows only the settings with an open proposal, until
+ *  "Show every setting". */
+function usePendingOnly(items: SettingItem[], initial: boolean) {
+  const [on, setOn] = useState(initial);
+  const shown = useMemo(() => (on ? withOpenProposal(items) : items), [items, on]);
+  return { on, shown, clear: () => setOn(false) };
+}
+
+function PendingOnlyNotice({ pending, items }: { pending: ReturnType<typeof usePendingOnly>; items: SettingItem[] }) {
+  const t = useSettingsT();
+  if (!pending.on) return null;
+  return (
+    <span data-testid="settings-pending-only" style={{ display: "inline-flex", gap: 10, alignItems: "center",
+      flexWrap: "wrap" }}>
+      <Badge tone="info">{t("pendingOnly", openProposalCount(items))}</Badge>
+      <Button size="sm" variant="ghost" onClick={pending.clear} testId="settings-pending-all">
+        {t("pendingShowAll")}</Button>
+    </span>
+  );
+}
+
 /** AA-1106: the app tab and area asked by `?app=&area=` (an unknown app opens CIS); picking another tab drops the
  *  asked area. S280: `&key=<setting key>` opens the app with the search box filled with that key. */
 function useAskedTab() {
@@ -278,13 +304,14 @@ function useAskedTab() {
     (APPS as readonly string[]).includes(asked ?? "") ? (asked as SettingApp) : "cis");
   const [askedArea, setAskedArea] = useState(params.get("area") ?? "");
   const [askedKey, setAskedKey] = useState(params.get("key") ?? "");
-  const pick = (k: string) => { setApp(k as SettingApp); setAskedArea(""); setAskedKey(""); };
-  return { app, askedArea, askedKey, pick };
+  const [askedPending, setAskedPending] = useState(params.get("pending") === "1");   // AA-1190
+  const pick = (k: string) => { setApp(k as SettingApp); setAskedArea(""); setAskedKey(""); setAskedPending(false); };
+  return { app, askedArea, askedKey, askedPending, pick };
 }
 
 export default function SettingsRegistry() {
   const t = useSettingsT();
-  const { app, askedArea, askedKey, pick } = useAskedTab();
+  const { app, askedArea, askedKey, askedPending, pick } = useAskedTab();
   return (
     <PageFrame>
       <PageHeader
@@ -295,7 +322,7 @@ export default function SettingsRegistry() {
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 14 }}>
         <Tabs ariaLabel={t("appsLabel")} active={app} onChange={pick} testId="settings-apps"
           tabs={APPS.map((a) => ({ key: a, label: t(APP_LABEL[a]) }))} />
-        <AppSettings key={app} app={app} initialArea={askedArea} initialQuery={askedKey} />
+        <AppSettings key={app} app={app} initialArea={askedArea} initialQuery={askedKey} initialPending={askedPending} />
       </div>
     </PageFrame>
   );

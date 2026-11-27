@@ -1,4 +1,6 @@
 """AA-1156 — My work on real Postgres: each tile's count equals the total its target page lists for the same filter.
+AA-1190: the approval tiles (Settings proposals, compliance exceptions, data erasure), the platform tile, the Review
+Queue split into ready / held by policy.
 
 The fixtures add waiting and not-waiting rows to every queue (Review Queue, supply entities, AA content, place cards,
 compliance flags); the test then asks GET /admin/my-work/summary (as admin, so every tile) and each target page's own
@@ -26,6 +28,10 @@ from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 from api.core.staff_authz import principal_from_role  # noqa: E402
 from api.routers import admin_content_quality, admin_my_work, admin_pipeline  # noqa: E402
 from api.routers import admin_tenant_compliance as atc  # noqa: E402
+from api.services import compliance_exceptions, settings_registry  # noqa: E402
+from services.quality import policy_review  # noqa: E402
+from services.tenant_erasure import store as erasure_store  # noqa: E402
+from shared import settings as shared_settings  # noqa: E402
 from services.aa_content import store  # noqa: E402
 from services.supply_content import review as supply  # noqa: E402
 
@@ -60,10 +66,10 @@ async def conn():
 
 
 def _req(conn):
-    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(pool=_OneConnPool(conn))))
+    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(pool=_OneConnPool(conn))), headers={})
 
 
-async def _review_row(conn, status: str, created_at=None) -> uuid.UUID:
+async def _review_row(conn, status: str, created_at=None, *, policy: bool = False) -> uuid.UUID:
     tour = uuid.uuid4()
     await conn.execute(
         "INSERT INTO silver_aa_internal.raw_tours (tour_id, tenant_id, batch_id, src_name, country, duration, "
@@ -77,6 +83,9 @@ async def _review_row(conn, status: str, created_at=None) -> uuid.UUID:
         "INSERT INTO silver_aa_internal.review_queue (tour_id, generated_content_id, tenant_id, failure_summary, "
         "score_overall, review_status, created_at) VALUES ($1, $2, $3, 'LOW_SCORE', 4.0, $4, COALESCE($5, now()))",
         tour, gc, MASTER, status, created_at)
+    if policy:   # AA-1049: an elephant-riding policy review (the marker the page's filter finds)
+        await conn.execute("UPDATE silver_aa_internal.review_queue SET escalate_detail = $2::jsonb WHERE tour_id = $1",
+                           tour, json.dumps(policy_review.detail([{"where": "highlights", "field": "highlights"}])))
     return tour
 
 
@@ -135,12 +144,56 @@ async def _flag(conn, state: str):
         datetime.now(timezone.utc) if resolved else None)
 
 
+CIS_KEY = next(k for k in shared_settings.READER.keys() if shared_settings.definition(k).app == "cis")
+
+
+async def _proposal(conn, *, by: str = "admin:00000000-0000-0000-0000-0000000000aa", key: str = CIS_KEY,
+                    tenant: str | None = None):
+    version = await conn.fetchval("SELECT coalesce(max(version), 0) + 1 FROM shared.setting_value WHERE key = $1 "
+                                  "AND tenant_id IS NOT DISTINCT FROM $2::uuid", key, tenant)
+    await conn.execute(
+        "INSERT INTO shared.setting_value (key, tenant_id, value, version, proposed_by, reason) "
+        "VALUES ($1, $2::uuid, $5::jsonb, $3, $4, 'An invented reason long enough for the check.')",
+        key, tenant, version, by, json.dumps(shared_settings.definition(key).default_value))
+
+
+async def _exception(conn, status: str, *, by: str = "admin:00000000-0000-0000-0000-0000000000aa"):
+    decided = status != "proposed"
+    await conn.execute(
+        "INSERT INTO compliance.exception (subject_kind, subject_ref, title, reason, risk_level, status, proposed_by, "
+        "expires_on, decided_by, decided_at) VALUES ('check', $1, 'An invented risk', 'An invented reason long "
+        "enough for the check.', 'low', $2, $3, current_date + 30, $4, $5)",
+        f"zz-{uuid.uuid4().hex[:8]}", status, by, "admin:someone-else" if decided else None,
+        datetime.now(timezone.utc) if decided else None)
+
+
+async def _erasure(conn, phase: str):
+    tid = str(uuid.uuid4())
+    await conn.execute(
+        "INSERT INTO shared.tenants (tenant_id, name, slug, plan_tier, posts_per_week, rate_limit_rpm, is_active, "
+        "is_canary) VALUES ($1::uuid, 'Lanternfall Voyages synthetic', $2, 'starter'::plan_tier_enum, 3, 60, false, "
+        "true)", tid, f"zz1190-{tid[:12]}")
+    req = await erasure_store.create_request(conn, tid, opened_at=datetime.now(timezone.utc), mode="drill",
+                                             actor="test:AA-1190")
+    if phase != "dry_run":
+        assert await erasure_store.move(conn, req["request_id"], ["dry_run"], phase, combined_fingerprint="a" * 64,
+                                        fingerprint_at=datetime.now(timezone.utc))
+
+
+async def _ops_event(conn, kind: str, *, ended: bool = False, severity: str = "sev2"):
+    await conn.execute(
+        "INSERT INTO acp_shared.ops_event (occurred_at, ended_at, kind, severity, app, subject, title, details, "
+        "dedupe_key) VALUES (now(), $1, $2, $3, 'cis', 'invented-service', 'An invented problem', '{}'::jsonb, $4)",
+        datetime.now(timezone.utc) if ended else None, kind, severity, f"zz1190:{uuid.uuid4().hex}")
+
+
 async def _page_totals(conn, monkeypatch) -> dict:
     """The total each target page shows for the tile's filter, read through the page's own list route."""
     monkeypatch.setattr(admin_pipeline, "verify_admin_secret", lambda _s: None)
     monkeypatch.setattr(admin_content_quality, "verify_admin_secret", lambda _s: None)
     req = _req(conn)
-    review = await admin_pipeline.admin_review_queue(req, x_admin_secret="x", page_size=1)   # page default: pending
+    review = await admin_pipeline.admin_review_queue(req, x_admin_secret="x", page_size=1, policy="none")
+    held = await admin_pipeline.admin_review_queue(req, x_admin_secret="x", page_size=1, policy="elephant_riding")
     supply_drafts = await supply.list_entities(conn, has_draft=True, limit=1, offset=0)
     supply_none = await supply.list_entities(conn, status="draft", limit=1, offset=0)
     aa = await store.list_items(conn, kind=None, locale=None, status="draft", country=None, limit=1, offset=0)
@@ -149,7 +202,15 @@ async def _page_totals(conn, monkeypatch) -> dict:
     # Compliance: list_flags' own total query with the page's default (state open, every kind and tenant). Its row
     # query joins acp_shared.content_piece columns this test DB's replay does not create, so the rows are not read.
     flags = {"total": int(await conn.fetchval(atc.COUNT_SQL, "open", None, None))}
-    return {"review_waiting": review["pagination"]["total"], "supply_drafts": supply_drafts["total"],
+    # Settings: the open proposals the page lists on the CIS tab (two-person approval off: nothing left out)
+    registry = await settings_registry.list_settings(req.app.state.pool, app="cis")
+    exceptions = await compliance_exceptions.list_exceptions(req.app.state.pool)
+    erasures = await erasure_store.list_requests(conn, limit=200)
+    return {"settings_to_approve": sum(len(i["proposals"]) for i in registry["settings"]),
+            "compliance_exceptions_to_approve": exceptions["counts"]["proposed"],
+            "erasure_to_approve": sum(1 for r in erasures if r["phase"] == "awaiting_approval"),
+            "review_held_by_policy": held["pagination"]["total"],
+            "review_waiting": review["pagination"]["total"], "supply_drafts": supply_drafts["total"],
             "supply_no_description": supply_none["total"], "aa_content_drafts": aa["total"],
             "place_cards_to_review": cards["total"], "compliance_holds": flags["total"]}
 
@@ -176,14 +237,59 @@ async def test_every_tile_counts_what_its_target_page_lists(conn, monkeypatch):
         await _card(conn, status)
     for state in ("open", "resolved"):
         await _flag(conn, state)
+    await _review_row(conn, "pending", policy=True)
+    await _proposal(conn)
+    for status in ("proposed", "proposed", "approved"):
+        await _exception(conn, status)
+    for phase in ("awaiting_approval", "dry_run"):
+        await _erasure(conn, phase)
+    await _ops_event(conn, "alarm")
+    await _ops_event(conn, "service_down", ended=True)      # closed: not open
+    await _ops_event(conn, "deploy", severity="info")        # a deploy is not a problem
 
     tiles = await _summary(conn, "admin")
     assert list(tiles) == [t.key for t in admin_my_work.TILES]
     assert all(t.available for t in tiles.values())
-    assert {k: t.count for k, t in tiles.items()} == await _page_totals(conn, monkeypatch)
+    counts = {k: t.count for k, t in tiles.items() if k != "ops_open_problems"}
+    assert counts == await _page_totals(conn, monkeypatch)
     added = {"review_waiting": 2, "supply_drafts": 3, "supply_no_description": 2, "aa_content_drafts": 1,
-             "place_cards_to_review": 2, "compliance_holds": 1}
+             "place_cards_to_review": 2, "compliance_holds": 1, "review_held_by_policy": 1,
+             "settings_to_approve": 1, "compliance_exceptions_to_approve": 2, "erasure_to_approve": 1,
+             "ops_open_problems": 1}
     assert {k: tiles[k].count - before[k] for k in added} == added
+    assert tiles["settings_to_approve"].filter == {"pending": "1", "app": "cis"}
+    assert not tiles["place_cards_to_review"].counts_toward_total
+    assert not tiles["review_held_by_policy"].counts_toward_total
+
+
+@pytest.mark.asyncio
+async def test_own_proposals_leave_the_approval_tiles_while_two_person_approval_is_on(conn, monkeypatch):
+    """Maker-checker: with two-person approval on, the approve routes refuse the proposer, so the tiles leave their
+    own proposals out; with it off (a recorded self-approval) they count."""
+    me = "admin:00000000-0000-0000-0000-0000000000bb"
+    await _proposal(conn, by=me)
+    await _exception(conn, "proposed", by=me)
+    viewer = admin_my_work.Viewer(role="admin", perms=frozenset(), actor=me)
+
+    async def on(_conn):
+        return True
+
+    async def off(_conn):
+        return False
+
+    monkeypatch.setattr(settings_registry, "two_person_on", off)
+    assert (await admin_my_work._settings_to_approve(conn, viewer))["count"] >= 1
+    assert (await admin_my_work._compliance_exceptions(conn, viewer))["count"] >= 1
+    monkeypatch.setattr(settings_registry, "two_person_on", on)
+    open_others = await conn.fetchval("SELECT count(*) FROM compliance.exception WHERE status = 'proposed' "
+                                      "AND proposed_by <> $1", me)
+    assert (await admin_my_work._compliance_exceptions(conn, viewer))["count"] == open_others
+    settings_tile = await admin_my_work._settings_to_approve(conn, viewer)
+    mine = await conn.fetchval("SELECT count(*) FROM shared.setting_value WHERE status = 'proposed' AND "
+                               "proposed_by = $1", me)
+    assert mine == 1 and settings_tile["by_app"].get("cis", 0) == await conn.fetchval(
+        "SELECT count(*) FROM shared.setting_value WHERE status = 'proposed' AND proposed_by <> $1 AND key = ANY($2)",
+        me, [k for k in shared_settings.READER.keys() if shared_settings.definition(k).app == "cis"])
 
 
 @pytest.mark.asyncio
@@ -214,5 +320,5 @@ async def test_a_trashed_source_leaves_the_review_tile_like_the_page(conn, monke
 @pytest.mark.asyncio
 async def test_a_content_role_gets_only_its_tiles(conn):
     assert list(await _summary(conn, "content")) == [
-        "review_waiting", "supply_drafts", "supply_no_description", "aa_content_drafts"]
-    assert list(await _summary(conn, "tenant_qa")) == ["place_cards_to_review", "compliance_holds"]
+        "review_waiting", "supply_drafts", "supply_no_description", "aa_content_drafts", "review_held_by_policy"]
+    assert list(await _summary(conn, "tenant_qa")) == ["compliance_holds", "place_cards_to_review"]

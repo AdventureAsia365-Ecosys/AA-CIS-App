@@ -27,7 +27,9 @@ export type ReviewQueueQuery = {
   country?: string; // "all" = no filter
   score?: string; // all | critical | low | ok
   tourId?: string | null;
-  policy?: string; // "all" = no filter; "elephant_riding" = only the elephant-riding policy reviews (AA-1049)
+  // "all" = no filter; "elephant_riding" = only the elephant-riding policy reviews (AA-1049); "none" = without them
+  // (AA-1190)
+  policy?: string;
 };
 
 // AA-739: paging and filters run on the server (the page used to filter a 20-row slice).

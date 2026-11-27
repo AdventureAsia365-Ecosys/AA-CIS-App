@@ -72,8 +72,8 @@ async function login(page: Page) {
   await page.fill('input[type="text"]', adminUsername());
   await page.fill('input[type="password"]', adminPassword());
   await page.click('button:has-text("Login")');
-  // /admin/dashboard redirects to the role's landing page (admin: Overview).
-  await page.waitForURL(/\/admin\/(dashboard|overview)/, { timeout: 15000 });
+  // /admin/dashboard redirects to the role's landing page (admin: My work since AA-1190).
+  await page.waitForURL(/\/admin\/(dashboard|overview|my-work)/, { timeout: 15000 });
 }
 
 for (const vp of [{ width: 1440, height: 900 }, { width: 400, height: 860 }]) {

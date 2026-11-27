@@ -16,10 +16,11 @@ import { useReviewPendingCount } from "./useReviewPendingCount";
 import { useAdminIdentity } from "./useAdminIdentity";
 import { canSeePage } from "@/lib/rbac";
 
-// AA-1156: My work for the roles that land there; a role that may open Overview (admin) keeps Overview in its place.
+// AA-1156 / AA-1190: My work first for every role that lands there (admin included); Overview only for a role that
+// may open Overview but not My work (none of the built-in roles today: admin reaches it from the platform tile).
 const ITEMS = [
-  { href: "/admin/overview", label: "Overview", icon: Gauge },
-  { href: "/admin/my-work", label: "My work", icon: Inbox, unlessCanSee: "/admin/overview" },
+  { href: "/admin/my-work", label: "My work", icon: Inbox },
+  { href: "/admin/overview", label: "Overview", icon: Gauge, unlessCanSee: "/admin/my-work" },
   { href: "/admin/review", label: "Review", icon: ClipboardList, badge: true },
   { href: "/admin/master-content", label: "Master", icon: Library },
   { href: "/admin/jobs", label: "Jobs", icon: ListChecks },

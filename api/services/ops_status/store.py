@@ -39,6 +39,20 @@ EVENTS_SQL = """
 """
 
 
+# AA-1190 My work: the problems the sampler sees open now (an alarm firing, a service below its desired count, a failed
+# rollout; a deploy is not a problem), the "open" events of the status page's timeline (index ops_event_open_idx).
+OPEN_PROBLEM_KINDS = ("alarm", "service_down", "rollout_failed")
+OPEN_PROBLEMS_SQL = """
+    SELECT count(*) AS n, min(occurred_at) AS oldest FROM acp_shared.ops_event
+     WHERE ended_at IS NULL AND kind = ANY($1::text[]) AND severity IN ('sev1', 'sev2', 'sev3')
+"""
+
+
+async def open_problems_summary(conn: Any) -> dict:
+    row = await conn.fetchrow(OPEN_PROBLEMS_SQL, list(OPEN_PROBLEM_KINDS))
+    return {"count": int(row["n"] or 0), "oldest_at": row["oldest"]}
+
+
 def _json(v: Any) -> dict:
     if isinstance(v, str):
         try:

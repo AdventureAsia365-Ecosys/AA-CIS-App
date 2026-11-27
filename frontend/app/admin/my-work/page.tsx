@@ -1,23 +1,29 @@
 "use client";
-// app/admin/my-work/page.tsx — AA-1156: My work, the landing page of the content roles (lib/rbac.ts landingPage; admin
-// lands on Overview and finds My work in the Home group). One band, Content: a tile per work queue the signed-in role
-// may work (shown by capability, never by person: the backend sends only the tiles of the caller's capabilities). Each
-// tile shows the count, how long the oldest item has waited and opens its target page with the same filter the count
-// used (lib/myWork.ts tileHref), so the two numbers match.
+// app/admin/my-work/page.tsx — AA-1156: My work. AA-1190 (slice 1): the landing page of every staff role (lib/rbac.ts
+// landingPage, admin included). The tiles the signed-in person may act on (shown by capability, never by person: the
+// backend sends only those), in bands: Needs your approval, Content work, Platform, Keep an eye on. A tile with work
+// shows its count and how long the oldest item has waited and opens its target page with the same filter the count
+// used (lib/myWork.ts tileHref), so the two numbers match. Tiles with nothing waiting are folded into one line at the
+// end ("Nothing waiting in N queues", opens to show them); "Keep an eye on" (backlog, policy decisions) is never in
+// the total.
 //
 // API: GET /api/admin/my-work/summary (BFF → api/routers/admin_my_work.py). Loaded on open and on Refresh: no polling.
 // "Booking: My work" opens the Booking staff dashboard (lib/apps.ts appPageUrl, same WORKFORCE sign-in) for the content
 // roles; Booking checks its own grant (a person without one sees Booking's refusal).
 
+import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronRight, ExternalLink, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import {
   Button, EmptyState, ErrorState, K, KpiTile, PageFrame, PageHeader, Section, apiGet, relativeTime, sans,
   useAdminIdentity, useFormat, useLang, useT,
 } from "../../_kit";
 import { appPageUrl } from "@/lib/apps";
-import { MY_WORK_API, knownTiles, tileHref, totalWaiting, type MyWorkSummary, type MyWorkTile, type MyWorkTileDef } from "@/lib/myWork";
+import {
+  MY_WORK_API, knownTiles, splitBands, tileHref, totalWaiting, type MyWorkGroup, type MyWorkSummary, type MyWorkTile,
+  type MyWorkTileDef,
+} from "@/lib/myWork";
 import { can } from "@/lib/rbac";
 import { MY_WORK } from "./messages";
 
@@ -33,7 +39,7 @@ export default function MyWorkPage() {
   let body: React.ReactNode;
   if (q.isError) body = <ErrorState message={(q.error as Error)?.message || t("loadError")} onRetry={refresh} />;
   else if (q.data && tiles.length === 0) body = <EmptyState title={t("nothing")} description={t("nothingDesc")} />;
-  else body = <ContentBand data={q.data} tiles={tiles} />;
+  else body = <Bands data={q.data} tiles={tiles} />;
 
   return (
     <PageFrame>
@@ -66,25 +72,56 @@ function HeaderActions({ fetching, onRefresh }: { fetching: boolean; onRefresh: 
   );
 }
 
-/** The Content band: the tiles (skeletons while loading) and a line with the total and when it was counted. */
-function ContentBand({ data, tiles }: { data?: MyWorkSummary; tiles: ReturnType<typeof knownTiles> }) {
+const BAND_TITLE: Record<MyWorkGroup, "bandApprove" | "bandWork" | "bandPlatform" | "bandWatch"> = {
+  approve: "bandApprove", work: "bandWork", platform: "bandPlatform", watch: "bandWatch",
+};
+const BAND_DESC: Record<MyWorkGroup, "bandApproveDesc" | "bandWorkDesc" | "bandPlatformDesc" | "bandWatchDesc"> = {
+  approve: "bandApproveDesc", work: "bandWorkDesc", platform: "bandPlatformDesc", watch: "bandWatchDesc",
+};
+
+/** The summary line, the bands with work, then the empty queues folded into one line (skeletons while loading). */
+function Bands({ data, tiles }: { data?: MyWorkSummary; tiles: ReturnType<typeof knownTiles> }) {
   const t = useT(MY_WORK);
   const { formatDateTime } = useFormat();
+  const [showEmpty, setShowEmpty] = useState(false);
+  if (!data) {
+    return (
+      <Section title={t("title")} description={t("contentBandDesc")} testId="my-work-loading">
+        <div style={grid}>{[0, 1, 2, 3].map((i) => <KpiTile key={i} label="" value={undefined} />)}</div>
+      </Section>
+    );
+  }
   const total = totalWaiting(tiles.map((x) => x.tile));
   const summary = total ? t("totalWaiting", total) : t("allClear");
+  const now = Date.parse(data.generated_at);
+  const { bands, empty } = splitBands(tiles);
   return (
-    <Section
-      title={t("contentBand")}
-      description={data ? `${summary} ${t("updated", formatDateTime(data.generated_at))}` : t("contentBandDesc")}
-      testId="my-work-content"
-    >
-      <div style={grid}>
-        {data
-          ? tiles.map(({ tile, def }) => (
-            <Tile key={tile.key} tile={tile} def={def} now={Date.parse(data.generated_at)} />))
-          : [0, 1, 2, 3].map((i) => <KpiTile key={i} label="" value={undefined} />)}
-      </div>
-    </Section>
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 16 }}>
+      <p data-testid="my-work-total" style={summaryLine}>
+        {summary} {t("updated", formatDateTime(data.generated_at))}
+      </p>
+      {bands.map((band) => (
+        <Section key={band.group} title={t(BAND_TITLE[band.group])} description={t(BAND_DESC[band.group])}
+          testId={`my-work-band-${band.group}`}>
+          <div style={grid}>
+            {band.tiles.map(({ tile, def }) => <Tile key={tile.key} tile={tile} def={def} now={now} />)}
+          </div>
+        </Section>
+      ))}
+      {empty.length > 0 && (
+        <Section testId="my-work-empty">
+          <Button variant="ghost" size="sm" onClick={() => setShowEmpty((v) => !v)} aria-expanded={showEmpty}
+            testId="my-work-empty-toggle">
+            {showEmpty ? <ChevronDown size={13} /> : <ChevronRight size={13} />} {t("emptyQueues", empty.length)}
+          </Button>
+          {showEmpty && (
+            <div style={{ ...grid, marginTop: 12 }}>
+              {empty.map(({ tile, def }) => <Tile key={tile.key} tile={tile} def={def} now={now} />)}
+            </div>
+          )}
+        </Section>
+      )}
+    </div>
   );
 }
 
@@ -106,7 +143,7 @@ function Tile({ tile, def, now }: { tile: MyWorkTile; def: MyWorkTileDef; now: n
       <KpiTile
         label={label}
         value={tile.available ? (tile.count ?? 0) : null}
-        valueTone={tile.available && tile.count ? "warning" : undefined}
+        valueTone={tile.available && tile.count && tile.counts_toward_total !== false ? "warning" : undefined}
         hint={hint}
         style={{ height: "100%" }}
       />
@@ -117,6 +154,8 @@ function Tile({ tile, def, now }: { tile: MyWorkTile; def: MyWorkTileDef; now: n
 const grid: React.CSSProperties = {
   display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 220px), 1fr))", minWidth: 0,
 };
+
+const summaryLine: React.CSSProperties = { margin: 0, fontSize: 13, color: K.muted, fontFamily: sans };
 
 const bookingLink: React.CSSProperties = {
   display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12.5, fontWeight: 600,

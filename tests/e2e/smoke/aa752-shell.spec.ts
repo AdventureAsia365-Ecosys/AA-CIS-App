@@ -42,8 +42,8 @@ async function adminPage(browser: import('@playwright/test').Browser) {
 test.describe('AA-752 — admin shell', { tag: '@staff' }, () => {
   test('(a) sidebar logo links to /admin/overview', async ({ browser }) => {
     const { context, page } = await adminPage(browser);
-    // The logo pushes /admin/overview; a viewer is redirected to its landing page (/admin/review), so it
-    // starts elsewhere to see the move.
+    // AA-1190: the logo pushes the role's landing page (lib/rbac.ts landingPage), so it starts elsewhere to see
+    // the move.
     const target = landingPathFor(smokeRole());
     try {
       await page.goto(isAdminRun() ? '/admin/jobs' : '/admin/master-content', { waitUntil: 'domcontentloaded' });
