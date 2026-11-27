@@ -11,6 +11,11 @@
 - **A0 note**: tours with an empty itinerary are skipped at upload and flagged "No Itinerary"
   (AA-604). As of the 16/09 data reset: 793 raw tours kept, 30 empty-itinerary rows trashed,
   763 ready for S1.
+- **A0 match**: which existing tour an uploaded row is (AA-1187, `services/ingestion/tour_match.py`, one function
+  for the Upload preview and Commit): same Name (case and outer spaces ignored) and same Provider, else same Name and
+  same country (or a country unknown on one side); the same Name in another country is a new tour. A match goes to
+  Duplicate Review (Merge, Create a new tour, Bypass, Restore), so a Provider change never makes a second tour by
+  itself. A row with an empty Itineraries is skipped even when it matches; the preview says so for that row.
 - **A1 — Generic Rewrite (S1)**: the admin S1 pipeline rewrites A0's raw content into
   `generated_content` with a neutral, brand-agnostic voice (see AA-535) — the shared base every
   tenant later re-voices for their own brand. Flow: generate → validate → judge →

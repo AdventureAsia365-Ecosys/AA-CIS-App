@@ -10,6 +10,7 @@ import structlog
 from urllib.parse import unquote_plus
 
 from .excel_parser import ExcelParser
+from .tour_match import match_existing
 from shared.repository.raw_tour_repository import RawTourRepository
 from shared.repository.raw_source_repository import RawSourceRepository
 from shared.secrets import get_database_url
@@ -216,14 +217,9 @@ async def process_file(s3_bucket: str, s3_key: str, seo_mode: str = "standard") 
                 })
                 continue
 
-            existing = await conn.fetchrow("""
-                SELECT tour_id, source_group_id
-                FROM silver_aa_internal.raw_tours
-                WHERE tenant_id = $1
-                  AND lower(trim(src_name)) = $2
-                  AND lower(trim(coalesce(provider, ''))) = $3
-                ORDER BY ingest_at DESC LIMIT 1
-            """, tenant_uuid, nname, nprov)
+            # AA-1187: the same rule as the Upload preview (services/ingestion/tour_match.py): same Name and same
+            # Provider, else same Name and same country. A Provider change goes to Duplicate Review, never a new tour.
+            existing = await match_existing(conn, tenant_uuid, r)
 
             if existing:
                 staging_id = await conn.fetchval("""
