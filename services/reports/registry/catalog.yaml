@@ -1669,6 +1669,32 @@ reports:
   - 4. Tenant AI clause status (docs/legal/tenant-ai-schedule.md)
   - 5. '[to be confirmed]' markers remaining in public pages
   - 6. Changes since last review
+- id: SEC-11
+  family: security
+  name_en: Yearly Well-Architected review
+  name_vi: Đánh giá Well-Architected hằng năm
+  audience: tech lead, CTO/CIO guides
+  owner_role: tech lead (agent drafts with a reviewer panel, tech lead approves)
+  decision: Which high and medium risks across the six pillars and the SaaS and Generative AI lenses must be fixed before
+    the next milestone, and are last year's risks closed?
+  cadence: 'yearly: next 2027-11-27 (S295 baseline 2026-11-27), or before production if production comes first'
+  schedule: event
+  channel: AWS Well-Architected Tool (workload "AA Ecosystem (Dev)", milestone per review) + catalog page
+    docs/architecture/well-architected-review.md (ARCH-11) + public-safe summary docs/audits/<date>-S<nnn>-well-architected/README.md
+    via root PR; full pillar files in the private ISMS evidence store
+  automation: manual
+  status: exists
+  priority: P1
+  template: null
+  generator: null
+  trigger: yearly date on the ops calendar, or the first production environment
+  kpis: []
+  sections:
+  - 1. Scorecard per pillar (HRI, MRI) and per lens
+  - 2. Top risks ordered by value and effort, each with fix, cost and issue
+  - 3. What is already strong (keep)
+  - 4. Risks closed since the previous milestone
+  - 5. Plan into the next sessions and new issues
 - id: DATA-01
   family: data-quality
   name_en: Nightly data integrity digest
