@@ -248,12 +248,13 @@ _OLD_MY_VERSIONS_ROWS = """
     ORDER BY ttv.created_at DESC, ttv.id DESC
     LIMIT $2 OFFSET $3
 """
+# AA-1188 (DB-01): rt.price_raw left the statement (the source price text is never a tenant read).
 _OLD_VERSION = """
     SELECT ttv.*, pt.tour_id, pt.aa_name, pt.aa_subtitle, pt.aa_summary,
            pt.aa_description, pt.aa_highlights, pt.aa_itineraries,
            pt.seo_title AS aa_seo_title, pt.seo_meta AS aa_seo_meta,
            pt.updated_at AS master_updated_at,  -- AA-990: master_newer is derived from it (project_version)
-           rt.country, rt.duration, rt.price_raw, rt.inclusions, rt.exclusions,
+           rt.country, rt.duration, rt.inclusions, rt.exclusions,
            j.status AS job_status  -- AA-652
     FROM gold_aa_internal.tenant_tour_versions ttv
     JOIN gold_aa_internal.published_tours pt ON pt.id = ttv.published_tour_id

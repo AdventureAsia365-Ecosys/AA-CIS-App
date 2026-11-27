@@ -6,6 +6,10 @@ Before this module the rule lived in two copies (``v1_marketplace.tenant_version
 ``v1_tours._TENANT_HIDDEN_VERSION_FIELDS``) and several tenant reads skipped it. Every tenant
 read in ``v1_tours.py`` and ``v1_marketplace.py`` now goes through these helpers.
 
+AA-1188 (S295 data-boundary audit DB-01): nor AA's commercial / supplier data. A raw_tours row is projected through an
+allowlist (TENANT_RAW_FIELDS), and every projection and the key-walk also refuse TENANT_COMMERCIAL_KEY_RE keys
+(supplier, provider, source price text, net / cost / margin / markup).
+
 The stored ``tenant_tour_versions.status`` is NOT changed: ``needs_review`` (score < 7.0, written
 by services/jobs/t2_rewrite_job.py) remains the admin signal. It is only mapped at read time.
 """
@@ -20,6 +24,16 @@ from typing import Any, Iterable, Optional
 TENANT_FORBIDDEN_KEY_RE = re.compile(
     r"needs_review|quality|score|qa_|judge|llm_cost|jev_cost|generation_meta|rule_ids|release|memory|\bfs_id\b")
 
+# AA-1188 (S295 data-boundary audit DB-01) — AA's commercial and supplier data never reaches an agency: the supplier or
+# DMC named in a source sheet (`raw_tours.provider`, `supplier_id`), the source price text (`price_raw`) and any net /
+# cost / margin / markup figure. Matched on whole `_`-separated parts of a key, so `net_amount`, `target_margin`,
+# `supplier_id`, `llm_cost_usd` and `provider` are caught while `internet_fee`, `planet` or `costume` are not; plus
+# `price_raw` anywhere in a key. Keys a tenant legitimately gets (`from_price`, `price_usd`, `price_available`,
+# `price_usd_monthly`, `overage_usd`) do not match. A separate constant from TENANT_FORBIDDEN_KEY_RE (that one is the
+# AA-770 quality rule) so each reads on its own; `_without` and `forbidden_keys` apply both.
+TENANT_COMMERCIAL_KEY_RE = re.compile(
+    r"(?:^|_)(?:net|costs?|margins?|markups?|suppliers?|providers?)(?:_|$)|price_raw")
+
 # tenant_tour_versions columns that are gate or generation output, not content (generation_meta: CIS 297, AA-920;
 # judge_breakdown: CIS 300, AA-795 — the T2 judge verdict and the brand-claim check; fs_id: CIS 386, AA-1047 — the
 # admin FactSheet the version was written from. The tenant pool's table-level grant covers fs_id, so this projection,
@@ -28,10 +42,28 @@ TENANT_HIDDEN_VERSION_FIELDS = frozenset({
     "quality_score", "qa_status", "qa_repair_count", "qa_checked_at", "qa_auto_passed", "generation_meta",
     "judge_breakdown", "fs_id",
 })
-# published_tours columns that are A1 gate output.
-TENANT_HIDDEN_TOUR_FIELDS = frozenset({"quality_score", "quality_score_id"})
-# raw_tours columns that are the admin's A1 review state / notes.
-TENANT_HIDDEN_RAW_FIELDS = frozenset({"review_status", "reviewed_by", "reviewed_at", "review_notes"})
+# published_tours columns that are A1 gate output. AA-1188 (DB-01): and the staff / pipeline columns a `SELECT pt.*`
+# (GET /v1/tours/{id}, the /full tenant branch) carried: who approved, deleted or locked the Master and why
+# (`human_lock_reason` is pii:free_text), the A1 writer row, the gold S3 path and the search embedding.
+TENANT_HIDDEN_TOUR_FIELDS = frozenset({
+    "quality_score", "quality_score_id", "generated_content_id", "approved_by", "deleted_by", "master_status_reason",
+    "human_lock_at", "human_lock_by", "human_lock_reason", "s3_gold_path", "content_embedding",
+})
+# AA-1188 (DB-01) — the raw_tours columns a tenant may see: an ALLOWLIST, not a list of hidden columns, so a column
+# added to raw_tours later stays AA-side until someone adds it here. Only trip facts of the AA tour, the same ones the
+# tenant already reads on GET /v1/tours/versions/{id} (country, duration, inclusions, exclusions) plus the other plain
+# facts of the tour (country code, group size, best time to go, activities), and `tour_id`. Left out on purpose: the
+# supplier named in the source sheet and its id (`provider`, `supplier_id`), the source price text (`price_raw`, ADR
+# 0005 d7: reference only), the supplier's own source copy (`src_*`, `feature`, `period`: AA's input, may name the
+# supplier, its contacts or its prices; the tenant gets AA's text in `published_tours.aa_*`), `links`, `manual_facts`,
+# file / import metadata (`batch_id`, `source_id`, `tour_id_external`, `sku`, `ingest_at`, `entry_origin`,
+# `source_group_id`, `source_version`, `source_key`, `country_raw_unresolved`, `tenant_id`) and every pipeline /
+# review / lifecycle column (`pipeline_status`, `review_*`, `reviewed_*`, `source_status`, `lifecycle_stage`,
+# `deleted_*`). Columns: docs/architecture/db-schema-reference.md, silver_aa_internal.raw_tours.
+TENANT_RAW_FIELDS = frozenset({
+    "tour_id", "country", "country_iso2", "duration", "group_size", "best_time_to_go", "activities",
+    "inclusions", "exclusions",
+})
 # /v1/billing — LLM and Jev spend are AA's cost, not the tenant's bill (AA-796 reverses AA-636).
 TENANT_HIDDEN_BILLING_FIELDS = frozenset({"llm_cost_usd", "jev_cost_usd"})
 
@@ -68,12 +100,23 @@ def tenant_version_state(status: Optional[str]) -> str:
     return "ready"
 
 
+def tenant_forbidden_key(key: Any) -> bool:
+    """True when a key may never reach a tenant: the AA-770 quality rule or the AA-1188 commercial rule."""
+    k = str(key)
+    return bool(TENANT_FORBIDDEN_KEY_RE.search(k) or TENANT_COMMERCIAL_KEY_RE.search(k))
+
+
 def _without(row: Any, hidden: Iterable[str]) -> dict:
-    """Drop the named columns, plus any column whose name matches TENANT_FORBIDDEN_KEY_RE (a
-    safety net for a column added to a SELECT * table later)."""
+    """Drop the named columns, plus any column whose name matches TENANT_FORBIDDEN_KEY_RE or
+    TENANT_COMMERCIAL_KEY_RE (a safety net for a column added to a SELECT * table later)."""
     hidden = set(hidden)
-    return {k: v for k, v in dict(row).items()
-            if k not in hidden and not TENANT_FORBIDDEN_KEY_RE.search(str(k))}
+    return {k: v for k, v in dict(row).items() if k not in hidden and not tenant_forbidden_key(k)}
+
+
+def _only(row: Any, allowed: Iterable[str]) -> dict:
+    """Keep only the named columns (an allowlist), and never a forbidden key even if it is named."""
+    allowed = set(allowed)
+    return {k: v for k, v in dict(row).items() if k in allowed and not tenant_forbidden_key(k)}
 
 
 def master_newer(master_updated_at: Any, version_created_at: Any) -> bool:
@@ -120,8 +163,8 @@ def project_tour(row: Any) -> dict:
 
 
 def project_raw(row: Any) -> dict:
-    """A raw_tours row as the tenant may see it."""
-    return _without(row, TENANT_HIDDEN_RAW_FIELDS)
+    """A raw_tours row as the tenant may see it: only the TENANT_RAW_FIELDS columns (AA-1188)."""
+    return _only(row, TENANT_RAW_FIELDS)
 
 
 def project_billing(row: Any) -> dict:
@@ -130,12 +173,12 @@ def project_billing(row: Any) -> dict:
 
 
 def forbidden_keys(obj: Any, path: str = "") -> list:
-    """Every key path in a JSON-like value whose key matches TENANT_FORBIDDEN_KEY_RE."""
+    """Every key path in a JSON-like value whose key matches TENANT_FORBIDDEN_KEY_RE or TENANT_COMMERCIAL_KEY_RE."""
     hits = []
     if isinstance(obj, dict):
         for k, v in obj.items():
             p = f"{path}.{k}" if path else str(k)
-            if TENANT_FORBIDDEN_KEY_RE.search(str(k)):
+            if tenant_forbidden_key(k):
                 hits.append(p)
             hits.extend(forbidden_keys(v, p))
     elif isinstance(obj, (list, tuple)):

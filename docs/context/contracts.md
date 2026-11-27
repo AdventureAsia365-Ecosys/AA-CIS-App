@@ -41,7 +41,9 @@ CIS as a consumer of the public "from" price (AA-1029, contract `price.from.v1`,
 `docs/contracts/price.from.v1.md`; Booking bk-040 grants `booking.v_from_prices` to `cis_app`): `GET /v1/tours/pool`
 (the Content studio Marketplace) reads the suggested retail price per person of the page's tours by catalog key, on MAIN
 after the tenant block, and returns it as `from_price` (null when Booking has none or the view cannot be read: fail
-soft). CIS never computes a price and never shows `raw_tours.price_raw` as one (ADR 0005 d7).
+soft). `GET /v1/marketplace` (the studio's "In my catalog") reads it the same way (AA-1188): `from_price`, and
+`price_usd` = its amount when the currency is USD. CIS never computes a price and never shows `raw_tours.price_raw` as
+one (ADR 0005 d7); since AA-1188 no tenant read selects it.
 
 **Tour reference prices (AA-1091, root ADR 0005 d7; CIS 402 / 403).** The structured REFERENCE price of an AA tour
 (amount, currency, basis `per_person` | `per_group` | `from`) lives in `silver_aa_internal.tour_reference_price`, one row
