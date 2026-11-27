@@ -829,6 +829,15 @@ the single tenant rule:
 - Hidden fields: no tenant API returns `quality_score`, `quality_score_id`, `qa_*`, judge or writer
   output (`generated_content`, `quality_scores`), the A1 review state of `raw_tours`, or LLM/Jev cost
   (`/v1/billing` dropped `llm_cost_usd`, reversing AA-636).
+- Commercial data (AA-1188, S295 data-boundary audit DB-01): no tenant API returns AA's supplier or commercial
+  data: the supplier named in a source sheet (`raw_tours.provider`, `supplier_id`), the source price text
+  (`raw_tours.price_raw`, root ADR 0005 d7: reference only) or any net / cost / margin / markup figure.
+  `TENANT_COMMERCIAL_KEY_RE` refuses those keys in every projection and in the key-walk, next to the AA-770
+  rule `TENANT_FORBIDDEN_KEY_RE`. A `raw_tours` row reaches a tenant only through the allowlist
+  `TENANT_RAW_FIELDS` (tour id and trip facts: country, country code, duration, group size, best time to go,
+  activities, inclusions, exclusions); a new `raw_tours` column stays AA-side until it is added there. The
+  staff / pipeline columns of `published_tours` (approver, lock, deletion, gold path, embedding, writer row)
+  are hidden too. The price a tenant sees is AA-Booking's `from_price` (`/v1/tours/pool`, `/v1/marketplace`).
 - Pool: newest-first only, no quality sort or filter.
 - Admin path: `/v1/tours/{id}/full` keeps the full before/after payload only for the X-Admin-Secret
   path.
@@ -866,7 +875,7 @@ _Avoid_: Fact (bare) — always say which scope.
 **Fact lock (agency T2 copy)**:
 AA-1144 (S285 decision D8): an agency may reword its T2 copy (`PATCH /v1/tours/versions/{id}`, action `edit`) but not
 change what the tour is. `services/content_generation/t2_fact_lock.py` checks the edit against the version it edits,
-the Master (`published_tours.aa_*`) and the raw source with the FactSheet extractors (`services/quality/s1_facts.py`):
+the Master (`published_tours.aa_*`) and the raw source (never `price_raw`, AA-1188) with the FactSheet extractors (`services/quality/s1_facts.py`):
 a non-wording key, another day structure, a figure the base never states (a spelled-out duration such as "a two-day
 walk" counts), a new place in the highlights or itinerary (checked against the parent's highlights / itinerary and the
 Master / raw texts only, never the parent's free-wording fields), a day / night / week figure other than the Master's

@@ -69316,7 +69316,7 @@
     },
     "/v1/marketplace": {
       "get": {
-        "description": "Tenant's own Marketplace rollup — see module docstring for the exact join.\n\n`posts_per_week` is read fresh from `shared.tenants` (never client-supplied)\nto feed `runway_months()` — same reused, unmodified formula\n`admin_marketplace.py`'s AA-330 Phần B already established (AA-440 confirmed\npure/reusable). `price_usd`/`price_available` reuse `parse_price()` unchanged\nfor the same \"never fabricate a price, mark unavailable instead\" contract that\nfunction's own docstring guarantees.",
+        "description": "Tenant's own Marketplace rollup — see module docstring for the exact join.\n\n`posts_per_week` is read fresh from `shared.tenants` (never client-supplied)\nto feed `runway_months()` — same reused, unmodified formula\n`admin_marketplace.py`'s AA-330 Phần B already established (AA-440 confirmed\npure/reusable).\n\nAA-1188: each tour carries `from_price`, AA-Booking's public suggested retail price per person (price.from.v1, as\non GET /v1/tours/pool) or null; `price_usd` is that amount when it is in USD, else null, and `price_available`\nsays whether `price_usd` is set. The source price text (`raw_tours.price_raw`) is never read here.",
         "operationId": "get_marketplace_v1_marketplace_get",
         "responses": {
           "200": {

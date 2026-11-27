@@ -1,4 +1,5 @@
 """AA-796 — tenant-JWT /v1/* reads carry no score, QA state, score-derived status or LLM cost.
+AA-1188 (DB-01) — nor AA's commercial / supplier data: supplier name and id, source price text, net / cost / margin.
 
 Projection only: the stored tenant_tour_versions.status (needs_review = T2 score < 7.0) is the
 admin signal and is not changed; tenant reads map it to ai_generated. Every route is called with
@@ -35,7 +36,16 @@ WM_GENERATION_META = {"writing_release": {"writer": "t2", "platform": {"release_
 # v_tenant_monthly_usage), plus the stored score-derived status. AA-920 WM-25: `generation_meta` (CIS 297) and the
 # writing-memory keys a later join could add (`rule_ids`, `writing_release`, `memory_enabled`): dropped by name or by
 # TENANT_FORBIDDEN_KEY_RE. AA-1047: `fs_id` (CIS 386), the admin FactSheet id a T2 version is stamped with.
+# AA-1188 (DB-01): AA's commercial / supplier data a joined row could carry (raw_tours.provider / supplier_id /
+# price_raw, and the net / cost / margin / markup columns of the booking schema). Values are checked too.
+SUPPLIER_NAME = "Horizon Voyages DMC"
+SOURCE_PRICE = "US$450 net per person"
+_COMMERCIAL = {
+    "provider": SUPPLIER_NAME, "supplier_id": uuid.uuid4(), "price_raw": SOURCE_PRICE, "net_amount": Decimal("310"),
+    "target_margin": Decimal("0.18"), "markup_pct": Decimal("20"), "supplier_cost": Decimal("300"),
+}
 _POISON = {
+    **_COMMERCIAL,
     "status": "needs_review", "quality_score": Decimal("5.5"), "quality_score_id": uuid.uuid4(),
     "qa_status": "escalated", "qa_repair_count": 2, "qa_checked_at": NOW, "qa_auto_passed": True,
     "llm_cost_usd": Decimal("0.12"), "jev_cost_usd": Decimal("0.01"),
@@ -44,13 +54,21 @@ _POISON = {
 }
 
 
+_STAFF_TOUR_COLUMNS = {"approved_by": "staff@example.test", "deleted_by": None, "master_status_reason": "internal",
+                       "human_lock_at": NOW, "human_lock_by": "staff@example.test",
+                       "human_lock_reason": "held for a staff check", "s3_gold_path": "s3://bucket/gold/x.json",
+                       "content_embedding": [0.1, 0.2]}
+
+
 def _tour_row(**over):
     row = {"id": PT_ID, "tour_id": TOUR_ID, "aa_name": "Ha Long Bay", "aa_subtitle": "s", "aa_summary": "x",
            "aa_highlights": "[]", "aa_itineraries": "", "aa_description": "", "seo_title": "t", "seo_meta": "m",
            "seo_keywords_used": "[]", "published_at": NOW, "country": "Vietnam", "duration": "3 days",
-           "price_raw": "US$450", "already_rewritten": False, "generated_content_id": uuid.uuid4(),
+           "already_rewritten": False, "generated_content_id": uuid.uuid4(),
            "master_status": "active", "deleted_at": None,
-           "quality_score": Decimal("8.4"), "quality_score_id": uuid.uuid4()}
+           "quality_score": Decimal("8.4"), "quality_score_id": uuid.uuid4(),
+           # AA-1188: the staff / pipeline columns of a `SELECT pt.*` row
+           **_STAFF_TOUR_COLUMNS, **_COMMERCIAL}
     row.update(over)
     return row
 
@@ -65,8 +83,20 @@ def _version_row(**over):
 
 
 def _raw_row():
-    return {"tour_id": TOUR_ID, "src_name": "Ha Long", "country": "Vietnam", "review_status": "approved",
-            "reviewed_by": uuid.uuid4(), "reviewed_at": NOW, "review_notes": "internal note"}
+    """Every silver_aa_internal.raw_tours column (docs/architecture/db-schema-reference.md), internal ones poisoned."""
+    return {"tour_id": TOUR_ID, "tenant_id": uuid.uuid4(), "batch_id": uuid.uuid4(), "source_id": uuid.uuid4(),
+            "tour_id_external": "EXT-1", "sku": "SKU-1", "provider": SUPPLIER_NAME,
+            "src_name": "Ha Long", "src_subtitle": "s", "src_summary": "Call Horizon on +84 000",
+            "src_description": "d", "src_highlights": [], "src_itineraries": "Day 1",
+            "country": "Vietnam", "duration": "3 days", "group_size": "2-12", "period": "2026",
+            "price_raw": SOURCE_PRICE, "inclusions": "Boat", "exclusions": "Drinks",
+            "links": {"brochure": "https://supplier.example.test/x.pdf"}, "activities": ["kayaking"],
+            "feature": "f", "best_time_to_go": "Oct-Apr", "pipeline_status": "published", "ingest_at": NOW,
+            "review_status": "approved", "reviewed_by": uuid.uuid4(), "reviewed_at": NOW,
+            "review_notes": "internal note", "source_group_id": uuid.uuid4(), "source_version": 2,
+            "source_status": "active", "deleted_at": None, "deleted_by": "staff@example.test",
+            "lifecycle_stage": "live", "country_raw_unresolved": None, "source_key": "k", "country_iso2": "VN",
+            "supplier_id": uuid.uuid4(), "entry_origin": "sheet", "manual_facts": {"net": 310}}
 
 
 class _Conn:
@@ -125,6 +155,8 @@ def assert_tenant_clean(resp):
     for key in ("generation_meta", "rule_ids", "release", "memory"):
         assert key not in flat, key
     assert WM_RELEASE_ID not in flat and WM_RULE_ID not in flat
+    # AA-1188 (DB-01): no supplier name and no source price text as a value either
+    assert SUPPLIER_NAME not in flat and SOURCE_PRICE not in flat
 
 
 # ── one call per tenant-JWT route in scope ────────────────────────────────────
@@ -185,7 +217,7 @@ async def _billing():
 async def _marketplace():
     row = {"version_id": VERSION_ID, "version_number": 1, "version_created_at": NOW, "published_tour_id": PT_ID,
            "tour_id": TOUR_ID, "name": "Ha Long Bay", "country": "Vietnam", "duration": "3 days",
-           "price_raw": "US$450", "atom_count": 3, **_POISON}
+           "catalog_source_id": "key-1", "atom_count": 3, **_POISON}
     conn = _Conn([("posts_per_week", {"posts_per_week": 3}), ("latest_versions", [row])])
     return await v1_marketplace.get_marketplace(_request(conn), TENANT), conn
 
@@ -251,7 +283,52 @@ async def test_full_tenant_branch_never_reads_generated_or_quality():
     resp, conn = await _full_tenant()
     assert set(resp) == {"published", "raw", "seo"}
     assert not any("generated_content" in sql or "quality_scores" in sql for sql, _ in conn.calls)
-    assert "review_notes" not in resp["raw"] and resp["raw"]["src_name"] == "Ha Long"
+    assert "review_notes" not in resp["raw"] and resp["raw"]["country"] == "Vietnam"
+
+
+@pytest.mark.asyncio
+async def test_full_tenant_raw_is_the_allowlist_only():
+    """AA-1188 (DB-01): /full (tenant JWT) projects raw_tours through TENANT_RAW_FIELDS: trip facts, never the supplier,
+    its id, the source price text, links, manual facts, the source copy or any pipeline / review / lifecycle column."""
+    resp, _ = await _full_tenant()
+    assert set(resp["raw"]) == set(tp.TENANT_RAW_FIELDS)
+    for key in ("provider", "supplier_id", "price_raw", "links", "manual_facts", "deleted_by", "src_name",
+                "src_summary", "batch_id", "sku", "pipeline_status", "source_status", "lifecycle_stage",
+                "entry_origin", "tenant_id"):
+        assert key not in resp["raw"], key
+    assert resp["raw"]["inclusions"] == "Boat" and resp["raw"]["duration"] == "3 days"
+    # and the published row loses the staff / pipeline columns of `SELECT pt.*`
+    for key in _STAFF_TOUR_COLUMNS:
+        assert key not in resp["published"], key
+    assert resp["published"]["aa_name"] == "Ha Long Bay"
+
+
+def test_raw_allowlist_holds_no_forbidden_column():
+    assert not any(tp.tenant_forbidden_key(k) for k in tp.TENANT_RAW_FIELDS)
+    # a forbidden key is refused even if someone adds it to the allowlist
+    assert tp._only({"price_raw": "x", "country": "VN"}, {"price_raw", "country"}) == {"country": "VN"}
+
+
+@pytest.mark.parametrize("key", ["provider", "supplier_id", "supplier", "price_raw", "price_raw_seen", "net_amount",
+                                 "net", "supplier_net", "target_margin", "effective_margin", "margins", "markup_pct",
+                                 "cost", "net_cost", "llm_cost_usd", "supplier_cost", "providers"])
+def test_commercial_keys_are_forbidden(key):
+    assert tp.TENANT_COMMERCIAL_KEY_RE.search(key) and tp.tenant_forbidden_key(key)
+    assert tp.forbidden_keys({"x": [{key: 1}]}) == [f"x[0].{key}"]
+
+
+@pytest.mark.parametrize("key", ["from_price", "price_usd", "price_available", "price_usd_monthly", "overage_usd",
+                                 "overage_rate_usd_per_tour", "internet_fee", "planet", "costume", "network",
+                                 "aa_name", "country", "duration", "inclusions", "exclusions", "activities",
+                                 "generator", "cover_image_url", "already_rewritten", "atom_count"])
+def test_tenant_content_keys_are_not_commercial(key):
+    assert not tp.TENANT_COMMERCIAL_KEY_RE.search(key)
+
+
+def test_tenant_reads_never_select_the_source_price_text():
+    """AA-1188 (DB-01): the pool and version SQL read trip facts of raw_tours, never price_raw."""
+    for sql in (v1_tours._POOL_ROWS_SQL, v1_tours._VERSION_SQL, v1_marketplace._MARKETPLACE_QUERY):
+        assert "price_raw" not in sql
 
 
 @pytest.mark.asyncio

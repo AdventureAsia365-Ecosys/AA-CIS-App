@@ -29,6 +29,7 @@
 ## Tradeoffs
 
 - `price_raw` stays in the answer (the studio no longer shows it as a price; other readers may still use the text).
+  Superseded by AA-1188 (S295 DB-01): no tenant read returns `price_raw` any more.
 - The price is the AA catalogue RRP; per-tenant tiers are AA-1030.
 
 ## Should know

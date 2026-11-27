@@ -127,7 +127,7 @@ _POOL_ROWS_SQL = """
            pt.aa_highlights, pt.aa_itineraries, pt.aa_description,
            pt.seo_title, pt.seo_meta, pt.seo_keywords_used,
            pt.published_at, pt.updated_at,
-           rt.country, rt.duration, rt.price_raw,
+           rt.country, rt.duration,
            (COALESCE(rt.source_group_id, rt.tour_id))::text AS catalog_source_id,
            EXISTS(
                SELECT 1 FROM gold_aa_internal.tenant_tour_versions ttv
@@ -200,11 +200,12 @@ def _pool_facets(row: dict) -> dict:
 # AA-1029 R4 (root ADR 0005 d1 / d6 as amended by ADR 0019 b15) — the public "from" price of each pool tour comes only
 # from AA-Booking's contract view booking.v_from_prices (price.from.v1, root docs/contracts/price.from.v1.md; SELECT to
 # cis_app by Booking bk-040): the suggested retail price per person for 2 travellers. CIS never computes a price and
-# never shows raw_tours.price_raw as one (ADR 0005 d7: reference only). Read on MAIN (cis_app) after the tenant block,
-# keyed by the catalog key (raw_tours.source_key = COALESCE(source_group_id, tour_id)::text, written as the expression
-# so the SQL does not depend on 258's stored column), like the job statuses above: aa_app_user holds nothing on schema
-# booking. Fail soft: the view not there yet (bk-039), no grant (bk-040 not applied), any other error, or no row = no
-# price (`from_price: null`), never a failed page. Per-tenant prices (AA-1030) are out of scope.
+# never shows raw_tours.price_raw as one (ADR 0005 d7: reference only; AA-1188: no tenant read selects it, and
+# /v1/marketplace reads this price too). Read on MAIN (cis_app) after the tenant block, keyed by the catalog key
+# (raw_tours.source_key = COALESCE(source_group_id, tour_id)::text, written as the expression so the SQL does not
+# depend on 258's stored column), like the job statuses above: aa_app_user holds nothing on schema booking. Fail
+# soft: the view not there yet (bk-039), no grant (bk-040 not applied), any other error, or no row = no price
+# (`from_price: null`), never a failed page. Per-tenant prices (AA-1030) are out of scope.
 _FROM_PRICE_SQL = """
     SELECT source_id, amount::text AS amount, currency, basis, pax, season, valid_to
       FROM booking.v_from_prices
@@ -1034,15 +1035,14 @@ async def get_tour(
 # AA-796 — the hidden version fields now live in api/routers/_tenant_projection.py.
 
 # GET /v1/tours/versions/{version_id}. `{job_col}` / `{job_join}` as in _MY_VERSIONS_ROWS_SQL; on the tenant
-# pool `job_status` is filled from `ttv.job_id` (part of ttv.*) on MAIN.
+# pool `job_status` is filled from `ttv.job_id` (part of ttv.*) on MAIN. AA-1188 (DB-01): never rt.price_raw.
 _VERSION_TENANT_COND = "ttv.id = $1::uuid AND ttv.tenant_id = $2::uuid"
 _VERSION_SQL = """
     SELECT ttv.*, pt.tour_id, pt.aa_name, pt.aa_subtitle, pt.aa_summary,
            pt.aa_description, pt.aa_highlights, pt.aa_itineraries,
            pt.seo_title AS aa_seo_title, pt.seo_meta AS aa_seo_meta,
            pt.updated_at AS master_updated_at,  -- AA-990: master_newer is derived from it (project_version)
-           rt.country, rt.duration, rt.price_raw,
-           rt.inclusions, rt.exclusions,
+           rt.country, rt.duration, rt.inclusions, rt.exclusions,
            {job_col}  -- AA-652
     FROM gold_aa_internal.tenant_tour_versions ttv
     JOIN gold_aa_internal.published_tours pt ON pt.id = ttv.published_tour_id

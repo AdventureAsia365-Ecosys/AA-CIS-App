@@ -8,7 +8,7 @@ Depends() machinery.
 """
 import uuid
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -19,6 +19,13 @@ TOUR_A = str(uuid.uuid4())
 TOUR_B = str(uuid.uuid4())
 VERSION_A = str(uuid.uuid4())
 PUBLISHED_A = str(uuid.uuid4())
+
+
+@pytest.fixture(autouse=True)
+def _no_booking_read():
+    """AA-1188: the Booking "from" price read (v1_tours._from_prices) answers "no price" unless a test patches it."""
+    with patch.object(v1_marketplace, "_from_prices", AsyncMock(return_value={})):
+        yield
 
 
 def _make_pool(conn):
@@ -45,10 +52,15 @@ def _marketplace_row(**over):
         "version_created_at": None,
         "published_tour_id": uuid.UUID(PUBLISHED_A), "tour_id": uuid.UUID(TOUR_A),
         "name": "Ha Long Bay Cruise", "country": "Vietnam", "duration": "3 days",
-        "price_raw": "US$450", "atom_count": 12,
+        "catalog_source_id": "key-a", "atom_count": 12,
     }
     base.update(over)
     return base
+
+
+def _from_price(amount="450.00", currency="USD"):
+    return {"amount": amount, "currency": currency, "basis": "per_person", "pax": 2, "season": None,
+            "valid_to": "9999-12-31"}
 
 
 class TestGetMarketplaceQuery:
@@ -91,14 +103,19 @@ class TestGetMarketplaceQuery:
 class TestGetMarketplaceResponseShape:
     @pytest.mark.asyncio
     async def test_returns_price_and_runway_estimates(self):
+        """AA-1188: the price is AA-Booking's public "from" price (price.from.v1) by the tour's catalog key, never the
+        source price text; the internal catalog key does not reach the tenant."""
         conn = AsyncMock()
         conn.fetchrow.return_value = {"posts_per_week": 3}
         conn.fetch.return_value = [_marketplace_row()]
         pool = _make_pool(conn)
         request = _make_request(pool)
 
-        result = await v1_marketplace.get_marketplace(request, tenant={"sub": TENANT_ID})
+        with patch.object(v1_marketplace, "_from_prices",
+                          AsyncMock(return_value={"key-a": _from_price()})) as from_prices:
+            result = await v1_marketplace.get_marketplace(request, tenant={"sub": TENANT_ID})
 
+        assert from_prices.await_args.args[1] == ["key-a"]
         assert result["tenant_id"] == TENANT_ID
         assert result["posts_per_week"] == 3
         assert result["total_tours"] == 1
@@ -108,9 +125,10 @@ class TestGetMarketplaceResponseShape:
         assert tour["name"] == "Ha Long Bay Cruise"
         assert tour["price_available"] is True
         assert tour["price_usd"] == 450.0
+        assert tour["from_price"] == _from_price()
         # runway_months(12, 3) == floor(12 / (3*4)) == 1, same reused formula
         assert tour["runway_months"] == 1
-        assert "price_raw" not in tour  # popped before returning, never leaked to the client
+        assert "price_raw" not in tour and "catalog_source_id" not in tour
 
     @pytest.mark.asyncio
     async def test_no_posts_per_week_means_no_runway(self):
@@ -126,18 +144,40 @@ class TestGetMarketplaceResponseShape:
         assert result["tours"][0]["runway_months"] is None
 
     @pytest.mark.asyncio
-    async def test_unparseable_price_is_unavailable_not_fabricated(self):
+    async def test_no_booking_price_is_unavailable_not_fabricated(self):
         conn = AsyncMock()
         conn.fetchrow.return_value = {"posts_per_week": 2}
-        conn.fetch.return_value = [_marketplace_row(price_raw="On request")]
+        conn.fetch.return_value = [_marketplace_row()]
         pool = _make_pool(conn)
         request = _make_request(pool)
 
-        result = await v1_marketplace.get_marketplace(request, tenant={"sub": TENANT_ID})
+        with patch.object(v1_marketplace, "_from_prices", AsyncMock(return_value={})):
+            result = await v1_marketplace.get_marketplace(request, tenant={"sub": TENANT_ID})
 
         tour = result["tours"][0]
         assert tour["price_available"] is False
-        assert tour["price_usd"] is None
+        assert tour["price_usd"] is None and tour["from_price"] is None
+
+    @pytest.mark.asyncio
+    async def test_a_non_usd_from_price_is_not_converted(self):
+        conn = AsyncMock()
+        conn.fetchrow.return_value = {"posts_per_week": 2}
+        conn.fetch.return_value = [_marketplace_row()]
+        pool = _make_pool(conn)
+        request = _make_request(pool)
+
+        with patch.object(v1_marketplace, "_from_prices",
+                          AsyncMock(return_value={"key-a": _from_price("390.00", "EUR")})):
+            result = await v1_marketplace.get_marketplace(request, tenant={"sub": TENANT_ID})
+
+        tour = result["tours"][0]
+        assert tour["from_price"]["currency"] == "EUR"
+        assert tour["price_usd"] is None and tour["price_available"] is False
+
+    def test_query_never_reads_the_source_price_text(self):
+        """AA-1188 (DB-01): raw_tours.price_raw is AA's reference text, never a tenant read."""
+        assert "price_raw" not in v1_marketplace._MARKETPLACE_QUERY
+        assert "catalog_source_id" in v1_marketplace._MARKETPLACE_QUERY
 
     @pytest.mark.asyncio
     async def test_zero_atom_tour_still_included(self):

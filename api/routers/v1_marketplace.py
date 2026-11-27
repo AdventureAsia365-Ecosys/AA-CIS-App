@@ -22,8 +22,8 @@ mentioned in the ADR as a related-but-separate future admin-tier need, is not th
 endpoint).
 
 GET /v1/marketplace — one tour per row (latest tenant_tour_versions per
-published_tour_id), with that tour's owner_scope=tenant_id atom aggregate and a
-reused (not reimplemented) price/runway estimate.
+published_tour_id), with that tour's owner_scope=tenant_id atom aggregate, a reused
+(not reimplemented) runway estimate and AA-Booking's public "from" price (AA-1188: never the source price text).
 
 AA-859 wave 4 (S247): the tours / atoms query runs on the aa_app_user tenant pool behind MARKETPLACE_FLAG
 (`aa859:marketplace_pool`, fail closed; needs migration 266, RLS on tour_atoms). posts_per_week stays on the
@@ -37,8 +37,8 @@ from fastapi import APIRouter, Depends, Request
 
 from api.core.aa544_tenant_pool import MARKETPLACE_FLAG, acquire_scoped_conn
 from api.routers._tenant_projection import project_version, tenant_version_state  # AA-796 — shared rule
-from api.routers.v1_tours import get_tenant
-from services.acp_shared.marketplace_estimates import parse_price, runway_months
+from api.routers.v1_tours import _from_prices, get_tenant
+from services.acp_shared.marketplace_estimates import runway_months
 from shared import tour_liveness as _tl
 from shared.tour_liveness import with_served
 
@@ -88,7 +88,8 @@ _MARKETPLACE_QUERY = """
     SELECT
         lv.version_id, lv.version_number, lv.status, lv.version_created_at,
         pt.id AS published_tour_id, pt.tour_id, pt.aa_name AS name,
-        rt.country, rt.duration, rt.price_raw,
+        rt.country, rt.duration,
+        (COALESCE(rt.source_group_id, rt.tour_id))::text AS catalog_source_id,
         COALESCE(ac.atom_count, 0) AS atom_count
     FROM latest_versions lv
     JOIN gold_aa_internal.published_tours pt ON pt.id = lv.published_tour_id
@@ -104,6 +105,16 @@ _MARKETPLACE_QUERY = """
 """
 
 
+def _usd_amount(from_price) -> float | None:
+    """The amount of a price.from.v1 dict as a number when its currency is USD; None otherwise or when unreadable."""
+    if not from_price or str(from_price.get("currency") or "").upper() != "USD":
+        return None
+    try:
+        return float(from_price["amount"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 @router.get("")
 async def get_marketplace(request: Request, tenant=Depends(get_tenant)):
     """Tenant's own Marketplace rollup — see module docstring for the exact join.
@@ -111,9 +122,11 @@ async def get_marketplace(request: Request, tenant=Depends(get_tenant)):
     `posts_per_week` is read fresh from `shared.tenants` (never client-supplied)
     to feed `runway_months()` — same reused, unmodified formula
     `admin_marketplace.py`'s AA-330 Phần B already established (AA-440 confirmed
-    pure/reusable). `price_usd`/`price_available` reuse `parse_price()` unchanged
-    for the same "never fabricate a price, mark unavailable instead" contract that
-    function's own docstring guarantees.
+    pure/reusable).
+
+    AA-1188: each tour carries `from_price`, AA-Booking's public suggested retail price per person (price.from.v1, as
+    on GET /v1/tours/pool) or null; `price_usd` is that amount when it is in USD, else null, and `price_available`
+    says whether `price_usd` is set. The source price text (`raw_tours.price_raw`) is never read here.
     """
     tenant_id = tenant["sub"]
     pool = request.app.state.pool
@@ -133,14 +146,21 @@ async def get_marketplace(request: Request, tenant=Depends(get_tenant)):
 
     tours = []
     total_atoms = 0
-    for r in rows:
+    # AA-1188 (DB-01, root ADR 0005 d7): the price a tenant sees is AA-Booking's public "from" price (price.from.v1, the
+    # same read as GET /v1/tours/pool, on MAIN after the tenant block, fail soft), never the source price text.
+    keys = [r.get("catalog_source_id") for r in rows]
+    prices = await _from_prices(pool, keys)
+    for r, key in zip(rows, keys):
         t = _safe(project_version(r))  # AA-796 — drops gate fields even if the query ever selects them
+        t.pop("catalog_source_id", None)
         # AA-770/AA-796 — no QA states on the tenant side (shared rule in _tenant_projection)
         t["status"] = tenant_version_state(t.get("status"))
-        price_raw = t.pop("price_raw")
-        price_usd = parse_price(price_raw)
-        t["price_usd"] = price_usd
-        t["price_available"] = price_usd is not None
+        from_price = prices.get(key) if key else None
+        t["from_price"] = from_price
+        # `price_usd` / `price_available` kept for the studio's "In my catalog" card: the from price when it is in USD,
+        # else none (no conversion: CIS never computes a price).
+        t["price_usd"] = _usd_amount(from_price)
+        t["price_available"] = t["price_usd"] is not None
         atom_count = t["atom_count"]
         state = served.get(str(r["tour_id"]))
         with_served(t, state)
