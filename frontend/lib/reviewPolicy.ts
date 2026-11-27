@@ -12,3 +12,8 @@ export function policyFromSearch(search: string): string {
   const v = new URLSearchParams(search).get("policy") ?? "all";
   return POLICY_VALUES.includes(v) ? v : "all";
 }
+
+/** AA-1190: what a Review Queue link asks for: the policy filter and the Master Content deep link (`?tour_id=`). */
+export function reviewLinkFromSearch(search: string): { policy: string; tourId: string | null } {
+  return { policy: policyFromSearch(search), tourId: new URLSearchParams(search).get("tour_id") || null };
+}

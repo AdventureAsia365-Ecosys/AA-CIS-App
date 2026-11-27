@@ -15,7 +15,8 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Ban, CheckCircle, Filter, RotateCcw, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   K, mono, sans,
   Button,
@@ -52,7 +53,7 @@ import {
   BLOCK_STYLE,
   NO_POLICY_FILTER,
   POLICY_FILTER,
-  policyFromSearch,
+  reviewLinkFromSearch,
   policyEvidenceText,
   type ReviewItem,
 } from "./reviewModel";
@@ -120,7 +121,10 @@ const selectStyle: React.CSSProperties = {
   minWidth: 0,
 };
 
-function ReviewQueueInner() {
+/** What a link asked for (?policy=, ?tour_id=): the queue's starting filters. */
+interface ReviewLink { policy: string; tourId: string | null }
+
+function ReviewQueueInner({ link }: { link: ReviewLink }) {
   const bands = useScoreBands();
   const passLine = usePassLine();
   const filterNums = scoreFilterNumbers(bands, passLine);
@@ -137,9 +141,8 @@ function ReviewQueueInner() {
   const [filterCountry, setCountryRaw] = useState("all");
   const [filterScore, setScoreRaw] = useState("all");
   // AA-1190: a link may open the queue filtered by policy (?policy=none from My work's "ready to review" tile,
-  // ?policy=elephant_riding from "Held by policy"); read once as a lazy initial value (client-only), like ?tour_id=.
-  const [filterPolicy, setPolicyRaw] = useState(() =>
-    typeof window === "undefined" ? "all" : policyFromSearch(window.location.search));
+  // ?policy=elephant_riding from "Held by policy"). The link comes from useSearchParams (ReviewQueueFromUrl below).
+  const [filterPolicy, setPolicyRaw] = useState(link.policy);
   // AA-739: server-side paging. Any filter change goes back to the first page.
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(25);
@@ -147,13 +150,8 @@ function ReviewQueueInner() {
   const setCountry = (v: string) => { setCountryRaw(v); setPageIndex(0); };
   const setScore = (v: string) => { setScoreRaw(v); setPageIndex(0); };
   const setPolicy = (v: string) => { setPolicyRaw(v); setPageIndex(0); };
-  // Deep-link ?tour_id= from Master Content ("N failed" badge). Read once from the URL as a lazy
-  // initial value (client-only; null on the server) rather than setting state in an effect, which
-  // the React Compiler forbids (AGENTS.md). Null-safe for SSR/prerender.
-  const [tourFilter, setTourFilter] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    return new URLSearchParams(window.location.search).get("tour_id");
-  });
+  // Deep-link ?tour_id= from Master Content ("N failed" badge), from the same link.
+  const [tourFilter, setTourFilter] = useState<string | null>(link.tourId);
   const [editorItem, setEditorItem] = useState<ReviewItem | null>(null);
   const [regenItems, setRegenItems] = useState<ReviewItem[]>([]);
   // AA-916 — the Reject / Dismiss waiting for its reason chip
@@ -668,10 +666,23 @@ function ReviewQueueInner() {
   );
 }
 
+/** The queue as the URL asks for it. AA-1190 (S296 live check): the link is read with useSearchParams, never
+ *  window.location: on a client-side <Link> click (the My work tiles) the page renders before the browser URL changes,
+ *  so a window.location read saw the previous page's query and the queue opened unfiltered. A new link (Back /
+ *  Forward, the menu link without a filter, another tile) remounts the queue on what it asks for (the page never
+ *  writes the URL itself, so only a navigation changes it); the person's own filter picks hold until then. */
+function ReviewQueueFromUrl() {
+  const link = reviewLinkFromSearch(useSearchParams().toString());
+  return <ReviewQueueInner key={`${link.policy}|${link.tourId ?? ""}`} link={link} />;
+}
+
 export default function AdminReviewPage() {
   return (
     <ToastProvider>
-      <ReviewQueueInner />
+      {/* useSearchParams: a Suspense boundary for `next build`. */}
+      <Suspense>
+        <ReviewQueueFromUrl />
+      </Suspense>
     </ToastProvider>
   );
 }

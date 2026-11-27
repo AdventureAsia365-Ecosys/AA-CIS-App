@@ -19,9 +19,13 @@
 //   GET  /api/admin/tenant-names                     the offboarded tenants for the picker (lib/tenants.ts TENANTS_API)
 // The selected DRY RUN and apply job ids live in the URL (?job=…&apply=…), so a reload or a deploy between the
 // DRY RUN and the apply keeps the page. The traveller hash is kept only in memory (for the verification run).
+// AA-1190 (S296 live check): the tab and the jobs are read with useSearchParams (useLinkFilters, lib/erasureView.ts),
+// never window.location: on a client-side <Link> click (the My work tile ?tab=offboarding) the page renders before
+// the browser URL changes, so a window.location read opened the DRY RUN tab. Needs the Suspense boundary in page.tsx.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, RefreshCw, RotateCcw } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
   Badge, Button, DataTable, ErrorState, K, PageHeader, StatusBadge, TableSkeleton, Tabs, apiGet, mono, useFormat, useT,
@@ -32,7 +36,9 @@ import {
   jobTenant, subjectLabel, totalsSentence,
   type ErasureJob, type ErasureSettings, type ErasureWords, type JobsPage, type TenantOption,
 } from "@/lib/dataErasure";
+import { erasureSearch, erasureTabFromSearch, erasureViewFromSearch, type ErasureView } from "@/lib/erasureView";
 import { TENANTS_API, TENANTS_QUERY_KEY, tenantSearchText } from "@/lib/tenants";
+import { useLinkFilters } from "../../_components/useLinkFilters";
 import { TenantName } from "../../_components/TenantSelect";
 import ApplyPanel, { type SendResult } from "./ApplyPanel";
 import ErasurePlan from "./ErasurePlan";
@@ -42,35 +48,13 @@ import { ER } from "./messages";
 import { TO } from "./offboarding.messages";
 import TenantOffboarding from "./TenantOffboarding";
 
-type Tab = "subjects" | "offboarding";
-
-function readTab(): Tab {
-  if (typeof window === "undefined") return "subjects";
-  return new URLSearchParams(window.location.search).get("tab") === "offboarding" ? "offboarding" : "subjects";
-}
-
 const JOB_POLL_MS = 3_000;
 const HISTORY_POLL_MS = 10_000;
 const HISTORY_SIZE = 20;
 
-interface View { job: string | null; apply: string | null }
-
-function readView(): View {
-  if (typeof window === "undefined") return { job: null, apply: null };
-  const p = new URLSearchParams(window.location.search);
-  const id = (k: string) => {
-    const v = p.get(k);
-    return v && /^[0-9a-f-]{36}$/i.test(v) ? v.toLowerCase() : null;
-  };
-  return { job: id("job"), apply: id("apply") };
-}
-
-function writeView(v: View) {
+/** Write the page's view into the URL without a navigation (Next syncs useSearchParams with it). */
+function writeSearch(qs: string) {
   if (typeof window === "undefined") return;
-  const p = new URLSearchParams();
-  if (v.job) p.set("job", v.job);
-  if (v.apply) p.set("apply", v.apply);
-  const qs = p.toString();
   window.history.replaceState(null, "", qs ? `?${qs}` : window.location.pathname);
 }
 
@@ -115,26 +99,22 @@ export default function DataErasure() {
   const t = useT(ER);
   const to = useT(TO);
   // AA-1093 L2: the Tenant offboarding tab (the erasure saga across the apps); kept in the URL (?tab=offboarding)
-  const [tab, setTab] = useState<Tab>(() => readTab());
+  const search = useSearchParams().toString();
+  const [tab, setTab] = useLinkFilters(erasureTabFromSearch);
   const pickTab = (k: string) => {
-    const next: Tab = k === "offboarding" ? "offboarding" : "subjects";
+    const next = k === "offboarding" ? "offboarding" : "subjects";
     setTab(next);
-    if (typeof window !== "undefined") {
-      const p = new URLSearchParams(window.location.search);
-      if (next === "offboarding") p.set("tab", "offboarding"); else p.delete("tab");
-      const qs = p.toString();
-      window.history.replaceState(null, "", qs ? `?${qs}` : window.location.pathname);
-    }
+    writeSearch(erasureSearch(search, { tab: next }));
   };
   const w = useErasureWords();
   const { formatDateTime } = useFormat();
   const qc = useQueryClient();
-  const [view, setView] = useState<View>(() => readView());
-  const update = (patch: Partial<View>) => setView((prev) => {
-    const next = { ...prev, ...patch };
-    writeView(next);
-    return next;
-  });
+  const [view, setView] = useLinkFilters(erasureViewFromSearch);
+  const update = (patch: Partial<ErasureView>) => {
+    const next = { ...view, ...patch };
+    setView(next);
+    writeSearch(erasureSearch(search, next));
+  };
   // A coarse clock for the DRY RUN age and the retention window (event handler state, not render-time Date.now()).
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
