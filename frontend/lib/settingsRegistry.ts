@@ -499,6 +499,16 @@ export function openProposal(item: Pick<SettingItem, "proposals">, tenantId: str
   return item.proposals.find((p) => (p.tenant_id ?? null) === tenantId);
 }
 
+/** AA-1190: the settings with at least one open proposal (the My work tile "Settings to approve" opens this view). */
+export function withOpenProposal<T extends Pick<SettingItem, "proposals">>(items: readonly T[]): T[] {
+  return items.filter((i) => i.proposals.length > 0);
+}
+
+/** AA-1190: every open proposal of `items` (platform and tenant values); the My work tile counts the same rows. */
+export function openProposalCount(items: readonly Pick<SettingItem, "proposals">[]): number {
+  return items.reduce((n, i) => n + i.proposals.length, 0);
+}
+
 /** The open proposals of tenants (the platform's own is the dialog's default). Pure. */
 export function tenantProposals(item: Pick<SettingItem, "proposals">): SettingRow[] {
   return item.proposals.filter((p) => p.tenant_id);

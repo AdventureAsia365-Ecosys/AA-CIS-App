@@ -96,6 +96,7 @@ export const M = defineMessages(
     // AA-1049 — the elephant-riding policy review (a person reviews the tour before it is on sale)
     allReviews: "All reviews",
     policyFilter: (n: number) => `Elephant riding policy (${n})`,
+    noPolicyFilter: "Without a policy hold",
     policyBadge: "Elephant riding policy",
     policyHeld: "Off sale until approved",
     policyEvidence: (fields: string) => `Elephant riding found in: ${fields}`,
@@ -231,6 +232,7 @@ export const M = defineMessages(
     ok: (pass: string) => `${pass}+ (bị giữ vì lý do khác)`,
     allReviews: "Mọi loại duyệt",
     policyFilter: (n: number) => `Chính sách cưỡi voi (${n})`,
+    noPolicyFilter: "Không bị giữ theo chính sách",
     policyBadge: "Chính sách cưỡi voi",
     policyHeld: "Ngừng bán đến khi được duyệt",
     policyEvidence: (fields: string) => `Có cưỡi voi trong: ${fields}`,

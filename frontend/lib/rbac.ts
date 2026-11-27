@@ -51,12 +51,18 @@ const REFERENCE_PRICE_READERS: StaffRole[] = [
   "admin", "content_lead", "content", "customer_success", "finance",
 ];
 const REFERENCE_PRICE_WRITERS: StaffRole[] = ["admin", "customer_success"];
-// AA-1156 — My work (/admin/my-work): the roles holding a tile capability (review.act, content.write or quality.write;
-// lib/myWork.ts MY_WORK_TILES, backend api/routers/admin_my_work.py). tests/unit/test_aa1156_my_work.py derives the
-// set from ROLE_PERMS and keeps this list equal to it.
+// AA-1156 — My work (/admin/my-work): the roles holding a tile capability (lib/myWork.ts MY_WORK_TILES, backend
+// api/routers/admin_my_work.py) or ops.read (AA-1190: an ops.read custom role lands there too).
+// tests/unit/test_aa1156_my_work.py derives the set from ROLE_PERMS and keeps this list equal to it.
 const MY_WORK: StaffRole[] = ["admin", "content_lead", "content", "tenant_qa"];
-// AA-1156 — the content roles land on My work after sign-in (admin keeps Overview; the viewer keeps the Review Queue).
-const MY_WORK_LANDING: readonly StaffRole[] = ["content_lead", "content", "tenant_qa"];
+// AA-1156 / AA-1190 (S295 D1) — these roles land on My work after sign-in, admin included (Overview is one click away:
+// Home group, the platform tile); the viewer keeps the Review Queue.
+const MY_WORK_LANDING: readonly StaffRole[] = ["admin", "content_lead", "content", "tenant_qa"];
+// The capabilities that open My work (the backend route's any_of, api/core/staff_authz.py POLICY).
+const MY_WORK_CAPS: Capability[] = [
+  "review.act", "content.write", "quality.write", "settings.approve", "compliance.write", "tenant.write", "ops.write",
+  "ops.read",
+];
 
 // AA-878 — the read-only role (the UI-smoke E2E account). It reads the content pages and is refused on every
 // write: requireAdmin() (lib/auth-server.ts) answers 403 to any non-GET from it before the admin secret is
@@ -151,7 +157,7 @@ export const PAGE_RULES: PageRule[] = [
   { prefix: "/admin/overview", caps: ["ops.read"], roles: ["admin"] },          // AA-664
   { prefix: "/admin/data-coverage", caps: ["ops.read"], roles: ["admin"] },     // AA-992 — counts from raw upload to CRM (incl. CRM)
   { prefix: "/admin/reports", caps: ["ops.read"], roles: ["admin"] },          // AA-1003 — report register, KPI scorecard runs
-  { prefix: "/admin/my-work", caps: ["review.act", "content.write", "quality.write"], roles: MY_WORK },            // AA-1156 — the caller's content queues (tiles by capability)
+  { prefix: "/admin/my-work", caps: MY_WORK_CAPS, roles: MY_WORK },            // AA-1156 / AA-1190 — the landing page: the caller's queues (tiles by capability)
   // AA-1039 (S266): also the Tenants group pages /admin/tenants/agencies (was /admin/platform/agencies) and
   // /admin/tenants/data-erasure (was /admin/data-erasure).
   // AA-1035 R2: the more specific Tenants pages first (pageRule takes the first match); the directory and Tenant 360
@@ -410,8 +416,7 @@ export function canWriteAdminPath(subject: StaffSubject, method: string, path: s
 export function landingPage(subject: StaffSubject): string {
   const role = subjectRole(subject);
   if (isCustomRole(role)) return customLanding(capabilitiesOf(subject));   // AA-1155
-  if (role === "admin") return "/admin/overview";
-  if (MY_WORK_LANDING.includes(role as StaffRole)) return "/admin/my-work";   // AA-1156
+  if (MY_WORK_LANDING.includes(role as StaffRole)) return "/admin/my-work";   // AA-1156, AA-1190 (admin too)
   if (role === "customer_success" || role === "support" || role === "finance") return "/admin/tenants";   // AA-1035
   if (role === "ai_ops") return "/admin/ai-gateway";
   return "/admin/review";
@@ -498,11 +503,10 @@ export function can(role: StaffSubject, capability: Capability): boolean {
 export const CAPABILITIES: readonly Capability[] = Array.from(new Set(Object.values(ROLE_PERMS).flat())).sort();
 
 /** AA-1155: the landing page of a custom role, from its capabilities (the first page it may open, in the built-in
- *  roles' order: My work, Tenants, AI gateway, Review Queue, else the docs). */
+ *  roles' order: My work (AA-1190: also for ops.read), Tenants, AI gateway, Review Queue, else the docs). */
 function customLanding(caps: readonly Capability[]): string {
   const holds = (...c: Capability[]) => c.some((x) => caps.includes(x));
-  if (holds("ops.read")) return "/admin/overview";
-  if (holds("review.act", "content.write", "quality.write")) return "/admin/my-work";
+  if (holds(...MY_WORK_CAPS)) return "/admin/my-work";   // AA-1190: ops.read too (was Overview)
   if (holds("tenant.read", "tenant.book.read", "billing.read")) return "/admin/tenants";
   if (holds("spend.read")) return "/admin/ai-gateway";
   if (holds("content.read")) return "/admin/review";

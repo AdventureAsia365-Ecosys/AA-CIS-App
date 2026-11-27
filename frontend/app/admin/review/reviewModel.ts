@@ -162,7 +162,8 @@ export type PolicyReview = {
   evidence: { where: string | null; field: string | null }[];
 };
 
-export const POLICY_FILTER = "elephant_riding";
+// AA-1190: the filter values live in lib/reviewPolicy.ts (dependency-free, tested with My work).
+export { NO_POLICY_FILTER, POLICY_FILTER, policyFromSearch } from "@/lib/reviewPolicy";
 
 /** "master highlights, source itinerary" — the evidence as plain words (codes only, never page text). */
 export function policyEvidenceText(p: PolicyReview): string {

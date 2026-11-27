@@ -7754,12 +7754,20 @@
             ],
             "title": "Count"
           },
+          "counts_toward_total": {
+            "title": "Counts Toward Total",
+            "type": "boolean"
+          },
           "filter": {
             "additionalProperties": {
               "type": "string"
             },
             "title": "Filter",
             "type": "object"
+          },
+          "group": {
+            "title": "Group",
+            "type": "string"
           },
           "key": {
             "title": "Key",
@@ -7781,6 +7789,8 @@
         "required": [
           "key",
           "capability",
+          "group",
+          "counts_toward_total",
           "filter",
           "available"
         ],
@@ -35033,7 +35043,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "My work: the caller's content queues",
+        "summary": "My work: what is waiting for the caller",
         "tags": [
           "admin-my-work"
         ]

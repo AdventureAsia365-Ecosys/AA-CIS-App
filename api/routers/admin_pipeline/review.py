@@ -107,6 +107,9 @@ def _review_failure_class(score, codes: list, failures: list, brand_audit_status
             "hint": "Regenerate to try again"}
 
 
+# AA-1190: ``policy=none`` keeps the rows that are not a policy review (the page's "Without a policy hold").
+NO_POLICY_FILTER = "none"
+
 # The Review Queue's one tenant: Master Content (aa_internal).
 _REVIEW_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 
@@ -142,13 +145,17 @@ def _review_queue_where(tenant_id: str, *, status: str = "pending", country: Opt
         where.append(f"rq.tour_id = ${len(params)}::uuid")
     if policy == policy_review.FILTER_VALUE:
         where.append(policy_review.row_is_policy_sql("rq"))
+    elif policy == NO_POLICY_FILTER:
+        # AA-1190: the rows a reviewer can decide now, without the policy reviews (My work's "ready to review")
+        where.append(f"NOT {policy_review.row_is_policy_sql('rq')}")
     return where, params, facet_where, facet_params
 
 
-async def review_queue_summary(conn, *, status: str = "pending") -> dict:
-    """AA-1156 My work: how many Review Queue rows the page lists for ``status`` (its default view: pending, no other
-    filter) and when the oldest of them was queued. Same FROM / WHERE as the page's total."""
-    where, params, _fw, _fp = _review_queue_where(_REVIEW_TENANT_ID, status=status)
+async def review_queue_summary(conn, *, status: str = "pending", policy: Optional[str] = None) -> dict:
+    """AA-1156 My work: how many Review Queue rows the page lists for ``status`` (its default view: pending) and
+    ``policy`` (AA-1190: ``none`` = without the policy reviews, ``elephant_riding`` = only them), and when the oldest
+    of them was queued. Same FROM / WHERE as the page's total."""
+    where, params, _fw, _fp = _review_queue_where(_REVIEW_TENANT_ID, status=status, policy=policy)
     row = await conn.fetchrow(f"""
         SELECT count(*) AS n, min(rq.created_at) AS oldest FROM silver_aa_internal.review_queue rq
         JOIN silver_aa_internal.raw_tours rt ON rt.tour_id = rq.tour_id

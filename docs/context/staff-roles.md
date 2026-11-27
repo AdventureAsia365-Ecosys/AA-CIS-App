@@ -804,8 +804,7 @@ legacy password login (`/auth/admin-login`, kept for Booking until ADR 0006 Phas
 profile keyed by `admin_users.id` and verifies a CIS-issued JWT with `aud=booking` (root ADR 0004, O1).
 
 **My work (AA-1156, S286; no migration).** `/admin/my-work` is the landing page of `content`, `content_lead` and
-`tenant_qa` (`lib/rbac.ts landingPage`; admin keeps `/admin/overview` and finds My work in the Home nav group, the
-viewer keeps the Review Queue). `GET /admin/my-work/summary` (`api/routers/admin_my_work.py`, POLICY
+`tenant_qa` (`lib/rbac.ts landingPage`; since AA-1190 admin too, the viewer keeps the Review Queue). `GET /admin/my-work/summary` (`api/routers/admin_my_work.py`, POLICY
 `review.act | content.write | quality.write`) answers one tile per work queue the caller's capabilities allow, never
 per person: Review Queue waiting (`review.act`), supply copy drafts to review (entities with an open draft version,
 whatever their content status: a redraft of published or stale content keeps that status; list filter `has_draft`)
@@ -818,6 +817,20 @@ total its page lists for that filter (`tests/integration/test_aa1156_my_work_cou
 the link's query (`frontend/lib/myWork.ts`); Supply copy reads `?status=` and `?has_draft=`, AA content and Place
 cards read `?status=`. Refresh, no
 polling; a "Booking: My work" link opens the Booking staff dashboard through `appPageUrl`.
+
+**My work slice 1 (AA-1190, S296; no migration).** My work is the landing page of admin too (S295 decision D1) and of
+a custom role holding `ops.read` (the route opens to it; such a role may get an empty page); the logo goes to
+`landingPage(role)`, the phone bottom bar starts with My work. Each tile now carries `group` (`approve`, `work`,
+`platform`, `watch`) and `counts_toward_total`: the page shows the bands with work (Needs your approval, Content work,
+Platform, Keep an eye on) and folds the empty queues into one line. New tiles: Settings to approve
+(`settings.approve`, open proposals of the CIS / TripPlanner tabs; link `/admin/platform/settings?pending=1&app=…`, a
+new "only settings with an open proposal" view), Compliance exceptions to approve (`compliance.write`,
+`?tab=exceptions`), Data erasure to approve (`tenant.write` and the administrator role, offboarding requests in
+`awaiting_approval`), Platform problems open (`ops.write`, not for the business owner: open alarm / service_down /
+rollout_failed events of `acp_shared.ops_event`, link Overview). The approval counts leave the viewer's own proposals
+out only while two-person approval is on. The Review Queue tile counts `policy=none` (new filter: without the
+elephant-riding policy reviews, also on the page as "Without a policy hold"); "Held by policy" (`policy=elephant_riding`)
+and Place cards are watch tiles, never in the total.
 
 ### Booking staff token (AA-680) — retired (AA-911, S271)
 

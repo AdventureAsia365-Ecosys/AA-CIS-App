@@ -615,8 +615,8 @@ POLICY: dict[tuple[str, str], Any] = {
     **{("POST", "/admin/overview/incidents" + p): OPS_WRITE for p in ("", "/{incident_id}")},  # AA-1142 incidents
     **{("GET", "/admin/overview/" + p): OPS_READ for p in (  # AA-1142: incidents, per-agency drill-down, SLO drill
         "incidents", "incidents/{incident_id}", "status/tenants", "status/slo/drill")},
-    ("GET", "/admin/my-work/summary"): any_of(REVIEW_ACT, CONTENT_WRITE, QUALITY_WRITE),  # AA-1156 My work (per tile)
-    ("GET", "/admin/data-coverage"): OPS_READ,  # AA-992 data coverage counts, incl. CRM over crm.ops.v1 (admin-only)
+    ("GET", "/admin/data-coverage"): OPS_READ, ("GET", "/admin/my-work/summary"): any_of(  # AA-992; AA-1156/1190 tiles
+      REVIEW_ACT, CONTENT_WRITE, QUALITY_WRITE, SETTINGS_APPROVE, COMPLIANCE_WRITE, TENANT_WRITE, OPS_WRITE, OPS_READ),
     # ── admin_reports (AA-1003) — report register, runs, generate now (admin-only page)
     ("GET", "/admin/reports"): OPS_READ,
     ("GET", "/admin/reports/runs/{run_id}"): OPS_READ, ("GET", "/admin/reports/{report_id}/runs"): OPS_READ,

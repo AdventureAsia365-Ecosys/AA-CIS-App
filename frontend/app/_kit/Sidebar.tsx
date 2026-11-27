@@ -40,6 +40,7 @@ import { NavGroup as KitNavGroup } from "./core/NavGroup";
 import { navGroupId } from "./core/sidebarStore";
 import { useHydrated } from "./core/useHydrated";
 import { useAdminIdentity } from "./useAdminIdentity";
+import { landingPage } from "@/lib/rbac";
 import { useReviewPendingCount } from "./useReviewPendingCount";
 import { useNavLabel } from "./adminNav";
 import { useT } from "./core/useI18n";
@@ -109,10 +110,10 @@ export function Sidebar({ onNavigate, drawerOpen = false }: { onNavigate?: () =>
         transition: "width .18s ease",
       }}
     >
-      {/* Brand → Overview */}
+      {/* Brand → the role's landing page (AA-1190: My work for most roles; a fixed Overview redirected the others) */}
       <div style={{ paddingBottom: 16, borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
         <button
-          onClick={() => go("/admin/overview")}
+          onClick={() => go(landingPage(role))}
           data-testid="sidebar-logo"
           title={t("logoTitle")}
           aria-label={t("logoAria")}

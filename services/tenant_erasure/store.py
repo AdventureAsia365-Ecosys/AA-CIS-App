@@ -162,6 +162,17 @@ async def on_restore(conn, tenant_id: str) -> Optional[str]:
         return None
 
 
+# AA-1190 My work: the requests whose combined DRY RUN fingerprint waits for an administrator's approval (the
+# Tenant offboarding tab lists them with phase awaiting_approval); oldest = when that fingerprint was set.
+AWAITING_APPROVAL_SQL = ("SELECT count(*) AS n, min(coalesce(fingerprint_at, updated_at)) AS oldest "
+                         "FROM shared.tenant_erasure_request WHERE phase = 'awaiting_approval'")
+
+
+async def awaiting_approval_summary(conn) -> dict:
+    row = await conn.fetchrow(AWAITING_APPROVAL_SQL)
+    return {"count": int(row["n"] or 0), "oldest_at": row["oldest"]}
+
+
 async def get_request(conn, request_id: str, *, for_update: bool = False) -> Optional[dict]:
     lock = " FOR UPDATE" if for_update else ""
     return _row(await conn.fetchrow(
