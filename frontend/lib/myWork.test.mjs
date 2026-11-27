@@ -21,7 +21,8 @@ import { MY_WORK_TILES, knownTiles, splitBands, tileDef, tileHref, totalWaiting 
 import { STAFF_ROLES, can, canSeePage, landingPage } from "./rbac.ts";
 import { filtersFromSearch, listUrl } from "./supplyContent.ts";
 import { openProposalCount, withOpenProposal } from "./settingsRegistry.ts";
-import { policyFromSearch } from "./reviewPolicy.ts";
+import { policyFromSearch, reviewLinkFromSearch } from "./reviewPolicy.ts";
+import { erasureTabFromSearch } from "./erasureView.ts";
 
 const FRONTEND = fileURLToPath(new URL("..", import.meta.url));
 const read = (rel) => readFileSync(join(FRONTEND, rel), "utf8");
@@ -87,13 +88,17 @@ test("5b. AA-1190 target pages read the new filters", () => {
   assert.equal(policyFromSearch("?policy=elephant_riding"), "elephant_riding");
   assert.equal(policyFromSearch("?policy=nope"), "all");
   assert.equal(policyFromSearch(""), "all");
-  assert.match(read("app/admin/review/page.tsx"), /policyFromSearch\(window\.location\.search\)/);
+  assert.deepEqual(reviewLinkFromSearch("?policy=none"), { policy: "none", tourId: null });
+  assert.deepEqual(reviewLinkFromSearch("policy=elephant_riding&tour_id=t-1"), { policy: "elephant_riding", tourId: "t-1" });
+  assert.deepEqual(reviewLinkFromSearch("?tour_id="), { policy: "all", tourId: null });
+  assert.match(read("app/admin/review/page.tsx"), /reviewLinkFromSearch\(useSearchParams\(\)\.toString\(\)\)/);
   assert.match(read("app/admin/platform/settings/SettingsRegistry.tsx"), /params\.get\("pending"\) === "1"/);
   const items = [{ proposals: [] }, { proposals: [{ id: "a" }, { id: "b" }] }, { proposals: [{ id: "c" }] }];
   assert.equal(withOpenProposal(items).length, 2);
   assert.equal(openProposalCount(items), 3);
   assert.match(read("app/admin/platform/compliance/CompliancePage.tsx"), /get\("tab"\)/);
-  assert.match(read("app/admin/tenants/data-erasure/DataErasure.tsx"), /get\("tab"\) === "offboarding"/);
+  assert.equal(erasureTabFromSearch("?tab=offboarding"), "offboarding");
+  assert.match(read("app/admin/tenants/data-erasure/DataErasure.tsx"), /useLinkFilters\(erasureTabFromSearch\)/);
 });
 
 test("6. AA-1190 bands: work first by band, empty queues folded, watch tiles outside the total", () => {
