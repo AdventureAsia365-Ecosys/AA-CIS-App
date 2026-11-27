@@ -1,6 +1,6 @@
 # Adventure Asia: how to report a security vulnerability in this service (RFC 9116).
 # Concerns about AI-generated content on this service go to the same address.
 # Please do not include personal data of other people in a report.
-Contact: mailto:security@adventure.asia
+Contact: mailto:info@adventure.asia
 Expires: 2027-11-26T00:00:00.000Z
 Preferred-Languages: en, vi
