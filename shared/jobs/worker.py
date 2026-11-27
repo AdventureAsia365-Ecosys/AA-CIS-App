@@ -742,19 +742,17 @@ async def _main() -> None:
     load_kinds()
     max_parallel = worker_max_parallel()
     grace_seconds = worker_grace_seconds()  # AA-993 G1: fails before the pool opens on a bad value
-    # AA-737: LangGraph runs sync nodes (every LLM call) on the loop's default executor, which is
-    # sized from the CPU count (6 threads on the 0.5 vCPU task) — fewer than the slots. Size it to
-    # the slots (2 per job: a node + a blocking side call such as atomize's Cohere pacing) so
-    # raising max_parallel is not silently capped by threads. Same reason the pool grows with it.
-    # AA-1178: plus the monitoring lane's own slots, at the setting's upper bound (both grow lazily, so an unused
-    # slot costs nothing, and an administrator raising the cap needs no restart).
+    # AA-737: LangGraph runs sync nodes (every LLM call) on the loop's default executor, which is sized from the CPU
+    # count (6 threads on the 0.5 vCPU task) — fewer than the slots. Size it to the slots (2 per job: a node + a
+    # blocking side call such as atomize's Cohere pacing) so raising max_parallel is not silently capped by threads.
+    # Same reason the pool grows with it. AA-1178: plus the monitoring lane's own slots, at the setting's upper bound
+    # (both grow lazily, so an unused slot costs nothing, and an administrator raising the cap needs no restart).
     slots = max_parallel + lanes.monitor_slots_bound()
     asyncio.get_running_loop().set_default_executor(
         ThreadPoolExecutor(max_workers=2 * slots, thread_name_prefix="job"))
     pool = await asyncpg.create_pool(get_database_url(), min_size=1, max_size=max(5, slots + 2),
-                                     server_settings={"application_name": "cis-worker"},  # AA-824
-                                     # S291: depth-named savepoints (shared/pg_connection.py)
-                                     connection_class=StableSavepointConnection)
+                                     connection_class=StableSavepointConnection,  # S291: depth-named savepoints
+                                     server_settings={"application_name": "cis-worker"})  # AA-824
     redis = None
     if os.environ.get("REDIS_HOST"):
         import redis.asyncio as aioredis
