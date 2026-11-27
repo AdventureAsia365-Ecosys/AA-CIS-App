@@ -523,9 +523,16 @@ _ORIGIN_SQL = """
 """
 
 
+async def is_hand_made(conn, tour_id: str) -> bool:
+    """True for a hand-made tour row (entry_origin 'manual'); False for a sheet tour, an unknown id or before CIS 478.
+    The workspace's own probe of one row; the Excel fact-draft merge, merge-preview and publish refuse per key instead
+    (AA-1181, services/tour_lifecycle/hand_made.py ``key_is_hand_made``)."""
+    return await conn.fetchval(_ORIGIN_SQL, tour_id) == "manual"
+
+
 async def _manual_row(conn, tour_id: str):
     """The tour row when it is a hand-made tour; None for a sheet tour, an unknown id or before CIS 478."""
-    if await conn.fetchval(_ORIGIN_SQL, tour_id) != "manual":
+    if not await is_hand_made(conn, tour_id):
         return None
     return await conn.fetchrow(_TOUR_SQL, tour_id)
 

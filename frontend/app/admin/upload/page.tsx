@@ -11,6 +11,7 @@ import {
   Button, PageFrame, PageHeader, useFormat, useT, Input, Select, K, serif, sans, mono, Section, Eyebrow, Badge,
   DataTable, IconButton, KX, LinkButton, useIsPhone, type ColumnDef,
 } from "../../_kit";
+import { FACT_DRAFT_HAND_MADE, refusalText } from "@/lib/factDraftErrors";
 import { phoneCardColumns } from "@/lib/tableSort";
 import { UP } from "./messages";
 import { MergeSlot, type MergeChoice } from "./MergePanel";
@@ -104,6 +105,8 @@ interface StagingItem {
   // AA-986 L2 (Q6): the matched tour was deleted at S0/A0 (no live version left).
   matched_deleted?: boolean;
   matched_deleted_at?: string | null;
+  // AA-1181: the matched tour was made by hand in the content workspace (Bypass or Create a new tour only).
+  matched_hand_made?: boolean;
   incoming: Record<string, string | null>;
   existing: {
     src_name: string | null;
@@ -727,6 +730,27 @@ function UploadHistorySection({ history, loading, onRefresh }: {
 
 // ─── DuplicateReview (Step 5) ─────────────────────────────────────────────────
 
+// The red note above a staged row whose match takes other decisions: a deleted tour (AA-986 L2, Q6: Restore or Create
+// a new tour) or a tour made by hand in the content workspace (AA-1181: Bypass or Create a new tour).
+function MatchNote({ item }: { item: StagingItem }) {
+  const t = useT(UP);
+  let text: string | null = null;
+  if (item.matched_deleted) {
+    text = t("deletedOn", item.matched_deleted_at ? item.matched_deleted_at.slice(0, 10) : t("earlierDate"));
+  } else if (item.matched_hand_made) {
+    text = t("handMadeMatch");
+  }
+  if (!text) return null;
+  return (
+    <div style={{
+      padding: "8px 16px", background: K.dangerTint, borderBottom: `1px solid ${K.line}`,
+      fontSize: 12, color: K.danger, fontWeight: 600,
+    }}>
+      {text}
+    </div>
+  );
+}
+
 function DuplicateReviewStep({
   batchIds,
   onDone,
@@ -783,7 +807,8 @@ function DuplicateReviewStep({
         results[item.staging_id] = res.ok;
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
-          failures.push(`${item.incoming.src_name || "—"}: ${typeof body.detail === "string" ? body.detail : res.status}`);
+          const why = refusalText(body, String(res.status), { [FACT_DRAFT_HAND_MADE]: t("handMadeMatch") });
+          failures.push(`${item.incoming.src_name || "—"}: ${why}`);
         }
       } catch {
         results[item.staging_id] = false;
@@ -852,14 +877,7 @@ function DuplicateReviewStep({
                 )}
               </div>
 
-              {item.matched_deleted && (
-                <div style={{
-                  padding: "8px 16px", background: K.dangerTint, borderBottom: `1px solid ${K.line}`,
-                  fontSize: 12, color: K.danger, fontWeight: 600,
-                }}>
-                  {t("deletedOn", item.matched_deleted_at ? item.matched_deleted_at.slice(0, 10) : t("earlierDate"))}
-                </div>
-              )}
+              <MatchNote item={item} />
 
               {/* Side-by-side */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>

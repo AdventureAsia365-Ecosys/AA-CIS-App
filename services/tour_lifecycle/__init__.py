@@ -6,6 +6,7 @@ status columns or inserting into raw_tours / published_tours.
 """
 from .batch import open_batch
 from .effects import recompute_after_status_change, run_after_commit
+from .hand_made import SOURCE_HAND_MADE, hand_made_versions, key_is_hand_made
 from .service import (
     LifecycleError,
     Outcome,
@@ -29,7 +30,8 @@ from .service import (
 )
 
 __all__ = [
-    "LifecycleError", "Outcome", "PREVIEW_ACTIONS", "activate_master", "deleted_key_info", "insert_new_sources",
+    "LifecycleError", "Outcome", "PREVIEW_ACTIONS", "SOURCE_HAND_MADE", "activate_master", "deleted_key_info",
+    "hand_made_versions", "insert_new_sources", "key_is_hand_made",
     "key_of", "key_was_published", "open_batch", "pause_master", "policy_hold", "preview", "publish",
     "recompute_after_status_change",
     "restore_master", "restore_source", "retire_source", "run_after_commit", "served_state", "set_active",

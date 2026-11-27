@@ -313,7 +313,12 @@
     /admin/tours/{id}/fact-draft`, `POST .../fact-draft/publish` (`api/routers/admin_pipeline/fact_drafts.py`) runs the
     same two-person rule (the merge's author is the editor), the price rule, a live source and a stale check (409
     `fact_draft_stale` when a field changed since the merge), then writes the facts with one `raw_tour_revision` row
-    (`excel_merge`, resolutions) and runs the source fan-out. Without `reference_price.write` a merge never changes
+    (`excel_merge`, resolutions) and runs the source fan-out. **A supplier sheet never changes a tour made by hand in
+    the content workspace** (AA-1181; per key: any version of the matched key with `entry_origin = 'manual'`,
+    `services/tour_lifecycle/hand_made.py`): merge, merge-preview and fact-draft publish answer 409
+    `fact_draft_hand_made` (a draft opened earlier can still be discarded); replace, update, keep_both and set-active of
+    a sheet version answer 409 `source_hand_made`; the Duplicate Review lists such a row with `matched_hand_made` and
+    offers only Bypass and Create a new tour. Without `reference_price.write` a merge never changes
     `price_raw`: taking the sheet's price is 403 `price_read_only`, an untouched price change is held back (`withheld`
     in the result). **Re-check verdicts belong to the text they read**: the re-validation writes `revalidate_passed`
     only while the version's `edited_at` is the one it read (a save during the run rolls the verdict back, result
@@ -346,7 +351,8 @@
     its last publish, or that was never published (`FactsReviewRequiredError`, version -> `hitl`; S1 files it in the
     Review Queue, where the approve counts the facts writers). **The drawer** (`PATCH /admin/tours/{id}/raw`) refuses a
     hand-made tour's facts (409 `manual_tour_use_workspace`; only `price_raw` stays there) and its Original tab shows
-    them read-only with a link to the workspace (`raw.entry_origin` in the detail). **Facts saves** (`PUT …/tours/{id}/facts`, content.write; hand-made tours only, 409 `not_hand_made`): before the
+    them read-only with a link to the workspace (`raw.entry_origin` in the detail); a supplier sheet never merges into,
+    replaces or joins it (Excel re-import T1 above). **Facts saves** (`PUT …/tours/{id}/facts`, content.write; hand-made tours only, 409 `not_hand_made`): before the
     first publish the page autosaves; once published a save needs a reason (422 `reason_required`; a reason has 3..500
     characters, 422 `reason_length`), keeps the required list complete (409 `required_missing`) and runs the source
     fan-out; every save that changes something writes one `raw_tour_revision` row (`staff_edit`) and one audit row; a

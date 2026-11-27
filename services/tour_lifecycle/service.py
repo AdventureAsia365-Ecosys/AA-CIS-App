@@ -43,7 +43,7 @@ import structlog
 from services.notifications import EventType, NotificationService
 from shared.tour_liveness import SourceState, source_not_live_message
 
-from . import derivatives as _d
+from . import derivatives as _d, hand_made as _hand_made
 from . import policy as _policy
 
 logger = structlog.get_logger()
@@ -348,10 +348,9 @@ async def _cascade(conn, out: Outcome, actor: str, *, superseded: Optional[list]
             out.derivatives[tenant_id] = kinds
     elif a_state == "served" and b_state != "served":
         for tenant_id, entity_id in await _outstanding_warnings(conn, tour_ids):
-            await svc.emit(
-                event_type=EventType.TOUR_REINSTATED, entity_type="tour", entity_id=entity_id,
-                tenant_id=tenant_id, actor_type="admin" if actor != "pipeline" else "system",
-                payload={"tour_name": out.tour_name, "changed_by": actor, "source_id": out.source_id})
+            await svc.emit(event_type=EventType.TOUR_REINSTATED, entity_type="tour", entity_id=entity_id,
+                           tenant_id=tenant_id, actor_type="admin" if actor != "pipeline" else "system",
+                           payload={"tour_name": out.tour_name, "changed_by": actor, "source_id": out.source_id})
             out.reinstated_tenants.append(tenant_id)
 
     logger.info("tour_lifecycle", **out.summary())
@@ -479,8 +478,7 @@ async def _insert_version(conn, *, tenant_id: str, batch_id: str, payload: dict,
 
 
 async def supersede(conn, *, decision: str, tenant_id: str, batch_id: str, payload: dict,
-                    matched_tour_id: Optional[str], matched_group_id: Optional[str],
-                    actor: str = "admin") -> Outcome:
+                    matched_tour_id: Optional[str], matched_group_id: Optional[str], actor: str = "admin") -> Outcome:
     """Commit a staged upload (decision replace | update | keep_both | create_new).
 
     replace / update  the incoming row becomes the live version of the matched key; the old live version is
@@ -490,7 +488,7 @@ async def supersede(conn, *, decision: str, tenant_id: str, batch_id: str, paylo
     keep_both         the incoming row is added as a superseded version; nothing else changes.
     create_new        the incoming row starts a new key (version 1, live), the matched one is left as it is (Q6).
     A matched key that was deleted at S0/A0 refuses replace / update / keep_both (409 source_deleted, Q6): staff choose
-    Restore (restore_source) or Create a new tour."""
+    Restore (restore_source) or Create a new tour. One with a hand-made version refuses them too (hand_made.py)."""
     if decision not in ("replace", "update", "keep_both", "create_new"):
         raise LifecycleError(400, "bad_decision", f"unknown decision {decision!r}")
     async with conn.transaction():
@@ -502,6 +500,7 @@ async def supersede(conn, *, decision: str, tenant_id: str, batch_id: str, paylo
                 raise LifecycleError(409, "source_deleted",
                                      f"this tour was deleted on {when}. Choose Restore (bring the deleted tour back) "
                                      "or Create a new tour.")
+        await _hand_made.refuse_sheet(conn, source_id or matched_group_id, decision=decision)   # AA-1181
         if decision == "create_new" or not matched_group_id:
             group_id, version = str(uuid.uuid4()), 1
             source_id = None if decision == "create_new" else source_id
@@ -543,6 +542,7 @@ async def set_active(conn, tour_id, *, actor: str = "admin") -> Outcome:
             raise LifecycleError(409, "source_trashed",
                                  "this version was deleted (trashed) in S0/A0. Restore it (Upload, Trashed Source "
                                  "Tours, Restore) instead of setting it active.")
+        await _hand_made.refuse_sheet(conn, v["source_id"], live_tour_id=v["tour_id"])        # AA-1181
         out = Outcome("set_active", v["tour_id"], v["source_id"], v["src_name"] or "")
         out.before = await served_state(conn, out.source_id)
         rows = await conn.fetch("""

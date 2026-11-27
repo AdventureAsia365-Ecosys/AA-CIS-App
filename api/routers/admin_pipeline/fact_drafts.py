@@ -11,11 +11,19 @@
                                               since the merge); then the facts are written, with one history row
                                               (excel_merge) and one audit row, and the source fan-out marks what was
                                               written from the old facts (content.publish | review.act)
+                                              AA-1181: a tour whose key has a hand-made version (content workspace,
+                                              entry_origin 'manual') is refused first (409 ``fact_draft_hand_made``):
+                                              its facts are rendered from raw_tours.manual_facts and change only in
+                                              the workspace
   DELETE /tours/{tour_id}/fact-draft          discard it (kept as history) (content.write)
 
 The draft is written by POST /admin/upload-staging/{id}/decide with decision ``merge`` (uploads.py,
 :func:`create_fact_draft`): the tour is not touched until a person publishes. One open draft per tour (CIS 457 partial
-unique index); before CIS 457 every route answers 503 ``versions_not_ready``.
+unique index); before CIS 457 every route answers 503 ``versions_not_ready``. The merge and merge-preview refuse a
+hand-made key too (uploads.py ``_merge_inputs`` calls :func:`refuse_hand_made`), so such a draft is only found when it
+was opened before the check or before a hand-made version joined the key; it can still be discarded. The rule is per
+key (services/tour_lifecycle/hand_made.py ``key_is_hand_made``), the same as the Duplicate Review list and
+supersede / set-active: any hand-made version of the key refuses, not only the matched row.
 """
 import json
 from typing import Optional
@@ -29,11 +37,21 @@ from api.routers.admin_pipeline._shared import logger, router
 from api.services import content_publish_gate as gate
 from services.acp_shared.audit_log import write_audit_log
 from services.ingestion import excel_merge as em
+from services.tour_lifecycle import key_is_hand_made
 from shared.tour_liveness import SOURCE_NOT_LIVE, source_not_live_message, source_state
 
 FACT_DRAFT_NOT_READY = {"code": "versions_not_ready",
                         "message": "Sheet drafts are not available yet: the database update (CIS 457) is not applied"}
 FACT_DRAFT_RESOURCE = "raw_tour"
+# AA-1181: a supplier sheet never changes a hand-made tour (its facts live in raw_tours.manual_facts, edited in the
+# content workspace with its own draft, required list and two-person publish); a sheet write would leave them stale.
+FACT_DRAFT_HAND_MADE = "fact_draft_hand_made"
+_HAND_MADE_MESSAGES = {
+    "publish": "This tour was made by hand in the content workspace: a supplier sheet never changes it. Discard this "
+               "sheet draft and change the tour in the content workspace",
+    "merge": "This tour was made by hand in the content workspace: a supplier sheet never merges into it. Choose "
+             "Bypass, or Create a new tour to keep the sheet's tour as a separate tour",
+}
 _FD_OPEN_SQL = """
     SELECT id, tour_id::text AS tour_id, staging_id::text AS staging_id, fields, before::text AS before,
            after::text AS after, resolutions::text AS resolutions, author, reason, created_at
@@ -90,6 +108,15 @@ async def create_fact_draft(conn, *, tour_id: str, staging_id: str, before: dict
         raise _open_draft_conflict()
 
 
+async def refuse_hand_made(conn, tour_id: str, action: str) -> None:
+    """409 ``fact_draft_hand_made`` when the tour's key has a hand-made version (``action``: publish | merge, the
+    message's advice). Per key, not per row: a key whose live version came from a sheet but which holds a hand-made
+    version is refused too (services/tour_lifecycle/hand_made.py)."""
+    if await key_is_hand_made(conn, tour_id):
+        raise HTTPException(status_code=409, headers={"X-Error-Code": FACT_DRAFT_HAND_MADE},
+                            detail={"code": FACT_DRAFT_HAND_MADE, "message": _HAND_MADE_MESSAGES[action]})
+
+
 def _open_draft_conflict() -> HTTPException:
     return HTTPException(status_code=409, headers={"X-Error-Code": "fact_draft_open"},
                          detail={"code": "fact_draft_open",
@@ -123,12 +150,14 @@ async def get_fact_draft(tour_id: str, request: Request, x_admin_secret: str = H
         if current is None:
             raise HTTPException(status_code=404, detail=f"Tour {tour_id} not found")
         return {"tour_id": tour_id, "draft": _fd_out(d, current) if d else None,
-                "two_person_publish": await gate.switch_on(conn), "price_editable": may_edit_price(request)}
+                "two_person_publish": await gate.switch_on(conn), "price_editable": may_edit_price(request),
+                "hand_made": await key_is_hand_made(conn, tour_id)}
 
 
 async def _fd_publish_checks(conn, request: Request, tour_id: str, d) -> dict:
     """The gate of a fact draft's publish, in the publish transaction; returns the tour's current values."""
     fields = list(d["fields"])
+    await refuse_hand_made(conn, tour_id, "publish")
     await enforce_publish_gate(conn, request, editors=[d["author"]])
     if set(fields) & em.PRICE_FIELDS and not may_edit_price(request):
         raise price_read_only()

@@ -293,7 +293,10 @@ def _merge_cols() -> str:
 
 async def _merge_inputs(conn, staging_id: str) -> tuple:
     """(staging row, matched raw tour row, hand-edited fields, plan) of a staged re-import. 404 / 409 when it cannot
-    merge: no pending row, no matched tour, or the matched tour is not live (deleted: Restore or Create new)."""
+    merge: no pending row, no matched tour, the matched tour is not live (deleted: Restore or Create new) or its key
+    has a hand-made version (409 ``fact_draft_hand_made``, AA-1181: Bypass or Create new; per key, as the list's
+    ``matched_hand_made``)."""
+    from api.routers.admin_pipeline.fact_drafts import refuse_hand_made
     from services.ingestion import excel_merge as em
     staging = await conn.fetchrow("""
         SELECT id::text AS id, parsed_payload, matched_tour_id::text AS matched_tour_id
@@ -308,6 +311,7 @@ async def _merge_inputs(conn, staging_id: str) -> tuple:
     if not src.live:
         raise HTTPException(status_code=409, detail=source_not_live_message(src, "merge this sheet into it"),
                             headers={"X-Error-Code": SOURCE_NOT_LIVE})
+    await refuse_hand_made(conn, tour_id, "merge")     # AA-1181: a supplier sheet never merges into a hand-made key
     current = await conn.fetchrow(
         f"SELECT tour_id::text AS tour_id, {_merge_cols()} FROM silver_aa_internal.raw_tours "
         "WHERE tour_id = $1::uuid FOR UPDATE", tour_id)
@@ -421,6 +425,16 @@ _STAGING_KEY_DELETED_SQL = """
          WHERE COALESCE(k.source_group_id, k.tour_id) = COALESCE(us.matched_source_group_id, us.matched_tour_id)
     ) kd ON true
 """
+# AA-1181: the matched key has a version made by hand in the content workspace (raw_tours.entry_origin 'manual', CIS
+# 478; read through to_jsonb, so false before it): a supplier sheet never merges into, replaces or joins it, so the UI
+# offers Bypass and Create a new tour only (services/tour_lifecycle supersede refuses the rest, 409 source_hand_made).
+_STAGING_KEY_HAND_MADE_SQL = """
+    LEFT JOIN LATERAL (
+        SELECT bool_or(to_jsonb(h) ->> 'entry_origin' = 'manual') AS hand_made
+          FROM silver_aa_internal.raw_tours h
+         WHERE COALESCE(h.source_group_id, h.tour_id) = COALESCE(us.matched_source_group_id, us.matched_tour_id)
+    ) hm ON true
+"""
 
 
 @router.get("/upload-staging/{batch_id}")
@@ -431,7 +445,8 @@ async def list_upload_staging(
 ):
     """Return staging rows + existing tour fields for side-by-side comparison. AA-986 L2 (Q6): `existing` carries the
     matched row's source_status / deleted_at, and `matched_deleted` / `matched_deleted_at` say the matched tour was
-    deleted at S0/A0 (the UI then offers Restore or Create a new tour)."""
+    deleted at S0/A0 (the UI then offers Restore or Create a new tour). AA-1181: `matched_hand_made` says the matched
+    tour was made by hand in the content workspace (the UI then offers Bypass or Create a new tour)."""
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
@@ -447,11 +462,13 @@ async def list_upload_staging(
                 rt.provider, rt.ingest_at,
                 rt.source_status::text AS source_status, rt.deleted_at,
                 (kd.deleted_at IS NOT NULL AND NOT COALESCE(kd.has_live, false)) AS matched_deleted,
-                kd.deleted_at AS key_deleted_at
+                kd.deleted_at AS key_deleted_at,
+                COALESCE(hm.hand_made, false) AS matched_hand_made
             FROM silver_aa_internal.upload_staging us
             LEFT JOIN silver_aa_internal.raw_tours rt
                 ON rt.tour_id = us.matched_tour_id
             {_STAGING_KEY_DELETED_SQL}
+            {_STAGING_KEY_HAND_MADE_SQL}
             WHERE us.batch_id = $1::uuid
               AND us.decision = 'pending'
             ORDER BY us.created_at
@@ -469,6 +486,7 @@ async def list_upload_staging(
                 "matched_deleted":         bool(r["matched_deleted"]),
                 "matched_deleted_at":      (r["key_deleted_at"].isoformat()
                                             if r["matched_deleted"] and r["key_deleted_at"] else None),
+                "matched_hand_made":       bool(r["matched_hand_made"]),
                 "incoming": (
                     json.loads(r["parsed_payload"])
                     if isinstance(r["parsed_payload"], str)
@@ -509,6 +527,7 @@ async def decide_staging(
     replace    → incoming INSERT as active; old active → superseded (its Master switched off); delete staging
     update     → same as replace (alias)
     keep_both  → incoming INSERT as superseded; active unchanged; delete staging
+                 (replace / update / keep_both / merge on a hand-made match → 409, AA-1181: Bypass or Create new)
     restore    → (matched tour deleted at S0/A0 only) restore the deleted tour, discard incoming (Q6)
     create_new → incoming INSERT as a new tour (new key), the matched one untouched (Q6)
 
