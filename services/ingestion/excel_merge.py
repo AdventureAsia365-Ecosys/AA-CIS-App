@@ -74,9 +74,15 @@ def hand_edited_fields(revisions: Iterable[Mapping[str, Any]]) -> set[str]:
     return owned
 
 
-def plan(current: Mapping[str, Any], incoming: Mapping[str, Any], hand_edited: Iterable[str]) -> dict:
-    """{unchanged: [field], auto: [{field, current, incoming}], conflicts: [{field, current, incoming}]}."""
+def plan(current: Mapping[str, Any], incoming: Mapping[str, Any], hand_edited: Iterable[str],
+         ask: Iterable[str] = ()) -> dict:
+    """{unchanged: [field], auto: [{field, current, incoming}], conflicts: [{field, current, incoming}]}.
+
+    ``ask``: fields that are a conflict whenever the sheet changes them, hand-edited or not (AA-1187: the Provider of a
+    re-upload that matched its tour on Name + country, so another spelling never replaces the operator without a
+    person's choice)."""
     owned = set(hand_edited)
+    choose = owned | set(ask)
     out: dict = {"unchanged": [], "auto": [], "conflicts": []}
     for f in MERGE_FIELDS:
         if f not in incoming or _empty(incoming.get(f)):
@@ -86,7 +92,7 @@ def plan(current: Mapping[str, Any], incoming: Mapping[str, Any], hand_edited: I
             out["unchanged"].append(f)
             continue
         item = {"field": f, "current": cur, "incoming": inc, "hand_edited": f in owned}
-        (out["conflicts"] if f in owned else out["auto"]).append(item)
+        (out["conflicts"] if f in choose else out["auto"]).append(item)
     return out
 
 

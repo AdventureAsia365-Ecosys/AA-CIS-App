@@ -31,11 +31,23 @@ const HAND_MADE_DECISION_LABELS: Record<"bypass" | "create_new", DecisionLabel> 
   create_new: "decCreateNew",
 };
 
+// AA-1187 — a row that matched a live supplier tour on Name + country but names another Provider may be another
+// operator's tour of the same name: Create a new tour keeps both, the matched tour untouched (a Merge asks before it
+// changes the Provider).
+const OTHER_PROVIDER_DECISION_LABELS: Record<"bypass" | "merge" | "create_new" | "replace" | "keep_both", DecisionLabel> = {
+  bypass:     "decBypass",
+  merge:      "decMerge",
+  create_new: "decCreateNew",
+  replace:    "decReplace",
+  keep_both:  "decKeepBoth",
+};
+
 export function decisionLabels(
-  item: { matched_deleted?: boolean; matched_hand_made?: boolean },
+  item: { matched_deleted?: boolean; matched_hand_made?: boolean; matched_other_provider?: boolean },
 ): Record<string, DecisionLabel> {
   if (item.matched_deleted) return DELETED_DECISION_LABELS;
-  return item.matched_hand_made ? HAND_MADE_DECISION_LABELS : DECISION_LABELS;
+  if (item.matched_hand_made) return HAND_MADE_DECISION_LABELS;
+  return item.matched_other_provider ? OTHER_PROVIDER_DECISION_LABELS : DECISION_LABELS;
 }
 
 /** The POST body of one decision: a merge carries the person's choices and reason. */

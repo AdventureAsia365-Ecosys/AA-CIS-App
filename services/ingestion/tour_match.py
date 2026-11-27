@@ -13,9 +13,12 @@ ignored) when, in this order of preference:
 3. there is no match: the same Name in another country is another tour.
 
 Among several candidates of one rank the newest ingest wins (as before). A matched row goes to Duplicate Review
-(``silver_aa_internal.upload_staging``), where the person chooses Merge (field by field, AA-1146), Create a new tour
-(two operators really do sell tours of the same name, near_duplicate.py), Bypass, or Restore for a deleted tour. The
-in-file check (two rows of one file) keeps its Name + Provider key: neither row is in the database yet.
+(``silver_aa_internal.upload_staging``), where the person chooses Merge (field by field, AA-1146), Bypass, or Restore
+for a deleted tour. A row matched on Name + country with another Provider is also offered Create a new tour (two
+operators really do sell tours of the same name, near_duplicate.py; the staging list's ``matched_other_provider``), and
+its Merge never changes the Provider unless the person takes the sheet's value (the Provider is a conflict of the
+merge plan, uploads.py ``_merge_inputs``). The in-file check (two rows of one file) keeps its Name + Provider key:
+neither row is in the database yet.
 
 The Provider stays an internal field (DB-01): it shows on the staff preview and Duplicate Review only.
 """
@@ -43,10 +46,21 @@ LIMIT 1
 """
 
 
+def _provider_key(value: Any) -> str:
+    return str(value or "").lower().strip()
+
+
+def same_provider(a: Any, b: Any) -> bool:
+    """Two Provider values name the same operator as the match compares them (case and outer spaces ignored; an empty
+    Provider is its own value). Duplicate Review uses it for a row matched on Name + country: it then offers Create a
+    new tour, and a Merge asks before it changes the Provider (excel_merge ``ask``)."""
+    return _provider_key(a) == _provider_key(b)
+
+
 def match_key(row: Mapping[str, Any]) -> tuple[str, str, Optional[str]]:
     """(name, provider, country) as the match compares them; an empty country is None (unknown, matches any)."""
     name = str(row.get("src_name") or "").lower().strip()
-    provider = str(row.get("provider") or "").lower().strip()
+    provider = _provider_key(row.get("provider"))
     country = str(row.get("country") or "").lower().strip() or None
     return name, provider, country
 
@@ -72,4 +86,5 @@ def preview_message(match: Mapping[str, Any], row: Mapping[str, Any]) -> str:
     was = match.get("provider") or "none"
     now = row.get("provider") or "none"
     return (f"This tour already exists in the system with another provider ({was}; this row: {now}). "
-            "Duplicate Review will offer Merge or Create a new tour; nothing new is made without that choice.")
+            "Duplicate Review will offer Merge (the provider changes only if you choose it) or Create a new tour; "
+            "nothing new is made without that choice.")

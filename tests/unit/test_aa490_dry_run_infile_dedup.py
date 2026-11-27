@@ -205,7 +205,8 @@ class TestAA1187PreviewMatchesLikeCommit:
         (blocked,) = result["blocked_tours"]
         assert blocked["reason"] == "duplicate_tour" and result["ready_count"] == 0
         assert "another provider (Quillon Treks; this row: Quillon Trek Co)" in blocked["message"]
-        assert "Merge or Create a new tour" in blocked["message"]
+        assert "Duplicate Review will offer Merge (the provider changes only if you choose it) or Create a new tour" \
+            in blocked["message"]
         assert blocked["matched_provider"] == "Quillon Treks"
 
     async def test_no_match_is_a_new_tour(self, monkeypatch):

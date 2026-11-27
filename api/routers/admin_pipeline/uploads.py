@@ -326,7 +326,11 @@ async def _merge_inputs(conn, staging_id: str) -> tuple:
         else:
             incoming["country"] = c.name
     owned = em.hand_edited_fields([dict(r) for r in revisions])
-    return staging, dict(current), owned, em.plan(dict(current), incoming, owned)
+    # AA-1187: a row matched on Name + country may name another Provider (a typo, another spelling, or another
+    # operator); the merge never changes the tour's Provider unless the person takes the sheet's value.
+    from services.ingestion.tour_match import same_provider
+    ask = () if same_provider(incoming.get("provider"), current["provider"]) else ("provider",)
+    return staging, dict(current), owned, em.plan(dict(current), incoming, owned, ask=ask)
 
 
 @router.get("/upload-staging/{staging_id}/merge-preview")
@@ -439,7 +443,10 @@ async def list_upload_staging(
     """Return staging rows + existing tour fields for side-by-side comparison. AA-986 L2 (Q6): `existing` carries the
     matched row's source_status / deleted_at, and `matched_deleted` / `matched_deleted_at` say the matched tour was
     deleted at S0/A0 (the UI then offers Restore or Create a new tour). AA-1181: `matched_hand_made` says the matched
-    tour was made by hand in the content workspace (the UI then offers Bypass or Create a new tour)."""
+    tour was made by hand in the content workspace (the UI then offers Bypass or Create a new tour). AA-1187:
+    `matched_other_provider` says the row names another Provider than the matched tour (it matched on Name + country):
+    the UI then also offers Create a new tour (another operator's tour of the same name)."""
+    from services.ingestion.tour_match import same_provider
     verify_admin_secret(x_admin_secret)
     pool = request.app.state.pool
     async with pool.acquire() as conn:
@@ -467,6 +474,10 @@ async def list_upload_staging(
             ORDER BY us.created_at
         """, batch_id)
 
+    def _incoming(r) -> dict:
+        p = r["parsed_payload"]
+        return json.loads(p) if isinstance(p, str) else dict(p or {})
+
     return {
         "batch_id": batch_id,
         "items": [
@@ -480,11 +491,9 @@ async def list_upload_staging(
                 "matched_deleted_at":      (r["key_deleted_at"].isoformat()
                                             if r["matched_deleted"] and r["key_deleted_at"] else None),
                 "matched_hand_made":       bool(r["matched_hand_made"]),
-                "incoming": (
-                    json.loads(r["parsed_payload"])
-                    if isinstance(r["parsed_payload"], str)
-                    else dict(r["parsed_payload"] or {})
-                ),
+                "matched_other_provider":  (bool(r["matched_tour_id"])
+                                            and not same_provider(incoming.get("provider"), r["provider"])),
+                "incoming": incoming,
                 "existing": {
                     "src_name":  r["src_name"],
                     "src_summary": r["src_summary"],
@@ -497,6 +506,7 @@ async def list_upload_staging(
                 },
             }
             for r in rows
+            for incoming in (_incoming(r),)
         ],
         "total": len(rows),
     }

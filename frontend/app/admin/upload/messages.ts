@@ -94,6 +94,8 @@ export const UP = defineMessages(
       `This tour was deleted on ${date}. Choose Restore to bring it back, or Create a new tour.`,
     earlierDate: "an earlier date",
     handMadeMatch: "This tour was made by hand in the content workspace: a supplier sheet never merges into it or replaces it. Choose Bypass, or Create a new tour to keep the sheet's tour as a separate tour.",
+    otherProviderMatch: (was: string, now: string) =>
+      `Same name and country, but another provider (in the catalog: ${was}; this row: ${now}). If it is another operator's tour, choose Create a new tour. Merge keeps the current provider unless you take the sheet's value.`,
     incoming: "Incoming (new)",
     existing: "Existing (in catalog)",
     lName: "Name",
@@ -257,6 +259,8 @@ export const UP = defineMessages(
       `Tour này đã bị xoá vào ${date}. Chọn Khôi phục để đưa nó trở lại, hoặc Tạo tour mới.`,
     earlierDate: "một ngày trước đây",
     handMadeMatch: "Tour này được tạo tay trong Khu làm nội dung: bảng tính nhà cung cấp không bao giờ gộp vào hay thay thế nó. Hãy chọn Bỏ qua, hoặc Tạo tour mới để giữ tour của bảng tính thành một tour riêng.",
+    otherProviderMatch: (was: string, now: string) =>
+      `Cùng tên và quốc gia nhưng khác nhà cung cấp (trong danh mục: ${was}; dòng này: ${now}). Nếu là tour của nhà điều hành khác, hãy chọn Tạo tour mới. Gộp sẽ giữ nhà cung cấp hiện tại trừ khi bạn chọn giá trị của bảng tính.`,
     incoming: "Bản mới (đang nhập)",
     existing: "Bản hiện có (trong danh mục)",
     lName: "Tên",

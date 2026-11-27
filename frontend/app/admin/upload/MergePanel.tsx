@@ -8,6 +8,8 @@
 // price without reference_price.write, D5) keeps its value; a tour with a sheet draft waiting cannot take another.
 // AA-1181: a tour made by hand in the content workspace never takes a sheet (409 fact_draft_hand_made): the panel says
 // so in the reader's language and the merge is never ready (Confirm stays off until another decision is chosen).
+// AA-1187: a row matched on Name + country with another Provider has the Provider among the choices (not a hand edit:
+// "Keep the current value"), so a merge never changes the tour's operator without a person's choice.
 
 import { useEffect, useState } from "react";
 import { K, Badge, DataTable, Input, Select, useT, type ColumnDef } from "../../_kit";
@@ -86,7 +88,7 @@ export default function MergePanel({ stagingId, onChange }: {
             setChoices(next);
             emit(next, reason);
           }}>
-          <option value="current">{t("keepCurrent")}</option>
+          <option value="current">{t(c.hand_edited ? "keepCurrent" : "keepCurrentValue")}</option>
           <option value="incoming">{t("takeIncoming")}</option>
         </Select>
       ) },

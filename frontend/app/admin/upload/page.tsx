@@ -107,6 +107,8 @@ interface StagingItem {
   matched_deleted_at?: string | null;
   // AA-1181: the matched tour was made by hand in the content workspace (Bypass or Create a new tour only).
   matched_hand_made?: boolean;
+  // AA-1187: the row names another Provider than the matched tour (matched on Name + country): Create a new tour too.
+  matched_other_provider?: boolean;
   incoming: Record<string, string | null>;
   existing: {
     src_name: string | null;
@@ -731,7 +733,8 @@ function UploadHistorySection({ history, loading, onRefresh }: {
 // ─── DuplicateReview (Step 5) ─────────────────────────────────────────────────
 
 // The red note above a staged row whose match takes other decisions: a deleted tour (AA-986 L2, Q6: Restore or Create
-// a new tour) or a tour made by hand in the content workspace (AA-1181: Bypass or Create a new tour).
+// a new tour), a tour made by hand in the content workspace (AA-1181: Bypass or Create a new tour) or a tour of
+// another Provider (AA-1187: Create a new tour is offered too).
 function MatchNote({ item }: { item: StagingItem }) {
   const t = useT(UP);
   let text: string | null = null;
@@ -739,6 +742,8 @@ function MatchNote({ item }: { item: StagingItem }) {
     text = t("deletedOn", item.matched_deleted_at ? item.matched_deleted_at.slice(0, 10) : t("earlierDate"));
   } else if (item.matched_hand_made) {
     text = t("handMadeMatch");
+  } else if (item.matched_other_provider) {
+    text = t("otherProviderMatch", item.existing.provider || "—", item.incoming.provider || "—");
   }
   if (!text) return null;
   return (
