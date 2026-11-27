@@ -15,7 +15,7 @@ import { FACT_DRAFT_HAND_MADE, refusalText } from "@/lib/factDraftErrors";
 import { phoneCardColumns } from "@/lib/tableSort";
 import { UP } from "./messages";
 import { MergeSlot, type MergeChoice } from "./MergePanel";
-import { canConfirm, decisionBody, decisionLabels, type Decision } from "./stagingDecisions";
+import { canConfirm, decisionBody, decisionLabels, type Decision, type StagingItem } from "./stagingDecisions";
 
 const TENANT_ID = "00000000-0000-0000-0000-000000000001";
 
@@ -96,30 +96,6 @@ interface CommitResponse {
   tours_written?: number;
   tours_staged?: number;
   staged_ids?: string[];
-}
-
-interface StagingItem {
-  staging_id: string;
-  matched_tour_id: string | null;
-  decision: string;
-  // AA-986 L2 (Q6): the matched tour was deleted at S0/A0 (no live version left).
-  matched_deleted?: boolean;
-  matched_deleted_at?: string | null;
-  // AA-1181: the matched tour was made by hand in the content workspace (Bypass or Create a new tour only).
-  matched_hand_made?: boolean;
-  // AA-1187: the row names another Provider than the matched tour (matched on Name + country): Create a new tour too.
-  matched_other_provider?: boolean;
-  incoming: Record<string, string | null>;
-  existing: {
-    src_name: string | null;
-    src_summary: string | null;
-    country: string | null;
-    price_raw: string | null;
-    provider: string | null;
-    ingest_at: string | null;
-    source_status?: string | null;
-    deleted_at?: string | null;
-  };
 }
 
 interface FileState {

@@ -5,6 +5,31 @@ import type { MergeChoice } from "./MergePanel";
 
 export type Decision = "bypass" | "replace" | "keep_both" | "restore" | "create_new" | "merge";
 
+// One staged row of GET /admin/upload-staging/{batch_id} (moved out of page.tsx, AA-1187).
+export interface StagingItem {
+  staging_id: string;
+  matched_tour_id: string | null;
+  decision: string;
+  // AA-986 L2 (Q6): the matched tour was deleted at S0/A0 (no live version left).
+  matched_deleted?: boolean;
+  matched_deleted_at?: string | null;
+  // AA-1181: the matched tour was made by hand in the content workspace (Bypass or Create a new tour only).
+  matched_hand_made?: boolean;
+  // AA-1187: the row names another Provider than the matched tour (matched on Name + country): Create a new tour too.
+  matched_other_provider?: boolean;
+  incoming: Record<string, string | null>;
+  existing: {
+    src_name: string | null;
+    src_summary: string | null;
+    country: string | null;
+    price_raw: string | null;
+    provider: string | null;
+    ingest_at: string | null;
+    source_status?: string | null;
+    deleted_at?: string | null;
+  };
+}
+
 type DecisionLabel = "decBypass" | "decMerge" | "decReplace" | "decKeepBoth" | "decRestore" | "decCreateNew";
 
 // Message keys (messages.ts). AA-1146 T1: "merge" keeps the tour and its hand edits, taking the untouched fields from
@@ -34,7 +59,7 @@ const HAND_MADE_DECISION_LABELS: Record<"bypass" | "create_new", DecisionLabel> 
 // AA-1187 — a row that matched a live supplier tour on Name + country but names another Provider may be another
 // operator's tour of the same name: Create a new tour keeps both, the matched tour untouched (a Merge asks before it
 // changes the Provider).
-const OTHER_PROVIDER_DECISION_LABELS: Record<"bypass" | "merge" | "create_new" | "replace" | "keep_both", DecisionLabel> = {
+const OTHER_PROVIDER_DECISION_LABELS: Record<Exclude<Decision, "restore">, DecisionLabel> = {
   bypass:     "decBypass",
   merge:      "decMerge",
   create_new: "decCreateNew",
