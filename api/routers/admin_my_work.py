@@ -28,8 +28,9 @@ says which band it belongs to and whether it counts toward the page's total.
       (*) and the administrator role: approving an erasure needs it (admin_tenant_erasure.approve).
       (**) never for the business owner, who reads the status page and does not acknowledge (admin_overview).
 
-Bands: ``approve`` (maker-checker: only what the caller may decide; their own proposals are left out while two-person
-approval is on, since the approve route refuses them), ``work``, ``platform`` and ``watch``. A ``watch`` tile is
+Bands: ``approve`` (maker-checker: only what the caller may decide; their own proposals are left out exactly when the
+approve route refuses them: for settings, a maker_checker key while two-person approval is on or the content publish
+switch while it is on, ``settings_registry._own_refused``), ``work``, ``platform`` and ``watch``. A ``watch`` tile is
 backlog or a decision of policy (place cards, the elephant-riding policy reviews): shown, never counted in the total
 (``counts_toward_total`` false).
 

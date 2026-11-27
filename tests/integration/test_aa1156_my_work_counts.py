@@ -145,6 +145,12 @@ async def _flag(conn, state: str):
 
 
 CIS_KEY = next(k for k in shared_settings.READER.keys() if shared_settings.definition(k).app == "cis")
+# AA-1190: one CIS key of each approval mode (the self-approval rule differs; the two switches themselves excluded)
+CHECKED_KEY = next(k for k in shared_settings.READER.keys() if shared_settings.definition(k).app == "cis"
+                   and shared_settings.definition(k).approval == "maker_checker"
+                   and k not in ("cis.settings.two_person_approval", "cis.content.publish_two_person"))
+SINGLE_KEY = next(k for k in shared_settings.READER.keys() if shared_settings.definition(k).app == "cis"
+                  and shared_settings.definition(k).approval == "single")
 
 
 async def _proposal(conn, *, by: str = "admin:00000000-0000-0000-0000-0000000000aa", key: str = CIS_KEY,
@@ -264,10 +270,11 @@ async def test_every_tile_counts_what_its_target_page_lists(conn, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_own_proposals_leave_the_approval_tiles_while_two_person_approval_is_on(conn, monkeypatch):
-    """Maker-checker: with two-person approval on, the approve routes refuse the proposer, so the tiles leave their
-    own proposals out; with it off (a recorded self-approval) they count."""
+    """Maker-checker: with two-person approval on, the approve routes refuse the proposer of a maker_checker key, so
+    the tiles leave those own proposals out; with it off (a recorded self-approval) they count. AA-1190: a key whose
+    approval is "single" is never refused, so its own proposal always counts."""
     me = "admin:00000000-0000-0000-0000-0000000000bb"
-    await _proposal(conn, by=me)
+    await _proposal(conn, by=me, key=CHECKED_KEY)
     await _exception(conn, "proposed", by=me)
     viewer = admin_my_work.Viewer(role="admin", perms=frozenset(), actor=me)
 
@@ -287,9 +294,14 @@ async def test_own_proposals_leave_the_approval_tiles_while_two_person_approval_
     settings_tile = await admin_my_work._settings_to_approve(conn, viewer)
     mine = await conn.fetchval("SELECT count(*) FROM shared.setting_value WHERE status = 'proposed' AND "
                                "proposed_by = $1", me)
-    assert mine == 1 and settings_tile["by_app"].get("cis", 0) == await conn.fetchval(
+    cis_keys = [k for k in shared_settings.READER.keys() if shared_settings.definition(k).app == "cis"]
+    others = await conn.fetchval(
         "SELECT count(*) FROM shared.setting_value WHERE status = 'proposed' AND proposed_by <> $1 AND key = ANY($2)",
-        me, [k for k in shared_settings.READER.keys() if shared_settings.definition(k).app == "cis"])
+        me, cis_keys)
+    assert mine == 1 and settings_tile["by_app"].get("cis", 0) == others
+    # AA-1190: an own proposal of a "single" key stays in while two-person approval is on (the route allows it)
+    await _proposal(conn, by=me, key=SINGLE_KEY)
+    assert (await admin_my_work._settings_to_approve(conn, viewer))["by_app"].get("cis", 0) == others + 1
 
 
 @pytest.mark.asyncio

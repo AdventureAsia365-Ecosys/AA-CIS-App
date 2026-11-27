@@ -238,29 +238,47 @@ async def list_settings(pool: Any, *, app: Optional[str] = "cis", area: Optional
 
 async def open_proposals_summary(conn: Any, *, viewer: Optional[str] = None) -> dict:
     """AA-1190 My work: the open proposals a checker may decide, by app tab of Platform › Settings (the page lists
-    the same rows: ``OPEN_WHERE``, keys of the compiled defaults only). While two-person approval is on, ``viewer``'s
-    own proposals are left out (the approve route refuses them: second_person_required); while it is off the
-    administrator may approve their own (recorded self-approval), so they count. ``viewer`` = ``admin:<id>`` of a
-    verified sign-in, None for any other caller (nothing is left out). One read of a table of a few dozen rows."""
+    the same rows: ``OPEN_WHERE``, keys of the compiled defaults only). ``viewer``'s own proposal is left out exactly
+    when the approve route refuses it (:func:`_own_refused`, the rule of :func:`_decide`): a ``maker_checker`` key while
+    two-person approval is on, or the content publish switch while that switch is on; a ``single`` key, or a
+    ``maker_checker`` key while both are off (a recorded self-approval), counts. ``viewer`` = ``admin:<id>`` of a
+    verified sign-in, None for any other caller (nothing is left out). One read of a table of a few dozen rows; each
+    switch is read at most once, and only when the viewer has a proposal it decides."""
     rows = await conn.fetch(OPEN_SUMMARY_SQL, "%")
-    skip_own = viewer is not None and rows and await two_person_on(conn)
+    switches: dict[str, bool] = {}
     by_app: dict[str, int] = {}
     oldest: dict[str, datetime] = {}
     for r in rows:
         try:
-            app = settings.definition(r["key"]).app
+            d = settings.definition(r["key"])
         except KeyError:            # not a registry key: the page does not show it either
             continue
-        if app not in PAGE_APPS:    # the Booking tab links to Booking's own page; the CRM keeps its own registry
+        if d.app not in PAGE_APPS:  # the Booking tab links to Booking's own page; the CRM keeps its own registry
             continue
-        if skip_own and r["proposed_by"] == viewer:
+        if viewer is not None and r["proposed_by"] == viewer and await _own_refused(conn, d, switches):
             continue
-        by_app[app] = by_app.get(app, 0) + 1
-        if app not in oldest or r["proposed_at"] < oldest[app]:
-            oldest[app] = r["proposed_at"]
+        by_app[d.app] = by_app.get(d.app, 0) + 1
+        if d.app not in oldest or r["proposed_at"] < oldest[d.app]:
+            oldest[d.app] = r["proposed_at"]
     first = min(oldest, key=lambda a: (oldest[a], a)) if oldest else None
     return {"count": sum(by_app.values()), "oldest_at": oldest.get(first) if first else None, "by_app": by_app,
             "app": first}
+
+
+async def _own_refused(conn: Any, d: Definition, switches: dict[str, bool]) -> bool:
+    """Would :func:`_decide` refuse its proposer's approval of ``d`` (409 second_person_required)? The same predicate;
+    ``switches`` caches the two switch reads for one summary."""
+    if d.approval != "maker_checker":
+        return False
+    if "two_person" not in switches:
+        switches["two_person"] = await two_person_on(conn)
+    if switches["two_person"]:
+        return True
+    if d.key != _PUBLISH_TWO_PERSON_KEY:
+        return False
+    if "publish" not in switches:
+        switches["publish"] = await _content_switch_on(conn)
+    return switches["publish"]
 
 
 async def history(pool: Any, key: str, tenant_id: Optional[str] = None) -> dict:
@@ -520,8 +538,8 @@ async def _decide(conn: Any, d: Definition, proposal: dict, *, actor: str, appro
     if approve and actor == proposal["proposed_by"] and d.approval == "maker_checker":
         # The flag itself is maker_checker (CIS 407): while it is on, the one person it checks cannot turn it off.
         # AA-1146 D1 (S285): the content publish switch is the same: while it is on, changing it needs a second person
-        # whatever cis.settings.two_person_approval says.
-        if await two_person_on(conn) or (d.key == _PUBLISH_TWO_PERSON_KEY and await _content_switch_on(conn)):
+        # whatever cis.settings.two_person_approval says. AA-1190: one predicate with the My work tile (_own_refused).
+        if await _own_refused(conn, d, {}):
             raise SettingsError(409, f"{d.label} needs a second person to approve (two-person approval is on)",
                                 "second_person_required")
         self_approved = True

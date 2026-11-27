@@ -269,3 +269,85 @@ def test_every_role_with_a_tile_lands_on_my_work():
     assert "MY_WORK_LANDING" in body
     landing = set(re.findall(r'"([a-z_]+)"', re.search(r"const MY_WORK_LANDING[^=]*=\s*\[([^\]]*)\]", rbac).group(1)))
     assert landing == set(EXPECTED)
+
+
+# ── AA-1190 review fix: the settings tile leaves out exactly the own proposals the approve route refuses ──
+
+_ME = "admin:00000000-0000-0000-0000-0000000000c1"
+_OTHER = "admin:00000000-0000-0000-0000-0000000000c2"
+_SINGLE = "cis.compliance.applicability_review_max_age_days"   # approval "single" (compiled defaults)
+_CHECKED = "cis.a1.attempts_before_review"                     # approval "maker_checker"
+_PUBLISH = "cis.content.publish_two_person"                    # maker_checker, also guarded by its own switch
+
+
+class _Rows:
+    """A connection whose fetch answers the open proposals (the summary's one read)."""
+
+    def __init__(self, rows):
+        self.rows = rows
+        self.fetches = 0
+
+    async def fetch(self, _sql, *_args):
+        self.fetches += 1
+        return self.rows
+
+
+def _open(key: str, by: str, minute: int) -> dict:
+    return {"key": key, "proposed_by": by, "proposed_at": datetime(2026, 11, 20, 9, minute, tzinfo=timezone.utc)}
+
+
+@pytest.mark.parametrize(
+    ("two_person", "publish_switch", "expected"),
+    [
+        # two-person on: own maker_checker proposals (the checked key, the publish switch) out; own single key in
+        (True, False, {_SINGLE}),
+        # both off: every own proposal is a recorded self-approval, so all count
+        (False, False, {_SINGLE, _CHECKED, _PUBLISH}),
+        # two-person off, publish switch on: only the publish switch's own proposal is refused
+        (False, True, {_SINGLE, _CHECKED}),
+    ],
+)
+@pytest.mark.asyncio
+async def test_the_settings_tile_follows_the_approve_routes_self_approval_rule(
+        monkeypatch, two_person, publish_switch, expected):
+    from api.services import settings_registry as reg
+    from shared import settings as shared_settings
+
+    assert shared_settings.definition(_SINGLE).approval == "single"
+    assert shared_settings.definition(_CHECKED).approval == "maker_checker"
+    assert shared_settings.definition(_PUBLISH).approval == "maker_checker"
+    reads: list[str] = []
+
+    async def two(_conn):
+        reads.append("two_person")
+        return two_person
+
+    async def publish(_conn):
+        reads.append("publish")
+        return publish_switch
+
+    monkeypatch.setattr(reg, "two_person_on", two)
+    monkeypatch.setattr(reg, "_content_switch_on", publish)
+    mine = [_open(_SINGLE, _ME, 1), _open(_CHECKED, _ME, 2), _open(_PUBLISH, _ME, 3)]
+    got = await reg.open_proposals_summary(_Rows([*mine, _open(_CHECKED, _OTHER, 4)]), viewer=_ME)
+    counted = {r["key"] for r in mine if (r["key"] in expected)}
+    assert got["count"] == len(counted) + 1 and got["by_app"] == {"cis": len(counted) + 1}
+    # each switch is read at most once per summary (the publish one only when the two-person one is off)
+    assert reads.count("two_person") == 1 and reads.count("publish") == (0 if two_person else 1)
+    # the approve route decides with the same predicate: refused exactly for the left-out keys
+    for key in (_SINGLE, _CHECKED, _PUBLISH):
+        assert await reg._own_refused(None, shared_settings.definition(key), {}) is (key not in expected), key
+
+
+@pytest.mark.asyncio
+async def test_the_settings_tile_reads_no_switch_without_an_own_proposal(monkeypatch):
+    from api.services import settings_registry as reg
+
+    async def boom(_conn):
+        raise AssertionError("no switch read needed")
+
+    monkeypatch.setattr(reg, "two_person_on", boom)
+    monkeypatch.setattr(reg, "_content_switch_on", boom)
+    got = await reg.open_proposals_summary(_Rows([_open(_CHECKED, _OTHER, 5)]), viewer=_ME)
+    assert got["count"] == 1 and got["app"] == "cis"
+    assert (await reg.open_proposals_summary(_Rows([_open(_CHECKED, _ME, 6)]), viewer=None))["count"] == 1
