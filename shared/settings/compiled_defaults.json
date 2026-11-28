@@ -7056,7 +7056,7 @@
    "app": "cis",
    "area": "platform",
    "label": "Pilot fence: refuse the Dev-only E2E staff accounts",
-   "description": "On: the CIS API and the Booking API refuse every staff sign-in and every request of an E2E test account (any address of the E2E mailbox domain: the Dev-only test identities of the agent's automated checks), with 403 e2e_pilot_fence, whatever the account's own Dev-only rules allow. Booking reads this value through the read-only view catalog.v_pilot_fence_v1 and refuses those accounts when it cannot read it. Off (default): the E2E test accounts work on Dev under their own rules, as today. Turn it on the day the pilot agency starts on Dev, before the test accounts are disabled in Cognito. Real staff accounts are never affected.",
+   "description": "On: the CIS API and the Booking API refuse every staff sign-in and every request of an E2E test account (any address of the E2E mailbox domain: the Dev-only test identities of the agent's automated checks), with 403 e2e_pilot_fence, whatever the account's own Dev-only rules allow. Both APIs also refuse those accounts (403 e2e_pilot_fence_unknown) while they cannot read this value; Booking reads it through the read-only view catalog.v_pilot_fence_v1. Off (default): the E2E test accounts work on Dev under their own rules, as today. Turn it on the day the pilot agency starts on Dev, before the test accounts are disabled in Cognito. Real staff accounts are never affected.",
    "value_type": "bool",
    "unit": null,
    "min_value": null,
