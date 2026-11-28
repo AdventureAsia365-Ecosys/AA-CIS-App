@@ -129,7 +129,7 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   account and live subscriptions; read only, `available: false` without the view; the Billing tab's rule:
   billing.read, or tenant.book.account.read on the own book) with "Open in Booking" (`lib/apps.ts
   bookingAgencyInvoicesUrl`).
-- **Currency rule: USD only** (AA-1191, tech lead S295; CIS 496-497): one settings-registry key,
+- **Currency rule: USD only** (AA-1191, tech lead S295; CIS 497-498): one settings-registry key,
   `cis.billing.enabled_currencies` (Platform › Settings, area billing, maker-checker, audited; allowed `USD` / `VND`,
   default `["USD"]`), says which currencies the platform shows and accepts; USD is the base currency and always enabled.
   Reader `services/tenant_account/currency.py` (`enabled()`, `effective()`, `problem()`). While VND is not enabled:
@@ -140,7 +140,7 @@ CIS `shared` is the master of the tenant account, lifecycle, plans, subscription
   billing page (`/v1` billing) prices plans and the quote in USD. Every write in a currency that is not enabled is
   refused with 422 `currency_not_enabled` (billing currency, agreed currency, a new or changed VND plan price). The VND
   columns keep their values (no DROP, no conversion), so enabling VND again on Platform › Settings brings them back.
-  Booking reads the value through `catalog.v_billing_currencies_v1` (CIS 497, SELECT to `booking` only, contract
+  Booking reads the value through `catalog.v_billing_currencies_v1` (CIS 498, SELECT to `booking` only, contract
   tenant.entitlements.v1 1.12); the partner CRM through `GET /catalog/v1/currencies` (catalog.http.v1 1.5). Supplier
   cost currencies (Booking FX, CRM supplier lines) are out of this rule.
 - **TripPlanner tenants** (AA-1038 R5 slice 2, root ADR 0019 d10; `docs/implementation-notes/AA-1038.md`): CIS 379

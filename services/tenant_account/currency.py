@@ -1,4 +1,4 @@
-"""AA-1191 (CIS 496) — the enabled currencies: which currencies the platform shows and accepts.
+"""AA-1191 (CIS 497) — the enabled currencies: which currencies the platform shows and accepts.
 
 One administrator-edited key, ``cis.billing.enabled_currencies`` (Platform › Settings, maker-checker, audited; tech lead
 S295: USD only for now). USD is the base currency and always enabled, even when the stored list leaves it out (every
@@ -10,7 +10,7 @@ price has a USD column). A currency that is not enabled:
 * is not billed in: a tenant whose stored ``billing_currency`` is not enabled is quoted in USD (:func:`effective`);
   the stored value stays and comes back when the currency is enabled again (no column is dropped, no row converted).
 
-Booking reads the same value through ``catalog.v_billing_currencies_v1`` (CIS 497), the partner CRM through
+Booking reads the same value through ``catalog.v_billing_currencies_v1`` (CIS 498), the partner CRM through
 ``GET /catalog/v1/currencies`` (catalog.http.v1 1.5). Pure helpers take the list; :func:`enabled` /
 :func:`aenabled` read the value in force (``shared.settings``), never a copied literal.
 """
@@ -38,7 +38,7 @@ def normalise(values: Optional[Iterable[Any]]) -> tuple[str, ...]:
 
 def enabled() -> tuple[str, ...]:
     """The enabled currencies in force (sync: the reader's last snapshot). A build whose compiled defaults do not know
-    the key yet (CIS 496 not merged) serves the 496 default, USD only."""
+    the key yet (CIS 497 not merged) serves the 497 default, USD only."""
     try:
         return normalise(settings.get(ENABLED_CURRENCIES))
     except KeyError:

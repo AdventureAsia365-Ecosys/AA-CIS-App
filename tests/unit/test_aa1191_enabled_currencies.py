@@ -1,4 +1,4 @@
-"""AA-1191 — USD only: the Enabled currencies setting (CIS 496) hides and refuses every currency that is not enabled.
+"""AA-1191 — USD only: the Enabled currencies setting (CIS 497) hides and refuses every currency that is not enabled.
 
 The pure helpers (services/tenant_account/currency.py), the quote in the effective currency without a VND reference,
 the billing details as served, the refused agreed currency and VND plan prices, the commercial terms without the VND

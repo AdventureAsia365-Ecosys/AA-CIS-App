@@ -134,7 +134,7 @@ info:
     a failed write is logged), which CIS counts only within the setting cis.tenant.crm_agency_seen_hours for its own
     display (tenant.addons.v1 1.2). Readers name their columns; a reader that knows only the 1.10 columns keeps its
     rows. No personal data.
-    1.12 (AA-1191, additive; no HTTP shape change; CIS 496-497): a new view for Booking, catalog.v_billing_currencies_v1
+    1.12 (AA-1191, additive; no HTTP shape change; CIS 497-498): a new view for Booking, catalog.v_billing_currencies_v1
     (SELECT to booking only), always one row: enabled_currencies (text[], USD first, then the other currencies of the
     setting cis.billing.enabled_currencies in force, Platform › Settings › Enabled currencies) and base_currency
     ('USD'). The default is USD only (tech lead S295). A tenant whose billing_currency (catalog.v_tenant_billing_v1) is
