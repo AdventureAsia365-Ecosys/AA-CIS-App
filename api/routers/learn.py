@@ -22,8 +22,10 @@ Who may (decisions 6 and 7): ``/learn/v1/*`` takes only a WORKFORCE access token
 (``api/core/learn_identity.py``, its own verifier): none / bad -> 401 ``unauthorized``; another client or pool -> 403
 ``forbidden``; a partner-pool token -> 403 ``partner_not_open`` (P7). The learner is the ACTIVE ``shared.admin_users``
 row bound to the verified ``(iss, sub)``, any staff role; no row -> 403 ``not_a_learner``. A Dev-only E2E identity is a
-test learner (``is_test``) and refused outside Dev (403 ``forbidden``). The certificate name is the directory's
-display name, refreshed on every call, never a name the client sends (S280 review). Draft modules need
+test learner (``is_test``) and refused outside Dev (403 ``forbidden``); while the pilot fence is on or unread
+(AA-1054, ``api/core/pilot_fence.py``) every address of the E2E mailbox domain is refused 403 ``forbidden``. The
+certificate name is the directory's display name, refreshed on every call, never a name the client sends (S280
+review). Draft modules need
 ``learn.preview`` (``staff_authz.ROLE_PERMS`` of the token's ``cis-*`` group role).
 
 Public verify rate limit (S280 review): the key is the caller's address as ``login_throttle.client_ip`` reads it, the
@@ -53,11 +55,11 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
-from api.core import e2e_staff, learn_identity, login_throttle
+from api.core import e2e_staff, learn_identity, login_throttle, pilot_fence
 from api.core.identity_verifier import AuthUnavailable, InvalidToken, Principal
 from api.core.m2m_auth import bearer_token
 from api.core.staff_authz import LEARN_PREVIEW, ROLE_PERMS
-from api.core.staff_identity import role_from_groups
+from api.core.staff_identity import StaffAuthError, role_from_groups
 from api.schemas import learn as m
 from services.learn import academy as ac
 from services.learn import assessment as qa
@@ -138,6 +140,15 @@ async def learner_ctx(store: Any, principal: Principal) -> ac.Ctx:
     if staff is None:
         logger.info("learn_refused", reason="not_a_learner", client_id=principal.client_id)
         raise ac.Problem(403, "not_a_learner", "This account is not an active staff member.")
+    # AA-1054: the pilot fence holds here too (this path does not go through staff_identity.resolve_staff): while it is
+    # on or cannot be read, every E2E identity (A10 included, which is_dev_only_e2e_address below does not mark) is
+    # refused before a learner row is written. The contract's error code stays "forbidden".
+    try:
+        await pilot_fence.check(row_email=staff.get("email"), token_email=principal.email,
+                                admin_id=staff.get("admin_id"), sub=principal.sub, client_id=principal.client_id)
+    except StaffAuthError as exc:
+        logger.info("learn_refused", reason=exc.reason, client_id=principal.client_id)
+        raise ac.Problem(403, "forbidden", "This test account is closed while the pilot runs.") from None
     # AA-1176: the A10h E2E owner is a test learner too (Dev only), though its CIS session is not read-only.
     is_test = (e2e_staff.is_dev_only_e2e_address(staff.get("email"))
                or e2e_staff.is_dev_only_e2e_address(principal.email))
