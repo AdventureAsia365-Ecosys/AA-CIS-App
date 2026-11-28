@@ -512,8 +512,7 @@ def _apply_schema(conn):
         # AA-1094 (S278): 404 creates catalog.v_tenant_tour_v1 (catalog recipe; needs 359, 379 and tenant_tour_versions):
         # test_aa1094_migration_404 applies 253 ... 359 + 379 + 404 the DB Migrate way in a rolled-back transaction.
         # S279: 410/415; S281: 429; S282: 432 (test_aa1107_*); 438 / S283 444: test_aa1116_*; S284 452: test_aa1113_*.
-        # (S285 456: only its settings row is replayed, see _replay_parts.py.) S297 496: test_aa1054_migration_496;
-        # S297 498: test_aa1191_migration_498.
+        # (S285 456: only its settings row is replayed, see _replay_parts.py.) S297 496/498: test_aa1054_*/test_aa1191_*.
         and not f.startswith(('404', '410', '415', '429', '432', '438', '444', '452', '496', '498'))
     ])
 
