@@ -23,8 +23,8 @@ jobs:
   release-please:
     name: Release PR / tag
     runs-on: ubuntu-latest
-    # Environment "release": deployment branch policy main only, holds AA_CI_BOT_PRIVATE_KEY.
-    environment: release
+    # Environment "ci-bot": deployment branch policy main only, holds AA_CI_BOT_PRIVATE_KEY.
+    environment: ci-bot
     if: github.ref == 'refs/heads/main'
     steps:
       - name: Mint the CI bot App token

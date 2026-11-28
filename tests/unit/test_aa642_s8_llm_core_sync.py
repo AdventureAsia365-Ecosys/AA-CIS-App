@@ -12,7 +12,7 @@ the real shared/aa_llm, and consumer repos with a bare `origin`. No network and 
 - `plan` is unchanged when a commit touches no core file and changed when it does.
 - `sync` commits on bot/llm-core-sync, pushes once, does not push the same tree again, and is a no-op that leaves no
   branch behind when the consumer already has the core.
-- The workflows: the sync job is main-only, in the `release` environment, with a token narrowed to one consumer repo
+- The workflows: the sync job is main-only, in the `ci-bot` environment, with a token narrowed to one consumer repo
   (Contents + Pull requests); the consumers check reads no secret and has a stable result job.
 """
 from __future__ import annotations
@@ -206,7 +206,7 @@ def test_sync_workflow_is_main_only_with_a_narrow_token():
     assert trigger["push"]["paths"] == ["shared/aa_llm/**"]
     assert wf["permissions"] == {"contents": "read"}
     job = wf["jobs"]["sync"]
-    assert job["environment"] == "release"
+    assert job["environment"] == "ci-bot"
     assert "refs/heads/main" in job["if"]
     token = next(s for s in job["steps"] if s.get("id") == "app-token")["with"]
     assert token["repositories"] == "${{ matrix.repo }}"

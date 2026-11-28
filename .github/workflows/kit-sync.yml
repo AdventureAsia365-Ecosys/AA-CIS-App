@@ -70,8 +70,8 @@ jobs:
     needs: plan
     if: needs.plan.outputs.changed == 'true' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    # Environment "release": deployment branch policy main only, holds AA_CI_BOT_PRIVATE_KEY (as release-please.yml).
-    environment: release
+    # Environment "ci-bot": deployment branch policy main only, holds AA_CI_BOT_PRIVATE_KEY (as release-please.yml).
+    environment: ci-bot
     strategy:
       fail-fast: false
       matrix:

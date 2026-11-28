@@ -42,8 +42,8 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Environment "release": deployment branch policy main only, holds AA_CI_BOT_PRIVATE_KEY (as release-please.yml).
-    environment: release
+    # Environment "ci-bot": deployment branch policy main only, holds AA_CI_BOT_PRIVATE_KEY (as release-please.yml).
+    environment: ci-bot
     permissions:
       contents: read
       actions: read          # download the artifacts of other CI runs

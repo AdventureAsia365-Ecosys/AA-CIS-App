@@ -3,7 +3,7 @@
 The workflow mints an aa-ecosys-ci-bot token from the private key that can mint any permission the App has, so the
 narrowing in the file is the control. Pinned here, as text (stdlib only: the same file runs under pytest and under
 ``python3 -m unittest``): ``permissions: {}``; no checkout; push to main on the migrations folder only; the token
-minted in environment ``release`` for AA-CIS-Infra with ``permission-issues: write`` and no other permission; the only
+minted in environment ``ci-bot`` for AA-CIS-Infra with ``permission-issues: write`` and no other permission; the only
 write is one REST comment on the wake-up issue (no dispatch, no PR, no label). The workflow differs between AA-CIS-App,
 AA-Booking, AA-TripPlanner-Web and AA-Partner only in its migrations path (and AA-Partner's environment note); this
 test is identical in all four."""
@@ -44,7 +44,7 @@ class MigrationSyncWakeShapeTest(unittest.TestCase):
 
     def test_token_is_infra_only_and_issues_write_only(self):
         self.assertEqual(WF.count("actions/create-github-app-token@"), 1)
-        self.assertIn("    environment: release\n", WF)
+        self.assertIn("    environment: ci-bot\n", WF)
         self.assertIn("          owner: AdventureAsia365-Ecosys\n", WF)
         self.assertIn("          repositories: AA-CIS-Infra\n", WF)
         self.assertEqual(re.findall(r"(?m)^\s*(permission-[a-z-]+): *(\S+)", WF), [("permission-issues", "write")])

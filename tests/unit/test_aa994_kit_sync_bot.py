@@ -18,7 +18,7 @@ No network and no `gh`: --dry-run never calls it, --offline skips the PR step bu
 - A tokens-profile consumer (TripPlanner) is a no-op when only a non-token file (and so MANIFEST.json) changed.
 - A first-time core file is called out in the PR body (lesson S256); the body carries `Refs AA-994`.
 - `report` prints how many core commits each consumer is behind.
-- The workflows: the sync job is main-only, in the `release` environment, mints a token narrowed to one consumer repo
+- The workflows: the sync job is main-only, in the `ci-bot` environment, mints a token narrowed to one consumer repo
   with Contents + Pull requests only; the PR check reads no secret and has a stable "Kit consumers" result job that is
   green when the plan says unchanged.
 - The consumer legs install the app's dependencies before any check and run tsc / lint / tests only when that install
@@ -447,7 +447,7 @@ def test_sync_workflow_token_is_main_only_and_narrowed_to_one_consumer():
     assert "github.event_name == 'push'" in group and "!inputs.dry_run" in group
     assert wf["on"]["workflow_dispatch"]["inputs"]["dry_run"]["default"] is True
     sync = wf["jobs"]["sync"]
-    assert sync["environment"] == "release"
+    assert sync["environment"] == "ci-bot"
     assert "github.ref == 'refs/heads/main'" in sync["if"]
     mint = next(s for s in sync["steps"] if "create-github-app-token" in s.get("uses", ""))
     assert mint["with"]["repositories"] == "${{ matrix.repo }}"
