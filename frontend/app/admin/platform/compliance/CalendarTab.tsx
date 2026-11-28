@@ -95,36 +95,94 @@ function CalendarTable({ data, filter, t }: { data: CalendarResp; filter: Calend
   );
 }
 
-function CheckSection({ data, t }: { data: CalendarResp; t: CalT }) {
-  const { formatDateTime, formatDate } = useFormat();
-  const check = data.check;
-  const cal = data.calendar;
-  if (!check || !cal) return null;
+type CheckView = NonNullable<CalendarResp["check"]>;
+type CalendarView = NonNullable<CalendarResp["calendar"]>;
+
+function CheckHeader({ check, t }: { check: CheckView; t: CalT }) {
   const href = safeLink(check.link);
   return (
-    <Section title={t("checkTitle")} testId="compliance-calendar-check"
-      description={<span style={{ display: "inline-flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-        <span data-testid="compliance-calendar-check-state" data-state={check.state ?? ""}>
-          <Badge tone={checkTone(check.state)}>{check.state ?? "—"}</Badge>
-        </span>
-        <span style={{ fontFamily: mono, fontSize: 12 }}>{check.check_id}</span>
-        {check.sealed && <Badge tone="neutral" dot={false}>{t("sealed")}</Badge>}
-        {href && <a href={href} target="_blank" rel="noopener noreferrer" style={linkStyle}>
-          {t("openCalendarFile")}<ExternalLink size={11} /></a>}
-      </span>}>
+    <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+      <span data-testid="compliance-calendar-check-state" data-state={check.state ?? ""}>
+        <Badge tone={checkTone(check.state)}>{check.state ?? "—"}</Badge>
+      </span>
+      <span style={{ fontFamily: mono, fontSize: 12 }}>{check.check_id}</span>
+      {check.sealed && <Badge tone="neutral" dot={false}>{t("sealed")}</Badge>}
+      {href && <a href={href} target="_blank" rel="noopener noreferrer" style={linkStyle}>
+        {t("openCalendarFile")}<ExternalLink size={11} /></a>}
+    </span>
+  );
+}
+
+/** The notes under the check: what the published list is (drill run, shortened, invalid calendar). */
+function ListNotes({ cal, t }: { cal: CalendarView; t: CalT }) {
+  return (
+    <>
+      {cal.drill && <span><Badge tone="info" dot={false}>{t("drill")}</Badge></span>}
+      {cal.errors ? <span style={{ color: K.danger }}>{t("invalid", cal.errors)}</span> : null}
+      {cal.truncated && <span>{t("truncated")}</span>}
+      {cal.automated_omitted && !cal.truncated && <span>{t("automatedOmitted")}</span>}
+    </>
+  );
+}
+
+function CheckSection({ check, cal, t }: { check: CheckView; cal: CalendarView; t: CalT }) {
+  const { formatDateTime, formatDate } = useFormat();
+  const when = [check.collected_at ? t("collected", formatDateTime(check.collected_at)) : null,
+    cal.updated ? t("calendarUpdated", formatDate(cal.updated)) : null].filter(Boolean).join(" · ");
+  return (
+    <Section title={t("checkTitle")} testId="compliance-calendar-check" description={<CheckHeader check={check} t={t} />}>
       <div style={{ ...small, display: "grid", gap: 4 }}>
         {check.reason && <span>{check.reason}</span>}
         {cal.today && <span>{t("asOf", formatDate(cal.today))}</span>}
-        <span>
-          {check.collected_at ? t("collected", formatDateTime(check.collected_at)) : null}
-          {cal.updated ? ` · ${t("calendarUpdated", formatDate(cal.updated))}` : null}
-        </span>
-        {cal.drill && <span><Badge tone="info" dot={false}>{t("drill")}</Badge></span>}
-        {cal.errors ? <span style={{ color: K.danger }}>{t("invalid", cal.errors)}</span> : null}
-        {cal.truncated && <span>{t("truncated")}</span>}
-        {cal.automated_omitted && !cal.truncated && <span>{t("automatedOmitted")}</span>}
+        {when && <span>{when}</span>}
+        <ListNotes cal={cal} t={t} />
       </div>
     </Section>
+  );
+}
+
+function Kpis({ cal, t }: { cal: CalendarView; t: CalT }) {
+  return (
+    <div style={tiles} data-testid="compliance-calendar-kpis">
+      <KpiTile size="sm" label={t("kpiOverdue")} value={cal.overdue}
+        hintTone={cal.overdue ? "danger" : "neutral"} hint={cal.overdue ? label(t, "state_overdue") : undefined} />
+      <KpiTile size="sm" label={t("kpiDueSoon")} value={cal.counts.due_soon ?? 0} />
+      <KpiTile size="sm" label={t("kpiOpen")} value={cal.counts.open ?? 0} />
+      <KpiTile size="sm" label={t("kpiLines")} value={cal.lines} />
+    </div>
+  );
+}
+
+function Lines({ data, filter, onFilter, t }: { data: CalendarResp; filter: CalendarFilter;
+  onFilter: (f: string) => void; t: CalT }) {
+  return (
+    <Section title={t("tabCalendar")} testId="compliance-calendar-lines">
+      <div style={{ maxWidth: 320, marginBottom: 10 }}>
+        <Field label={t("filter")}>
+          <Select value={filter} onChange={(e) => onFilter(e.target.value)}
+            options={(["attention", "dated", "all"] as const).map((k) => ({ value: k, label: t(`filter_${k}`) }))} />
+        </Field>
+      </div>
+      {/* Its own horizontal scroller: the table is wider than a phone. */}
+      <div data-testid="compliance-calendar-scroll" style={{ maxWidth: "100%", overflowX: "auto", contain: "paint" }}>
+        <CalendarTable data={data} filter={filter} t={t} />
+      </div>
+    </Section>
+  );
+}
+
+function Published({ data, filter, onFilter, t }: { data: CalendarResp; filter: CalendarFilter;
+  onFilter: (f: string) => void; t: CalT }) {
+  if (!data.available || !data.check || !data.calendar) {
+    return <div data-testid="compliance-calendar-empty">
+      <EmptyState title={t("notPublished")} description={t("notPublishedHint")} /></div>;
+  }
+  return (
+    <>
+      <CheckSection check={data.check} cal={data.calendar} t={t} />
+      <Kpis cal={data.calendar} t={t} />
+      <Lines data={data} filter={filter} onFilter={onFilter} t={t} />
+    </>
   );
 }
 
@@ -134,40 +192,14 @@ export function CalendarTab() {
   const filter = calendarFilterOf(get("cal"));
   const q = useQuery({ queryKey: ["platform-compliance", "calendar"], retry: false, staleTime: 60_000,
     queryFn: () => apiGet<CalendarResp>(CALENDAR_PATH) });
-  const cal = q.data?.calendar;
+  const onFilter = (f: string) => setMany({ cal: f === "attention" ? null : f });
   return (
     <div style={grid}>
       <div role="note" data-testid="compliance-calendar-note" style={small}>{t("intro")}</div>
       {q.error && <ErrorState message={`${t("loadError")}: ${(q.error as Error).message}`}
         onRetry={() => void q.refetch()} />}
       {q.isLoading && <TableSkeleton rows={6} cols={6} />}
-      {q.data && !q.data.available && <div data-testid="compliance-calendar-empty">
-        <EmptyState title={t("notPublished")} description={t("notPublishedHint")} /></div>}
-      {q.data?.available && cal && (
-        <>
-          <CheckSection data={q.data} t={t} />
-          <div style={tiles} data-testid="compliance-calendar-kpis">
-            <KpiTile size="sm" label={t("kpiOverdue")} value={cal.overdue}
-              hintTone={cal.overdue ? "danger" : "neutral"} hint={cal.overdue ? label(t, "state_overdue") : undefined} />
-            <KpiTile size="sm" label={t("kpiDueSoon")} value={cal.counts.due_soon ?? 0} />
-            <KpiTile size="sm" label={t("kpiOpen")} value={cal.counts.open ?? 0} />
-            <KpiTile size="sm" label={t("kpiLines")} value={cal.lines} />
-          </div>
-          <Section title={t("tabCalendar")} testId="compliance-calendar-lines">
-            <div style={{ maxWidth: 320, marginBottom: 10 }}>
-              <Field label={t("filter")}>
-                <Select value={filter}
-                  onChange={(e) => setMany({ cal: e.target.value === "attention" ? null : e.target.value })}
-                  options={(["attention", "dated", "all"] as const).map((k) => ({ value: k, label: t(`filter_${k}`) }))} />
-              </Field>
-            </div>
-            {/* Its own horizontal scroller: the table is wider than a phone. */}
-            <div data-testid="compliance-calendar-scroll" style={{ maxWidth: "100%", overflowX: "auto", contain: "paint" }}>
-              <CalendarTable data={q.data} filter={filter} t={t} />
-            </div>
-          </Section>
-        </>
-      )}
+      {q.data && <Published data={q.data} filter={filter} onFilter={onFilter} t={t} />}
     </div>
   );
 }
