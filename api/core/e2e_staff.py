@@ -331,8 +331,13 @@ def has_allowlisted_writes(identity: Any) -> bool:
 
 def dev_only_e2e_environment() -> bool:
     """True only when ``ENVIRONMENT`` is exactly ``"dev"`` (read per call; unset refuses, unlike the
-    ``os.getenv("ENVIRONMENT", "dev")`` default used elsewhere)."""
-    return os.environ.get("ENVIRONMENT") == DEV_ONLY_ENVIRONMENT
+    ``os.getenv("ENVIRONMENT", "dev")`` default used elsewhere) and the pilot fence is off (AA-1054,
+    :mod:`api.core.pilot_fence`: on the pilot day every E2E exception that asks this closes too)."""
+    if os.environ.get("ENVIRONMENT") != DEV_ONLY_ENVIRONMENT:
+        return False
+    from api.core import pilot_fence  # noqa: PLC0415 - pilot_fence imports this module
+
+    return not pilot_fence.on()
 
 
 def is_allowed_e2e_write_path(method: str, path: str) -> bool:

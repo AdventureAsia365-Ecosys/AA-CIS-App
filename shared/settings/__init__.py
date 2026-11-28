@@ -105,6 +105,32 @@ async def ensure_fresh(pool: Any) -> bool:
         return False
 
 
+def installed() -> bool:
+    """True when the reader has a pool (the API and the worker install one at start-up): this process is meant to read
+    the approved values from the database, so a compiled default it serves means it could not read them (yet)."""
+    return READER._pool is not None
+
+
+def loaded() -> bool:
+    """True once the reader holds a snapshot read from the database. False before the first refresh finishes and while
+    every refresh since start-up failed: the compiled defaults are in force then, whatever an administrator stored."""
+    return READER._snapshot is not None
+
+
+async def ensure_loaded() -> bool:
+    """One read through the installed pool when the reader holds no snapshot yet, for a caller that must not act on a
+    compiled default (AA-1054: api/core/pilot_fence.py). Not forced: a failed read is retried after one cache window,
+    not on every call, and it is bounded by the reader's refresh timeout. A no-op without a pool, with a snapshot, or
+    under ENVIRONMENT=test. True when a snapshot is held after the call."""
+    if READER._pool is None or READER._snapshot is not None or os.environ.get("ENVIRONMENT") == "test":
+        return READER._snapshot is not None
+    try:
+        await READER.refresh()
+    except Exception as exc:  # the reader keeps the defaults; the caller decides what an unread value means
+        READER.last_error = f"{type(exc).__name__}: {exc}"[:300]
+    return READER._snapshot is not None
+
+
 async def stop_refresher(task: Optional[asyncio.Task]) -> None:
     if task is None:
         return
@@ -113,5 +139,5 @@ async def stop_refresher(task: Optional[asyncio.Task]) -> None:
 
 
 __all__ = ["COMPILED_DEFAULTS", "Definition", "KEY_PREFIX", "READER", "Resolution", "aget", "coerce", "definition",
-           "ensure_fresh", "get", "guide", "install", "load_definitions", "parse_text", "resolve", "start_refresher",
-           "stop_refresher", "validate"]
+           "ensure_fresh", "ensure_loaded", "get", "guide", "install", "installed", "load_definitions", "loaded",
+           "parse_text", "resolve", "start_refresher", "stop_refresher", "validate"]

@@ -183,6 +183,7 @@
     "GET /admin/platform/audit/verify",
     "GET /admin/platform/catalogue",
     "GET /admin/platform/compliance",
+    "GET /admin/platform/compliance/calendar",
     "GET /admin/platform/compliance/controls",
     "GET /admin/platform/compliance/controls/{control_id}",
     "GET /admin/platform/compliance/exceptions",

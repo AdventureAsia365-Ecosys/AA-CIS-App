@@ -11,6 +11,10 @@
   GET  /admin/platform/compliance/obligations           AA-1174: the law obligations as a met / not met / not yet
                                                         checked checklist per law (counsel flag, evidence or document
                                                         link) and the applicability matrix          compliance.read
+  GET  /admin/platform/compliance/calendar             AA-1184: the ops calendar of the root repo as its daily
+                                                        collector published it (check ops_calendar_overdue: every line
+                                                        with its due date and state; watched lines with their check's
+                                                        state); no table of its own              compliance.read
   POST /admin/platform/compliance/refresh               re-read the published evidence file now (at most every
                                                         30 s per process) and ingest it; AA-1174: also collect the
                                                         API's own sources (cis_db, crm_ops; each at most every 10
@@ -53,7 +57,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from api.core.staff_authz import COMPLIANCE_WRITE, has_perm, request_staff_identity, staff_policy
-from api.services import compliance, compliance_exceptions, compliance_obligations
+from api.services import compliance, compliance_calendar, compliance_exceptions, compliance_obligations
 from api.services.platform_apps import relay_authorization
 
 router = APIRouter(prefix="/admin/platform/compliance", tags=["admin-platform-compliance"],
@@ -95,6 +99,16 @@ async def get_obligations(request: Request):
     pool = _pool(request)
     state = await _read_sync(request, pool)
     body = await compliance_obligations.obligations(pool)
+    body["ingest"] = state
+    return JSONResponse(body, headers=_NO_STORE)
+
+
+@router.get("/calendar", summary="The ops calendar as the root collector published it: every dated duty with its due "
+                                 "date and state (overdue, due soon, open, ...); read-only")
+async def get_calendar(request: Request):
+    pool = _pool(request)
+    state = await _read_sync(request, pool)
+    body = await compliance_calendar.calendar(pool)
     body["ingest"] = state
     return JSONResponse(body, headers=_NO_STORE)
 

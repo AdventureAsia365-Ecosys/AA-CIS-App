@@ -190,3 +190,42 @@ test("the governance messages have every Vietnamese string", async () => {
   const src = readFileSync(new URL("../app/admin/platform/compliance/governance.messages.ts", import.meta.url), "utf8");
   assert.ok(src.includes("tabExceptions: \"Ngoại lệ\""));
 });
+
+// ── AA-1184: the Calendar tab ──────────────────────────────────────────────────────────────────────────────────────
+
+const line = (id, state, due = null, extra = {}) => ({
+  id, kind: "deadline", state, due, last: null, owner: "tech_lead", title: `Invented duty ${id}`, check: null,
+  check_state: null, extra: null, note: null, ...extra,
+});
+
+test("calendar tones: overdue red, due soon and open amber, calm states neutral or green", async () => {
+  const { calendarTone, needsAttention } = await import("./compliance.ts");
+  assert.equal(calendarTone("overdue"), "danger");
+  assert.equal(calendarTone("due_soon"), "warning");
+  assert.equal(calendarTone("open"), "warning");
+  assert.equal(calendarTone("done"), "success");
+  assert.equal(calendarTone("automated"), "neutral");
+  assert.equal(calendarTone("bogus"), "neutral");
+  assert.ok(needsAttention(line("OC-1", "open")));
+  assert.ok(!needsAttention(line("OC-1", "ok", "2026-12-20")));
+});
+
+test("calendar filters keep worst first, then by due date", async () => {
+  const { filterCalendar, calendarFilterOf } = await import("./compliance.ts");
+  const lines = [line("OC-3", "ok", "2026-12-20"), line("OC-2", "due_soon", "2026-12-04"),
+    line("OC-1", "overdue", "2026-12-01"), line("OC-4", "automated"), line("OC-5", "open")];
+  assert.deepEqual(filterCalendar(lines, "attention").map((l) => l.id), ["OC-1", "OC-2", "OC-5"]);
+  assert.deepEqual(filterCalendar(lines, "dated").map((l) => l.id), ["OC-1", "OC-2", "OC-3"]);
+  assert.deepEqual(filterCalendar(lines, "all").map((l) => l.id), ["OC-1", "OC-2", "OC-5", "OC-3", "OC-4"]);
+  assert.equal(calendarFilterOf("all"), "all");
+  assert.equal(calendarFilterOf("nonsense"), "attention");
+  assert.equal(calendarFilterOf(null), "attention");
+});
+
+test("days until a due date", async () => {
+  const { daysUntil } = await import("./compliance.ts");
+  assert.equal(daysUntil("2026-12-04", "2026-12-02"), 2);
+  assert.equal(daysUntil("2026-11-27", "2026-12-02"), -5);
+  assert.equal(daysUntil(null, "2026-12-02"), null);
+  assert.equal(daysUntil("not-a-date", "2026-12-02"), null);
+});

@@ -573,7 +573,7 @@ POLICY: dict[tuple[str, str], Any] = {
     ("POST", "/admin/settings/registry/{key}/proposals"): SETTINGS_WRITE,
     **{("POST", "/admin/settings/registry/proposals/{value_id}/" + a): SETTINGS_APPROVE for a in ("approve", "reject")},
     ("GET", "/admin/platform/catalogue"): OPS_READ, ("GET", "/admin/platform/delivery"): OPS_READ,  # AA-1106, AA-1108
-    **{("GET", "/admin/platform/compliance" + p): COMPLIANCE_READ for p in ("", "/controls", "/controls/{control_id}", "/obligations", "/exceptions", "/reviews")},  # noqa: E501 — AA-1174 /obligations, AA-1173 exceptions + monthly reviews
+    **{("GET", "/admin/platform/compliance" + p): COMPLIANCE_READ for p in ("", "/controls", "/controls/{control_id}", "/obligations", "/exceptions", "/reviews", "/calendar")},  # noqa: E501 — AA-1174 /obligations, AA-1173 exceptions + monthly reviews, AA-1184 calendar
     **{("POST", "/admin/platform/compliance" + p): COMPLIANCE_WRITE for p in ("/refresh", "/exceptions", "/reviews", *(f"/exceptions/{{exception_id}}/{a}" for a in ("approve", "reject", "revoke")))},  # noqa: E501 — AA-1170 refresh, AA-1173 maker-checker
     # ── admin_photos — Drive sync + assignment (Photos page, admin-only)
     ("POST", "/admin/photos/sync"): PHOTOS_WRITE,

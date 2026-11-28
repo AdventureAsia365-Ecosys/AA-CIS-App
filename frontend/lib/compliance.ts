@@ -532,3 +532,84 @@ export function exceptionActions(row: ExceptionRow, actor: string | null, twoPer
 export function sealedTone(state: string | null | undefined): Tone {
   return state === "ok" ? "success" : state === "broken" ? "danger" : state === "missing" ? "neutral" : "warning";
 }
+
+// ── AA-1184: the Calendar tab (the root ops calendar as the daily collector published it) ─────────────────────────
+
+export const CALENDAR_PATH = "/api/admin/platform/compliance/calendar";
+
+export type CalendarLineState =
+  | "overdue" | "due_soon" | "open" | "ok" | "done" | "scheduled" | "watched" | "waiting" | "automated";
+export type CalendarKind = "recurring" | "deadline" | "trigger" | "automated";
+export type CalendarOwner = "tech_lead" | "business_owner" | "engineer_on_duty" | "agent";
+export type CalendarFilter = "attention" | "dated" | "all";
+
+export interface CalendarLine {
+  id: string;
+  kind: CalendarKind;
+  state: CalendarLineState;
+  due: string | null;
+  last: string | null;
+  owner: CalendarOwner;
+  title: string;
+  check: string | null;
+  check_state: CheckStateName | null;
+  extra: string | null;
+  note: string | null;
+}
+
+export interface CalendarResp {
+  generated_at: string;
+  available: boolean;
+  check: {
+    check_id: string; status: string | null; state: CheckStateName | null; reason: string | null;
+    summary: string | null; source: string | null; collected_at: string | null; expires_at: string | null;
+    link: string | null; sealed: boolean;
+  } | null;
+  calendar: {
+    updated: string | null; today: string | null; lines: number; counts: Partial<Record<CalendarLineState, number>>;
+    overdue: number; attention: number; drill: boolean; truncated: boolean; automated_omitted: boolean;
+    errors: number | null;
+  } | null;
+  lines: CalendarLine[];
+  ingest?: IngestState | null;
+}
+
+export const CALENDAR_STATES: CalendarLineState[] = [
+  "overdue", "due_soon", "open", "ok", "done", "scheduled", "watched", "waiting", "automated",
+];
+const CALENDAR_TONE: Record<string, Tone> = {
+  overdue: "danger", due_soon: "warning", open: "warning", ok: "success", done: "success", scheduled: "info",
+  watched: "accent", waiting: "neutral", automated: "neutral",
+};
+const ATTENTION_STATES = new Set<string>(["overdue", "due_soon", "open"]);
+
+export function calendarTone(state: string | null | undefined): Tone {
+  return CALENDAR_TONE[state ?? ""] ?? "neutral";
+}
+
+export function needsAttention(line: Pick<CalendarLine, "state">): boolean {
+  return ATTENTION_STATES.has(line.state);
+}
+
+/** The lines a filter shows: "attention" (overdue, due soon, open), "dated" (every line with a due date) or "all";
+ * always worst first, then by due date, then by id (the API order, kept stable here). */
+export function filterCalendar(lines: CalendarLine[], filter: CalendarFilter): CalendarLine[] {
+  const kept = filter === "all" ? lines
+    : filter === "dated" ? lines.filter((l) => l.due !== null)
+      : lines.filter(needsAttention);
+  return [...kept].sort((a, b) => CALENDAR_STATES.indexOf(a.state) - CALENDAR_STATES.indexOf(b.state)
+    || (a.due ?? "9999-12-31").localeCompare(b.due ?? "9999-12-31") || a.id.localeCompare(b.id));
+}
+
+/** Whole days from `today` (YYYY-MM-DD) to `due` (negative = past); null when either is missing or not a date. */
+export function daysUntil(due: string | null | undefined, today: string | null | undefined): number | null {
+  if (!due || !today) return null;
+  const d = Date.parse(`${due}T00:00:00Z`);
+  const t = Date.parse(`${today}T00:00:00Z`);
+  if (Number.isNaN(d) || Number.isNaN(t)) return null;
+  return Math.round((d - t) / 86_400_000);
+}
+
+export function calendarFilterOf(value: string | null | undefined): CalendarFilter {
+  return value === "dated" || value === "all" ? value : "attention";
+}
