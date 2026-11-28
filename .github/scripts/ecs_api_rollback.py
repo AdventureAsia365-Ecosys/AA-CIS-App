@@ -10,7 +10,8 @@ per-service safety rule and adds what an API rollback needs on top:
 
   rollback   Moves every --target back to its previous revision, all or none: each target is first checked with a
              dry run (ecs_smoke_rollback.rollback without --apply), and when ANY of them is refused nothing is
-             written (CIS api and worker must keep one image). Then, with --apply, each target in the given order:
+             written, and it is refused too when the targets' previous revisions are different builds (CIS api and
+             worker must keep one image). Then, with --apply, each target in the given order:
              update-service, wait services-stable, the running tasks carry the previous image. Last, the public
              health URL must answer the previous build's commit in `git_sha` (the tag without its `dev-` prefix).
              Prints `outcome=<one line>` and `rolled_back=<family:revision,...>` for $GITHUB_OUTPUT.
@@ -136,6 +137,13 @@ def rollback(
             log(f"ERROR: {exc}")
             return finish(EXIT_FAILED, f"rollback FAILED before any change ({t.service}: AWS error)", [])
         prev_tags.append(tag)
+    # One image: the targets must have run the same build before the deploy (CIS api and worker; a single target is
+    # always one build). A worker left behind on an older build would otherwise come back split from the api.
+    builds = sorted(set(prev_tags))
+    if len(builds) > 1:
+        log(f"REFUSED (nothing changed): the targets ran different builds before the deploy: {' vs '.join(builds)}")
+        why = f"targets ran different builds before the deploy: {' vs '.join(builds)}"
+        return finish(EXIT_REFUSED, f"not rolled back (refused: {esr.scrub(why)[:200]})", [])
     want = build_sha(prev_tags[0])
     if not a.apply:
         log("DRY RUN: every target is safe; nothing changed")
