@@ -356,12 +356,17 @@ def test_deploy_dev_calls_verify_after_deploy_and_result_needs_every_job():
     verify = jobs["verify"]
     assert verify["uses"] == "./.github/workflows/post-deploy-verify.yml"
     assert verify["needs"] in ("deploy", ["deploy"])
-    assert verify["with"] == {"expected_sha": "${{ github.sha }}", "from_deploy": True}
+    assert verify["with"] == {
+        "expected_sha": "${{ github.sha }}",
+        "from_deploy": True,
+        "drill_force_fail": "${{ inputs.drill_force_smoke_fail == true }}",  # AA-1193 drill
+    }
     assert verify["secrets"] == "inherit"
     assert "if" not in verify, "verify must run only after a successful deploy (the default)"
     result = jobs["result"]
     assert result["if"] == "always()"
-    assert set(result["needs"]) == set(jobs) - {"result"}
+    # AA-1193: `rollback` and `report` are conditional and run after the verdict's inputs; `result` never waits on them.
+    assert set(result["needs"]) == set(jobs) - {"result", "rollback", "report"}
     # the post-deploy steps left the deploy job
     deploy_steps = [s.get("name", "") for s in jobs["deploy"]["steps"]]
     assert "Smoke test" not in deploy_steps and "Verify api/worker same image SHA" not in deploy_steps
@@ -462,3 +467,15 @@ def test_an_invalid_expected_sha_is_never_echoed(run_verify, image):
     assert r.returncode == 1
     assert "Expected commit `invalid`" in summary
     assert "SENTINEL" not in summary and "SENTINEL" not in r.stdout and "SENTINEL" not in r.stderr
+
+
+@needs_tools
+def test_failed_check_names_go_to_the_failed_file(run_verify, tmp_path):
+    """AA-1193: the rollback alert names the failing checks; the script appends each one to VERIFY_FAILED_FILE."""
+    http, ecs = _good()
+    _health_sha_mismatch(http, ecs)
+    failed = tmp_path / "failed.txt"
+    r, summary = run_verify(http, ecs, VERIFY_FAILED_FILE=str(failed))
+    assert r.returncode == 1
+    names = failed.read_text().split()
+    assert "health" in names and set(names) == _failed_rows(summary)
