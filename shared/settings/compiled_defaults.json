@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql, 469_aa1171_ops_thresholds_and_recipient_topic.sql, 471_aa1174_compliance_obligations.sql, 472_aa1172_fact_instruction_guard.sql, 474_aa1160_tenant_crm_agency_marker.sql, 475_aa1140_ops_status_samples_and_thresholds.sql, 476_aa1152_tp_agency_price_stale_hours.sql, 477_aa1140_rds_free_storage_pct.sql, 478_aa1148_manual_tours_supplier_link.sql, 479_aa1173_compliance_exceptions_reviews.sql, 481_aa1154_ops_assist_settings.sql, 483_aa1141_ops_status_p1_settings.sql, 484_aa1169_blog_claim_rule.sql, 486_aa1142_ops_status_p2_settings.sql, 487_aa1154_ops_assist_stage_and_budget.sql, 488_aa1141_ops_role_connections_samples.sql, 489_aa1178_job_lane_settings.sql, 491_aa1154_ops_assist_a2_settings.sql, 493_aa1142_external_check_worker_settings.sql, 495_aa1054_pilot_fence_setting.sql; do not edit by hand",
+ "_generated": "scripts/settings/gen_compiled_defaults.py from the settings seed and guides of 407_platform_settings_registry.sql, 411_tenant_erasure_saga_settings.sql, 412_quality_settings_registry.sql, 414_tripplanner_settings_registry.sql, 416_setting_definition_guides.sql, 417_aa1048_instrument_eval_settings.sql, 418_t9_blog_length_extend_setting.sql, 419_aa1051_w5_proof_settings.sql, 420_aa1105_learn_schema.sql, 422_t9_blog_extend_material_settings.sql, 423_aa1048_two_step_settings.sql, 424_aa1096_retire_settings_env_overrides.sql, 425_aa1105_learn_verify_visitor_setting.sql, 426_aa1048_claim_fire_sample_setting.sql, 427_aa1051_settings_enforced_keys.sql, 428_aa1090_tenant_tripplanner_domain.sql, 430_aa1003_r6_partner_report_settings.sql, 433_aa1108_delivery_metric_settings.sql, 434_aa1120_research_cache_settings.sql, 436_aa1116_billing_policy_settings.sql, 442_aa1122_research_auto_settings.sql, 445_aa1125_delivery_queue_settings.sql, 446_aa1126_gateway_spend_controls.sql, 447_aa1126_spend_environment_and_quota_notices.sql, 449_aa1127_gateway_idle_setting.sql, 450_aa1135_delivery_range_settings.sql, 453_aa1113_connection_provider_budget_setting.sql, 456_aa1143_connection_budget_seed_and_cap_v2.sql, 458_aa1146_content_publish_settings.sql, 459_aa1111_admin_mfa_setting.sql, 460_aa1051_t2_proof_cap.sql, 461_aa1127_cost_explorer_daily_settings.sql, 463_aa1168_ai_disclosure_setting.sql, 466_aa1170_compliance_schema.sql, 467_aa1167_prompt_data_fence.sql, 468_aa788_f12_scope_evidence_text.sql, 469_aa1171_ops_thresholds_and_recipient_topic.sql, 471_aa1174_compliance_obligations.sql, 472_aa1172_fact_instruction_guard.sql, 474_aa1160_tenant_crm_agency_marker.sql, 475_aa1140_ops_status_samples_and_thresholds.sql, 476_aa1152_tp_agency_price_stale_hours.sql, 477_aa1140_rds_free_storage_pct.sql, 478_aa1148_manual_tours_supplier_link.sql, 479_aa1173_compliance_exceptions_reviews.sql, 481_aa1154_ops_assist_settings.sql, 483_aa1141_ops_status_p1_settings.sql, 484_aa1169_blog_claim_rule.sql, 486_aa1142_ops_status_p2_settings.sql, 487_aa1154_ops_assist_stage_and_budget.sql, 488_aa1141_ops_role_connections_samples.sql, 489_aa1178_job_lane_settings.sql, 491_aa1154_ops_assist_a2_settings.sql, 493_aa1142_external_check_worker_settings.sql, 495_aa1054_pilot_fence_setting.sql, 497_aa1191_enabled_currencies_setting.sql; do not edit by hand",
  "definitions": [
   {
    "key": "cis.a1.attempts_before_review",
@@ -254,6 +254,47 @@
      "lower": "Bớt sản phẩm: nhiều đại lý đạt combo hơn.",
      "when": "Đổi khi có sản phẩm mới vào gói.",
      "example": "Với danh sách mặc định, đại lý cần Content studio, CRM và TripPlanner."
+    }
+   }
+  },
+  {
+   "key": "cis.billing.enabled_currencies",
+   "app": "cis",
+   "area": "billing",
+   "label": "Enabled currencies",
+   "description": "The currencies the platform shows and accepts (services/tenant_account/currency.py). USD is the base currency and always enabled, even when the list leaves it out. A currency that is not enabled is hidden everywhere (CIS Plans & add-ons, the plan drawer, the commercial terms, Tenant 360, the Content studio billing page and dashboard; Booking SaaS invoice drafts read it through catalog.v_billing_currencies_v1, CIS 498; the partner CRM through GET /catalog/v1/currencies, contract catalog.http.v1 1.5), and every API refuses a write in it (422 currency_not_enabled). A tenant whose stored billing currency is not enabled is quoted and invoiced in USD; its stored value and the plans' VND list stay in the database and come back when the currency is enabled again. Default USD only (tech lead S295).",
+   "value_type": "list",
+   "unit": null,
+   "min_value": null,
+   "max_value": null,
+   "allowed_values": [
+    "USD",
+    "VND"
+   ],
+   "default_value": [
+    "USD"
+   ],
+   "scope_kind": "platform",
+   "impact": "high",
+   "approval": "maker_checker",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 60,
+   "enforced": true,
+   "guide": {
+    "en": {
+     "what": "Which currencies agencies and staff see and can use for plans, billing terms, quotes, SaaS invoices and CRM proposals. USD is always on.",
+     "raise": "Adding VND: the VND price list, the billing currency and agreed-currency pickers, the VND quote and the VND invoice drafts come back, with the values saved before.",
+     "lower": "Removing VND: every VND field and picker is hidden, writes in VND are refused, and agencies set to VND are quoted and invoiced in USD until it is added again.",
+     "when": "Add VND only once the business owner confirms agencies must be invoiced in VND (for example a legal or accounting need); keep USD only otherwise.",
+     "example": "With the default of USD only, an agency whose billing currency was saved as VND sees its plan and quote in USD, and staff cannot pick VND anywhere."
+    },
+    "vi": {
+     "what": "Những loại tiền nào đại lý và staff thấy và được dùng cho gói, điều khoản thanh toán, báo giá, hoá đơn SaaS và proposal trong CRM. USD luôn bật.",
+     "raise": "Thêm VND: bảng giá VND, ô chọn tiền tệ thanh toán và tiền tệ thoả thuận, báo giá VND và hoá đơn nháp VND hiện lại, với các giá trị đã lưu trước đó.",
+     "lower": "Bỏ VND: mọi ô và lựa chọn VND bị ẩn, ghi bằng VND bị từ chối, và đại lý đang đặt VND được báo giá, lập hoá đơn bằng USD cho tới khi thêm lại.",
+     "when": "Chỉ thêm VND khi chủ doanh nghiệp xác nhận phải lập hoá đơn VND cho đại lý (ví dụ yêu cầu pháp lý hoặc kế toán); còn lại giữ chỉ USD.",
+     "example": "Với mặc định chỉ USD, đại lý đã lưu tiền tệ thanh toán là VND thấy gói và báo giá bằng USD, và staff không chọn được VND ở đâu cả."
     }
    }
   },
