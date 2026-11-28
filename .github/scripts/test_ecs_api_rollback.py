@@ -52,51 +52,57 @@ class FakeAws:
         return status, (self.prefix + sha if sha != "bootstrap" else sha)
 
     def __call__(self, args):
-        svc, op = args[0], args[1]
         opt = {args[i]: args[i + 1] for i in range(2, len(args) - 1) if args[i].startswith("--")}
-        if (svc, op) == ("ecs", "describe-services"):
-            name = opt["--services"]
-            return {
-                "services": [
-                    {
-                        "status": "ACTIVE",
-                        "taskDefinition": ARN + self.current[name],
-                        "deployments": [{"rolloutState": "COMPLETED"}],
-                        "desiredCount": 1,
-                    }
-                ]
-            }
-        if (svc, op) == ("ecs", "describe-task-definition"):
-            ref = opt["--task-definition"].rsplit("/", 1)[-1]
-            if ":" not in ref:  # a bare family: its latest revision
-                ref = f"{ref}:7"
-            status, tag = self.tag(ref)
-            name = self.tds[ref][2]
-            has_topic = self.topic and int(ref.rsplit(":", 1)[1]) >= self.topic_from_rev
-            env = [{"name": "ALERTS_TOPIC_ARN", "value": self.topic}] if has_topic else []
-            image = f"{REGISTRY}/app-dev-api:{tag}"
-            defs = [{"name": name, "image": image, "environment": env}]
-            return {"taskDefinition": {"status": status, "containerDefinitions": defs}}
-        if (svc, op) == ("ecr", "describe-images"):
-            tag = opt["--image-ids"].split("=", 1)[1]
-            return {"imageDetails": [{"imageTags": [tag]}]} if tag in self.ecr else {"imageDetails": []}
-        if (svc, op) == ("ecs", "update-service"):
-            self.writes.append(args)
-            self.current[opt["--service"]] = opt["--task-definition"]
-            return {"service": {}}
-        if (svc, op) == ("ecs", "wait"):
-            return None
-        if (svc, op) == ("ecs", "list-tasks"):
-            return {"taskArns": ["arn:task/1"]}
-        if (svc, op) == ("ecs", "describe-tasks"):
+        handler = {
+            ("ecs", "describe-services"): self._describe_services,
+            ("ecs", "describe-task-definition"): self._describe_task_definition,
+            ("ecr", "describe-images"): self._describe_images,
+            ("ecs", "update-service"): self._update_service,
+            ("ecs", "wait"): lambda opt, args: None,
+            ("ecs", "list-tasks"): lambda opt, args: {"taskArns": ["arn:task/1"]},
             # Containers of both services; ecs_smoke_rollback filters by container name (api / worker).
-            return {"tasks": [{"containers": [{"name": c, "image": i} for c, i in self._running()]}]}
-        if (svc, op) == ("sns", "publish"):
-            if self.publish_denied:
-                raise ear.esr.AwsError(ear.esr.scrub(f"sns publish failed: AccessDenied on {opt['--topic-arn']}"))
-            self.published.append(opt)
-            return {"MessageId": "m-1"}
-        raise AssertionError(f"unexpected call {args}")
+            ("ecs", "describe-tasks"): lambda opt, args: {
+                "tasks": [{"containers": [{"name": c, "image": i} for c, i in self._running()]}]
+            },
+            ("sns", "publish"): self._publish,
+        }.get((args[0], args[1]))
+        if handler is None:
+            raise AssertionError(f"unexpected call {args}")
+        return handler(opt, args)
+
+    def _describe_services(self, opt, args):
+        svc = {
+            "status": "ACTIVE",
+            "taskDefinition": ARN + self.current[opt["--services"]],
+            "deployments": [{"rolloutState": "COMPLETED"}],
+            "desiredCount": 1,
+        }
+        return {"services": [svc]}
+
+    def _describe_task_definition(self, opt, args):
+        ref = opt["--task-definition"].rsplit("/", 1)[-1]
+        if ":" not in ref:  # a bare family: its latest revision
+            ref = f"{ref}:7"
+        status, tag = self.tag(ref)
+        has_topic = self.topic and int(ref.rsplit(":", 1)[1]) >= self.topic_from_rev
+        env = [{"name": "ALERTS_TOPIC_ARN", "value": self.topic}] if has_topic else []
+        defs = [{"name": self.tds[ref][2], "image": f"{REGISTRY}/app-dev-api:{tag}", "environment": env}]
+        return {"taskDefinition": {"status": status, "containerDefinitions": defs}}
+
+    def _describe_images(self, opt, args):
+        tag = opt["--image-ids"].split("=", 1)[1]
+        return {"imageDetails": [{"imageTags": [tag]}]} if tag in self.ecr else {"imageDetails": []}
+
+    def _update_service(self, opt, args):
+        self.writes.append(args)
+        self.current[opt["--service"]] = opt["--task-definition"]
+        return {"service": {}}
+
+    def _publish(self, opt, args):
+        if self.publish_denied:
+            raise ear.esr.AwsError(ear.esr.scrub(f"sns publish failed: AccessDenied on {opt['--topic-arn']}"))
+        self.published.append(opt)
+        return {"MessageId": "m-1"}
 
     def _running(self):
         for td in self.current.values():
