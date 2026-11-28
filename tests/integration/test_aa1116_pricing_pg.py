@@ -10,6 +10,8 @@ Every test runs inside one outer transaction that is rolled back (the services' 
     price under the Enterprise floor refused, a lock of a per-seat plan stores the seat price;
   * the quote of a tenant with three products (combo), a locked seat price after a seat increase, and the
     custom-domain entitlement check of add_domain (TripPlanner Pro only).
+AA-1191: these tests write VND, so VND is enabled for the module (``enabled_vnd``); the last test checks the default
+(USD only): a VND billing currency or plan price is refused on the real tables and nothing is written.
 Invented names only.
 """
 import os
@@ -27,6 +29,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 from conftest import DB_HOST, DB_NAME, DB_PASS, DB_PORT, DB_USER  # noqa: E402
 from services.tenant_account import billing_terms as bt  # noqa: E402
+from services.tenant_account import currency  # noqa: E402
 from services.tenant_account import plans as pl  # noqa: E402
 from services.tenant_account import pricing_settings as ps  # noqa: E402
 from services.tenant_account import provision as pv  # noqa: E402
@@ -42,6 +45,13 @@ class _Pool:
     @asynccontextmanager
     async def acquire(self):
         yield self._conn
+
+
+@pytest.fixture(autouse=True)
+def enabled_vnd(request, monkeypatch):
+    """AA-1191: VND enabled (Platform › Settings › Enabled currencies) for the option B VND cases."""
+    if "usd_only" not in request.node.name:
+        monkeypatch.setattr(currency, "enabled", lambda: ("USD", "VND"))
 
 
 @pytest_asyncio.fixture
@@ -186,3 +196,26 @@ async def test_quote_combo_and_custom_domain_entitlement(conn):
     await conn.execute("UPDATE shared.tenant_subscription SET plan_key = 'tripplanner.pro' WHERE tenant_id = $1::uuid "
                        "AND product = 'tripplanner'", tid)
     assert await conn.fetchval(tpd.CUSTOM_DOMAIN_ENTITLED_SQL, tid) is True        # a Pro feature only (decision 14)
+
+
+@pytest.mark.asyncio
+async def test_usd_only_refuses_vnd_writes_and_bills_in_usd(conn):
+    """AA-1191 default (USD only): VND refused on the billing currency and on a plan price; a tenant stored in VND is
+    served and quoted in USD, its stored value untouched."""
+    tid = await _tenant(conn, "growth")
+    with pytest.raises(bt.TermsError) as e:
+        await bt.set_details(conn, tid, {"billing_currency": "VND"}, actor=ACTOR)
+    assert (e.value.code, e.value.status) == ("currency_not_enabled", 422)
+    core = await pl.get_plan(conn, "crm.core")
+    with pytest.raises(pl.PlanError) as e:
+        await pl.update_plan(conn, "crm.core", {"version": core["version"], "price_vnd_monthly": 123000}, actor=ACTOR)
+    assert e.value.code == "currency_not_enabled"
+    await conn.execute("UPDATE shared.tenants SET billing_currency = 'VND' WHERE tenant_id = $1::uuid", tid)
+    out = await bt.details(conn, tid)
+    assert (out["billing_currency"], out["billing_currency_hidden"], out["enabled_currencies"]) == ("USD", True,
+                                                                                                    ["USD"])
+    quote = await bt.tenant_quote(conn, tid)
+    assert quote["currency"] == "USD" and quote["reference"] is None
+    stored = await conn.fetchval("SELECT billing_currency::text AS c FROM shared.tenants WHERE tenant_id = $1::uuid",
+                                 tid)
+    assert stored == "VND"

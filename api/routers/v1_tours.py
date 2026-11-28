@@ -516,7 +516,7 @@ async def get_my_billing(request: Request, tenant=Depends(get_tenant)):
         # currency (VND list when the tenant is invoiced in VND); shared.membership_plans is no longer read
         currency = await conn.fetchval(
             "SELECT billing_currency::text FROM shared.tenants WHERE tenant_id = $1::uuid", tenant_id)
-        currency = currency if currency in billing_terms.CURRENCIES else "USD"
+        currency = billing_terms.effective_currency(currency)   # AA-1191: USD while its currency is not enabled
         plan_rows = await conn.fetch(billing_terms.PUBLIC_CONTENT_PLANS_SQL)
         # AA-1028 R1 slice 3: each plan's RPM from its live content plan (content.rate_limit_rpm), not PLAN_LIMITS
         rpm_by_tier = await tenant_plans.rate_limits_by_tier(conn)

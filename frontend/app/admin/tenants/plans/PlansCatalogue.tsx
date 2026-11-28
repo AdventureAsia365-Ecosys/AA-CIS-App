@@ -10,7 +10,8 @@ import {
   Badge, Button, DataTable, ErrorState, K, PageHeader, Section, Switch, mono, useT, type ColumnDef,
 } from "../../../_kit";
 import {
-  FEATURES_API, PLANS_API, PLANS_KEY, PRODUCTS, money, sendJson, type Feature, type Plan, type PlansResp, type Product,
+  FEATURES_API, PLANS_API, PLANS_KEY, PRODUCTS, currencyEnabled, money, sendJson, type Feature, type Plan, type PlansResp,
+  type Product,
 } from "@/lib/tenantPlans";
 import { PLANS } from "./plans.messages";
 import { PlanDrawer } from "./PlanDrawer";
@@ -31,6 +32,8 @@ export default function PlansCatalogue() {
     staleTime: 5 * 60_000,
   });
   const catalogue = useMemo(() => featuresQ.data ?? [], [featuresQ.data]);
+  // AA-1191: the VND list shows only while VND is an enabled currency (Platform › Settings)
+  const vnd = currencyEnabled("VND", plansQ.data?.enabled_currencies);
 
   const columns = useMemo<ColumnDef<Plan, unknown>[]>(() => [
     {
@@ -51,7 +54,7 @@ export default function PlansCatalogue() {
         return (
           <span style={{ display: "flex", flexDirection: "column" }}>
             <span>{t("perUnit", p.price_usd_monthly, t(`unit_${p.price_unit}`))}</span>
-            {p.price_vnd_monthly != null && (
+            {vnd && p.price_vnd_monthly != null && (
               <span style={{ fontSize: 11, color: K.muted }}>{money(p.price_vnd_monthly, "VND")}</span>
             )}
           </span>
@@ -70,7 +73,7 @@ export default function PlansCatalogue() {
         </span>
       ),
     },
-  ], [t]);
+  ], [t, vnd]);
 
   const refresh = () => { void qc.invalidateQueries({ queryKey: PLANS_KEY }); };
   const error = plansQ.error ? (plansQ.error as Error).message : featuresQ.error ? (featuresQ.error as Error).message : null;
@@ -122,7 +125,7 @@ export default function PlansCatalogue() {
       )}
       {open && (
         <PlanDrawer key={open.plan?.plan_key ?? "new"} plan={open.plan} product={open.product} catalogue={catalogue}
-          onClose={() => setOpen(null)} />
+          vnd={vnd} onClose={() => setOpen(null)} />
       )}
     </>
   );

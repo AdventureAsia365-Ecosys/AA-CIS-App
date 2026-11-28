@@ -33,13 +33,14 @@ from tests.unit.aa976_m2m import OTHER_CLIENT, install_m2m
 
 CONTRACT = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "tenant.entitlements.v1.openapi.yaml"
 DOC = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
-# sha256 of AA-Ecosys docs/contracts/tenant.entitlements.v1.openapi.yaml (info.version 1.11, AA-1160: crm_agency and the
+# sha256 of AA-Ecosys docs/contracts/tenant.entitlements.v1.openapi.yaml (info.version 1.12, AA-1191: the Booking
+# currencies view; 1.11 AA-1160: crm_agency and the
 # fallback route appended to the TripPlanner catalog view; 1.10 AA-1116: the quote
 # discount appended to the Booking billing view; 1.9 the option B billing terms; 1.8 AA-1090: custom_domains appended
 # to the TripPlanner catalog view; 1.7 AA-1093: the event account.erasure_requested; 1.6 added is_synthetic to the
 # catalog view only).
 # Update the root file first, copy it here byte for byte, then set this to `sha256sum` of the root file.
-ROOT_CONTRACT_SHA256 = "c23da74d5d7e5816ea6bc17f2ba540de70c4b33eace554711232d734c63d9899"
+ROOT_CONTRACT_SHA256 = "e50f002d72b6a53bf74b3232011de6ca7eeeaa4dc8f0b4ce3faf9c4f469544c8"
 
 # Fixed UUIDs (AA-993: parametrize IDs must not change between pytest-xdist workers).
 TENANT = "1028a000-0000-4000-8000-000000000001"

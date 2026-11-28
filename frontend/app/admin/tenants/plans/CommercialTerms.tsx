@@ -2,13 +2,15 @@
 // app/admin/tenants/plans/CommercialTerms.tsx — AA-1116 (option B): the commercial terms in force (annual months,
 // founding offer, combo, reference rate, review periods, trials, pilot) read-only with a link to Platform › Settings,
 // where they are edited with a second person's approval, and the price review dates of every priced plan with the
-// VND drift against the reference rate. GET /api/admin/plans/commercial-terms through the BFF.
+// VND drift against the reference rate. GET /api/admin/plans/commercial-terms through the BFF. AA-1191: while VND is
+// not an enabled currency the API leaves the VND terms out and the VND review / drift columns are hidden.
 
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { Badge, DataTable, ErrorState, K, Section, mono, useT, type ColumnDef } from "../../../_kit";
 import {
-  COMMERCIAL_TERMS_API, sendJson, termText, type CommercialTerm, type CommercialTermsResp, type PlanReview,
+  COMMERCIAL_TERMS_API, currencyEnabled, sendJson, termText, type CommercialTerm, type CommercialTermsResp,
+  type PlanReview,
 } from "@/lib/tenantPlans";
 import { PLANS } from "./plans.messages";
 
@@ -35,14 +37,17 @@ export function CommercialTerms() {
       {date}{overdue && <Badge tone="warning">{t("overdue")}</Badge>}
     </span>
   );
+  const vnd = currencyEnabled("VND", q.data?.enabled_currencies);
   const reviewCols: ColumnDef<PlanReview, unknown>[] = [
     { accessorKey: "name", header: t("colPlan") },
     { id: "review", header: t("colReviewDue"), cell: (c) => due(c.row.original.price_review_due,
       c.row.original.price_review_overdue) },
-    { id: "vnd", header: t("colVndReview"), cell: (c) => due(c.row.original.vnd_review_due,
-      c.row.original.vnd_review_overdue) },
-    { id: "drift", header: t("colDrift"),
-      cell: (c) => c.row.original.vnd_drift_pct == null ? "—" : `${c.row.original.vnd_drift_pct} %` },
+    ...(vnd ? [
+      { id: "vnd", header: t("colVndReview"), cell: (c) => due(c.row.original.vnd_review_due,
+        c.row.original.vnd_review_overdue) },
+      { id: "drift", header: t("colDrift"),
+        cell: (c) => c.row.original.vnd_drift_pct == null ? "—" : `${c.row.original.vnd_drift_pct} %` },
+    ] satisfies ColumnDef<PlanReview, unknown>[] : []),
   ];
   if (q.error) return <ErrorState message={`${t("loadError")}: ${(q.error as Error).message}`} />;
   return (

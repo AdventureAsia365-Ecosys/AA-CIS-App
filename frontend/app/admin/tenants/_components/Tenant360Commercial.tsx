@@ -4,6 +4,8 @@
 //     yearly, an agreed price per billed unit (per seat on a per-seat plan) with an optional end, "lock today's list
 //     price");
 //   * Quote: the lines, the offer in force and the monthly / yearly totals in the tenant's currency.
+// AA-1191: only the enabled currencies show (Platform › Settings › Enabled currencies, USD only by default): a currency
+// picker with one choice is hidden, a saved currency that is not enabled shows as the USD it is billed in.
 // Writes need tenant.write (admin); the API re-checks it and audits every change. All values come from the API: prices
 // from Plans & add-ons, the offers and lengths from Platform › Settings. There is no retail add-on (no custom-domain
 // add-on, no AI pack): an AI top-up is an override on this tab.
@@ -15,8 +17,8 @@ import {
   type ColumnDef, type Translator,
 } from "../../../_kit";
 import {
-  billingDetailsKey, billingDetailsPath, money, quoteKey, quotePath, sendJson, subscriptionTermsPath,
-  type BillingDetails, type QuoteLine, type QuoteSubscription, type TenantQuote,
+  agreedStart, billingDetailsKey, billingDetailsPath, currencyEnabled, currencyOptions, money, quoteKey, quotePath,
+  sendJson, subscriptionTermsPath, termsBody, type BillingDetails, type QuoteLine, type QuoteSubscription, type TenantQuote,
 } from "@/lib/tenantPlans";
 import { T360_COMMERCIAL } from "./commercial.messages";
 
@@ -50,7 +52,7 @@ function Billing({ tenantId, canWrite }: { tenantId: string; canWrite: boolean }
   const [terms, setTerms] = useState<QuoteSubscription | null>(null);
   const d = q.data;
   const rows = billingRows(d, t);
-  const termCols = termColumns(t);
+  const termCols = termColumns(t, d?.enabled_currencies);
   return (
     <Section title={t("billingTitle")} description={t("billingHint")} testId="tenant360-billing-details"
       actions={canWrite && d ? <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>{t("edit")}</Button>
@@ -77,18 +79,23 @@ function billingRows(d: BillingDetails | undefined, t: CT): [string, string][] {
   if (!d) return [];
   const rows: [string, string | null][] = [
     [t("fieldLegal"), d.legal_entity_name], [t("fieldTaxId"), d.tax_id], [t("fieldEmail"), d.billing_email],
-    [t("fieldAddress"), d.billing_address], [t("fieldCountry"), d.billing_country], [t("fieldCurrency"), d.billing_currency],
+    [t("fieldAddress"), d.billing_address], [t("fieldCountry"), d.billing_country],
+    [t("fieldCurrency"), d.billing_currency_hidden ? t("currencyHidden", d.billing_currency) : d.billing_currency],
     [t("fieldFoundingFrom"), d.founding_offer_from], [t("fieldFoundingUntil"), d.founding_offer_until],
   ];
   return rows.map(([label, value]) => [label, value ?? t("none")]);
 }
 
-function termColumns(t: CT): ColumnDef<QuoteSubscription, unknown>[] {
+function termColumns(t: CT, enabled?: string[]): ColumnDef<QuoteSubscription, unknown>[] {
+  const agreed = (s: QuoteSubscription) => {
+    if (s.agreed_price_monthly == null) return t("none");
+    const c = s.agreed_currency ?? "USD";
+    return currencyEnabled(c, enabled) ? money(s.agreed_price_monthly, c) : t("agreedHidden");
+  };
   return [
     { accessorKey: "product", header: t("colProduct"), cell: (c) => c.row.original.plan_key },
     { id: "interval", header: t("colInterval"), cell: (c) => t(`interval_${c.row.original.billing_interval}`) },
-    { id: "agreed", header: t("colAgreed"), cell: (c) => c.row.original.agreed_price_monthly == null ? t("none")
-      : money(c.row.original.agreed_price_monthly, c.row.original.agreed_currency ?? "USD") },
+    { id: "agreed", header: t("colAgreed"), cell: (c) => agreed(c.row.original) },
     { id: "until", header: t("colUntil"), cell: (c) => c.row.original.agreed_until ?? t("none") },
   ];
 }
@@ -111,7 +118,7 @@ function BillingDrawer({ tenantId, details, onClose }: { tenantId: string; detai
       for (const k of ["legal_entity_name", "tax_id", "billing_email", "billing_address", "billing_country"] as const) {
         body[k] = f[k].trim() || null;
       }
-      body.billing_currency = f.billing_currency;
+      if (f.billing_currency !== details.billing_currency) body.billing_currency = f.billing_currency;
       if (f.founding_offer_from !== (details.founding_offer_from ?? "")
           || f.founding_offer_until !== (details.founding_offer_until ?? "")) {
         body.founding_offer_from = f.founding_offer_from || null;
@@ -138,10 +145,8 @@ function BillingDrawer({ tenantId, details, onClose }: { tenantId: string; detai
         {text("billing_address", t("fieldAddress"), 1000)}
         <div style={grid}>
           {text("billing_country", t("fieldCountry"), 2)}
-          <Field label={t("fieldCurrency")}>
-            <Select value={f.billing_currency} onChange={(e) => set("billing_currency", e.target.value)}
-              options={[{ value: "USD", label: "USD" }, { value: "VND", label: "VND" }]} />
-          </Field>
+          <CurrencyPicker label={t("fieldCurrency")} value={f.billing_currency}
+            onChange={(v) => set("billing_currency", v)} enabled={details.enabled_currencies} />
         </div>
         <div style={grid}>
           <Field label={t("fieldFoundingFrom")} hint={t("fieldFoundingHint")}>
@@ -159,19 +164,19 @@ function BillingDrawer({ tenantId, details, onClose }: { tenantId: string; detai
 
 function TermsDrawer({ tenantId, sub, details, onClose }: { tenantId: string; sub: QuoteSubscription;
                                                             details?: BillingDetails; onClose: () => void }) {
-  const currency = details?.billing_currency ?? "USD";
   const t = useT(T360_COMMERCIAL);
   const toast = useToast();
   const refresh = useRefresh(tenantId);
   const [interval, setInterval_] = useState(sub.billing_interval);
-  const [price, setPrice] = useState(sub.agreed_price_monthly ?? "");
-  const [cur, setCur] = useState(sub.agreed_currency ?? currency);
-  const [until, setUntil] = useState(sub.agreed_until ?? "");
+  // AA-1191: an agreed price in a currency that is not enabled is not shown (and not applied); it is sent back only
+  // when staff type a new price (lib/tenantPlans.ts agreedStart / termsBody)
+  const [start] = useState(() => agreedStart(sub, details));
+  const [price, setPrice] = useState(start.price);
+  const [cur, setCur] = useState(start.cur);
+  const [until, setUntil] = useState(start.until);
   const send = useMutation({
-    mutationFn: (lock: boolean) => sendJson(subscriptionTermsPath(tenantId, sub.product), "PUT", lock
-      ? { lock: true, billing_interval: interval }
-      : { billing_interval: interval, agreed_price_monthly: price.trim() || null, agreed_currency: cur,
-          agreed_until: until || null }),
+    mutationFn: (lock: boolean) => sendJson(subscriptionTermsPath(tenantId, sub.product), "PUT",
+      termsBody(interval, start, { price, cur, until }, lock)),
     onSuccess: () => { toast.success(t("saved")); refresh(); onClose(); },
     onError: (e) => toast.error(t("failed", errText(e))),
   });
@@ -191,17 +196,29 @@ function TermsDrawer({ tenantId, sub, details, onClose }: { tenantId: string; su
           <Field label={t("fieldAgreed")} hint={t("fieldAgreedHint")}>
             <Input inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} />
           </Field>
-          <Field label={t("fieldAgreedCurrency")}>
-            <Select value={cur} onChange={(e) => setCur(e.target.value)}
-              options={[{ value: "USD", label: "USD" }, { value: "VND", label: "VND" }]} />
-          </Field>
+          <CurrencyPicker label={t("fieldAgreedCurrency")} value={cur} onChange={setCur}
+            enabled={details?.enabled_currencies} />
         </div>
         <Field label={t("fieldAgreedUntil")}>
           <Input type="date" value={until} onChange={(e) => setUntil(e.target.value)} />
         </Field>
+        {start.hidden && <p style={small}>{t("agreedHidden")}</p>}
         <p style={small}>{t("lockHint")}</p>
       </div>
     </Drawer>
+  );
+}
+
+/** AA-1191: a currency picker of the enabled currencies only; hidden while there is no choice (USD only). */
+function CurrencyPicker({ label, value, onChange, enabled }: {
+  label: string; value: string; onChange: (v: string) => void; enabled?: string[];
+}) {
+  const options = currencyOptions(enabled);
+  if (options.length < 2) return null;
+  return (
+    <Field label={label}>
+      <Select value={value} onChange={(e) => onChange(e.target.value)} options={options} />
+    </Field>
   );
 }
 

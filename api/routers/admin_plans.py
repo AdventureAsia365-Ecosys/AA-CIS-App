@@ -23,8 +23,13 @@ from pydantic import BaseModel, Field
 
 from api.core.staff_authz import staff_policy
 from api.routers.admin import _admin_actor, _require_tenant_admin, verify_admin_secret
+from services.tenant_account import currency as cur_
 from services.tenant_account import plans as pl
 from services.tenant_account import pricing_settings as ps
+
+# AA-1191: commercial terms that only matter while VND is an enabled currency (hidden from the list otherwise; still
+# edited on Platform › Settings)
+VND_TERMS = (ps.FX_VND_PER_USD, ps.VND_PRICE_REVIEW_MONTHS)
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(staff_policy)])
 
@@ -94,10 +99,14 @@ async def commercial_terms(request: Request, x_admin_secret: str = Header(None))
     labels, and per live priced plan its review dates and the VND drift against the reference rate."""
     verify_admin_secret(x_admin_secret)
     terms = ps.snapshot(ps.COMMERCIAL)
+    allowed = cur_.enabled()
+    vnd = "VND" in allowed
     async with request.app.state.pool.acquire() as conn:
         plans = await pl.list_plans(conn)
-    return {"terms": [{"key": k, "value": terms[k], "label": ps.label(k)} for k in ps.COMMERCIAL],
-            "reviews": pl.reviews(plans, terms, today=date.today())}
+    return {"terms": [{"key": k, "value": terms[k], "label": ps.label(k)} for k in ps.COMMERCIAL
+                      if vnd or k not in VND_TERMS],
+            "reviews": pl.reviews(plans, terms, today=date.today(), vnd=vnd),
+            "enabled_currencies": list(allowed)}
 
 
 @router.get("/plans", summary="The plan catalogue with features and live subscription counts")
@@ -107,7 +116,8 @@ async def list_plans(request: Request, product: Optional[Product] = Query(None),
     async with request.app.state.pool.acquire() as conn:
         plans = await pl.list_plans(conn, product=product, include_retired=include_retired)
         tiers = await pl.assignable_tiers(conn)
-    return {"plans": plans, "assignable_tiers": tiers}
+    # AA-1191: the frontend hides the VND list (column, drawer inputs) while VND is not enabled
+    return {"plans": plans, "assignable_tiers": tiers, "enabled_currencies": list(cur_.enabled())}
 
 
 @router.get("/plans/features", summary="The feature key catalogue")

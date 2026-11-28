@@ -22,9 +22,12 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 
 from services.acp_shared.audit_log import AdminTenantAuditAction, write_audit_log
+from services.tenant_account import currency as cur_
 from services.tenant_account import pricing_settings as ps
 from services.tenant_account import quote as qt
 
+# technical-constant: the currencies the CIS 435 CHECK constraints accept; which of them are open is the setting
+# cis.billing.enabled_currencies (AA-1191, services/tenant_account/currency.py)
 CURRENCIES = ("USD", "VND")
 INTERVALS = ("month", "year")
 # technical-constant: the CIS 354 / 435 CHECK lengths of the bill-to fields (the database refuses longer)
@@ -107,8 +110,43 @@ def _months_after(start: date, months: int) -> date:
 
 
 async def details(conn, tenant_id: str) -> Optional[dict]:
+    """The billing details. AA-1191: ``billing_currency`` is the currency the tenant is billed in now (its stored one
+    while enabled, else USD); ``billing_currency_hidden`` says the stored one is a currency that is not enabled (its
+    value stays in the database and comes back when it is enabled); ``enabled_currencies`` feeds the pickers."""
     row = await conn.fetchrow(TENANT_SQL, tenant_id)
-    return None if row is None else {k: _iso(v) for k, v in dict(row).items()}
+    if row is None:
+        return None
+    out = {k: _iso(v) for k, v in dict(row).items()}
+    return with_effective_currency(out, cur_.enabled())
+
+
+def with_effective_currency(out: dict, allowed: tuple[str, ...]) -> dict:
+    """AA-1191: the billing details as served (see :func:`details`). Pure."""
+    stored = out.get("billing_currency")
+    eff = cur_.effective(stored, allowed)
+    return {**out, "billing_currency": eff, "billing_currency_hidden": bool(stored) and stored != eff,
+            "enabled_currencies": list(allowed)}
+
+
+def effective_currency(stored: Optional[str]) -> str:
+    """AA-1191: the currency a tenant is billed in now (its stored one while enabled, else USD)."""
+    return cur_.effective(stored if stored in CURRENCIES else None, cur_.enabled())
+
+
+def _billing_currency(value: Any, stored: Optional[str]) -> str:
+    """A billing currency write: one of the CHECK values, and (AA-1191) an enabled one unless it is the stored one."""
+    if value not in CURRENCIES:
+        raise TermsError("invalid_currency", "billing_currency: USD or VND", field="billing_currency")
+    if value != stored:
+        _refuse_disabled(value, "billing_currency", cur_.enabled())
+    return value
+
+
+def _refuse_disabled(code: Optional[str], field: str, allowed: tuple[str, ...]) -> None:
+    """AA-1191: a write in a currency that is not enabled is refused (422 currency_not_enabled)."""
+    why = cur_.problem(code, allowed, field=field)
+    if why:
+        raise TermsError(cur_.CODE, why, field=field)
 
 
 async def tenant_quote(conn, tenant_id: str, *, today: Optional[date] = None) -> Optional[dict]:
@@ -117,7 +155,7 @@ async def tenant_quote(conn, tenant_id: str, *, today: Optional[date] = None) ->
     if tenant is None:
         return None
     subs = [dict(r) for r in await conn.fetch(SUBS_SQL, tenant_id)]
-    terms = ps.snapshot(ps.COMMERCIAL)
+    terms = {**ps.snapshot(ps.COMMERCIAL), cur_.ENABLED_CURRENCIES: list(cur_.enabled())}
     q = qt.build(dict(tenant), subs, terms, today=today or date.today()).out()
     q["subscriptions"] = [{"product": s["product"], "plan_key": s["plan_key"], "status": s["status"],
                            "billing_interval": s["billing_interval"],
@@ -165,9 +203,7 @@ async def set_details(conn, tenant_id: str, payload: dict, *, actor: str) -> dic
                 raise TermsError("invalid_country", "billing_country is a two-letter ISO code", field="billing_country")
             after["billing_country"] = None if c is None else c.strip().upper()
         if "billing_currency" in payload:
-            if payload["billing_currency"] not in CURRENCIES:
-                raise TermsError("invalid_currency", "billing_currency: USD or VND", field="billing_currency")
-            after["billing_currency"] = payload["billing_currency"]
+            after["billing_currency"] = _billing_currency(payload["billing_currency"], before["billing_currency"])
         if "founding_offer_from" in payload or "founding_offer_until" in payload:
             await _founding(conn, tenant_id, payload, after)
         await conn.execute(UPDATE_DETAILS_SQL, tenant_id, *(after[k] for k in DETAIL_FIELDS))
@@ -227,8 +263,11 @@ def _agreed_price(v: Any) -> Optional[Decimal]:
     return d
 
 
-def _agreed_terms(sub: dict, payload: dict, currency: str, today: date) -> tuple:
-    """(price, currency, until) after the payload: a lock, a new agreed price, a new end, or unchanged."""
+def _agreed_terms(sub: dict, payload: dict, currency: str, today: date,
+                  allowed: tuple[str, ...] = CURRENCIES) -> tuple:
+    """(price, currency, until) after the payload: a lock, a new agreed price, a new end, or unchanged. ``currency``
+    is the tenant's effective billing currency; a new agreed price in a currency outside ``allowed`` (the enabled
+    currencies, AA-1191) is refused."""
     price, cur, until = sub["agreed_price_monthly"], sub["agreed_currency"], sub["agreed_until"]
     if payload.get("lock"):
         # the list UNIT price (per seat on a per-seat plan): the agreed price is per billed unit, so a seat added
@@ -244,6 +283,8 @@ def _agreed_terms(sub: dict, payload: dict, currency: str, today: date) -> tuple
             return None, None, None
         cur = payload.get("agreed_currency", cur or currency)
         until = _date(payload.get("agreed_until"), "agreed_until")
+        if cur in CURRENCIES:
+            _refuse_disabled(cur, "agreed_currency", allowed)
     elif "agreed_until" in payload and price is not None:
         until = _date(payload["agreed_until"], "agreed_until")
     if price is not None and cur not in CURRENCIES:
@@ -276,12 +317,13 @@ async def set_terms(conn, tenant_id: str, product: str, payload: dict, *, actor:
         sub = await conn.fetchrow(SUB_LOCK_SQL, tenant_id, product)
         if sub is None:
             raise TermsError("subscription_not_found", f"the tenant has no {product} subscription", 404)
-        currency = await conn.fetchval("SELECT billing_currency::text FROM shared.tenants WHERE tenant_id = $1::uuid",
-                                       tenant_id)
+        allowed = cur_.enabled()
+        currency = cur_.effective(await conn.fetchval(
+            "SELECT billing_currency::text FROM shared.tenants WHERE tenant_id = $1::uuid", tenant_id), allowed)
         interval = payload.get("billing_interval", sub["billing_interval"])
         if interval not in INTERVALS:
             raise TermsError("invalid_interval", "billing_interval: month or year", field="billing_interval")
-        price, cur, until = _agreed_terms(dict(sub), payload, currency, today)
+        price, cur, until = _agreed_terms(dict(sub), payload, currency, today, allowed)
         _check_floor(dict(sub), price, cur, today)
         await conn.execute(UPDATE_TERMS_SQL, tenant_id, product, interval, price, cur, until, actor[:64])
         before = {"billing_interval": sub["billing_interval"], "agreed_price_monthly": sub["agreed_price_monthly"],

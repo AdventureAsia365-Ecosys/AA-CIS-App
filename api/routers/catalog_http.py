@@ -10,6 +10,7 @@ schema (ADR 0008a decision 1), so it reads published content here.
   GET /catalog/v1/aa-content                             AA-authored content: latest published version of each item
                                                          that is not retired (kind, locale, cursor, limit)
   GET /catalog/v1/aa-content/{content_id}/versions/{v}   one published version (also after a newer publish or retire)
+  GET /catalog/v1/currencies                             AA-1191 (contract 1.5): the enabled currencies in force
 
 ``updated_since`` filters ``catalog.v_tour.updated_at`` only (the published Master row). Place, time-zone, photo and
 component changes move ``content_hash`` without moving it, so the contract tells an incremental CRM sync to also run
@@ -55,13 +56,14 @@ from fastapi.responses import JSONResponse, Response
 
 from api.core import m2m_auth
 from api.schemas.public_api import (  # AA-899: doc only
-    CatalogAaContent, CatalogAaContentPage, CatalogDestination, CatalogTour, CatalogTourPage,
+    CatalogAaContent, CatalogAaContentPage, CatalogCurrencies, CatalogDestination, CatalogTour, CatalogTourPage,
 )
 from services.aa_content import reader as aa_reader
 from services.aa_content import validate as aa_validate
 from services.catalog_http import reader
 from services.catalog_http.mapping import HIDDEN_GEO_STATUS, destination_body, tour_summary
 from services.photos.sync import public_base
+from services.tenant_account import currency as enabled_currency
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/catalog/v1", tags=["catalog-http"])
@@ -235,6 +237,20 @@ async def get_destination(destination_id: str, request: Request,
     if keeper is not None:
         raise CatalogProblem(404, "not_found", "This destination was merged into another one.")
     body = destination_body(row)
+    return _cached(request, body, _body_hash(body))
+
+
+# ── Enabled currencies (AA-1191, contract 1.5) ─────────────────────────────────
+
+@router.get("/currencies", responses={200: {"model": CatalogCurrencies}})
+async def get_currencies(request: Request,
+                         caller: m2m_auth.M2MCaller = Depends(require_catalog_reader)) -> Response:
+    """The currencies the platform shows and accepts (Platform › Settings › Enabled currencies): USD first, always
+    enabled. ``cache_s`` is the setting's own cache window: the CRM keeps the answer that long."""
+    allowed = await enabled_currency.aenabled()
+    body = {"enabled": list(allowed), "base": enabled_currency.BASE,
+            "cache_s": enabled_currency.cache_seconds()}
+    logger.info("catalog_http_served", op="getCurrencies", client_id=caller.client_id, enabled=len(allowed))
     return _cached(request, body, _body_hash(body))
 
 

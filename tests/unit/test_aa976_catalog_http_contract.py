@@ -25,9 +25,9 @@ from tests.unit.aa976_m2m import OTHER_CLIENT, install_m2m
 
 CONTRACT = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "catalog.http.v1.openapi.yaml"
 DOC = yaml.safe_load(CONTRACT.read_text(encoding="utf-8"))
-# sha256 of AA-Ecosys docs/contracts/catalog.http.v1.openapi.yaml (info.version 1.4). Update the root file first,
+# sha256 of AA-Ecosys docs/contracts/catalog.http.v1.openapi.yaml (info.version 1.5). Update the root file first,
 # copy it here byte for byte, then set this to `sha256sum` of the root file.
-ROOT_CONTRACT_SHA256 = "6e641b5a623bf3358bf0788c8c506e33a57061637fc0dc18f93d555a5b30b8b0"
+ROOT_CONTRACT_SHA256 = "b69b90b9d29332065da863a10d93e85f510133ba2383e1e433a6315e2a86babe"
 
 
 def test_copy_is_the_pinned_root_contract():
@@ -42,6 +42,7 @@ SERVED = {
     "getDestination": ("/destinations/{destination_id}", "get"),
     "listAaContent": ("/aa-content", "get"),
     "getAaContentVersion": ("/aa-content/{content_id}/versions/{version}", "get"),
+    "getCurrencies": ("/currencies", "get"),      # AA-1191, contract 1.5
 }
 
 
@@ -182,6 +183,25 @@ def test_hidden_and_merged_destinations_conform(issuer):
                                           headers=_h(issuer))).status_code == 404
 
 
+def test_get_currencies_every_status(client, issuer, monkeypatch):
+    """AA-1191 (contract 1.5): USD only by default, the value in force USD first, ETag / 304, the auth errors."""
+    from services.tenant_account import currency
+
+    ok = _check("getCurrencies", client.get("/catalog/v1/currencies", headers=_h(issuer)))
+    assert ok.status_code == 200 and ok.json()["enabled"] == ["USD"] and ok.json()["base"] == "USD"
+    _check("getCurrencies", client.get("/catalog/v1/currencies",
+                                       headers={**_h(issuer), "If-None-Match": ok.headers["etag"]}))
+
+    async def _vnd():
+        return ("USD", "VND")
+
+    monkeypatch.setattr(currency, "aenabled", _vnd)
+    both = _check("getCurrencies", client.get("/catalog/v1/currencies", headers=_h(issuer)))
+    assert both.json()["enabled"] == ["USD", "VND"] and both.headers["etag"] != ok.headers["etag"]
+    _check("getCurrencies", client.get("/catalog/v1/currencies"))
+    _check("getCurrencies", client.get("/catalog/v1/currencies", headers=_h(issuer, client_id=OTHER_CLIENT)))
+
+
 def test_served_tour_never_carries_a_price_or_person_field(client, issuer):
     body = client.get(f"/catalog/v1/tours/cis/{SID_A}", headers=_h(issuer)).json()
     text = str(body).lower()
@@ -196,7 +216,8 @@ def test_openapi_doc_models_match_the_contract_and_the_served_bodies(client, iss
 
     pairs = {"TourPage": m.CatalogTourPage, "TourSummary": m.CatalogTourSummary, "Tour": m.CatalogTour,
              "TourDay": m.CatalogTourDay, "Place": m.CatalogPlace, "Exclusion": m.CatalogExclusion,
-             "Facets": m.CatalogFacets, "Photo": m.CatalogPhoto, "Destination": m.CatalogDestination}
+             "Facets": m.CatalogFacets, "Photo": m.CatalogPhoto, "Destination": m.CatalogDestination,
+             "Currencies": m.CatalogCurrencies}
     for name, model in pairs.items():
         schema = DOC["components"]["schemas"][name]
         assert set(model.model_fields) == set(schema["properties"]), name

@@ -27,8 +27,11 @@ const ERR = {
   overage: "err_overage",
 } as const satisfies Record<Exclude<PlanDraftError, KeyedError>, keyof typeof PLANS.en>;
 
-export function PlanDrawer({ plan, product, catalogue, onClose }: {
-  plan: Plan | null; product: Product; catalogue: Feature[]; onClose: () => void;
+export function PlanDrawer({ plan, product, catalogue, vnd, onClose }: {
+  plan: Plan | null; product: Product; catalogue: Feature[];
+  /** AA-1191: VND is an enabled currency (the VND list fields show only then). */
+  vnd: boolean;
+  onClose: () => void;
 }) {
   const t = useT(PLANS);
   const units = useMemo(() => ({ usdMonth: t("unit_usdMonth"), perMinute: t("unit_perMinute"), seats: t("unit_seats"),
@@ -159,7 +162,7 @@ export function PlanDrawer({ plan, product, catalogue, onClose }: {
               onChange={(e) => set({ price_extra_seat: e.target.value })} />
           </Field>
         </div>
-        <PriceListFields draft={draft} set={set} lock={lock} err={err} plan={plan} />
+        <PriceListFields draft={draft} set={set} lock={lock} err={err} plan={plan} vnd={vnd} />
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <Switch checked={draft.is_public} disabled={lock} label={t("fieldPublic")}
             onChange={(v) => set({ is_public: v })} />
@@ -223,10 +226,11 @@ export function PlanDrawer({ plan, product, catalogue, onClose }: {
   );
 }
 
-/** AA-1116 option B: the VND list, the seat minimum, the contract floor and (content) the overage rates. */
-function PriceListFields({ draft, set, lock, err, plan }: {
+/** AA-1116 option B: the VND list (AA-1191: only while VND is enabled), the seat minimum, the contract floor and
+ *  (content) the overage rates. */
+function PriceListFields({ draft, set, lock, err, plan, vnd }: {
   draft: PlanDraft; set: (p: Partial<PlanDraft>) => void; lock: boolean;
-  err: (k: PlanDraftError) => string | undefined; plan: Plan | null;
+  err: (k: PlanDraftError) => string | undefined; plan: Plan | null; vnd: boolean;
 }) {
   const t = useT(PLANS);
   const priceSetAt = plan?.price_set_at;
@@ -235,14 +239,18 @@ function PriceListFields({ draft, set, lock, err, plan }: {
       <div style={{ fontSize: 13, fontWeight: 600, color: K.ink, marginBottom: 6 }}>{t("optionBTitle")}</div>
       {priceSetAt && <p style={{ ...small, marginBottom: 6 }}>{t("priceSetAt", priceSetAt)}</p>}
       <div style={grid}>
-        <Field label={t("fieldPriceVnd")} hint={t("fieldPriceVndHint")} error={err("vnd")}>
-          <Input inputMode="numeric" value={draft.price_vnd} disabled={lock} data-testid="plan-price-vnd"
-            onChange={(e) => set({ price_vnd: e.target.value.replace(/[\s.,]/g, "") })} />
-        </Field>
-        <Field label={t("fieldExtraSeatVnd")}>
-          <Input inputMode="numeric" value={draft.price_extra_seat_vnd} disabled={lock}
-            onChange={(e) => set({ price_extra_seat_vnd: e.target.value.replace(/[\s.,]/g, "") })} />
-        </Field>
+        {vnd && (
+          <>
+            <Field label={t("fieldPriceVnd")} hint={t("fieldPriceVndHint")} error={err("vnd")}>
+              <Input inputMode="numeric" value={draft.price_vnd} disabled={lock} data-testid="plan-price-vnd"
+                onChange={(e) => set({ price_vnd: e.target.value.replace(/[\s.,]/g, "") })} />
+            </Field>
+            <Field label={t("fieldExtraSeatVnd")}>
+              <Input inputMode="numeric" value={draft.price_extra_seat_vnd} disabled={lock}
+                onChange={(e) => set({ price_extra_seat_vnd: e.target.value.replace(/[\s.,]/g, "") })} />
+            </Field>
+          </>
+        )}
         <Field label={t("fieldSeatsMin")} hint={t("fieldSeatsMinHint")} error={err("seatsMin")}>
           <Input inputMode="numeric" value={draft.seats_min} disabled={lock} data-testid="plan-seats-min"
             onChange={(e) => set({ seats_min: e.target.value })} />

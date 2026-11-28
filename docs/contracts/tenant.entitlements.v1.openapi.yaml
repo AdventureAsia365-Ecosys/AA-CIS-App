@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: tenant.entitlements.v1 (AA-CIS-App → AA-Partner CRM, AA-Booking, TripPlanner; tenant account and entitlements)
-  version: "1.11"
+  version: "1.12"
   description: >-
     CIS shared is the master of the tenant account: lifecycle status, data region, product subscriptions and the
     entitlements they give (root ADR 0019 d1, d2). This contract tells the other apps, per tenant, which feature keys
@@ -134,10 +134,18 @@ info:
     a failed write is logged), which CIS counts only within the setting cis.tenant.crm_agency_seen_hours for its own
     display (tenant.addons.v1 1.2). Readers name their columns; a reader that knows only the 1.10 columns keeps its
     rows. No personal data.
+    1.12 (AA-1191, additive; no HTTP shape change; CIS 497-498): a new view for Booking, catalog.v_billing_currencies_v1
+    (SELECT to booking only), always one row: enabled_currencies (text[], USD first, then the other currencies of the
+    setting cis.billing.enabled_currencies in force, Platform › Settings › Enabled currencies) and base_currency
+    ('USD'). The default is USD only (tech lead S295). A tenant whose billing_currency (catalog.v_tenant_billing_v1) is
+    not enabled is invoiced in USD from the USD columns (price_usd_monthly, price_extra_seat_usd); an agreed price in a
+    currency that is not enabled does not apply; Booking refuses a write in a currency that is not enabled. The VND
+    columns keep their values (they come back when VND is enabled again). A reader that cannot see the view (42P01 /
+    42501) keeps USD only. No personal data.
   x-aa-contract: tenant.entitlements.v1
   x-aa-producer: AA-CIS-App
   x-aa-consumers: [AA-Partner, AA-Booking, AA-TripPlanner-Web]
-  x-aa-issues: [AA-1028, AA-1037, AA-1038, AA-1093, AA-1116, AA-1160]
+  x-aa-issues: [AA-1028, AA-1037, AA-1038, AA-1093, AA-1116, AA-1160, AA-1191]
 servers:
   - url: /tenant/v1
 security:
