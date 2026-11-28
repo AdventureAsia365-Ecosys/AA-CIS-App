@@ -113,6 +113,34 @@ def _health(url: str, want: str, tries: int, delay: float, fetch: Fetch, sleep: 
     return seen
 
 
+def _preflight(
+    aws: esr.Aws, a: argparse.Namespace, targets: list, log: Log
+) -> tuple[list[str], tuple[int, str] | None]:
+    """Dry-run every target; ([previous image tag per target], None) when all are safe and one build, else ([], (exit
+    code, outcome)). Nothing is written here."""
+    prev_tags: list[str] = []
+    for t in targets:
+        try:
+            esr.rollback(aws, _ns(a, t, apply=False), lambda m, s=t.service: log(f"[{s}] {m}"))
+            _, tag = esr.container_tag(aws, t.previous, t.container)
+        except esr.Refused as exc:
+            log(f"REFUSED (nothing changed): {t.service}: {exc}")
+            return [], (EXIT_REFUSED, f"not rolled back (refused: {t.service}: {esr.scrub(str(exc))[:200]})")
+        except esr.AwsError as exc:
+            log(f"ERROR: {exc}")
+            return [], (EXIT_FAILED, f"rollback FAILED before any change ({t.service}: AWS error)")
+        prev_tags.append(tag)
+    # One image: the targets must have run the same build before the deploy (CIS api and worker; a single target is
+    # always one build). A worker left behind on an older build would otherwise come back split from the api while
+    # /health, which reads the api only, looks green.
+    builds = sorted(set(prev_tags))
+    if len(builds) > 1:
+        why = esr.scrub(f"targets ran different builds before the deploy: {' vs '.join(builds)}")[:200]
+        log(f"REFUSED (nothing changed): {why}")
+        return [], (EXIT_REFUSED, f"not rolled back (refused: {why})")
+    return prev_tags, None
+
+
 def rollback(
     aws: esr.Aws, a: argparse.Namespace, log: Log, out: Log, fetch: Fetch, sleep: Callable[[float], None]
 ) -> int:
@@ -124,26 +152,10 @@ def rollback(
         return code
 
     targets = [parse_target(raw) for raw in a.target]
-    # 1. Every target must be safe before anything is written (api and worker keep one image).
-    prev_tags: list[str] = []
-    for t in targets:
-        try:
-            esr.rollback(aws, _ns(a, t, apply=False), lambda m, s=t.service: log(f"[{s}] {m}"))
-            _, tag = esr.container_tag(aws, t.previous, t.container)
-        except esr.Refused as exc:
-            log(f"REFUSED (nothing changed): {t.service}: {exc}")
-            return finish(EXIT_REFUSED, f"not rolled back (refused: {t.service}: {esr.scrub(str(exc))[:200]})", [])
-        except esr.AwsError as exc:
-            log(f"ERROR: {exc}")
-            return finish(EXIT_FAILED, f"rollback FAILED before any change ({t.service}: AWS error)", [])
-        prev_tags.append(tag)
-    # One image: the targets must have run the same build before the deploy (CIS api and worker; a single target is
-    # always one build). A worker left behind on an older build would otherwise come back split from the api.
-    builds = sorted(set(prev_tags))
-    if len(builds) > 1:
-        log(f"REFUSED (nothing changed): the targets ran different builds before the deploy: {' vs '.join(builds)}")
-        why = f"targets ran different builds before the deploy: {' vs '.join(builds)}"
-        return finish(EXIT_REFUSED, f"not rolled back (refused: {esr.scrub(why)[:200]})", [])
+    # 1. Every target must be safe, and all on one build, before anything is written (api and worker keep one image).
+    prev_tags, refused = _preflight(aws, a, targets, log)
+    if refused:
+        return finish(*refused, [])
     want = build_sha(prev_tags[0])
     if not a.apply:
         log("DRY RUN: every target is safe; nothing changed")
