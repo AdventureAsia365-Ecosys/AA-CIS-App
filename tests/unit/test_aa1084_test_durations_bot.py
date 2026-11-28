@@ -10,7 +10,7 @@
   workflow refusal closes the old PR and recreates the branch), opens or edits the one PR and never merges it (root
   ADR 0011a: ci-bot merges only the root schema dump and the Infra migration copy); main already equal is a no-op.
 - ``fetch`` reads only successful merge_group runs of ci.yml and skips a run whose artifact is gone.
-- The workflow: main only, nightly, environment release, GITHUB_TOKEN read-only (+ actions: read), the App token minted
+- The workflow: main only, nightly, environment ci-bot, GITHUB_TOKEN read-only (+ actions: read), the App token minted
   only when there is something to publish and never on a dry run, scoped to Contents + Pull requests; no merge path.
 All gh calls go to a fake: no network.
 """
@@ -332,7 +332,7 @@ def test_the_workflow_is_main_only_nightly_and_mints_a_narrow_token_only_to_publ
     assert wf["permissions"] == {"contents": "read"}
     job = wf["jobs"]["refresh"]
     assert job["if"] == "github.ref == 'refs/heads/main'"
-    assert job["environment"] == "release"
+    assert job["environment"] == "ci-bot"
     assert job["permissions"] == {"contents": "read", "actions": "read"}
     steps = {s.get("name") or s.get("uses"): s for s in job["steps"]}
     mint = next(s for s in job["steps"] if str(s.get("uses", "")).startswith("actions/create-github-app-token@"))

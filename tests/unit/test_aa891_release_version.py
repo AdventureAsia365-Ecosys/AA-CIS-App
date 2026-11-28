@@ -4,7 +4,7 @@
   FastAPI app version is the same value. The only copy in code is api/version.py, marked for release-please.
 - release-please-config.json: manifest mode, bump-minor-pre-major, include-v-in-tag, CHANGELOG.md, extra-files
   holding every file that carries the version.
-- release-please.yml: App token (aa-ecosys-ci-bot) minted in environment "release", GITHUB_TOKEN read-only, only on
+- release-please.yml: App token (aa-ecosys-ci-bot) minted in environment "ci-bot", GITHUB_TOKEN read-only, only on
   push to main + workflow_dispatch, actions pinned to a released major.
 - deploy-dev.yml: a release PR (CHANGELOG.md + manifest + api/version.py) does not deploy; the post-deploy verify
   (AA-993, post-deploy-verify.yml + .github/verify/cis.rows) checks version.
@@ -80,7 +80,7 @@ def test_release_workflow_triggers_and_permissions():
     assert "pull_request" not in on and "schedule" not in on, on
     perms = RELEASE_WF.split("\npermissions:\n", 1)[1].split("\n\n", 1)[0]
     assert perms.strip() == "contents: read", perms
-    assert "environment: release" in RELEASE_WF
+    assert "environment: ci-bot" in RELEASE_WF
 
 
 def test_release_workflow_uses_the_ci_bot_app_token():
