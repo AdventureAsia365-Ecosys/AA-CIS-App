@@ -43,6 +43,10 @@ planner) and AA-CIS-Infra (the Terraform that provisions the AWS resources this 
   identical copy in `AA-CIS-Infra/db/migrations/cis/` by the **DB Migrate** workflow, before the
   code that needs it merges.
 
+- **Currency**: USD only (tech lead S295, AA-1191). Which currencies the platform shows and accepts is the setting
+  `cis.billing.enabled_currencies` (default USD only; USD always enabled); Booking and the partner CRM read it from
+  CIS. Rule and readers: [tenancy](docs/context/tenancy.md), "Currency rule: USD only".
+
 ## Run it locally
 
 The shortest path that works without AWS access. The [README](README.md) has the full commands and the variable

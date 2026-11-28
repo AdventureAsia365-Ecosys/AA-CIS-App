@@ -114,7 +114,7 @@ def test_contract_declares_the_field_optional_and_nullable():
     day = DOC["components"]["schemas"]["TourDay"]
     assert "overnight_destination_id" not in day["required"]
     assert day["properties"]["overnight_destination_id"]["type"] == ["string", "null"]
-    assert DOC["info"]["version"] == "1.4"
+    assert DOC["info"]["version"] in ("1.4", "1.5")      # 1.5 (AA-1191, /currencies) is additive over 1.4
 
 
 def test_reader_reads_the_day_route_view_by_tour_id_and_only_rows_with_a_night():

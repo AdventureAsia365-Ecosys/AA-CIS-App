@@ -39,6 +39,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 
 from services.acp_shared.audit_log import write_audit_log
+from services.tenant_account import currency as cur_
 
 PRODUCTS = ("content", "crm", "tripplanner")
 PRICE_UNITS = ("tenant", "seat", "site")
@@ -365,6 +366,21 @@ def _option_b(pick) -> dict:
     }
 
 
+# AA-1191: the plan columns priced in VND (hidden and refused on write while VND is not an enabled currency)
+VND_PRICE_FIELDS = ("price_vnd_monthly", "price_extra_seat_vnd")
+
+
+def refuse_disabled_vnd(before: Optional[PlanDraft], after: PlanDraft, allowed: tuple[str, ...]) -> None:
+    """AA-1191: a create or edit that sets or changes a VND price while VND is not enabled is refused (422
+    ``currency_not_enabled``). A VND price that stays as stored, or is cleared, is accepted. Pure."""
+    if "VND" in allowed:
+        return
+    for name in VND_PRICE_FIELDS:
+        new, old = getattr(after, name), (getattr(before, name) if before is not None else None)
+        if new is not None and new != old:
+            raise PlanError(cur_.CODE, cur_.problem("VND", allowed, field=name))
+
+
 def _whole(v: Optional[Decimal], what: str) -> Optional[Decimal]:
     if v is not None and v != v.to_integral_value():
         raise PlanError("invalid_price", f"{what} is a whole number of dong")
@@ -488,6 +504,7 @@ async def create_plan(conn, payload: dict, *, actor: str) -> dict:
     async with conn.transaction():
         await conn.execute("SELECT set_config('aa.actor', $1, true)", actor)
         d = draft(payload, product=product, tier=tier, catalogue=await _catalogue(conn))
+        refuse_disabled_vnd(None, d, cur_.enabled())
         if await conn.fetchval("SELECT 1 FROM shared.plan WHERE plan_key = $1", plan_key):
             raise PlanError("plan_exists", f"plan {plan_key} already exists", 409)
         if tier is not None:
@@ -540,6 +557,7 @@ async def update_plan(conn, plan_key: str, payload: dict, *, actor: str) -> dict
         catalogue = await _catalogue(conn)
         before = draft({}, product=stored["product"], tier=None, catalogue=catalogue, base=stored)
         after = draft(payload, product=stored["product"], tier=stored["tier"], catalogue=catalogue, base=stored)
+        refuse_disabled_vnd(before, after, cur_.enabled())
         dropped = {f.feature_key for f in before.features} - {f.feature_key for f in after.features}
         removed_limits = sorted(k for k in dropped if (catalogue.get(k) or {}).get("value_kind") in ("limit", "seats"))
         if removed_limits:
@@ -596,13 +614,16 @@ def _add_months(d: date, months: int) -> date:
     return date(year, month, min(d.day, calendar.monthrange(year, month)[1]))
 
 
-def reviews(plans: list[dict], terms: dict, *, today: date) -> list[dict]:
+def reviews(plans: list[dict], terms: dict, *, today: date, vnd: bool = True) -> list[dict]:
     """Per live priced plan: when its list price and its VND price are due for review (price_set_at + the review
-    months of Platform › Settings) and how far the VND price drifts from USD x the reference rate (percent). Pure."""
+    months of Platform › Settings) and how far the VND price drifts from USD x the reference rate (percent). With
+    ``vnd`` False (AA-1191: VND is not an enabled currency) the VND review and drift are left out (None). Pure."""
     from services.tenant_account import pricing_settings as ps
     out = []
-    fx = Decimal(str(terms.get(ps.FX_VND_PER_USD) or 0))
+    fx = Decimal(str(terms.get(ps.FX_VND_PER_USD) or 0)) if vnd else Decimal(0)
     for p in plans:
+        if not vnd:
+            p = {**p, "price_vnd_monthly": None}
         if p.get("retired_at") or (p.get("price_usd_monthly") is None and p.get("price_vnd_monthly") is None):
             continue
         set_at = date.fromisoformat(p["price_set_at"]) if p.get("price_set_at") else None

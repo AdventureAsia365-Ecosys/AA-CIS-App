@@ -36,6 +36,7 @@ from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Iterable, Optional
 
+from services.tenant_account import currency as cur_
 from services.tenant_account import pricing_settings as ps
 
 LIVE = ("trialing", "active", "past_due")
@@ -112,8 +113,9 @@ class Quote:
         months = int(self.terms.get(ps.ANNUAL_PAID_MONTHS) or 12)
         fx = _d(self.terms.get(ps.FX_VND_PER_USD))
         total = self.monthly_total
-        if fx and fx > 0:
-            ref_currency, ref = ("USD", total / fx) if c == "VND" else ("VND", total * fx)
+        ref_currency = "USD" if c == "VND" else "VND"
+        if fx and fx > 0 and _is_enabled(ref_currency, self.terms):
+            ref = total / fx if c == "VND" else total * fx
             reference = {"currency": ref_currency, "monthly_total": str(_money(ref, ref_currency)),
                          "fx_vnd_per_usd": str(fx)}
         else:
@@ -191,9 +193,20 @@ def _in_offer(tenant: dict, today: date) -> bool:
     return start <= today <= end
 
 
+def _is_enabled(code: str, terms: dict) -> bool:
+    """AA-1191: ``code`` is an enabled currency (``terms`` carries cis.billing.enabled_currencies; a caller that does
+    not pass it, a unit test, keeps every currency)."""
+    allowed = terms.get(cur_.ENABLED_CURRENCIES)
+    return allowed is None or code in cur_.normalise(allowed)
+
+
 def build(tenant: dict, subscriptions: list[dict], terms: dict, *, today: date) -> Quote:
-    """The quote of the live subscriptions. ``terms`` = :func:`pricing_settings.snapshot`."""
+    """The quote of the live subscriptions. ``terms`` = :func:`pricing_settings.snapshot` (plus, AA-1191, the enabled
+    currencies: a billing currency that is not enabled quotes in USD, and the reference equivalent is shown only in an
+    enabled currency)."""
     currency = tenant.get("billing_currency") or "USD"
+    if not _is_enabled(currency, terms):
+        currency = cur_.BASE
     q = Quote(currency=currency, terms=terms)
     live_subs = [s for s in subscriptions if s.get("status") in LIVE]
     q.lines = [subscription_line(s, currency, today) for s in live_subs]

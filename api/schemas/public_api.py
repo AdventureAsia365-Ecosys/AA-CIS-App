@@ -220,6 +220,13 @@ class CatalogDestination(_CatalogModel):
     lng: Optional[float] = None
 
 
+class CatalogCurrencies(_CatalogModel):
+    """GET /catalog/v1/currencies — the enabled currencies in force (AA-1191, contract 1.5)."""
+    enabled: list[str]
+    base: Literal["USD"]
+    cache_s: int
+
+
 class CatalogAaContentSummary(_CatalogModel):
     """One item in a ``listAaContent`` page: the latest published version of an item that is not retired (AA-977)."""
     content_id: str

@@ -43,7 +43,7 @@ def _body(views, sid=SID_A):
 
 
 def test_contract_is_1_3_with_an_ai_mark_on_tour():
-    assert DOC["info"]["version"] in ("1.3", "1.4")      # 1.4 (AA-1152) is additive over 1.3: the mark is unchanged
+    assert DOC["info"]["version"] in ("1.3", "1.4", "1.5")      # 1.4 / 1.5 are additive over 1.3: the mark is unchanged
     schemas = DOC["components"]["schemas"]
     assert schemas["Tour"]["properties"]["ai"] == {"$ref": "#/components/schemas/AiMark"}
     assert "ai" not in schemas["Tour"]["required"]  # additive: a 1.2 body stays valid

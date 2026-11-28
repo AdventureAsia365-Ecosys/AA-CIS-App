@@ -15,6 +15,7 @@ import {
   termText, PRODUCTS, PRICE_UNITS,
   addOnDecisionPath, addOnRequestPath, approveBody, requestShown, requestTone, sortAddOnRequests,
   END_PILOT_REASON_MAX, endPilotPath,
+  enabledCurrencies, currencyEnabled, currencyOptions, agreedStart, termsBody,
 } from "./tenantPlans.ts";
 
 const CATALOGUE = [
@@ -462,4 +463,35 @@ test("AA-1116: the New tenant result lists what the saga set up, line by line", 
   // a job still running with the POST's steps: the add-on not subscribed yet reads pending
   const running = provisionOutcome(job({ status: "running", steps: ["tenant_created"] }), ["tripplanner"]);
   assert.deepEqual(running.map((r) => r.state), ["done", "pending", "pending"]);
+});
+
+// AA-1191: USD only unless an administrator enables another currency.
+test("enabled currencies keep USD first and default to USD only", () => {
+  assert.deepEqual(enabledCurrencies(undefined), ["USD"]);
+  assert.deepEqual(enabledCurrencies([]), ["USD"]);
+  assert.deepEqual(enabledCurrencies(["VND"]), ["USD", "VND"]);
+  assert.deepEqual(enabledCurrencies(["vnd", "USD", "VND"]), ["USD", "VND"]);
+  assert.equal(currencyEnabled("VND", ["USD"]), false);
+  assert.equal(currencyEnabled("VND", ["USD", "VND"]), true);
+  assert.equal(currencyEnabled("USD", null), true);
+});
+
+test("a currency picker offers the enabled currencies only", () => {
+  assert.deepEqual(currencyOptions(["USD"]), [{ value: "USD", label: "USD" }]);
+  assert.deepEqual(currencyOptions(["USD", "VND"]).map((o) => o.value), ["USD", "VND"]);
+});
+
+test("a hidden agreed VND price starts empty and is never sent back unless staff change it", () => {
+  const sub = { product: "crm", plan_key: "crm.core", status: "active", billing_interval: "month",
+                agreed_price_monthly: "400000", agreed_currency: "VND", agreed_until: null, price_floor_usd_monthly: null };
+  const details = { billing_currency: "USD", enabled_currencies: ["USD"] };
+  const start = agreedStart(sub, details);
+  assert.deepEqual(start, { hidden: true, price: "", cur: "USD", until: "" });
+  assert.deepEqual(termsBody("year", start, { price: "", cur: "USD", until: "" }, false), { billing_interval: "year" });
+  assert.deepEqual(termsBody("month", start, { price: "15", cur: "USD", until: "" }, false),
+    { billing_interval: "month", agreed_price_monthly: "15", agreed_currency: "USD", agreed_until: null });
+  assert.deepEqual(termsBody("month", start, start, true), { lock: true, billing_interval: "month" });
+  const shown = agreedStart(sub, { billing_currency: "VND", enabled_currencies: ["USD", "VND"] });
+  assert.equal(shown.hidden, false);
+  assert.equal(shown.price, "400000");
 });

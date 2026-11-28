@@ -2094,6 +2094,35 @@
         "title": "CatalogAiMark",
         "type": "object"
       },
+      "CatalogCurrencies": {
+        "additionalProperties": false,
+        "description": "GET /catalog/v1/currencies — the enabled currencies in force (AA-1191, contract 1.5).",
+        "properties": {
+          "base": {
+            "const": "USD",
+            "title": "Base",
+            "type": "string"
+          },
+          "cache_s": {
+            "title": "Cache S",
+            "type": "integer"
+          },
+          "enabled": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Enabled",
+            "type": "array"
+          }
+        },
+        "required": [
+          "enabled",
+          "base",
+          "cache_s"
+        ],
+        "title": "CatalogCurrencies",
+        "type": "object"
+      },
       "CatalogDestination": {
         "additionalProperties": false,
         "description": "GET /catalog/v1/destinations/{destination_id} — one destination with its IANA time zone.",
@@ -66195,6 +66224,28 @@
           }
         },
         "summary": "Get Aa Content Version",
+        "tags": [
+          "catalog-http"
+        ]
+      }
+    },
+    "/catalog/v1/currencies": {
+      "get": {
+        "description": "The currencies the platform shows and accepts (Platform › Settings › Enabled currencies): USD first, always\nenabled. ``cache_s`` is the setting's own cache window: the CRM keeps the answer that long.",
+        "operationId": "get_currencies_catalog_v1_currencies_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogCurrencies"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Currencies",
         "tags": [
           "catalog-http"
         ]

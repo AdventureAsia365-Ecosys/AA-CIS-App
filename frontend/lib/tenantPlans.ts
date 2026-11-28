@@ -49,7 +49,11 @@ export interface Plan {
   features: PlanFeatureRow[];
 }
 
-export interface PlansResp { plans: Plan[]; assignable_tiers: string[] }
+export interface PlansResp {
+  plans: Plan[]; assignable_tiers: string[];
+  /** AA-1191: the enabled currencies (Platform › Settings › Enabled currencies), USD first; absent from an older API. */
+  enabled_currencies?: string[];
+}
 
 export const PRODUCTS: Product[] = ["content", "crm", "tripplanner"];
 export const TIERS = ["starter", "growth", "business", "enterprise", "internal"] as const;
@@ -699,7 +703,7 @@ export interface PlanReview {
   price_review_overdue: boolean; vnd_review_due: string | null; vnd_review_overdue: boolean;
   vnd_drift_pct: string | null;
 }
-export interface CommercialTermsResp { terms: CommercialTerm[]; reviews: PlanReview[] }
+export interface CommercialTermsResp { terms: CommercialTerm[]; reviews: PlanReview[]; enabled_currencies?: string[] }
 
 /** A term's value as text: lists joined, booleans on / off, numbers grouped. Pure. */
 export function termText(v: unknown, on: string, off: string): string {
@@ -713,6 +717,9 @@ export interface BillingDetails {
   tenant_id: string; name: string; legal_entity_name: string | null; tax_id: string | null;
   billing_email: string | null; billing_address: string | null; billing_country: string | null;
   billing_currency: "USD" | "VND"; founding_offer_from: string | null; founding_offer_until: string | null;
+  /** AA-1191: the stored billing currency is not enabled (the agency is billed in USD; the stored value stays). */
+  billing_currency_hidden?: boolean;
+  enabled_currencies?: string[];
 }
 export const billingDetailsPath = (tenantId: string) => `/api/admin/tenants/${tenantId}/billing-details`;
 export const billingDetailsKey = (tenantId: string) => ["tenant360", tenantId, "billing-details"] as const;
@@ -739,6 +746,45 @@ export interface TenantQuote {
 }
 export const quotePath = (tenantId: string) => `/api/admin/tenants/${tenantId}/quote`;
 export const quoteKey = (tenantId: string) => ["tenant360", tenantId, "quote"] as const;
+
+// ── AA-1191: USD only unless an administrator enables another currency ─────────────────────────────────────────────
+export const BASE_CURRENCY = "USD";
+
+/** The enabled currencies as served (USD first, always present; USD only when the API does not say). Pure. */
+export function enabledCurrencies(list?: readonly string[] | null): string[] {
+  const out = [BASE_CURRENCY];
+  for (const c of list ?? []) if (typeof c === "string" && c && !out.includes(c.toUpperCase())) out.push(c.toUpperCase());
+  return out;
+}
+
+/** Is ``code`` an enabled currency? Pure. */
+export function currencyEnabled(code: string, list?: readonly string[] | null): boolean {
+  return enabledCurrencies(list).includes(code);
+}
+
+/** The options of a currency picker: the enabled currencies only (a picker with one option is hidden). Pure. */
+export function currencyOptions(list?: readonly string[] | null): { value: string; label: string }[] {
+  return enabledCurrencies(list).map((c) => ({ value: c, label: c }));
+}
+
+/** AA-1191: the agreed terms a terms drawer starts from. An agreed price in a currency that is not enabled is not
+ *  shown (``hidden``; it does not apply either) and starts empty in the tenant's billing currency. Pure. */
+export interface AgreedDraft { price: string; cur: string; until: string }
+export function agreedStart(sub: QuoteSubscription, details?: BillingDetails): AgreedDraft & { hidden: boolean } {
+  const currency = details?.billing_currency ?? BASE_CURRENCY;
+  const hidden = !!sub.agreed_currency && !currencyEnabled(sub.agreed_currency, details?.enabled_currencies);
+  return hidden ? { hidden, price: "", cur: currency, until: sub.agreed_until ?? "" }
+    : { hidden, price: sub.agreed_price_monthly ?? "", cur: sub.agreed_currency ?? currency, until: sub.agreed_until ?? "" };
+}
+
+/** The body of a terms save: the agreed fields only when staff changed them (so changing the interval alone never
+ *  rewrites a hidden agreed price in another currency), or the lock. Pure. */
+export function termsBody(interval: string, start: AgreedDraft, now: AgreedDraft, lock: boolean): Record<string, unknown> {
+  if (lock) return { lock: true, billing_interval: interval };
+  const changed = now.price !== start.price || now.cur !== start.cur || now.until !== start.until;
+  return changed ? { billing_interval: interval, agreed_price_monthly: now.price.trim() || null, agreed_currency: now.cur,
+                     agreed_until: now.until || null } : { billing_interval: interval };
+}
 
 /** An amount in its currency: USD with two decimals and a $, VND whole with "₫". Pure. */
 export function money(v: string | number | null | undefined, currency: string): string {

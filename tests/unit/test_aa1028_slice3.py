@@ -424,7 +424,8 @@ def test_plan_routes_map_refusals(client, monkeypatch):
     monkeypatch.setattr(pl, "list_plans", AsyncMock(return_value=[{"plan_key": "crm.core"}]))
     monkeypatch.setattr(pl, "assignable_tiers", AsyncMock(return_value=["starter"]))
     got = c.get("/admin/plans?product=crm", headers=_h()).json()
-    assert got == {"plans": [{"plan_key": "crm.core"}], "assignable_tiers": ["starter"]}
+    assert got == {"plans": [{"plan_key": "crm.core"}], "assignable_tiers": ["starter"],
+                   "enabled_currencies": ["USD"]}                     # AA-1191
 
 
 def test_subscription_routes(client, monkeypatch):

@@ -18,6 +18,8 @@ export const T360_COMMERCIAL = defineMessages(
     fieldAddress: "Billing address",
     fieldCountry: "Country (two letters)",
     fieldCurrency: "Billing currency",
+    currencyHidden: (c: string) => `${c} (the saved currency is not enabled; billed in ${c})`,
+    agreedHidden: "Not applied: its currency is not enabled",
     fieldFoundingFrom: "Founding offer from",
     fieldFoundingUntil: "Founding offer until",
     fieldFoundingHint: "Empty end: the offer length from Platform › Settings. Clear the start to end the offer.",
@@ -71,6 +73,8 @@ export const T360_COMMERCIAL = defineMessages(
     fieldAddress: "Địa chỉ xuất hoá đơn",
     fieldCountry: "Quốc gia (hai chữ cái)",
     fieldCurrency: "Tiền tệ xuất hoá đơn",
+    currencyHidden: (c: string) => `${c} (tiền tệ đã lưu chưa được bật; xuất hoá đơn bằng ${c})`,
+    agreedHidden: "Không áp dụng: tiền tệ của giá này chưa được bật",
     fieldFoundingFrom: "Ưu đãi sáng lập từ",
     fieldFoundingUntil: "Ưu đãi sáng lập tới",
     fieldFoundingHint: "Để trống ngày kết thúc: dùng thời hạn ưu đãi trong Platform › Settings. Xoá ngày bắt đầu để "
