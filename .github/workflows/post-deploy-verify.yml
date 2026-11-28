@@ -18,6 +18,15 @@ on:
         required: false
         type: boolean
         default: false
+      drill_force_fail:
+        description: "AA-1193 drill (deploy-dev.yml input drill_force_smoke_fail): after every real check, turn red on purpose."
+        required: false
+        type: boolean
+        default: false
+    outputs:
+      failed_checks:
+        description: "AA-1193: the names of the checks that failed (comma-separated; empty when green), for the rollback alert."
+        value: ${{ jobs.verify.outputs.failed_checks }}
   workflow_dispatch:
     inputs:
       expected_sha:
@@ -36,6 +45,8 @@ jobs:
     permissions:
       id-token: write
       contents: read
+    outputs:
+      failed_checks: ${{ steps.failed.outputs.checks }}
     # Dispatched runs share `post-deploy-verify-cis` and queue there (one running, one pending: a newer dispatch cancels the older pending one). The call from
     # Deploy Dev gets a group of its own run: GitHub cancels the older PENDING job of a group when another one
     # queues, so a shared group would let a dispatch cancel a Deploy Dev verify (and turn that run red). Deploy Dev
@@ -83,6 +94,8 @@ jobs:
           ECS_CLUSTER: ${{ secrets.ECS_CLUSTER }}
           ECS_SERVICE: ${{ secrets.ECS_SERVICE }}
           BASE: https://api-cis.lumiguides.it.com
+          # AA-1193: the script appends each failed check's name here (read by the step "Failing checks").
+          VERIFY_FAILED_FILE: ${{ runner.temp }}/verify-failed.txt
         run: |
           # Same image and worker name as the deploy job: <registry>/<repo>:dev-<sha>, and the api service name
           # with its -api suffix replaced by -worker (AA-651, AA-725 part 5).
@@ -93,3 +106,27 @@ jobs:
           export ECS_WORKER_SERVICE=""
           [ -z "$ECS_SERVICE" ] || ECS_WORKER_SERVICE="${ECS_SERVICE%-api}-worker"
           bash .github/scripts/post_deploy_verify.sh
+      # AA-1193 drill: Dev was checked for real above (green, or this step does not run); now the verify turns red on
+      # purpose so Deploy Dev's `rollback` job runs end to end without a broken build. Only deploy-dev.yml sets it.
+      - name: Drill — force the post-deploy verify red
+        if: inputs.drill_force_fail
+        env:
+          VERIFY_FAILED_FILE: ${{ runner.temp }}/verify-failed.txt
+        run: |
+          echo "drill-forced-fail" >> "$VERIFY_FAILED_FILE"
+          echo "| drill-forced-fail | **FAIL** | the deploy was dispatched with drill_force_smoke_fail |" >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::verify [drill-forced-fail] forced red by the drill input (drill_force_smoke_fail): the rollback runs next"
+          exit 1
+      # AA-1193: the failed check names for the caller's rollback alert and issue (names only: [a-z0-9_.-]).
+      - name: Failing checks
+        id: failed
+        if: always()
+        env:
+          VERIFY_FAILED_FILE: ${{ runner.temp }}/verify-failed.txt
+        run: |
+          checks=""
+          if [ -f "$VERIFY_FAILED_FILE" ]; then
+            checks=$(grep -E '^[A-Za-z0-9_.-]+$' "$VERIFY_FAILED_FILE" | awk '!seen[$0]++' | paste -sd, - | cut -c1-300)
+          fi
+          echo "checks=${checks}" >> "$GITHUB_OUTPUT"
+          echo "failed checks: ${checks:-none}"

@@ -29,6 +29,8 @@ on:
       - ".github/scripts/test_workflow_lint.py"
       - ".github/scripts/ecs_smoke_rollback.py"
       - ".github/scripts/test_ecs_smoke_rollback.py"
+      - ".github/scripts/ecs_api_rollback.py"
+      - ".github/scripts/test_ecs_api_rollback.py"
       - ".github/scripts/npm_audit_gate.py"
       - ".github/scripts/test_npm_audit_gate.py"
       - ".github/npm-audit-allow.json"
@@ -48,6 +50,8 @@ on:
       - ".github/scripts/test_workflow_lint.py"
       - ".github/scripts/ecs_smoke_rollback.py"
       - ".github/scripts/test_ecs_smoke_rollback.py"
+      - ".github/scripts/ecs_api_rollback.py"
+      - ".github/scripts/test_ecs_api_rollback.py"
       - ".github/scripts/npm_audit_gate.py"
       - ".github/scripts/test_npm_audit_gate.py"
       - ".github/npm-audit-allow.json"
@@ -93,6 +97,7 @@ jobs:
           python -m pip install --quiet pyyaml==6.0.2
           python -B -m unittest discover -s .github/scripts -p 'test_workflow_lint.py'
           python -B -m unittest discover -s .github/scripts -p 'test_ecs_smoke_rollback.py'
+          python -B -m unittest discover -s .github/scripts -p 'test_ecs_api_rollback.py'
           python -B -m unittest discover -s .github/scripts -p 'test_release_bin.py'
           python -B -m unittest discover -s .github/scripts -p 'test_cache_cleanup.py'
           python -B -m unittest discover -s .github/scripts -p 'test_cache_warm.py'

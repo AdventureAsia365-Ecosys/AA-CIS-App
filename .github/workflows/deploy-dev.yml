@@ -24,6 +24,11 @@ on:
         description: "AA-725 — reason to deploy anyway while a rerun wave is open or a deploy-blocking job runs (AA-993 G5; Nghiệp only). Leave empty to respect the guard."
         required: false
         type: string
+      drill_force_smoke_fail:
+        description: "AA-1193 drill — deploy normally, then force the post-deploy verify red so the automatic rollback runs. Needs main ahead of what Dev runs (merge a commit that does not deploy first)."
+        required: false
+        type: boolean
+        default: false
 permissions:
   id-token: write
   contents: read
@@ -151,6 +156,12 @@ jobs:
     runs-on: ubuntu-latest
     environment: dev
     needs: [build-and-push, preflight, schema-gate]
+    # AA-1193: the revisions api and worker ran before this deploy (rollback targets). Revision NUMBERS only: the
+    # family names are the ECS_SERVICE secret, and GitHub drops a job output that contains a secret value (AA-725
+    # part 5). Empty = unknown or unsafe: the rollback is then refused.
+    outputs:
+      api_rev: ${{ steps.before.outputs.api_rev }}
+      worker_rev: ${{ steps.before.outputs.worker_rev }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Configure AWS credentials (OIDC)
@@ -207,6 +218,31 @@ jobs:
             --task-definition "$NEW_ARN" --region "$AWS_REGION" >/dev/null
           SH
           chmod +x /tmp/deploy_family.sh
+      # AA-1193 (same mechanism as AA-1119 for the web deploys): record what api and worker run now, before any
+      # update-service, so a red post-deploy verify can move both back (`rollback` below). The family must be the
+      # service name (deploy_family.sh registers into FAMILY = SERVICE) and the image a real build, else empty.
+      # Drill (input drill_force_smoke_fail): refused here, before the roll, when Dev already runs this commit (the
+      # rollback would have nothing older to go back to).
+      - name: Record the revisions before this deploy (rollback targets)
+        id: before
+        env:
+          DRILL: ${{ inputs.drill_force_smoke_fail == true }}
+        run: |
+          set -euo pipefail
+          record() {  # output name, service, container
+            local out td tag rev=""
+            out=$(python3 .github/scripts/ecs_smoke_rollback.py previous --cluster "$ECS_CLUSTER" --service "$2" --container "$3")
+            td=$(sed -n 's/^previous_td=//p' <<<"$out"); tag=$(sed -n 's/^previous_tag=//p' <<<"$out")
+            if [ -n "$td" ] && [ "${td%:*}" = "$2" ]; then rev="${td##*:}"; fi
+            echo "$1=${rev}" >> "$GITHUB_OUTPUT"
+            echo "$1: ${rev:-none} (image ${tag:-none})"
+            if [ "$DRILL" = "true" ] && [ "$tag" = "dev-${GITHUB_SHA}" ]; then
+              echo "::error::drill: $3 already runs this commit, so there is nothing older to roll back to. Merge a commit that does not deploy (docs only) and dispatch the drill again."
+              exit 1
+            fi
+          }
+          record api_rev "$ECS_SERVICE" api
+          record worker_rev "$ECS_WORKER_SERVICE" worker
       # AA-1024 G3 (c), S272 review: the preflight ran in parallel with the image build, minutes before this roll.
       # Ask the gate again right before update-service: an ECS exec script (ecsx heartbeat) or a deploy-blocking job
       # started during the build would be killed by the roll (lesson S234). Same script, same override.
@@ -255,11 +291,150 @@ jobs:
     with:
       expected_sha: ${{ github.sha }}
       from_deploy: true
+      # AA-1193 drill: the verify runs every real check, then turns red on purpose (row drill-forced-fail).
+      drill_force_fail: ${{ inputs.drill_force_smoke_fail == true }}
     secrets: inherit
+
+  # AA-1193 (S295 Well-Architected review, OPS06): a red post-deploy verify must not leave the bad build serving. When
+  # `verify` failed after a successful deploy, move api AND worker back to the revisions recorded before the deploy
+  # (.github/scripts/ecs_api_rollback.py: all or none, so both keep one image; each service through the AA-1119 safety
+  # rules of ecs_smoke_rollback.py), then /health must answer the previous commit. Same deploy gate as the deploy: an
+  # open wave or a running deploy-blocking job holds the rollback (a roll would kill it), unless the dispatch gave an
+  # override reason. Refused or held = nothing changed. Then one message on the alerts topic (the failing checks, the
+  # outcome) and the deploy-smoke-red issue (`report`). Never a loop: an update-service to an existing revision builds
+  # and pushes nothing and starts no workflow. The run stays red (`result`); fix forward on main.
+  rollback:
+    name: Roll back after a red post-deploy verify
+    needs: [deploy, verify]
+    if: >-
+      always() && github.ref == 'refs/heads/main'
+      && needs.deploy.result == 'success' && needs.verify.result == 'failure'
+    runs-on: ubuntu-latest
+    environment: dev
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      outcome: ${{ steps.rollback.outputs.outcome }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          mask-aws-account-id: true
+      - name: Roll back api and worker to the revisions before this deploy
+        id: rollback
+        env:
+          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
+          OVERRIDE: ${{ inputs.override_running_jobs }}
+          GATE_URL: https://api-cis.lumiguides.it.com/admin/job-runner/deploy-gate
+          API_REV: ${{ needs.deploy.outputs.api_rev }}
+          WORKER_REV: ${{ needs.deploy.outputs.worker_rev }}
+        run: |
+          set -uo pipefail
+          WORKER="${ECS_SERVICE%-api}-worker"
+          if bash .github/scripts/deploy_job_guard.sh > /tmp/gate.log 2>&1; then gate=open; else gate=held; fi
+          cat /tmp/gate.log
+          if [ "$gate" = "held" ]; then
+            reason=$(grep -m1 '^::error::' /tmp/gate.log | sed 's/^::error::Deploy blocked: //' | cut -c1-200)
+            outcome="not rolled back (held by the deploy gate: ${reason:-blocked}); roll back by hand once idle (root runbook rollback-cis.md)"
+            status=3
+          else
+            python3 .github/scripts/ecs_api_rollback.py rollback --cluster "$ECS_CLUSTER" --repository "$ECR_REPOSITORY" \
+              --deployed-tag "dev-${GITHUB_SHA}" \
+              --target "${ECS_SERVICE},api,${API_REV:+${ECS_SERVICE}:${API_REV}}" \
+              --target "${WORKER},worker,${WORKER_REV:+${WORKER}:${WORKER_REV}}" \
+              --health-url https://api-cis.lumiguides.it.com/health --apply > /tmp/rollback.out 2> /tmp/rollback.log
+            status=$?
+            cat /tmp/rollback.log
+            outcome=$(sed -n 's/^outcome=//p' /tmp/rollback.out)
+            outcome="${outcome:-rollback FAILED (exit $status)}"
+          fi
+          # Service names -> api / worker: the api family name is the ECS_SERVICE secret, and GitHub drops a job output
+          # that contains a secret value.
+          outcome="${outcome//${ECS_SERVICE}/api}"
+          outcome="${outcome//${WORKER}/worker}"
+          printf '%s' "$outcome" > /tmp/outcome.txt
+          echo "outcome=$outcome" >> "$GITHUB_OUTPUT"
+          echo "- $outcome" >> "$GITHUB_STEP_SUMMARY"
+          # Refused or held is a safe outcome (nothing changed); a failed rollback is red.
+          [ "$status" = 0 ] || [ "$status" = 3 ]
+      # The alerts SNS topic (the ops topic of every alarm), read from the api task definition's ALERTS_TOPIC_ARN; the
+      # deploy role needs sns:Publish on it (AA-CIS-Infra). Not sent = a warning: the issue below still opens.
+      - name: Alert the ops topic
+        if: always()
+        env:
+          FAILED_CHECKS: ${{ needs.verify.outputs.failed_checks }}
+          DRILL: ${{ inputs.drill_force_smoke_fail == true }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          outcome=$(cat /tmp/outcome.txt 2>/dev/null || echo "the rollback step did not finish (read the run)")
+          extra=()
+          [ "$DRILL" = "true" ] && extra+=(--drill)
+          python3 .github/scripts/ecs_api_rollback.py alert --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" \
+            --container api --app "CIS api + worker" --commit "$GITHUB_SHA" --failed-checks "$FAILED_CHECKS" \
+            --outcome "$outcome" --run-url "$RUN_URL" "${extra[@]}" --apply
+          status=$?
+          [ "$status" != 4 ] || echo "::warning::the ops alert was not sent (see the log above); the deploy-smoke-red issue still opens"
+          [ "$status" = 0 ] || [ "$status" = 4 ]
+
+  # AA-1193: one open issue labelled deploy-smoke-red per workflow while its post-deploy verify is red on main (opened,
+  # then commented on), closed by the next verified deploy. Same job as the web deploy workflows (AA-1119). Only this
+  # job writes, and only issues; no checkout.
+  report:
+    name: Report a red post-deploy verify (issue)
+    needs: [deploy, verify, rollback]
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && needs.deploy.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TITLE: "Deploy Dev: post-deploy verify is red"
+      VERIFY: ${{ needs.verify.result }}
+      FAILED_CHECKS: ${{ needs.verify.outputs.failed_checks }}
+      OUTCOME: ${{ needs.rollback.outputs.outcome || needs.rollback.result }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Open, comment on or close the deploy-smoke-red issue
+        run: |
+          set -euo pipefail
+          N=$(gh issue list --label deploy-smoke-red --state open --limit 50 --json number,title \
+            | jq -r --arg t "$TITLE" '[.[] | select(.title == $t)][0].number // empty')
+          if [ "$VERIFY" = "success" ]; then
+            if [ -n "$N" ]; then
+              gh issue close "$N" --comment "Verified again on ${GITHUB_SHA::7}: $RUN_URL"
+              echo "- post-deploy verify green: closed #$N" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            exit 0
+          fi
+          BODY="Deploy Dev on \`${GITHUB_SHA::7}\`: verify **$VERIFY** (failing checks: ${FAILED_CHECKS:-see the run}). Rollback: ${OUTCOME:-not run}.
+          Run: $RUN_URL
+
+          Read the failed job first. A rollback leaves main ahead of what runs: fix forward (revert or fix on main).
+          Runbook: docs/ops/runbooks/rollback-cis.md in the root repo. The next verified deploy closes this issue."
+          if [ -n "$N" ]; then
+            gh issue comment "$N" --body "$BODY"
+          else
+            gh label create deploy-smoke-red --color B60205 --force \
+              --description "A post-deploy verify or smoke is red on main (deploy workflows, AA-1119)"
+            N=$(gh issue create --title "$TITLE" --label deploy-smoke-red --body "$BODY" | sed -nE 's#.*/issues/([0-9]+)$#\1#p')
+          fi
+          echo "::warning::post-deploy verify red: issue #$N (label deploy-smoke-red)"
+          echo "- post-deploy verify red: issue #$N (label deploy-smoke-red)" >> "$GITHUB_STEP_SUMMARY"
 
   # AA-993 V1 — the run's verdict. GitHub shows a skipped job grey, not red, so without this a failed or skipped
   # preflight/build/deploy (verify then skips) could look like "nothing to verify". Every job here must succeed;
-  # skipped, failed or cancelled is red on every event (no job in this workflow is conditional).
+  # skipped, failed or cancelled is red on every event (no job it waits on is conditional; `rollback` and `report`
+  # (AA-1193) are, and `result` does not wait on them: a rolled-back run stays red through `verify`).
   result:
     name: Deploy Dev result
     runs-on: ubuntu-latest
