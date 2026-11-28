@@ -20,6 +20,9 @@
 // Security posture monthly review). A control with an approved, unexpired exception shows "Accepted risk" beside its
 // real state (table and drawer); the Collectors section lists the sealed sources of the Object Lock evidence store
 // (state, rows, hash chain), and an evidence row read from it carries a "sealed" tag in the drawer history.
+//
+// AA-1184: a sixth tab, Calendar (CalendarTab.tsx: the root ops calendar as the daily collector published it in the
+// check ops_calendar_overdue; read-only; GET /calendar).
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ClipboardCheck, ExternalLink, RefreshCw, SlidersHorizontal } from "lucide-react";
@@ -41,6 +44,8 @@ import { COMPLIANCE } from "./messages";
 import { ObligationsTab } from "./ObligationsTab";
 import { ExceptionsTab, ReviewsTab } from "./GovernanceTabs";
 import { GOVERNANCE } from "./governance.messages";
+import { CalendarTab } from "./CalendarTab";
+import { CALENDAR } from "./calendar.messages";
 
 const KEY = ["platform-compliance"];
 const small = { fontSize: 12, color: K.muted, lineHeight: 1.45 } as const;
@@ -372,7 +377,7 @@ function RefreshResult({ state, error, t }: { state: IngestState | null; error: 
 
 // ── page ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-const TABS = ["overview", "controls", "obligations", "exceptions", "reviews"] as const;
+const TABS = ["overview", "controls", "obligations", "exceptions", "reviews", "calendar"] as const;
 type TabKey = (typeof TABS)[number];
 
 function tabOf(value: string | null | undefined): TabKey {
@@ -396,6 +401,7 @@ function OverviewTab({ t }: { t: CT }) {
 export default function CompliancePage() {
   const t = useCT();
   const g = useGT();
+  const cal = useT(CALENDAR);
   const qc = useQueryClient();
   const { get, setMany } = useUrlFilters();
   const toast = useToast();
@@ -435,12 +441,13 @@ export default function CompliancePage() {
       </div>
       <div style={grid}>
         <Tabs ariaLabel={t("title")} active={tab} testId="compliance-tabs"
-          onChange={(k) => setMany({ tab: k === "overview" ? null : k, control: null, law: null })}
+          onChange={(k) => setMany({ tab: k === "overview" ? null : k, control: null, law: null, cal: null })}
           tabs={[{ key: "overview", label: t("tabOverview") }, { key: "controls", label: t("tabControls") },
             { key: "obligations", label: t("tabObligations") }, { key: "exceptions", label: g("tabExceptions") },
-            { key: "reviews", label: g("tabReviews") }]} />
+            { key: "reviews", label: g("tabReviews") }, { key: "calendar", label: cal("tabCalendar") }]} />
         {tab === "obligations" ? <ObligationsTab /> : tab === "controls" ? <Controls t={t} />
-          : tab === "exceptions" ? <ExceptionsTab /> : tab === "reviews" ? <ReviewsTab /> : <OverviewTab t={t} />}
+          : tab === "exceptions" ? <ExceptionsTab /> : tab === "reviews" ? <ReviewsTab />
+            : tab === "calendar" ? <CalendarTab /> : <OverviewTab t={t} />}
       </div>
     </PageFrame>
   );
