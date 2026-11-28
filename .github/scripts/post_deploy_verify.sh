@@ -16,7 +16,7 @@
 #
 # Env: EXPECTED_SHA, EXPECTED_VERSION, REQUIRED_SCHEMA, EXPECTED_IMAGE, ADMIN_SECRET, ECS_CLUSTER, ECS_SERVICE,
 #      ECS_WORKER_SERVICE, AWS_REGION; optional BASE, ROWS_FILE, VERIFY_TRIES (3), VERIFY_RETRY_DELAY (10),
-#      VERIFY_INITIAL_WAIT (10), GITHUB_STEP_SUMMARY. Needs bash, curl, jq, aws.
+#      VERIFY_INITIAL_WAIT (10), GITHUB_STEP_SUMMARY, VERIFY_FAILED_FILE (AA-1193: each failed check name is appended). Needs bash, curl, jq, aws.
 # Public repo: never print the registry (only the image tag) or an admin response body.
 # Exit 0 = every check passed, 1 = at least one failed.
 set -uo pipefail
@@ -41,6 +41,8 @@ record() {  # name, PASS|FAIL, detail
   else
     echo "::error::verify [$1] $3"
     FAILED=1
+    # AA-1193: the failed check names for the rollback alert (the workflow reads the file; unset = no file).
+    [ -z "${VERIFY_FAILED_FILE:-}" ] || printf '%s\n' "$1" >> "$VERIFY_FAILED_FILE"
   fi
 }
 
