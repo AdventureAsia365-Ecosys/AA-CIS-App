@@ -32,7 +32,7 @@ RUN_URL = "https://github.example.invalid/org/app/actions/runs/1"
 class FakeAws:
     """Two services (app-dev-api, app-dev-worker), each on revision 7 (NEW) with revision 6 (OLD) before it."""
 
-    def __init__(self, prefix="", ecr=(OLD, NEW), topic=TOPIC, publish_denied=False):
+    def __init__(self, prefix="", ecr=(OLD, NEW), topic=TOPIC, publish_denied=False, topic_from_rev=0):
         self.prefix = prefix  # "dev-" for CIS-style tags
         self.tds = {}
         for fam, name in (("app-dev-api", "api"), ("app-dev-worker", "worker")):
@@ -43,6 +43,7 @@ class FakeAws:
         self.ecr = {prefix + t for t in ecr}
         self.topic = topic
         self.publish_denied = publish_denied
+        self.topic_from_rev = topic_from_rev  # revisions below this one predate the ALERTS_TOPIC_ARN entry
         self.writes: list[list[str]] = []
         self.published: list[dict] = []
 
@@ -67,9 +68,12 @@ class FakeAws:
             }
         if (svc, op) == ("ecs", "describe-task-definition"):
             ref = opt["--task-definition"].rsplit("/", 1)[-1]
+            if ":" not in ref:  # a bare family: its latest revision
+                ref = f"{ref}:7"
             status, tag = self.tag(ref)
             name = self.tds[ref][2]
-            env = [{"name": "ALERTS_TOPIC_ARN", "value": self.topic}] if self.topic else []
+            has_topic = self.topic and int(ref.rsplit(":", 1)[1]) >= self.topic_from_rev
+            env = [{"name": "ALERTS_TOPIC_ARN", "value": self.topic}] if has_topic else []
             image = f"{REGISTRY}/app-dev-api:{tag}"
             defs = [{"name": name, "image": image, "environment": env}]
             return {"taskDefinition": {"status": status, "containerDefinitions": defs}}
@@ -259,6 +263,14 @@ class AlertTests(unittest.TestCase):
         self.assertEqual(code, 4)
         self.assertEqual(aws.published, [])
         self.assertIn("no ALERTS_TOPIC_ARN", err)
+
+    def test_an_older_revision_without_the_topic_falls_back_to_the_family_latest(self):
+        aws = FakeAws(topic_from_rev=7)
+        aws.current["app-dev-api"] = "app-dev-api:6"  # rolled back to a build that predates the entry
+        code, out, err = run(al(), aws)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(aws.published[0]["--topic-arn"], TOPIC)
+        self.assertNotIn(TOPIC, out + err)
 
     def test_publish_denied_is_not_sent_and_scrubbed(self):
         aws = FakeAws(publish_denied=True)

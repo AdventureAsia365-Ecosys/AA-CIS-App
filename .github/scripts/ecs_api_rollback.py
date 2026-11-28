@@ -161,10 +161,8 @@ def rollback(
     return finish(0, f"rolled back to {', '.join(done)} (/health on {want[:12]})", done)
 
 
-def topic_of(aws: esr.Aws, cluster: str, service: str, container: str) -> str:
-    """ALERTS_TOPIC_ARN of the task definition the service runs ('' when absent or malformed). Never logged."""
-    svc = esr.describe_service(aws, cluster, service)
-    data = aws(["ecs", "describe-task-definition", "--task-definition", svc.get("taskDefinition") or ""])
+def _topic_in(aws: esr.Aws, td: str, container: str) -> str:
+    data = aws(["ecs", "describe-task-definition", "--task-definition", td])
     defs = ((data or {}).get("taskDefinition") or {}).get("containerDefinitions") or []
     for c in defs:
         if container and c.get("name") != container:
@@ -173,6 +171,13 @@ def topic_of(aws: esr.Aws, cluster: str, service: str, container: str) -> str:
             if env.get("name") == "ALERTS_TOPIC_ARN" and TOPIC_ARN.match(str(env.get("value") or "")):
                 return str(env["value"])
     return ""
+
+
+def topic_of(aws: esr.Aws, cluster: str, service: str, container: str) -> str:
+    """ALERTS_TOPIC_ARN of the task definition the service runs, else of its family's latest revision (an older build
+    may predate the entry); '' when neither has a well-formed one. Never logged."""
+    td = esr.describe_service(aws, cluster, service).get("taskDefinition") or ""
+    return _topic_in(aws, td, container) or _topic_in(aws, esr.td_ref(td).split(":", 1)[0], container)
 
 
 def _clean(text: str, limit: int = FIELD_MAX) -> str:
