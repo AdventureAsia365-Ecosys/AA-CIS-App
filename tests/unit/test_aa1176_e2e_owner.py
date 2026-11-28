@@ -15,9 +15,7 @@ import structlog.testing
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 
-from api.core import (
-    e2e_staff, e2e_tenant_writes, pilot_fence, staff_identity, staff_mfa, staff_mfa_settings, staff_view_as,
-)
+from api.core import e2e_staff, e2e_tenant_writes, staff_identity, staff_mfa, staff_mfa_settings, staff_view_as
 from api.middleware.staff_bearer import StaffBearerMiddleware
 from api.services import staff_custom_roles as scr
 from api.services import staff_directory as sd
@@ -104,8 +102,6 @@ def switch(monkeypatch):
     state = {"on": False}
 
     def fake_get(key, tenant_id=None):
-        if key == pilot_fence.PILOT_E2E_FENCE:      # AA-1054: the pilot fence stays off here
-            return False
         assert key == staff_mfa_settings.ADMIN_MFA_REQUIRED
         return state["on"]
 

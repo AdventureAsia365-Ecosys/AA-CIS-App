@@ -311,7 +311,10 @@ AA-Booking) + `api/core/identity_config.py` (CIS surface) + `api/core/staff_iden
   identity, A10 ... A10h, any local part) with 403 `e2e_pilot_fence` before every other E2E rule, and
   `e2e_staff.dev_only_e2e_environment()` answers False (the directory's E2E create / re-enable / sync, the E2E
   `docs.owner_read`, the E2E Booking grant rule and the Learn test hook close too). The sign-in page shows
-  `/login?error=pilot_fence`. Real staff never read the switch. AA-Booking reads the same value through
+  `/login?error=pilot_fence`. It fails closed: while a task holds no settings snapshot (before its first read, or
+  every read failed) or the stored value was refused, the same identities get 403 `e2e_pilot_fence_unknown` and the
+  Dev-only exceptions stay closed. The academy (`/learn/v1`, which does not go through the resolver) refuses them
+  too (403 `forbidden`). Real staff never read the switch. AA-Booking reads the same value through
   `catalog.v_pilot_fence_v1` (CIS 496). Pilot-day order: root runbook `docs/ops/runbooks/pilot-agency-onboarding.md`.
 - `api/middleware/staff_bearer.py` (registered right after the rate limiter) handles every staff path: a
   verified Cognito Bearer **overwrites** `x-admin-role` / `x-admin-user-id` from the verified principal

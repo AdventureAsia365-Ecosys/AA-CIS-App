@@ -10,7 +10,7 @@ export const M = defineMessages(
     errMfaRequired:
       "Administrators must sign in with their password and the 6-digit code from their authenticator app. Sign in again and choose the password option.",
     errPilotFence:
-      "This test account is switched off while the pilot agency works on Dev (pilot fence on). Sign in with your own company account.",
+      "This test account is switched off while the pilot agency works on Dev. Sign in with your own company account.",
     errSigninFailed: "Sign-in could not be completed. Please try again.",
     errSessionExpired: "Your session has ended. Please sign in again.",
     errBackend: "The CIS service could not be reached. Please try again in a moment.",
@@ -37,7 +37,7 @@ export const M = defineMessages(
     errMfaRequired:
       "Quản trị viên phải đăng nhập bằng mật khẩu và mã 6 số từ ứng dụng xác thực. Hãy đăng nhập lại và chọn cách đăng nhập bằng mật khẩu.",
     errPilotFence:
-      "Tài khoản kiểm thử này đang bị tắt trong thời gian đại lý pilot làm việc trên Dev (hàng rào pilot đang bật). Hãy đăng nhập bằng tài khoản công ty của bạn.",
+      "Tài khoản kiểm thử này đang bị tắt trong thời gian đại lý pilot làm việc trên Dev. Hãy đăng nhập bằng tài khoản công ty của bạn.",
     errSigninFailed: "Không hoàn tất được việc đăng nhập. Vui lòng thử lại.",
     errSessionExpired: "Phiên làm việc đã kết thúc. Vui lòng đăng nhập lại.",
     errBackend: "Không kết nối được dịch vụ CIS. Vui lòng thử lại sau giây lát.",

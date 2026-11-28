@@ -26,6 +26,7 @@ test("the sign-in page knows the mfa_required code in both languages", () => {
 
 test("a 403 e2e_pilot_fence answer maps to the pilot_fence sign-in error (AA-1054)", () => {
   assert.equal(loginErrorFor({ ok: false, status: 403, detail: "e2e_pilot_fence" }), "pilot_fence");
+  assert.equal(loginErrorFor({ ok: false, status: 403, detail: "e2e_pilot_fence_unknown" }), "pilot_fence");
   assert.equal(loginErrorFor({ ok: false, status: 401, detail: "e2e_pilot_fence" }), "no_access");
   assert.equal(loginErrorFor({ ok: false, status: 503, detail: "e2e_pilot_fence" }), "backend");
 });

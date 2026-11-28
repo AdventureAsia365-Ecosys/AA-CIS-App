@@ -71,7 +71,9 @@ Rules
 5g. **Pilot fence (AA-1054, S297, root ADR 0006a; api/core/pilot_fence.py).** While the platform setting
    ``cis.platform.pilot_e2e_fence`` is on, a row or token whose address is of the E2E mailbox domain (every Dev-only
    E2E identity, A10 ... A10h, and any look-alike) is refused 403 ``e2e_pilot_fence`` (logged
-   ``staff_identity_refused``) before rules 5b-5f; real staff never read the switch.
+   ``staff_identity_refused``) before rules 5b-5f; while the switch cannot be read in this process (no settings
+   snapshot yet, or the stored value refused) the same identities get 403 ``e2e_pilot_fence_unknown`` (fail closed).
+   Real staff never read the switch.
 6. Rows are cached for :data:`STAFF_STATE_TTL_S` keyed by ``(iss, sub)`` (misses too), like the legacy
    verify-admin cache, so a deactivation takes effect within that TTL (plus the BFF's own verify cache).
 
@@ -421,8 +423,8 @@ async def resolve_staff(db: Any, principal: Principal, *, touch_login: bool = Fa
     if row is None:
         raise StaffAuthError(401, "Staff user is inactive or unknown", "inactive_or_unknown")
     # AA-1054 (rule 5g): the pilot fence refuses every E2E identity first, whatever its own Dev-only rules allow.
-    pilot_fence.check(row_email=row.email, token_email=principal.email, admin_id=row.admin_id, sub=principal.sub,
-                      client_id=principal.client_id)
+    await pilot_fence.check(row_email=row.email, token_email=principal.email, admin_id=row.admin_id,
+                            sub=principal.sub, client_id=principal.client_id)
     custom_role: Optional[staff_roles.CustomRole] = None
     if custom:
         custom_role = _custom_grant(row, principal)
