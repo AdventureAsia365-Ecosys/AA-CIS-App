@@ -305,6 +305,14 @@ AA-Booking) + `api/core/identity_config.py` (CIS surface) + `api/core/staff_iden
   `staff_admin_mfa_check outcome=would_refuse` (`satisfied` when the code was used; one line per identity and
   outcome per 10 minutes). Other CIS roles, the capped Preview viewer and the Dev-only read-only E2E identities are
   never checked. Enrolment and the switch-on order: AA-CIS-Infra `docs/runbooks/staff-admin-mfa.md`.
+- **Pilot fence (AA-1054, root ADR 0006a; `api/core/pilot_fence.py`).** While the platform setting
+  `cis.platform.pilot_e2e_fence` (CIS 495, Platform › Settings, area platform, maker-checker, no env override, default
+  off) is on, the resolver refuses a row or token whose address is of the E2E mailbox domain (every Dev-only E2E
+  identity, A10 ... A10h, any local part) with 403 `e2e_pilot_fence` before every other E2E rule, and
+  `e2e_staff.dev_only_e2e_environment()` answers False (the directory's E2E create / re-enable / sync, the E2E
+  `docs.owner_read`, the E2E Booking grant rule and the Learn test hook close too). The sign-in page shows
+  `/login?error=pilot_fence`. Real staff never read the switch. AA-Booking reads the same value through
+  `catalog.v_pilot_fence_v1` (CIS 496). Pilot-day order: root runbook `docs/ops/runbooks/pilot-agency-onboarding.md`.
 - `api/middleware/staff_bearer.py` (registered right after the rate limiter) handles every staff path: a
   verified Cognito Bearer **overwrites** `x-admin-role` / `x-admin-user-id` from the verified principal
   (client copies dropped), sets the `current_staff` contextvar and strips `Authorization`; an invalid

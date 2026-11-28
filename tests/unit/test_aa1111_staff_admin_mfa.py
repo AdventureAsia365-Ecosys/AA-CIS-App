@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from structlog.testing import capture_logs
 
-from api.core import identity_config, staff_identity, staff_mfa, staff_mfa_settings
+from api.core import identity_config, pilot_fence, staff_identity, staff_mfa, staff_mfa_settings
 from api.middleware.staff_bearer import StaffBearerMiddleware
 from tests.unit.aa854_cognito_staff import ISS, SUB, Directory, install_issuer
 
@@ -40,6 +40,8 @@ def switch(monkeypatch):
     state = {"on": False}
 
     def fake_get(key, tenant_id=None):
+        if key == pilot_fence.PILOT_E2E_FENCE:      # AA-1054: the pilot fence stays off here
+            return False
         assert key == staff_mfa_settings.ADMIN_MFA_REQUIRED
         return state["on"]
 

@@ -68,6 +68,10 @@ Rules
    is NOT read-only: ``e2e_read_only`` stays False and ``is_owner`` is the row's (the preview cap still wins); the
    identity carries ``e2e_owner = True`` (``staff_identity_e2e_owner`` logged once per cache load), which exempts it
    from the administrator MFA switch (api/core/staff_mfa.py) and holds it to its D5 limits on the Staff page.
+5g. **Pilot fence (AA-1054, S297, root ADR 0006a; api/core/pilot_fence.py).** While the platform setting
+   ``cis.platform.pilot_e2e_fence`` is on, a row or token whose address is of the E2E mailbox domain (every Dev-only
+   E2E identity, A10 ... A10h, and any look-alike) is refused 403 ``e2e_pilot_fence`` (logged
+   ``staff_identity_refused``) before rules 5b-5f; real staff never read the switch.
 6. Rows are cached for :data:`STAFF_STATE_TTL_S` keyed by ``(iss, sub)`` (misses too), like the legacy
    verify-admin cache, so a deactivation takes effect within that TTL (plus the BFF's own verify cache).
 
@@ -95,7 +99,7 @@ import asyncpg
 import jwt
 import structlog
 
-from api.core import e2e_staff, identity_config, staff_roles
+from api.core import e2e_staff, identity_config, pilot_fence, staff_roles
 from api.core.identity_verifier import MAX_TOKEN_CHARS, AuthUnavailable, InvalidToken, Principal
 
 logger = structlog.get_logger()
@@ -416,6 +420,9 @@ async def resolve_staff(db: Any, principal: Principal, *, touch_login: bool = Fa
     row, loaded_now = await _cached_row(db, principal, touch_login=touch_login)
     if row is None:
         raise StaffAuthError(401, "Staff user is inactive or unknown", "inactive_or_unknown")
+    # AA-1054 (rule 5g): the pilot fence refuses every E2E identity first, whatever its own Dev-only rules allow.
+    pilot_fence.check(row_email=row.email, token_email=principal.email, admin_id=row.admin_id, sub=principal.sub,
+                      client_id=principal.client_id)
     custom_role: Optional[staff_roles.CustomRole] = None
     if custom:
         custom_role = _custom_grant(row, principal)

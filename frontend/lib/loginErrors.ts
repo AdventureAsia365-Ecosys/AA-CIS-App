@@ -15,11 +15,14 @@ export function isTransientStatus(status: number): boolean {
 /**
  * "backend" for a transient answer; "mfa_required" when the API refused an administrator who signed in without an
  * authenticator code while the switch cis.platform.admin_mfa_required is on (403 detail "mfa_required");
- * "no_access" for any other refusal (and for an answer whose role is not a staff role).
+ * "pilot_fence" when the API refused a Dev-only E2E test account while the pilot fence cis.platform.pilot_e2e_fence is
+ * on (AA-1054, 403 detail "e2e_pilot_fence"); "no_access" for any other refusal (and for an answer whose role is not a
+ * staff role).
  */
-export function loginErrorFor(verified: VerifyAnswer): "backend" | "mfa_required" | "no_access" {
+export function loginErrorFor(verified: VerifyAnswer): "backend" | "mfa_required" | "pilot_fence" | "no_access" {
   if (verified.ok) return "no_access";
   if (isTransientStatus(verified.status)) return "backend";
   if (verified.status === 403 && verified.detail === "mfa_required") return "mfa_required";
+  if (verified.status === 403 && verified.detail === "e2e_pilot_fence") return "pilot_fence";
   return "no_access";
 }
