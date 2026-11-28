@@ -50,6 +50,8 @@ const PAGES = [
   // AA-1174 (S288): Platform › Compliance readiness, Overview and Obligations tabs (a crash here once shipped
   // unnoticed: the post-deploy smoke's content role cannot open the page).
   '/admin/platform/compliance', '/admin/platform/compliance?tab=obligations',
+  // AA-1184 (S297): the Calendar tab (the ops calendar as the daily collector published it).
+  '/admin/platform/compliance?tab=calendar',
   // AA-1169 (S293): Writing Lab › Eval runs (the run list carries no tenant text; the sample view is not shot).
   '/admin/lab/eval-runs',
   // S294: Platform › Product map (cards, no table rows: its ready marker is the "Catalogue <sha> · built" line, drawn
@@ -71,6 +73,9 @@ const READY: Partial<Record<(typeof PAGES)[number], string>> = {
   '/admin/tenant-qa/compliance': '[data-testid="admin-content-ready"]',
   '/admin/platform/compliance': '[data-testid="compliance-banner"]',
   '/admin/platform/compliance?tab=obligations': '[data-testid="compliance-banner"]',
+  // loaded: the KPI tiles, or the empty state before the first collector run (never the error state)
+  '/admin/platform/compliance?tab=calendar':
+    '[data-testid="compliance-calendar-kpis"], [data-testid="compliance-calendar-empty"]',
 };
 // A ready marker the page also renders in its error state (Compliance: the API error string or "not available yet" in
 // the same element): the marker must also hold the loaded table or the empty text, so an error page fails the run
